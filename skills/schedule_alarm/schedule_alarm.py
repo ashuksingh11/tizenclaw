@@ -57,6 +57,10 @@ if __name__ == "__main__":
 
     try:
         delay = int(sys.argv[1])
+        # Enforce minimum delay of 10 minutes (600 seconds) for Tizen alarm API
+        if delay < 600:
+            print(json.dumps({"error": "Tizen alarm API minimum delay is 10 minutes (600 seconds)."}))
+            sys.exit(1)
     except ValueError:
         print(json.dumps({"error": "Invalid delay specified, must be an integer."}))
         sys.exit(1)
