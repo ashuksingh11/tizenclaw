@@ -19,11 +19,11 @@
 **목표**: Python과 Node.js가 포함된 초경량 RootFS(Alpine 타볼 등)를 Tizen에 배포/탑재합니다.
 - **주요 구현 항목**:
   1. 호스트 머신(Ubuntu 등)에서 TizenClaw 전용 RootFS 빌드 스크립트(Dockerfile -> tar.gz 내보내기) 작성
-  2. RPM 패키징 시 RootFS 타볼을 `/opt/usr/apps/org.tizen.tizenclaw/data/rootfs.tar.gz` 경로에 포함
+  2. RPM 패키징 시 RootFS 타볼을 `/usr/apps/org.tizen.tizenclaw/data/rootfs.tar.gz` 경로에 포함
   3. Service App 시작 시 해당 타볼을 특정 경로에 `setup` 및 `mount` 하는 로직 구현
 
 **❓ 확인 필요 사항 (질문)**:
-1. **용량 제한**: Tizen 디바이스의 `/opt/usr/apps/` 영역에 배포할 수 있는 최대 패키지(tpk/rpm) 용량 제한이 있나요? Python/Node.js 포함 시 최소 50~100MB 가량이 예상됩니다.
+1. **용량 제한**: Tizen 디바이스의 `/usr/apps/` 영역에 배포할 수 있는 최대 패키지(tpk/rpm) 용량 제한이 있나요? Python/Node.js 포함 시 최소 50~100MB 가량이 예상됩니다.
 2. **RootFS 다운로드 방식**: 패키지 크기를 줄이기 위해 런타임(앱 최초 실행 시)에 네트워크를 통해 RootFS 이미지를 다운로드 받도록 설계하는 것이 나을까요? 아니면 rpm 배포본에 포함하는 것이 좋을까요?
 
 ---
@@ -31,7 +31,7 @@
 ## Phase 4: Skills 시스템 및 API 래퍼 구축
 **목표**: 스킬 폴더를 마운트하고, Agent가 Tizen Device C-API를 Python/Node.js에서 호출할 수 있는 브리지를 제공합니다.
 - **주요 구현 항목**:
-  1. Agent Core에서 `/opt/usr/home/owner/share/tizenclaw/skills/` 폴더 감시 및 매니페스트 읽기 로직 (Prompt Builder 연동)
+  1. Agent Core에서 `/usr/apps/org.tizen.tizenclaw/data/skills/` 폴더 감시 및 매니페스트 읽기 로직 (Prompt Builder 연동)
   2. Tizen Device API `pybind11` 통신 브리지 (Python 래퍼) 모듈 개발
   3. OpenClaw 호환 기본 스킬(System Info, Network 등) Python 래핑 적용
 

@@ -41,22 +41,22 @@ cd build
 %make_install
 
 # Tizen apps structure
-mkdir -p %{buildroot}/opt/usr/apps/org.tizen.tizenclaw/bin
-mkdir -p %{buildroot}/opt/usr/apps/org.tizen.tizenclaw/res
-mkdir -p %{buildroot}/opt/usr/apps/org.tizen.tizenclaw/data/skills
-mkdir -p %{buildroot}/opt/usr/apps/org.tizen.tizenclaw/shared/res
+mkdir -p %{buildroot}/usr/apps/org.tizen.tizenclaw/bin
+mkdir -p %{buildroot}/usr/apps/org.tizen.tizenclaw/res
+mkdir -p %{buildroot}/usr/apps/org.tizen.tizenclaw/data/skills
+mkdir -p %{buildroot}/usr/apps/org.tizen.tizenclaw/shared/res
 
 %files
 %manifest tizenclaw.manifest
 %defattr(-,root,root,-)
-/opt/usr/apps/org.tizen.tizenclaw/bin/tizenclaw
-/opt/usr/apps/org.tizen.tizenclaw/bin/tizenclaw-unittests
-/opt/usr/apps/org.tizen.tizenclaw/tizen-manifest.xml
-/opt/usr/apps/org.tizen.tizenclaw/data/rootfs.tar.gz
-/opt/usr/apps/org.tizen.tizenclaw/data/skills/
-%dir /opt/usr/apps/org.tizen.tizenclaw/shared/res
-%dir /opt/usr/apps/org.tizen.tizenclaw/bin
-%dir /opt/usr/apps/org.tizen.tizenclaw/res
-%dir /opt/usr/apps/org.tizen.tizenclaw/data
-%dir /opt/usr/apps/org.tizen.tizenclaw/shared
-%dir /opt/usr/apps/org.tizen.tizenclaw/
+/usr/apps/org.tizen.tizenclaw/bin/tizenclaw
+/usr/apps/org.tizen.tizenclaw/bin/tizenclaw-unittests
+/usr/apps/org.tizen.tizenclaw/tizen-manifest.xml
+/usr/apps/org.tizen.tizenclaw/data/rootfs.tar.gz
+/usr/apps/org.tizen.tizenclaw/data/skills/
+%dir /usr/apps/org.tizen.tizenclaw/shared/res
+%dir /usr/apps/org.tizen.tizenclaw/bin
+%dir /usr/apps/org.tizen.tizenclaw/res
+%dir /usr/apps/org.tizen.tizenclaw/data
+%dir /usr/apps/org.tizen.tizenclaw/shared
+%dir /usr/apps/org.tizen.tizenclaw/

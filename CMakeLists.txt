@@ -11,9 +11,9 @@ set(PACKAGE "tizenclaw")
 set(VERSION "1.0.0")
 set(PREFIX "/usr")
 set(BINDIR "${PREFIX}/bin")
-set(APP_EXEC_DIR "/opt/usr/apps/org.tizen.tizenclaw/bin")
-set(APP_RES_DIR "/opt/usr/apps/org.tizen.tizenclaw/res")
-set(APP_DATA_DIR "/opt/usr/apps/org.tizen.tizenclaw/data")
+set(APP_EXEC_DIR "/usr/apps/org.tizen.tizenclaw/bin")
+set(APP_RES_DIR "/usr/apps/org.tizen.tizenclaw/res")
+set(APP_DATA_DIR "/usr/apps/org.tizen.tizenclaw/data")
 
 # Tizen pkg-config dependencies
 find_package(PkgConfig REQUIRED)
@@ -42,9 +42,9 @@ target_link_libraries(${PACKAGE} ${PKGS_LIBRARIES})
 
 # Installation rules
 install(TARGETS ${PACKAGE} DESTINATION ${APP_EXEC_DIR})
-install(FILES tizen-manifest.xml DESTINATION /opt/usr/apps/org.tizen.tizenclaw/)
-install(FILES data/rootfs.tar.gz DESTINATION /opt/usr/apps/org.tizen.tizenclaw/data/)
-install(DIRECTORY skills/ DESTINATION /opt/usr/apps/org.tizen.tizenclaw/data/skills/)
+install(FILES tizen-manifest.xml DESTINATION /usr/apps/org.tizen.tizenclaw/)
+install(FILES data/rootfs.tar.gz DESTINATION /usr/apps/org.tizen.tizenclaw/data/)
+install(DIRECTORY skills/ DESTINATION /usr/apps/org.tizen.tizenclaw/data/skills/)
 
 # Unit Tests (run during %check)
 enable_testing()

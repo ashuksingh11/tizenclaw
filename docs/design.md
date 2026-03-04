@@ -33,7 +33,7 @@ graph TD
             NodeRT["Node.js Standalone"]
         end
 
-        subgraph Skills ["/opt/usr/home/owner/share/tizenclaw/skills/"]
+        subgraph Skills ["/usr/apps/org.tizen.tizenclaw/data/skills/"]
             OpenClawSkill_Py["OpenClaw Skill (Python)"]
             OpenClawSkill_Node["OpenClaw Skill (Node.js)"]
             TizenWrapper_Py["Tizen C-API Wrapper (Python)"]
@@ -61,18 +61,18 @@ graph TD
   - **권한 처리**: 일반 UI 앱과 달리 시스템 내부 동작을 위해, 해당 Service App은 **Core/Platform 레벨의 인증서로 서명(System App 권한)**되어야 합니다. 또한 Namespace나 커널 파라미터 제어가 필요할 경우 적절한 특권(Capability) 및 SMACK 예외 설정이 플랫폼 정책 레벨에서 배포/패치되어야 합니다.
 
 ### 3.2. 경량 컨테이너 (Image 기반) 및 kUEP 우회
-- **접근 방식**: Tizen 환경에 Docker 데몬은 없으나, 단순 `unshare()` 대신 표준 OCI 규격을 지원하는 **경량 컨테이너 런타임(`crun`, `runc`, 또는 `LXC`)**을 정적 빌드하여 Daemon 내장 모듈로 사용합니다.
-- **이미지 구성 (RootFS 탑재)**: Python 및 Node.js가 사전 설치된 경량 리눅스 이미지(예: Alpine Linux 기반 RootFS)를 압축(`tar.gz`) 형태로 보유합니다. 컨테이너 엔진이 이를 특정 경로(`/opt/usr/home/owner/share/tizenclaw/rootfs`)에 풀거나 마운트하여 컨테이너 베이스 파일시스템으로 활용합니다. 이로 인해 호스트 환경을 어지럽히지 않고 완벽한 파일시스템 격리가 가능해집니다.
+- **제어 방식**: Docker 데몬 형태의 거대 아키텍처 대신, 가볍고 빠르며 Tizen App 생태계에 적합한 OCI 호환 명령줄 런타임(`runc` 또는 `crun`)을 백그라운드로 실행합니다. Tizen Service App 권한을 상속받아 직접 `fork/exec` 하거나 `system()` 콜을 사용합니다.
+- **이미지 구성 (RootFS 탑재)**: Python 및 Node.js가 사전 설치된 경량 리눅스 이미지(예: Alpine Linux 기반 RootFS)를 압축(`tar.gz`) 형태로 보유합니다. 컨테이너 엔진이 이를 특정 경로(`/usr/apps/org.tizen.tizenclaw/data/rootfs`)에 풀거나 마운트하여 컨테이너 베이스 파일시스템으로 활용합니다. 이로 인해 호스트 환경을 어지럽히지 않고 완벽한 파일시스템 격리가 가능해집니다.
 - **kUEP 및 SMACK 우회 처리**: 컨테이너 인스턴스 실행 시 OCI 스펙(`config.json`)을 통해 Capabilities 부여, Namespace 분할, kUEP 우회를 위한 예외 처리 및 SMACK 레이블을 Tizen 플랫폼 정책에 맞게 지정합니다.
 
 ### 3.3. 런타임 제공 방안 (이미지 캡슐화)
 위의 Image 기반 컨테이너 아키텍처 덕분에, Tizen 10.0 호스트 환경에 Python이나 Node.js를 억지로 설치하지 않아도 됩니다. 
 필요한 언어 환경 및 OpenClaw 구동 라이브러리는 모두 **Container RootFS 이미지 내부에 캡슐화**되어 제공되며, 스킬 스크립트는 외부 볼륨 마운트 방식을 통해 컨테이너 안으로 주입됩니다.
 
-### 3.4. 스킬 생성 및 구동 (Skills Ecosystem)
-- **스킬 저장소 경로**: `/opt/usr/home/owner/share/tizenclaw/skills/`
-- **구동 구조**: 
-  - Agent는 위 디렉터리를 감시하고, 매니페스트(설정) 파일을 통해 가능한 스킬의 입출력 구조를 파악(Prompt에 반영)합니다.
+### 4. 스킬 탑재 (Dynamic Skills)
+Agent의 액션 유연성을 높이기 위해 OpenClaw 호환 형태의 "독립된 스킬 파일(Python/JS 등)"을 동적 로딩합니다.
+- **스킬 저장소 경로**: `/usr/apps/org.tizen.tizenclaw/data/skills/`
+- **구동 구조**: AgentCore가 명령을 받으면 필요한 스킬 스크립트를 식별한 뒤, Container 내에서 `python3 skill.py` 등의 형태로 바이너리를 실행시켜 그 `stdout`(JSON) 값을 파싱합니다.
   - Tizen Device API는 우선 10.0의 C API를 기준으로 Python용 모듈(예: `pybind11`이나 `ctypes` 활용)을 작성합니다. 처음부터 전체 래퍼를 제공하기보다, **네트워크 상태 조회, 디바이스 정보 조회 등 읽기 전용 단일 API**부터 하나씩 개발하여 포팅합니다.
 
 ### 3.5. MCP (Model Context Protocol) 연동

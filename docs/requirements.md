@@ -17,7 +17,7 @@
 - **MCP (Model Context Protocol) 연동**: 모델과의 Context 교환을 원활하게 하기 위해 외부 또는 로컬의 MCP 서버와 연결되는 인터페이스를 제공해야 합니다.
 
 ### 3.2. Skills 구동 환경 및 호환성 (Skills Execution & Compatibility)
-- **Skills 디렉터리 사용**: Tizen 내 `/opt/usr/home/owner/share/tizenclaw/` (또는 하위 경로)에 스킬 스크립트를 위치시키고 이를 동적으로 로드하여 사용할 수 있어야 합니다.
+- **Skills 디렉터리 사용**: Tizen 내 `/usr/apps/org.tizen.tizenclaw/data/skills/` (또는 하위 경로)에 스킬 스크립트를 위치시키고 이를 동적으로 로드하여 사용할 수 있어야 합니다.
 - **Tizen C API 연동**: Tizen Device C API를 스킬에서 접근할 수 있도록 Python 또는 Node.js 래퍼(Wrapper/Bindings) 제공이 필요합니다. 
   - *접근 전략*: 10.0의 Core API(System Info, Network 등)부터 하나씩 단계적으로 래핑(Wrapping) 작업을 진행합니다.
 - **OpenClaw 배포 스킬 호환성**: OpenClaw의 스킬팩이 Tizen 내부에서도 약간의 수정 내지 원활히 동작할 수 있어야 합니다.
@@ -36,6 +36,6 @@
 
 ### 4.2. 필수 런타임 언어 (Python / Node.js) 확보
 *현재 Tizen 환경에는 기본적으로 Python 및 Node.js가 미설치 상태입니다.* OpenClaw 스킬 활용 및 Python 래핑 API 구동을 위해서는 다음 중 하나의 전략이 필요합니다.
-1. **정적 빌드 바이너리 내장**: TizenClaw 배포 시 빌드된 Python(또는 Node.js) 런타임 자체를 스태틱으로 묶어 `/opt/usr/` 하위에 배치 (Standalone 형태)
+1. **정적 빌드 바이너리 내장**: TizenClaw 배포 시 빌드된 Python(또는 Node.js) 런타임 자체를 스태틱으로 묶어 앱 `data/` 하위에 배치 (Standalone 형태)
 2. **시스템 패키징 매니저 활용**: Tizen GBS(Gerrit Build System)를 통해 `rpm` 형식의 Python / Node.js 패키지를 생성하고 OS 이미지에 사전 탑재하거나 후속 설치.
 * 본 프로젝트는 TizenClaw 프레임워크 구축에 집중하므로, Tizen 전용 런타임 패키지 빌드 문서를 별도로 작성하거나 독립형 런타임 바이너리를 배포하는 방식으로 해결할 계획입니다.

@@ -53,5 +53,5 @@ target_link_libraries(tizenclaw-unittests PUBLIC
 enable_testing()
 add_test(NAME TizenClawTests COMMAND tizenclaw-unittests)
 
-# Install test bin (optional, can be useful for device testing)
-install(TARGETS tizenclaw-unittests DESTINATION /opt/usr/apps/org.tizen.tizenclaw/bin)
+# Install test bin (optional, can be installed for runtime)
+install(TARGETS tizenclaw-unittests DESTINATION /usr/apps/org.tizen.tizenclaw/bin)

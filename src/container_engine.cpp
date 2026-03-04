@@ -40,12 +40,12 @@ bool ContainerEngine::StartContainer(const std::string& container_name, const st
                container_name.c_str(), rootfs_path.c_str());
 
     // 1. Prepare bundle directory
-    std::string bundle_dir = "/opt/usr/home/owner/share/tizenclaw/bundles/" + container_name;
+    std::string bundle_dir = "/usr/apps/org.tizen.tizenclaw/data/bundles/" + container_name;
     std::string mkdir_cmd = "mkdir -p " + bundle_dir + "/rootfs";
     std::system(mkdir_cmd.c_str());
 
     // 2. Extract rootfs if it doesn't exist
-    // In Phase 3, we expect rootfs_path to point to /opt/usr/apps/.../data/rootfs.tar.gz
+    // In Phase 3, we expect rootfs_path to point to /usr/apps/.../data/rootfs.tar.gz
     // We will extract it if the target directory is empty
     std::string extract_cmd = "if [ ! -f " + bundle_dir + "/.extracted ]; then "
                               "tar -xzf " + rootfs_path + " -C " + bundle_dir + "/rootfs && "

@@ -51,6 +51,6 @@ void AgentCore::ProcessPrompt(const std::string& prompt) {
     // TODO: Send prompt to LLM (via MCP or local inference)
     // TODO: Parse the plan
     
-    // For now, statically start a mock skills container to test Pipeline
-    m_container->StartContainer("tizenclaw_skill_vm", "/opt/usr/apps/org.tizen.tizenclaw/data/rootfs.tar.gz");
+    // Launching the predefined container environment for Skills execution
+    m_container->StartContainer("tizenclaw_skill_vm", "/usr/apps/org.tizen.tizenclaw/data/rootfs.tar.gz");
 }
