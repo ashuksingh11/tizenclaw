@@ -28,6 +28,11 @@ cmake .. \
     -DCMAKE_INSTALL_PREFIX=/usr
 make %{?_smp_mflags}
 
+%check
+cd build
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:%{buildroot}/usr/lib
+ctest -V
+
 %install
 rm -rf %{buildroot}
 cd build

@@ -42,3 +42,7 @@ target_link_libraries(${PACKAGE} ${PKGS_LIBRARIES})
 # Installation rules
 install(TARGETS ${PACKAGE} DESTINATION ${APP_EXEC_DIR})
 install(FILES tizen-manifest.xml DESTINATION /opt/usr/apps/org.tizen.tizenclaw/)
+
+# Unit Tests (run during %check)
+enable_testing()
+add_subdirectory(test/unit_tests)
