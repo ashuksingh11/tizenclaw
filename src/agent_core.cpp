@@ -2,6 +2,8 @@
 #include <curl/curl.h>
 #include <fstream>
 #include <iostream>
+#include <dirent.h>
+#include <sys/stat.h>
 
 #include "agent_core.h"
 
@@ -98,48 +100,46 @@ std::string AgentCore::QueryGemini(const std::string& prompt_text) {
         return "{}";
     }
     
+    std::vector<nlohmann::json> dynamic_functions;
+    const std::string skills_dir = "/usr/apps/org.tizen.tizenclaw/data/skills";
+    DIR *dir = opendir(skills_dir.c_str());
+    if (dir) {
+        struct dirent *ent;
+        while ((ent = readdir(dir)) != NULL) {
+            if (ent->d_name[0] == '.') continue;
+            std::string manifest_path = skills_dir + "/" + ent->d_name + "/manifest.json";
+            std::ifstream mf(manifest_path);
+            if (mf.is_open()) {
+                try {
+                    nlohmann::json j;
+                    mf >> j;
+                    if (j.contains("parameters")) {
+                        nlohmann::json f;
+                        f["name"] = j.value("name", ent->d_name);
+                        f["description"] = j.value("description", "");
+                        f["parameters"] = j["parameters"];
+                        dynamic_functions.push_back(f);
+                    }
+                } catch (...) {
+                    dlog_print(DLOG_WARN, LOG_TAG, "Failed to parse manifest: %s", manifest_path.c_str());
+                }
+            }
+        }
+        closedir(dir);
+    }
+
     nlohmann::json payload = {
         {"contents", {{
             {"parts", {{{"text", prompt_text}}}}
-        }}},
-        {"tools", {{
-            {"functionDeclarations", {
-                {
-                    {"name", "launch_app"},
-                    {"description", "Launch a Tizen app using app ID"},
-                    {"parameters", {
-                        {"type", "object"},
-                        {"properties", {
-                            {"app_id", {{"type", "string"}, {"description", "The Tizen application ID, e.g., org.tizen.browser"}}}
-                        }},
-                        {"required", {"app_id"}}
-                    }}
-                },
-                {
-                    {"name", "vibrate_device"},
-                    {"description", "Trigger haptic vibration feedback"},
-                    {"parameters", {
-                        {"type", "object"},
-                        {"properties", {
-                            {"duration_ms", {{"type", "integer"}, {"description", "Vibration duration in milliseconds"}}}
-                        }}
-                    }}
-                },
-                {
-                    {"name", "schedule_alarm"},
-                    {"description", "Schedule an alarm or reminder"},
-                    {"parameters", {
-                        {"type", "object"},
-                        {"properties", {
-                            {"delay_sec", {{"type", "integer"}, {"description", "Delay in seconds (must be >= 600)"}}},
-                            {"prompt_text", {{"type", "string"}, {"description", "Prompt to send when alarm fires"}}}
-                        }},
-                        {"required", {"delay_sec", "prompt_text"}}
-                    }}
-                }
-            }}
         }}}
     };
+
+    if (!dynamic_functions.empty()) {
+        payload["tools"] = {{
+            {"functionDeclarations", dynamic_functions}
+        }};
+    }
+
     
     std::string url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=" + m_gemini_api_key;
     std::string response_string;
@@ -174,21 +174,18 @@ bool AgentCore::ExecuteSkill(const std::string& skill_name, const nlohmann::json
     // Launching the predefined container environment for Skills execution
     m_container->StartContainer("tizenclaw_skill_vm", "/usr/apps/org.tizen.tizenclaw/data/rootfs.tar.gz");
     
-    std::string arg_str = "";
-    if (skill_name == "launch_app") {
-        arg_str = args.value("app_id", "");
-    } else if (skill_name == "schedule_alarm") {
-        int delay = args.value("delay_sec", 600);
-        std::string text = args.value("prompt_text", "reminder");
-        arg_str = std::to_string(delay) + " '" + text + "'";
-    } else if (skill_name == "vibrate_device") {
-        int duration = args.value("duration_ms", 1000);
-        arg_str = std::to_string(duration);
+    // Convert JSON explicitly to a shell-escaped string or just write to temp file
+    std::string arg_str = args.dump();
+    // Escape single quotes just in case
+    size_t pos = 0;
+    while ((pos = arg_str.find("'", pos)) != std::string::npos) {
+        arg_str.replace(pos, 1, "'\"'\"'");
+        pos += 5;
     }
     
     std::string skill_file = "/usr/apps/org.tizen.tizenclaw/data/skills/" + skill_name + "/" + skill_name + ".py";
-    // Setup execution using the system Python interpreter (or rootfs one)
-    std::string cmd = "python3 " + skill_file + " " + arg_str;
+    // Using environment variable to pass JSON args generically, avoids quoting issues
+    std::string cmd = "CLAW_ARGS='" + arg_str + "' python3 " + skill_file;
     
     dlog_print(DLOG_INFO, LOG_TAG, "Running Skill CMD: %s", cmd.c_str());
     int res = std::system(cmd.c_str());
