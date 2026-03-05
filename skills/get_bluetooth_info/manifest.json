@@ -1,0 +1,9 @@
+{
+    "name": "get_bluetooth_info",
+    "description": "Get current Bluetooth adapter status, including activation state, adapter name, and address.",
+    "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+    }
+}

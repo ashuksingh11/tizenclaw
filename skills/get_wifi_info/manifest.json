@@ -1,0 +1,9 @@
+{
+    "name": "get_wifi_info",
+    "description": "Get current Wi-Fi status, including activation state, connection state (connected/disconnected), and SSID if connected.",
+    "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+    }
+}

@@ -1,0 +1,9 @@
+{
+    "name": "get_battery_info",
+    "description": "Get device battery information, including percentage, charging status, and level status (normal/low/critical).",
+    "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+    }
+}

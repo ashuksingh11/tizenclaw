@@ -3,6 +3,7 @@
 
 #include <dlog.h>
 #include <tizen_core.h>
+#include <json.hpp>
 #include <thread>
 #include <atomic>
 #include "agent_core.hh"
@@ -24,6 +25,7 @@ private:
     void OnCreate();
     void OnDestroy();
     void IpcServerLoop();
+    bool IsAllowedUid(uid_t uid) const;
 
     int argc_;
     char** argv_;
@@ -33,6 +35,12 @@ private:
     std::thread ipc_thread_;
     std::atomic<bool> ipc_running_{false};
     int ipc_socket_ = -1;
+
+    // Allowed UIDs for IPC connections
+    // 0=root, 301=app_fw, 200=system, 5001=developer
+    static constexpr uid_t kAllowedUids[] = {
+        0, 200, 301, 5001
+    };
 };
 
 #endif // __TIZENCLAW_H__

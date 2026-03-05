@@ -124,7 +124,16 @@ bool ContainerEngine::EnsureSkillsContainerRunning() {
   if (!PrepareSkillsBundle()) {
     return false;
   }
-  return StartSkillsContainer();
+
+  if (!StartSkillsContainer()) {
+    // Auto-restart: force cleanup and try once more
+    dlog_print(DLOG_WARN, LOG_TAG,
+               "Container start failed. "
+               "Attempting auto-restart...");
+    StopSkillsContainer();
+    return StartSkillsContainer();
+  }
+  return true;
 }
 
 bool ContainerEngine::PrepareSkillsBundle() {
@@ -206,7 +215,7 @@ bool ContainerEngine::WriteSkillsConfig() const {
   "ociVersion": "1.0.2",
   "process": {
     "terminal": false,
-    "user": {"uid": 0, "gid": 0},
+    "user": {"uid": 65534, "gid": 65534},
     "args": ["sh", "-lc", "while true; do sleep 3600; done"],
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -219,7 +228,12 @@ bool ContainerEngine::WriteSkillsConfig() const {
       "inheritable": [],
       "permitted": [],
       "ambient": []
-    }
+    },
+    "rlimits": [
+      {"type": "RLIMIT_NOFILE", "hard": 256, "soft": 256},
+      {"type": "RLIMIT_NPROC", "hard": 64, "soft": 64},
+      {"type": "RLIMIT_AS", "hard": 268435456, "soft": 268435456}
+    ]
   },
   "root": {
     "path": "rootfs",
@@ -252,6 +266,41 @@ bool ContainerEngine::WriteSkillsConfig() const {
       {"type": "uts"},
       {"type": "network"}
     ],
+    "seccomp": {
+      "defaultAction": "SCMP_ACT_ERRNO",
+      "architectures": ["SCMP_ARCH_X86_64", "SCMP_ARCH_X86", "SCMP_ARCH_AARCH64"],
+      "syscalls": [{
+        "names": [
+          "read","write","open","close","stat","fstat","lstat",
+          "poll","lseek","mmap","mprotect","munmap","brk",
+          "ioctl","access","pipe","select","sched_yield",
+          "dup","dup2","nanosleep","getpid","socket","connect",
+          "sendto","recvfrom","sendmsg","recvmsg","bind","listen",
+          "getsockname","getpeername","getsockopt","setsockopt",
+          "clone","fork","vfork","execve","exit","wait4",
+          "kill","uname","fcntl","flock","fsync","fdatasync",
+          "truncate","ftruncate","getdents","getcwd","chdir",
+          "mkdir","rmdir","creat","link","unlink","symlink",
+          "readlink","chmod","chown","lchown","umask",
+          "gettimeofday","getrlimit","getrusage","sysinfo",
+          "times","getuid","getgid","setuid","setgid",
+          "geteuid","getegid","getppid","getpgrp","setsid",
+          "getgroups","setgroups","sigaltstack","madvise",
+          "shmget","shmat","shmctl","shmdt",
+          "clock_gettime","clock_getres","clock_nanosleep",
+          "exit_group","epoll_wait","epoll_ctl","tgkill",
+          "openat","mkdirat","fchownat","fstatat",
+          "unlinkat","renameat","linkat","symlinkat",
+          "readlinkat","fchmodat","faccessat","futex",
+          "set_robust_list","get_robust_list",
+          "epoll_create1","pipe2","dup3","accept4",
+          "prlimit64","getrandom","memfd_create",
+          "statx","clone3","close_range","rseq",
+          "newfstatat"
+        ],
+        "action": "SCMP_ACT_ALLOW"
+      }]
+    },
     "maskedPaths": [
       "/proc/acpi",
       "/proc/kcore",

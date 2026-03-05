@@ -1,0 +1,72 @@
+name: TizenClaw CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-cpp:
+    name: C++ Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        run: |
+          cppcheck \
+            --enable=warning,style,performance \
+            --std=c++17 \
+            --suppress=missingIncludeSystem \
+            --suppress=unmatchedSuppression \
+            --error-exitcode=1 \
+            --inline-suppr \
+            -I inc/ -I inc/nlohmann/ \
+            src/ inc/
+
+  lint-python:
+    name: Python Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff lint
+        run: ruff check skills/
+
+  check-line-length:
+    name: 80-Column Check (C++)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check line length
+        run: |
+          VIOLATIONS=0
+          while IFS= read -r file; do
+            if awk -v file="$file" \
+              'length > 80 { printf "%s:%d: line is %d chars (max 80)\n", file, NR, length; found=1 } END { exit found ? 1 : 0 }' \
+              "$file"; then
+              :
+            else
+              VIOLATIONS=1
+            fi
+          done < <(find src/ inc/ -name '*.cc' -o -name '*.hh' | grep -v 'nlohmann')
+
+          if [ "$VIOLATIONS" -eq 1 ]; then
+            echo ""
+            echo "::error::Lines exceeding 80 columns found. See above for details."
+            exit 1
+          fi
+          echo "All C++ source files are within 80 columns."

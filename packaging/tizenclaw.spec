@@ -102,32 +102,18 @@ mkdir -p %{buildroot}/usr/bin
 mkdir -p %{buildroot}/usr/lib/systemd/system/
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/skills
 
-%post
-if command -v chsmack >/dev/null 2>&1; then
-  chsmack -a _ /usr/bin/tizenclaw || :
-  chsmack -a _ /usr/lib/systemd/system/tizenclaw.service || :
-  chsmack -a _ /usr/lib/systemd/system/tizenclaw-skills-secure.service || :
-  chsmack -a _ /usr/libexec/tizenclaw/run_standard_container.sh || :
-  chsmack -a _ /usr/libexec/tizenclaw/skills_secure_container.sh || :
-  chsmack -a _ /usr/libexec/tizenclaw/crun || :
-  chsmack -a _ /opt/usr/share/tizenclaw/rootfs.tar.gz || :
-fi
-
-%post unittests
-if command -v chsmack >/dev/null 2>&1; then
-  chsmack -a _ /usr/bin/tizenclaw-unittests || :
-fi
-
 %files
 %defattr(-,root,root,-)
 %manifest %{name}.manifest
 /usr/bin/tizenclaw
+/usr/bin/start_mcp_tunnel.sh
 /usr/lib/systemd/system/tizenclaw.service
 /usr/lib/systemd/system/tizenclaw-skills-secure.service
 /usr/libexec/tizenclaw/run_standard_container.sh
 /usr/libexec/tizenclaw/skills_secure_container.sh
 /usr/libexec/tizenclaw/crun
 /opt/usr/share/tizenclaw/rootfs.tar.gz
+/opt/usr/share/tizenclaw/llm_config.json.sample
 /opt/usr/share/tizenclaw/skills/
 %dir /opt/usr/share/tizenclaw/
 

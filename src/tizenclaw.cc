@@ -90,73 +90,216 @@ void TizenClawDaemon::OnDestroy() {
 }
 
 void TizenClawDaemon::IpcServerLoop() {
-    dlog_print(DLOG_INFO, LOG_TAG, "IPC Server thread starting...");
-    
+    dlog_print(DLOG_INFO, LOG_TAG,
+               "IPC Server thread starting...");
+
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sock < 0) {
-        dlog_print(DLOG_ERROR, LOG_TAG, "Failed to create IPC socket: %s", strerror(errno));
+        dlog_print(DLOG_ERROR, LOG_TAG,
+                   "Failed to create IPC socket: %s",
+                   strerror(errno));
         return;
     }
     ipc_socket_ = sock;
-    
+
     struct sockaddr_un addr;
     std::memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    
-    // Abstract namespace socket: "\0tizenclaw.ipc" = 14 bytes
-    // addr.sun_path[0] is already '\0' from memset (abstract namespace indicator)
-    // Copy "tizenclaw.ipc" starting at sun_path[1]
+
+    // Abstract namespace socket: "\0tizenclaw.ipc"
     const char kSocketName[] = "tizenclaw.ipc";
-    constexpr size_t kNameLen = 1 + sizeof(kSocketName) - 1;  // '\0' + "tizenclaw.ipc" = 14
-    std::memcpy(addr.sun_path + 1, kSocketName, sizeof(kSocketName) - 1);
-    
-    socklen_t addr_len = offsetof(struct sockaddr_un, sun_path) + kNameLen;
-    
-    if (bind(ipc_socket_, (struct sockaddr*)&addr, addr_len) < 0) {
-        dlog_print(DLOG_ERROR, LOG_TAG, "Failed to bind IPC socket: %s", strerror(errno));
+    constexpr size_t kNameLen =
+        1 + sizeof(kSocketName) - 1;
+    std::memcpy(addr.sun_path + 1, kSocketName,
+                sizeof(kSocketName) - 1);
+
+    socklen_t addr_len =
+        offsetof(struct sockaddr_un, sun_path) +
+        kNameLen;
+
+    if (bind(ipc_socket_,
+             (struct sockaddr*)&addr,
+             addr_len) < 0) {
+        dlog_print(DLOG_ERROR, LOG_TAG,
+                   "Failed to bind IPC socket: %s",
+                   strerror(errno));
         close(ipc_socket_);
         ipc_socket_ = -1;
         return;
     }
-    
+
     if (listen(ipc_socket_, 5) < 0) {
-        dlog_print(DLOG_ERROR, LOG_TAG, "Failed to listen on IPC socket: %s", strerror(errno));
+        dlog_print(DLOG_ERROR, LOG_TAG,
+                   "Failed to listen IPC socket: %s",
+                   strerror(errno));
         close(ipc_socket_);
         ipc_socket_ = -1;
         return;
     }
-    
-    dlog_print(DLOG_INFO, LOG_TAG, "IPC Server listening on abstract socket \\0tizenclaw.ipc (addr_len=%d)", addr_len);
-    
+
+    dlog_print(DLOG_INFO, LOG_TAG,
+               "IPC Server listening on "
+               "\\0tizenclaw.ipc (addr_len=%d)",
+               addr_len);
+
     while (ipc_running_) {
-        int client_sock = accept(ipc_socket_, nullptr, nullptr);
+        int client_sock =
+            accept(ipc_socket_, nullptr, nullptr);
         if (client_sock < 0) {
             if (ipc_running_) {
-                dlog_print(DLOG_WARN, LOG_TAG, "accept() failed: %s", strerror(errno));
+                dlog_print(DLOG_WARN, LOG_TAG,
+                           "accept() failed: %s",
+                           strerror(errno));
             }
             continue;
         }
-        
-        dlog_print(DLOG_INFO, LOG_TAG, "IPC client connected");
-        
+
+        dlog_print(DLOG_INFO, LOG_TAG,
+                   "IPC client connected");
+
+        // --- Peer credential verification ---
+        struct ucred cred;
+        socklen_t cred_len = sizeof(cred);
+        if (getsockopt(client_sock, SOL_SOCKET,
+                       SO_PEERCRED, &cred,
+                       &cred_len) < 0) {
+            dlog_print(DLOG_ERROR, LOG_TAG,
+                       "Failed to get peer cred: %s",
+                       strerror(errno));
+            close(client_sock);
+            continue;
+        }
+
+        if (!IsAllowedUid(cred.uid)) {
+            dlog_print(DLOG_WARN, LOG_TAG,
+                       "Rejected IPC from "
+                       "uid=%d pid=%d",
+                       cred.uid, cred.pid);
+            close(client_sock);
+            continue;
+        }
+
+        dlog_print(DLOG_INFO, LOG_TAG,
+                   "Authorized IPC from "
+                   "pid=%d uid=%d",
+                   cred.pid, cred.uid);
+
+        // Read all data until client signals EOF
         std::vector<char> buffer(4096);
-        std::string prompt;
+        std::string raw_msg;
         ssize_t bytes_read;
-        while ((bytes_read = ::read(client_sock, buffer.data(), buffer.size())) > 0) {
-            prompt.append(buffer.data(), bytes_read);
+        while ((bytes_read = ::read(
+                    client_sock, buffer.data(),
+                    buffer.size())) > 0) {
+            raw_msg.append(buffer.data(),
+                           bytes_read);
         }
-        
+
+        if (raw_msg.empty() || !agent_) {
+            close(client_sock);
+            continue;
+        }
+
+        dlog_print(DLOG_INFO, LOG_TAG,
+                   "Received IPC msg (%zu bytes)",
+                   raw_msg.size());
+
+        // Parse JSON and process
+        nlohmann::json response_json;
+        try {
+            auto req =
+                nlohmann::json::parse(raw_msg);
+
+            std::string session_id =
+                req.value("session_id", "default");
+            std::string prompt =
+                req.value("text", "");
+
+            if (prompt.empty()) {
+                response_json = {
+                    {"type", "response"},
+                    {"session_id", session_id},
+                    {"status", "error"},
+                    {"text", "Empty prompt"}
+                };
+            } else {
+                std::string result =
+                    agent_->ProcessPrompt(
+                        session_id, prompt);
+                response_json = {
+                    {"type", "response"},
+                    {"session_id", session_id},
+                    {"status", "ok"},
+                    {"text", result}
+                };
+            }
+        } catch (const nlohmann::json::exception& e) {
+            // Fallback: treat as plain text prompt
+            dlog_print(DLOG_WARN, LOG_TAG,
+                       "Non-JSON IPC msg, "
+                       "treating as plain text");
+            std::string result =
+                agent_->ProcessPrompt(
+                    "default", raw_msg);
+            response_json = {
+                {"type", "response"},
+                {"session_id", "default"},
+                {"status", "ok"},
+                {"text", result}
+            };
+        } catch (const std::exception& e) {
+            dlog_print(DLOG_ERROR, LOG_TAG,
+                       "IPC processing error: %s",
+                       e.what());
+            response_json = {
+                {"type", "response"},
+                {"session_id", "default"},
+                {"status", "error"},
+                {"text", std::string("Internal "
+                         "error: ") + e.what()}
+            };
+        }
+
+        // Write response back to client
+        std::string resp_str =
+            response_json.dump();
+        ssize_t total = 0;
+        ssize_t len =
+            static_cast<ssize_t>(resp_str.size());
+        while (total < len) {
+            ssize_t written = ::write(
+                client_sock,
+                resp_str.data() + total,
+                len - total);
+            if (written <= 0) {
+                dlog_print(DLOG_WARN, LOG_TAG,
+                           "Failed to write IPC "
+                           "response: %s",
+                           strerror(errno));
+                break;
+            }
+            total += written;
+        }
+
         close(client_sock);
-        
-        if (!prompt.empty() && agent_) {
-            dlog_print(DLOG_INFO, LOG_TAG, "Received IPC prompt (%zu bytes): %s",
-                        prompt.size(), prompt.c_str());
-            agent_->ProcessPrompt(prompt);
-        }
+        dlog_print(DLOG_INFO, LOG_TAG,
+                   "IPC response sent (%zd bytes)",
+                   total);
     }
-    
-    dlog_print(DLOG_INFO, LOG_TAG, "IPC Server thread exiting...");
+
+    dlog_print(DLOG_INFO, LOG_TAG,
+               "IPC Server thread exiting...");
 }
+
+bool TizenClawDaemon::IsAllowedUid(
+    uid_t uid) const {
+  for (auto allowed : kAllowedUids) {
+    if (uid == allowed) return true;
+  }
+  return false;
+}
+
+constexpr uid_t TizenClawDaemon::kAllowedUids[];
 
 int main(int argc, char *argv[]) {
     dlog_print(DLOG_INFO, LOG_TAG, "TizenClaw Service starting...");

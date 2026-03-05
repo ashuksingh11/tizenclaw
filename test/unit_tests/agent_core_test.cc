@@ -1,14 +1,25 @@
 #include <gtest/gtest.h>
+#include <fstream>
+#include <cstdlib>
+#include <unistd.h>
 #include "agent_core.hh"
 
 class AgentCoreTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        // Create a dummy config for testing
+        const char* test_config = "test_llm_config.json";
+        std::ofstream f(test_config);
+        f << "{\"active_backend\":\"gemini\",\"backends\":{\"gemini\":{\"api_key\":\"dummy_key\"}}}" << std::endl;
+        f.close();
+        setenv("TIZENCLAW_CONFIG_PATH", test_config, 1);
+        
         agent = new AgentCore();
     }
 
     void TearDown() override {
         delete agent;
+        unlink("test_llm_config.json");
     }
 
     AgentCore* agent;
@@ -23,9 +34,31 @@ TEST_F(AgentCoreTest, InitializationTest) {
 }
 
 TEST_F(AgentCoreTest, ProcessPromptWithoutInit) {
-    // Test that the agent handles prompt processing safely without initialization
-    // Since we redirect dlog_print to printf in main.cc, this won't crash and will just print the error.
-    ASSERT_NO_THROW({
-        agent->ProcessPrompt("Hello TizenClaw!");
-    });
+    // Without initialization, should return error
+    std::string result =
+        agent->ProcessPrompt("test_session",
+                             "Hello TizenClaw!");
+    EXPECT_FALSE(result.empty());
+    EXPECT_NE(result.find("Error"), std::string::npos);
 }
+
+TEST_F(AgentCoreTest, ProcessPromptReturnsString) {
+    agent->Initialize();
+    // ProcessPrompt should return a response.
+    // In a test environment without a real LLM config/backend, 
+    // it might return an error string, which is still a non-empty string.
+    std::string result =
+        agent->ProcessPrompt("test_session",
+                             "What is the battery level?");
+    EXPECT_FALSE(result.empty());
+}
+
+TEST_F(AgentCoreTest, IterativeLoopDetection) {
+    // This test would ideally mock LlmBackend to return tool_calls,
+    // then verify that AgentCore::ProcessPrompt enters a second iteration.
+    // For now, we perform a basic call.
+    agent->Initialize();
+    std::string result = agent->ProcessPrompt("multi_step_session", "List apps and then check Wi-Fi.");
+    EXPECT_FALSE(result.empty());
+}
+

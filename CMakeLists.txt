@@ -38,6 +38,12 @@ set(SOURCES
     src/tizenclaw.cc
     src/agent_core.cc
     src/container_engine.cc
+    src/http_client.cc
+    src/llm_backend_factory.cc
+    src/gemini_backend.cc
+    src/openai_backend.cc
+    src/anthropic_backend.cc
+    src/ollama_backend.cc
 )
 
 # Executable
@@ -56,9 +62,9 @@ install(PROGRAMS
     scripts/skills_secure_container.sh
     DESTINATION /usr/libexec/tizenclaw/
 )
-install(FILES data/rootfs.tar.gz DESTINATION /opt/usr/share/tizenclaw/)
+install(FILES data/rootfs.tar.gz data/llm_config.json.sample DESTINATION /opt/usr/share/tizenclaw/)
 install(DIRECTORY skills/ DESTINATION /opt/usr/share/tizenclaw/skills/)
-
+install(PROGRAMS scripts/start_mcp_tunnel.sh DESTINATION /usr/bin/)
 # Unit Tests (run during %check)
 enable_testing()
 add_subdirectory(test/unit_tests)

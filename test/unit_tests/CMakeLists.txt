@@ -16,6 +16,8 @@ set(UNIT_TEST_SRCS
     main.cc
     agent_core_test.cc
     container_engine_test.cc
+    llm_backend_test.cc
+    http_client_test.cc
 )
 
 # Mock Sources
@@ -27,6 +29,12 @@ set(MOCK_SRCS
 set(CORE_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/agent_core.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/container_engine.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/http_client.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/llm_backend_factory.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/gemini_backend.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/openai_backend.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/anthropic_backend.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/ollama_backend.cc
 )
 
 add_executable(tizenclaw-unittests
