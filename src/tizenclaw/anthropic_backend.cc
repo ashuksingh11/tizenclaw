@@ -3,6 +3,9 @@
 
 #include "../common/logging.hh"
 
+namespace tizenclaw {
+
+
 bool AnthropicBackend::Initialize(
     const nlohmann::json& config) {
   api_key_ = config.value("api_key", "");
@@ -154,3 +157,5 @@ LlmResponse AnthropicBackend::Chat(
 
   return ParseAnthropicResponse(http_resp.body);
 }
+
+} // namespace tizenclaw

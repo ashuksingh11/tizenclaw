@@ -3,6 +3,9 @@
 
 #include "llm_backend.hh"
 
+namespace tizenclaw {
+
+
 // Shared by OpenAI (ChatGPT) and xAI (Grok)
 // since xAI uses OpenAI-compatible API.
 class OpenAiBackend : public LlmBackend {
@@ -31,5 +34,7 @@ private:
   std::string endpoint_;
   std::string name_ = "openai";
 };
+
+} // namespace tizenclaw
 
 #endif  // __OPENAI_BACKEND_H__

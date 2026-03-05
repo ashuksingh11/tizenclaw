@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 #include "container_engine.hh"
 
+using namespace tizenclaw;
+
+
 class ContainerEngineTest : public ::testing::Test {
 protected:
     void SetUp() override {

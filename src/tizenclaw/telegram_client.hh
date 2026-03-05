@@ -6,6 +6,9 @@
 #include <thread>
 #include <atomic>
 
+namespace tizenclaw {
+
+
 // Forward declaration
 class AgentCore;
 
@@ -38,5 +41,7 @@ private:
     std::atomic<bool> running_;
     long update_offset_ = 0;
 };
+
+} // namespace tizenclaw
 
 #endif // __TELEGRAM_CLIENT_H__

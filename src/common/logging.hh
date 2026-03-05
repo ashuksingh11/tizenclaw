@@ -30,6 +30,9 @@
 #include <string>
 #include <vector>
 
+namespace tizenclaw {
+
+
 #ifndef PROJECT_TAG
 #define PROJECT_TAG "TIZEN_CLAW"
 #endif
@@ -158,12 +161,14 @@ inline static const constexpr char* __tag_for_project() { return PROJECT_TAG; }
 //     where:
 //       LEVEL = ERROR | WARNING | INFO | DEBUG
 #define LOG(LEVEL)                                                             \
-  ::utils::LogCatcher(::utils::LogLevel::LOG_##LEVEL, __tag_for_project()) &   \
-      ::utils::StringStream<char>()                                            \
+  ::tizenclaw::utils::LogCatcher(::tizenclaw::utils::LogLevel::LOG_##LEVEL, __tag_for_project()) &   \
+      ::tizenclaw::utils::StringStream<char>()                                            \
           << std::setw(50) << std::right                                       \
           << (std::string(__FILENAME__) + ": " + std::string(__FUNCTION__) +   \
               "(" + std::to_string(__LINE__) + ")")                            \
                  .c_str()                                                      \
           << std::setw(0) << " : "
+
+} // namespace tizenclaw
 
 #endif // LOGGING_HH_

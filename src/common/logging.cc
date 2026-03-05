@@ -16,6 +16,9 @@
 
 #include "logging.hh"
 
+namespace tizenclaw {
+
+
 namespace utils {
 
 log_priority LogLevelToPriority(LogLevel level) {
@@ -34,3 +37,5 @@ log_priority LogLevelToPriority(LogLevel level) {
 }
 
 }  // namespace utils
+
+} // namespace tizenclaw

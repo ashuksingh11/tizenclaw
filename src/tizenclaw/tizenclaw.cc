@@ -11,6 +11,8 @@
 #include <vector>
 #include <arpa/inet.h>
 
+namespace tizenclaw {
+
 TizenClawDaemon* g_daemon = nullptr;
 
 void signal_handler(int sig) {
@@ -337,7 +339,10 @@ bool TizenClawDaemon::IsAllowedUid(
 
 constexpr uid_t TizenClawDaemon::kAllowedUids[];
 
+} // namespace tizenclaw
+
 int main(int argc, char *argv[]) {
+    using namespace tizenclaw;
     LOG(INFO) << "TizenClaw Service starting...";
     try {
         TizenClawDaemon daemon(argc, argv);

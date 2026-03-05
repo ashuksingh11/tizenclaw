@@ -5,6 +5,9 @@
 #include "session_store.hh"
 #include "../common/logging.hh"
 
+namespace tizenclaw {
+
+
 SessionStore::SessionStore()
     : sessions_dir_(
           "/opt/usr/share/tizenclaw/sessions") {
@@ -161,3 +164,5 @@ void SessionStore::DeleteSession(
     LOG(INFO) << "Session deleted: " << session_id;
   }
 }
+
+} // namespace tizenclaw

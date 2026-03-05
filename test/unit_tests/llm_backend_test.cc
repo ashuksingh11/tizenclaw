@@ -5,6 +5,9 @@
 #include "anthropic_backend.hh"
 #include "ollama_backend.hh"
 
+using namespace tizenclaw;
+
+
 // -----------------------------------------------
 // Factory Tests
 // -----------------------------------------------

@@ -5,6 +5,9 @@
 #include <map>
 #include <functional>
 
+namespace tizenclaw {
+
+
 struct HttpResponse {
   long status_code = 0;
   std::string body;
@@ -34,5 +37,7 @@ public:
       long connect_timeout_sec = 10,
       long request_timeout_sec = 40);
 };
+
+} // namespace tizenclaw
 
 #endif  // __HTTP_CLIENT_H__

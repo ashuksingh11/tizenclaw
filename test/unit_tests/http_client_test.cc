@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 #include "http_client.hh"
 
+using namespace tizenclaw;
+
+
 class HttpClientTest : public ::testing::Test {};
 
 TEST_F(HttpClientTest,

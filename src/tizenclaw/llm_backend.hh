@@ -7,6 +7,9 @@
 #include <json.hpp>
 #include <functional>
 
+namespace tizenclaw {
+
+
 // --------------------------------------------------
 // Unified message structures (provider-agnostic)
 // --------------------------------------------------
@@ -82,5 +85,7 @@ public:
   static std::unique_ptr<LlmBackend> Create(
       const std::string& name);
 };
+
+} // namespace tizenclaw
 
 #endif  // __LLM_BACKEND_H__

@@ -7,6 +7,9 @@
 #include "agent_core.hh"
 #include "../common/logging.hh"
 
+namespace tizenclaw {
+
+
 AgentCore::AgentCore()
     : m_container(new ContainerEngine()),
       m_initialized(false) {
@@ -344,3 +347,5 @@ void AgentCore::ClearSession(
   m_sessions.erase(session_id);
   session_store_.DeleteSession(session_id);
 }
+
+} // namespace tizenclaw

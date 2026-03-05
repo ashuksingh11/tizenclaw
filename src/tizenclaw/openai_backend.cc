@@ -3,6 +3,9 @@
 
 #include "../common/logging.hh"
 
+namespace tizenclaw {
+
+
 bool OpenAiBackend::Initialize(
     const nlohmann::json& config) {
   api_key_ = config.value("api_key", "");
@@ -166,3 +169,5 @@ LlmResponse OpenAiBackend::Chat(
 
   return ParseOpenAiResponse(http_resp.body);
 }
+
+} // namespace tizenclaw

@@ -6,6 +6,9 @@
 
 #include "../common/logging.hh"
 
+namespace tizenclaw {
+
+
 std::unique_ptr<LlmBackend>
 LlmBackendFactory::Create(
     const std::string& name) {
@@ -29,3 +32,5 @@ LlmBackendFactory::Create(
   LOG(ERROR) << "Unknown LLM backend: " << name;
   return nullptr;
 }
+
+} // namespace tizenclaw

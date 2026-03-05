@@ -2,6 +2,9 @@
 #include "telegram_client.hh"
 #include "agent_core.hh"
 
+using namespace tizenclaw;
+
+
 class TelegramClientTest : public ::testing::Test {
 protected:
     void SetUp() override {

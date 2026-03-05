@@ -3,6 +3,9 @@
 
 #include "../common/logging.hh"
 
+namespace tizenclaw {
+
+
 bool OllamaBackend::Initialize(
     const nlohmann::json& config) {
   model_ = config.value("model", "llama3");
@@ -149,3 +152,5 @@ LlmResponse OllamaBackend::Chat(
 
   return ParseOllamaResponse(http_resp.body);
 }
+
+} // namespace tizenclaw

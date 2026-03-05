@@ -3,6 +3,9 @@
 
 #include "llm_backend.hh"
 
+namespace tizenclaw {
+
+
 class OllamaBackend : public LlmBackend {
 public:
   bool Initialize(
@@ -27,5 +30,7 @@ private:
   std::string model_;
   std::string endpoint_;
 };
+
+} // namespace tizenclaw
 
 #endif  // __OLLAMA_BACKEND_H__

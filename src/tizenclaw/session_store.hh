@@ -7,6 +7,9 @@
 
 #include "llm_backend.hh"
 
+namespace tizenclaw {
+
+
 class SessionStore {
 public:
     SessionStore();
@@ -43,5 +46,7 @@ private:
     static constexpr size_t kMaxFileSize =
         512 * 1024;
 };
+
+} // namespace tizenclaw
 
 #endif  // __SESSION_STORE_H__

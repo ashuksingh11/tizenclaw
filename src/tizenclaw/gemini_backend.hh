@@ -3,6 +3,9 @@
 
 #include "llm_backend.hh"
 
+namespace tizenclaw {
+
+
 class GeminiBackend : public LlmBackend {
 public:
   bool Initialize(
@@ -28,5 +31,7 @@ private:
   std::string api_key_;
   std::string model_;
 };
+
+} // namespace tizenclaw
 
 #endif  // __GEMINI_BACKEND_H__

@@ -23,6 +23,9 @@
 #include <mutex>
 #include <string>
 
+namespace tizenclaw {
+
+
 namespace utils {
 
 class FileLogBackend : public ILogBackend {
@@ -48,5 +51,7 @@ private:
 };
 
 } // namespace utils
+
+} // namespace tizenclaw
 
 #endif // FILE_LOG_BACKEND_HH_

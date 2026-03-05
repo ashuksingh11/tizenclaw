@@ -4,6 +4,9 @@
 #include <string>
 #include <memory>
 
+namespace tizenclaw {
+
+
 class ContainerEngine {
 public:
     ContainerEngine();
@@ -34,5 +37,7 @@ private:
     std::string m_rootfs_tar;
     std::string m_container_id;
 };
+
+} // namespace tizenclaw
 
 #endif // __CONTAINER_ENGINE_H__

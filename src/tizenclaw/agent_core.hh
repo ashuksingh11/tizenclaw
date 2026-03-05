@@ -13,6 +13,9 @@
 #include "session_store.hh"
 #include <mutex>
 
+namespace tizenclaw {
+
+
 class AgentCore {
 public:
     AgentCore();
@@ -59,5 +62,7 @@ private:
 
     SessionStore session_store_;
 };
+
+} // namespace tizenclaw
 
 #endif // __AGENT_CORE_H__

@@ -9,6 +9,9 @@
 #include "telegram_client.hh"
 #include "../common/logging.hh"
 
+namespace tizenclaw {
+
+
 class TizenClawDaemon {
 public:
     TizenClawDaemon(int argc, char** argv);
@@ -40,5 +43,7 @@ private:
         0, 200, 301, 5001
     };
 };
+
+} // namespace tizenclaw
 
 #endif // __TIZENCLAW_H__

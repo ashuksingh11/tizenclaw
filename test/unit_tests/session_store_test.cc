@@ -5,6 +5,9 @@
 
 #include "session_store.hh"
 
+using namespace tizenclaw;
+
+
 class SessionStoreTest : public ::testing::Test {
 protected:
     void SetUp() override {

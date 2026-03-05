@@ -28,6 +28,9 @@
 #include <string>
 #include <utility>
 
+namespace tizenclaw {
+
+
 namespace fs = std::filesystem;
 
 namespace utils {
@@ -140,3 +143,5 @@ std::string FileLogBackend::GetFileName() {
 }
 
 } // namespace utils
+
+} // namespace tizenclaw

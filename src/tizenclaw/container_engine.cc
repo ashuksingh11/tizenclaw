@@ -9,6 +9,9 @@
 #include <string>
 #include <unistd.h>
 
+namespace tizenclaw {
+
+
 #ifndef APP_DATA_DIR
 #define APP_DATA_DIR "/opt/usr/share/tizenclaw"
 #endif
@@ -329,3 +332,5 @@ std::string ContainerEngine::EscapeShellArg(const std::string& input) const {
   output += "'";
   return output;
 }
+
+} // namespace tizenclaw

@@ -7,6 +7,9 @@
 #include <chrono>
 #include <iostream>
 
+namespace tizenclaw {
+
+
 TelegramClient::TelegramClient(AgentCore* agent)
     : agent_(agent), running_(false) {
 }
@@ -200,3 +203,5 @@ void TelegramClient::PollingLoop() {
         }
     }
 }
+
+} // namespace tizenclaw

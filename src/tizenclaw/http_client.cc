@@ -7,6 +7,9 @@
 
 #include "../common/logging.hh"
 
+namespace tizenclaw {
+
+
 struct WriteContext {
   std::string* body;
   std::function<void(const std::string&)> stream_cb;
@@ -251,3 +254,5 @@ HttpResponse HttpClient::Get(
   result.success = false;
   return result;
 }
+
+} // namespace tizenclaw

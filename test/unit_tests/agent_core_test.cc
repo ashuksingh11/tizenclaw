@@ -4,6 +4,9 @@
 #include <unistd.h>
 #include "agent_core.hh"
 
+using namespace tizenclaw;
+
+
 class AgentCoreTest : public ::testing::Test {
 protected:
     void SetUp() override {

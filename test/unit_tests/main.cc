@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 
+
 // Mocking Tizen dlog_print for unit testing environment
 extern "C" {
 int __dlog_print(int log_id, int prio, const char* tag, const char* fmt, ...) {
