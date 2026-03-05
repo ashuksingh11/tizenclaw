@@ -15,4 +15,11 @@ description: Tizen gbs build workflow
 
    위 디렉토리 아래에 생성되는 로그 파일을 통해 빌드 결과를 검증할 수 있습니다.
 
+3. **주의: 파이프(`|`) 사용 금지**
+   `gbs build` 명령어의 출력을 `| tail`, `| grep` 등 파이프로 필터링하지 마세요. 파이프가 출력을 버퍼링하여 빌드가 멈춘 것처럼 보이는 현상이 발생합니다.
+   - ❌ `gbs build -A x86_64 --include-all 2>&1 | tail -50`
+   - ✅ `gbs build -A x86_64 --include-all 2>&1`
+
+   빌드 결과 확인이 필요한 경우, 빌드 완료 후 로그 파일을 직접 확인하세요.
+
 // turbo-all

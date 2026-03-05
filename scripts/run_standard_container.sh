@@ -57,7 +57,7 @@ run_without_container() {
     
     mount -t proc proc \"${BUNDLE_DIR}/rootfs/proc\" || true
     mount --rbind /sys \"${BUNDLE_DIR}/rootfs/sys\" || true
-    mount -t tmpfs tmpfs \"${BUNDLE_DIR}/rootfs/dev\" || true
+    mount --rbind /dev \"${BUNDLE_DIR}/rootfs/dev\" || true
     mount --rbind /usr \"${BUNDLE_DIR}/rootfs/usr\" || true
     mount --rbind /lib \"${BUNDLE_DIR}/rootfs/lib\" || true
     mount --rbind /lib64 \"${BUNDLE_DIR}/rootfs/lib64\" || true
@@ -110,9 +110,9 @@ write_config() {
     },
     {
       "destination": "/dev",
-      "type": "tmpfs",
-      "source": "tmpfs",
-      "options": ["nosuid", "strictatime", "mode=755", "size=65536k"]
+      "type": "bind",
+      "source": "/dev",
+      "options": ["rbind", "ro"]
     },
     {
       "destination": "/sys",

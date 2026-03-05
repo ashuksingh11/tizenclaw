@@ -33,7 +33,8 @@ write_config() {
     "user": {"uid": 0, "gid": 0},
     "args": ["sh", "-lc", "while true; do sleep 3600; done"],
     "env": [
-      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "LD_LIBRARY_PATH=/tizen_libs:/tizen_libs64"
     ],
     "cwd": "/",
     "noNewPrivileges": true,
@@ -57,15 +58,33 @@ write_config() {
     },
     {
       "destination": "/dev",
-      "type": "tmpfs",
-      "source": "tmpfs",
-      "options": ["nosuid", "strictatime", "mode=755", "size=65536k"]
+      "type": "bind",
+      "source": "/dev",
+      "options": ["rbind", "ro"]
     },
     {
       "destination": "/skills",
       "type": "bind",
       "source": "${APP_DATA_DIR}/skills",
       "options": ["rbind", "ro"]
+    },
+    {
+      "destination": "/tizen_libs",
+      "type": "bind",
+      "source": "/usr/lib",
+      "options": ["rbind", "ro"]
+    },
+    {
+      "destination": "/tizen_libs64",
+      "type": "bind",
+      "source": "/usr/lib64",
+      "options": ["rbind", "ro"]
+    },
+    {
+      "destination": "/var/run/dbus",
+      "type": "bind",
+      "source": "/var/run/dbus",
+      "options": ["rbind", "rw"]
     }
   ],
   "linux": {
@@ -128,15 +147,18 @@ start_container() {
   if [ "${NEEDS_FALLBACK}" = "1" ]; then
     echo "Runtime does not support disabling cgroups. Falling back to chroot with unshare."
     
-    mkdir -p "${BUNDLE_DIR}/rootfs/skills" "${BUNDLE_DIR}/rootfs/proc" "${BUNDLE_DIR}/rootfs/dev"
+    mkdir -p "${BUNDLE_DIR}/rootfs/skills" "${BUNDLE_DIR}/rootfs/proc" "${BUNDLE_DIR}/rootfs/dev" "${BUNDLE_DIR}/rootfs/var/run/dbus" "${BUNDLE_DIR}/rootfs/tizen_libs" "${BUNDLE_DIR}/rootfs/tizen_libs64"
     
     # Run in background via nohup and fake a container id pid
     nohup unshare -m /bin/sh -c "
       mount --make-rprivate / || true
       mount -t proc proc \"${BUNDLE_DIR}/rootfs/proc\" || true
-      mount -t tmpfs tmpfs \"${BUNDLE_DIR}/rootfs/dev\" || true
+      mount --rbind /dev \"${BUNDLE_DIR}/rootfs/dev\" || true
       mount --rbind \"${APP_DATA_DIR}/skills\" \"${BUNDLE_DIR}/rootfs/skills\" || true
-      exec chroot \"${BUNDLE_DIR}/rootfs\" /bin/sh -lc \"while true; do sleep 3600; done\"
+      mount --rbind /usr/lib \"${BUNDLE_DIR}/rootfs/tizen_libs\" || true
+      mount --rbind /usr/lib64 \"${BUNDLE_DIR}/rootfs/tizen_libs64\" || true
+      mount --rbind /var/run/dbus \"${BUNDLE_DIR}/rootfs/var/run/dbus\" || true
+      exec chroot \"${BUNDLE_DIR}/rootfs\" /bin/sh -lc \"export LD_LIBRARY_PATH=/tizen_libs:/tizen_libs64; while true; do sleep 3600; done\"
     " </dev/null >/dev/null 2>&1 &
     
     echo $! > "${BUNDLE_DIR}/chroot.pid"

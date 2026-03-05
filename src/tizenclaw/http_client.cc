@@ -190,10 +190,14 @@ HttpResponse HttpClient::Get(
     // Default is GET, so no CURLOPT_POSTFIELDS needed
     curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
 
+    WriteContext write_ctx;
+    write_ctx.body = &result.body;
+    write_ctx.stream_cb = nullptr;
+
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,
                      WriteCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA,
-                     &result.body);
+                     &write_ctx);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER,
                      1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST,

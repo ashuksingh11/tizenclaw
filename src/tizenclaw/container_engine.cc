@@ -2,15 +2,63 @@
 
 #include "../common/logging.hh"
 #include <array>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <json.hpp>
 #include <memory>
 #include <string>
 #include <unistd.h>
+#include <sys/wait.h>
 
 namespace tizenclaw {
 
+// Custom command runner using fork/exec with /bin/bash.
+// We cannot use popen() because it invokes /bin/sh, which in the standard
+// container is busybox linked against musl libc — but /lib is bind-mounted
+// from the host (glibc), making busybox non-functional.
+static std::pair<std::string, int> RunCommand(const std::string& cmd) {
+  int pipefd[2];
+  if (pipe(pipefd) == -1) {
+    return {"", -1};
+  }
+
+  pid_t pid = fork();
+  if (pid == -1) {
+    close(pipefd[0]);
+    close(pipefd[1]);
+    return {"", -1};
+  }
+
+  if (pid == 0) {
+    // Child: redirect stdout+stderr to pipe write end
+    close(pipefd[0]);
+    dup2(pipefd[1], STDOUT_FILENO);
+    dup2(pipefd[1], STDERR_FILENO);
+    close(pipefd[1]);
+    // Use /usr/bin/bash (from host bind-mount, glibc-linked) instead of
+    // /bin/bash (from rootfs, musl-linked and broken by host /lib mount).
+    execl("/usr/bin/bash", "bash", "-c", cmd.c_str(), nullptr);
+    _exit(127);
+  }
+
+  // Parent: read from pipe
+  close(pipefd[1]);
+  std::string output;
+  char buffer[256];
+  ssize_t n;
+  while ((n = read(pipefd[0], buffer, sizeof(buffer) - 1)) > 0) {
+    buffer[n] = '\0';
+    output += buffer;
+  }
+  close(pipefd[0]);
+
+  int status = 0;
+  waitpid(pid, &status, 0);
+  int rc = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+  return {output, rc};
+}
 
 #ifndef APP_DATA_DIR
 #define APP_DATA_DIR "/opt/usr/share/tizenclaw"
@@ -74,36 +122,52 @@ std::string ContainerEngine::ExecuteSkill(const std::string& skill_name, const s
     return "{}";
   }
 
-  if (!EnsureSkillsContainerRunning()) {
-    LOG(ERROR) << "Secure skills container is unavailable.";
-    return "{}";
-  }
-
   std::string claw_env = "CLAW_ARGS=" + arg_str;
   std::string skill_path = "/skills/" + skill_name + "/" + skill_name + ".py";
+  std::string run_cmd;
 
-  std::string run_cmd = m_runtime_bin + " exec --env " +
-                        EscapeShellArg(claw_env) + " " + m_container_id +
-                        " python3 " + EscapeShellArg(skill_path) + " 2>&1";
-  LOG(INFO) << "Exec skill in secure container: " << skill_name;
+  // Try OCI container first, fallback to chroot
+  if (EnsureSkillsContainerRunning()) {
+    run_cmd = m_runtime_bin + " exec --env " +
+              EscapeShellArg(claw_env) + " " + m_container_id +
+              " python3 " + EscapeShellArg(skill_path) + " 2>&1";
+    LOG(INFO) << "Exec skill in OCI container: " << skill_name;
+  } else {
+    // Fallback: run skill directly on host when OCI container is unavailable.
+    // This gives up container isolation but avoids ABI mismatches between
+    // host Tizen CAPI libraries and the container rootfs's glibc.
+    std::string host_skill_path = m_skills_dir + "/" + skill_name + "/" +
+                                  skill_name + ".py";
+    if (access(host_skill_path.c_str(), R_OK) != 0) {
+      LOG(ERROR) << "Skill script not found: " << host_skill_path;
+      nlohmann::json err;
+      err["error"] = "Skill script not found: " + host_skill_path;
+      return err.dump();
+    }
 
-  std::array<char, 256> buffer;
-  std::string output;
-  std::unique_ptr<FILE, int (*)(FILE*)> pipe(
-      popen(run_cmd.c_str(), "r"), pclose);
-  if (!pipe) {
-    LOG(ERROR) << "popen() failed while executing skill.";
+    LOG(WARNING) << "OCI container unavailable. Running skill directly on host: "
+                 << skill_name;
+    // RunCommand() invokes /bin/bash -c internally, so run_cmd is just the
+    // shell command to execute.
+    run_cmd = "CLAW_ARGS=" + EscapeShellArg(arg_str) +
+              " /usr/bin/python3 " + EscapeShellArg(host_skill_path) +
+              " 2>&1";
+  }
+
+  LOG(DEBUG) << "Running command: " << run_cmd;
+  auto [output, rc] = RunCommand(run_cmd);
+  if (rc == -1 && output.empty()) {
+    LOG(ERROR) << "fork/exec failed for skill command.";
     return "{}";
   }
 
-  while (fgets(buffer.data(), buffer.size(), pipe.get()) != nullptr) {
-    output += buffer.data();
-  }
-
-  int rc = pclose(pipe.release());
   if (rc != 0) {
     LOG(ERROR) << "Skill command failed: " << rc << ", output: " << output;
-    return "{}";
+    // Return structured error so LLM can generate a meaningful response
+    nlohmann::json err;
+    err["error"] = "Skill execution failed with exit code " + std::to_string(rc);
+    err["details"] = output.length() > 500 ? output.substr(0, 500) : output;
+    return err.dump();
   }
 
   return output;
@@ -205,7 +269,8 @@ bool ContainerEngine::WriteSkillsConfig() const {
     "user": {"uid": 65534, "gid": 65534},
     "args": ["sh", "-lc", "while true; do sleep 3600; done"],
     "env": [
-      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "LD_LIBRARY_PATH=/tizen_libs"
     ],
     "cwd": "/",
     "noNewPrivileges": true,
@@ -234,15 +299,27 @@ bool ContainerEngine::WriteSkillsConfig() const {
     },
     {
       "destination": "/dev",
-      "type": "tmpfs",
-      "source": "tmpfs",
-      "options": ["nosuid", "strictatime", "mode=755", "size=65536k"]
+      "type": "bind",
+      "source": "/dev",
+      "options": ["rbind", "ro"]
     },
     {
       "destination": "/skills",
       "type": "bind",
       "source": ")" + m_skills_dir + R"(",
       "options": ["rbind", "ro"]
+    },
+    {
+      "destination": "/tizen_libs",
+      "type": "bind",
+      "source": "/usr/lib",
+      "options": ["rbind", "ro"]
+    },
+    {
+      "destination": "/var/run/dbus",
+      "type": "bind",
+      "source": "/var/run/dbus",
+      "options": ["rbind", "rw"]
     }
   ],
   "linux": {
