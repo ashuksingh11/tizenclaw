@@ -3,6 +3,8 @@ import sys
 import json
 import os
 import subprocess
+import socket
+import struct
 
 # Local path to skills
 SKILLS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,6 +18,79 @@ class McpServer:
     def __init__(self):
         self.tools = {}
         self.discover_tools()
+        self.add_tizenclaw_tool()
+
+    def add_tizenclaw_tool(self):
+        self.tools["ask_tizenclaw"] = {
+            "name": "ask_tizenclaw",
+            "description": "Send a prompt directly to the TizenClaw LLM Agent",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "The user's request"}
+                },
+                "required": ["prompt"]
+            },
+            "is_synthetic": True
+        }
+
+    def _ask_tizenclaw(self, prompt: str):
+        req = {
+            "session_id": "mcp_session",
+            "text": prompt,
+            "stream": True
+        }
+        payload = json.dumps(req).encode('utf-8')
+        
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        try:
+            sock.connect("\0tizenclaw.ipc")
+            
+            # Send length-prefixed payload
+            length_prefix = struct.pack("!I", len(payload))
+            sock.sendall(length_prefix + payload)
+            
+            # Read streaming response
+            full_text = ""
+            while True:
+                # Read length prefix
+                resp_len_data = sock.recv(4)
+                if len(resp_len_data) != 4:
+                    yield {"error": "Failed to receive IPC response length"}
+                    break
+                    
+                resp_len = struct.unpack("!I", resp_len_data)[0]
+                
+                # Read payload
+                resp_data = bytearray()
+                while len(resp_data) < resp_len:
+                    chunk = sock.recv(min(4096, resp_len - len(resp_data)))
+                    if not chunk:
+                        break
+                    resp_data.extend(chunk)
+                    
+                if len(resp_data) != resp_len:
+                    yield {"error": "Incomplete IPC response"}
+                    break
+                    
+                resp_json = json.loads(resp_data.decode('utf-8'))
+                
+                if resp_json.get("type") == "stream_chunk":
+                    chunk_text = resp_json.get("text", "")
+                    full_text += chunk_text
+                    yield {"chunk": chunk_text}
+                elif resp_json.get("type") in ["response", "stream_end"]:
+                    full_text = resp_json.get("text", full_text)
+                    yield {"text": full_text}
+                    break
+                else:
+                    yield {"error": f"Unknown response type: {resp_json.get('type')}"}
+                    break
+                    
+        except Exception as e:
+            yield {"error": f"Error communicating with TizenClaw daemon: {e}"}
+        finally:
+            sock.close()
 
     def discover_tools(self):
         log(f"Scanning skills in {SKILLS_DIR}")
@@ -79,6 +154,41 @@ class McpServer:
             
             tool = self.tools[tool_name]
             log(f"Calling tool {tool_name} with {arguments}")
+            
+            if tool.get("is_synthetic"):
+                if tool_name == "ask_tizenclaw":
+                    meta = params.get("_meta", {})
+                    progress_token = meta.get("progressToken")
+                    
+                    final_text = ""
+                    error_text = None
+                    for chunk_map in self._ask_tizenclaw(arguments.get("prompt", "")):
+                        if "error" in chunk_map:
+                            error_text = chunk_map["error"]
+                            break
+                        if "chunk" in chunk_map:
+                            if progress_token:
+                                progress_req = {
+                                    "jsonrpc": "2.0",
+                                    "method": "$/progress",
+                                    "params": {
+                                        "progressToken": progress_token,
+                                        "progress": len(final_text),
+                                        "total": None,
+                                        "data": chunk_map["chunk"]
+                                    }
+                                }
+                                sys.stdout.write(json.dumps(progress_req) + "\n")
+                                sys.stdout.flush()
+                        if "text" in chunk_map:
+                            final_text = chunk_map["text"]
+                    
+                    if error_text:
+                        return {"isError": True, "content": [{"type": "text", "text": error_text}]}
+
+                    return {
+                        "content": [{"type": "text", "text": final_text}]
+                    }
             
             try:
                 # Execute the skill script

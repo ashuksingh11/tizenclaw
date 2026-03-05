@@ -9,7 +9,8 @@ public:
       const nlohmann::json& config) override;
   LlmResponse Chat(
       const std::vector<LlmMessage>& messages,
-      const std::vector<LlmToolDecl>& tools)
+      const std::vector<LlmToolDecl>& tools,
+      std::function<void(const std::string&)> on_chunk = nullptr)
       override;
   std::string GetName() const override {
     return "ollama";

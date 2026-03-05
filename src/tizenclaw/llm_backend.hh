@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <json.hpp>
+#include <functional>
 
 // --------------------------------------------------
 // Unified message structures (provider-agnostic)
@@ -60,7 +61,8 @@ public:
   // Send a chat request. Returns unified response.
   virtual LlmResponse Chat(
       const std::vector<LlmMessage>& messages,
-      const std::vector<LlmToolDecl>& tools) = 0;
+      const std::vector<LlmToolDecl>& tools,
+      std::function<void(const std::string&)> on_chunk = nullptr) = 0;
 
   // Provider name (e.g. "gemini", "openai")
   virtual std::string GetName() const = 0;

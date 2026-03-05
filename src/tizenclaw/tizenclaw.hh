@@ -1,18 +1,13 @@
 #ifndef __TIZENCLAW_H__
 #define __TIZENCLAW_H__
 
-#include <dlog.h>
 #include <tizen_core.h>
 #include <json.hpp>
 #include <thread>
 #include <atomic>
 #include "agent_core.hh"
-#include "telegram_bridge.hh"
-
-#ifdef  LOG_TAG
-#undef  LOG_TAG
-#endif
-#define LOG_TAG "TizenClaw"
+#include "telegram_client.hh"
+#include "../common/logging.hh"
 
 class TizenClawDaemon {
 public:
@@ -26,6 +21,7 @@ private:
     void OnCreate();
     void OnDestroy();
     void IpcServerLoop();
+    void HandleIpcClient(int client_sock);
     bool IsAllowedUid(uid_t uid) const;
 
     int argc_;
@@ -34,9 +30,9 @@ private:
     AgentCore* agent_ = nullptr;
     
     std::thread ipc_thread_;
-    std::atomic<bool> ipc_running_{false};
-    int ipc_socket_ = -1;
-    TelegramBridge* telegram_bridge_ = nullptr;
+    int ipc_socket_;
+    bool ipc_running_;
+    TelegramClient* telegram_client_ = nullptr;
 
     // Allowed UIDs for IPC connections
     // 0=root, 301=app_fw, 200=system, 5001=developer

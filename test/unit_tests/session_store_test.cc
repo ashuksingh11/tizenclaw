@@ -15,7 +15,7 @@ protected:
 
     void TearDown() override {
         // Clean up test files
-        system(("rm -rf " + test_dir_).c_str());
+        (void)system(("rm -rf " + test_dir_).c_str());
     }
 
     std::string test_dir_;

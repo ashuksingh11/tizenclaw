@@ -11,6 +11,7 @@
 #include "container_engine.hh"
 #include "llm_backend.hh"
 #include "session_store.hh"
+#include <mutex>
 
 class AgentCore {
 public:
@@ -23,7 +24,12 @@ public:
     // Process a prompt, returns response text
     std::string ProcessPrompt(
         const std::string& session_id,
-        const std::string& prompt);
+        const std::string& prompt,
+        std::function<void(const std::string&)> on_chunk = nullptr);
+
+    // Clear a session from memory and disk
+    void ClearSession(
+        const std::string& session_id);
 
 private:
     // Execute a skill and return its JSON output
@@ -46,6 +52,8 @@ private:
     // Session-based conversation history
     std::map<std::string,
              std::vector<LlmMessage>> m_sessions;
+    std::mutex session_mutex_; // Protects m_sessions
+
     static constexpr size_t kMaxHistorySize = 20;
     static constexpr int kMaxIterations = 5;
 

@@ -1,14 +1,9 @@
-#include <dlog.h>
 #include <fstream>
 #include <sstream>
 #include <sys/stat.h>
 
 #include "session_store.hh"
-
-#ifdef  LOG_TAG
-#undef  LOG_TAG
-#endif
-#define LOG_TAG "TizenClaw_SessionStore"
+#include "../common/logging.hh"
 
 SessionStore::SessionStore()
     : sessions_dir_(
@@ -115,20 +110,14 @@ bool SessionStore::SaveSession(
   std::string path = GetSessionPath(session_id);
   std::ofstream out(path);
   if (!out.is_open()) {
-    dlog_print(DLOG_ERROR, LOG_TAG,
-               "Failed to save session: %s",
-               path.c_str());
+    LOG(ERROR) << "Failed to save session: " << path;
     return false;
   }
 
   out << data;
   out.close();
 
-  dlog_print(DLOG_DEBUG, LOG_TAG,
-             "Session saved: %s (%zu messages, "
-             "%zu bytes)",
-             session_id.c_str(), arr.size(),
-             data.size());
+  LOG(DEBUG) << "Session saved: " << session_id << " (" << arr.size() << " messages, " << data.size() << " bytes)";
   return true;
 }
 
@@ -148,9 +137,7 @@ std::vector<LlmMessage> SessionStore::LoadSession(
     in.close();
 
     if (!arr.is_array()) {
-      dlog_print(DLOG_WARN, LOG_TAG,
-                 "Invalid session file: %s",
-                 path.c_str());
+      LOG(WARNING) << "Invalid session file: " << path;
       return history;
     }
 
@@ -158,13 +145,9 @@ std::vector<LlmMessage> SessionStore::LoadSession(
       history.push_back(JsonToMessage(j));
     }
 
-    dlog_print(DLOG_INFO, LOG_TAG,
-               "Session loaded: %s (%zu messages)",
-               session_id.c_str(), history.size());
+    LOG(INFO) << "Session loaded: " << session_id << " (" << history.size() << " messages)";
   } catch (const std::exception& e) {
-    dlog_print(DLOG_ERROR, LOG_TAG,
-               "Failed to parse session %s: %s",
-               path.c_str(), e.what());
+    LOG(ERROR) << "Failed to parse session " << path << ": " << e.what();
     history.clear();
   }
 
@@ -175,8 +158,6 @@ void SessionStore::DeleteSession(
     const std::string& session_id) {
   std::string path = GetSessionPath(session_id);
   if (remove(path.c_str()) == 0) {
-    dlog_print(DLOG_INFO, LOG_TAG,
-               "Session deleted: %s",
-               session_id.c_str());
+    LOG(INFO) << "Session deleted: " << session_id;
   }
 }

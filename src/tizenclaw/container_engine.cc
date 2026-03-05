@@ -1,6 +1,6 @@
 #include "container_engine.hh"
 
-#include <dlog.h>
+#include "../common/logging.hh"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -8,11 +8,6 @@
 #include <memory>
 #include <string>
 #include <unistd.h>
-
-#ifdef  LOG_TAG
-#undef  LOG_TAG
-#endif
-#define LOG_TAG "TizenClaw_Container"
 
 #ifndef APP_DATA_DIR
 #define APP_DATA_DIR "/opt/usr/share/tizenclaw"
@@ -39,13 +34,12 @@ ContainerEngine::~ContainerEngine() {
 bool ContainerEngine::Initialize() {
   if (m_initialized) return true;
 
-  dlog_print(DLOG_INFO, LOG_TAG, "ContainerEngine Initializing...");
+  LOG(INFO) << "ContainerEngine Initializing...";
 
   const char* bundled_crun = "/usr/libexec/tizenclaw/crun";
   if (access(bundled_crun, X_OK) == 0) {
     m_runtime_bin = bundled_crun;
-    dlog_print(DLOG_INFO, LOG_TAG, "Using bundled OCI runtime: %s",
-               m_runtime_bin.c_str());
+    LOG(INFO) << "Using bundled OCI runtime: " << m_runtime_bin;
     m_initialized = true;
     return true;
   }
@@ -56,31 +50,29 @@ bool ContainerEngine::Initialize() {
   } else if (std::system("runc --version > /dev/null 2>&1") == 0) {
     m_runtime_bin = "runc";
   } else {
-    dlog_print(
-        DLOG_ERROR, LOG_TAG,
-        "Neither crun nor runc found. Using mock runtime for build/tests.");
+    LOG(ERROR) << "Neither crun nor runc found. Using mock runtime for build/tests.";
     m_runtime_bin = "mock_runc";
     // Keep initialization successful for GBS unit-test environment.
   }
 
-  dlog_print(DLOG_INFO, LOG_TAG, "Using OCI runtime: %s", m_runtime_bin.c_str());
+  LOG(INFO) << "Using OCI runtime: " << m_runtime_bin;
   m_initialized = true;
   return true;
 }
 
 std::string ContainerEngine::ExecuteSkill(const std::string& skill_name, const std::string& arg_str) {
   if (!m_initialized) {
-    dlog_print(DLOG_ERROR, LOG_TAG, "Cannot run skill. Engine not initialized.");
+    LOG(ERROR) << "Cannot run skill. Engine not initialized.";
     return "{}";
   }
 
   if (m_runtime_bin == "mock_runc") {
-    dlog_print(DLOG_WARN, LOG_TAG, "Mock runtime active. Skip skill execution.");
+    LOG(WARNING) << "Mock runtime active. Skip skill execution.";
     return "{}";
   }
 
   if (!EnsureSkillsContainerRunning()) {
-    dlog_print(DLOG_ERROR, LOG_TAG, "Secure skills container is unavailable.");
+    LOG(ERROR) << "Secure skills container is unavailable.";
     return "{}";
   }
 
@@ -90,15 +82,14 @@ std::string ContainerEngine::ExecuteSkill(const std::string& skill_name, const s
   std::string run_cmd = m_runtime_bin + " exec --env " +
                         EscapeShellArg(claw_env) + " " + m_container_id +
                         " python3 " + EscapeShellArg(skill_path) + " 2>&1";
-  dlog_print(DLOG_INFO, LOG_TAG, "Exec skill in secure container: %s",
-             skill_name.c_str());
+  LOG(INFO) << "Exec skill in secure container: " << skill_name;
 
   std::array<char, 256> buffer;
   std::string output;
   std::unique_ptr<FILE, int (*)(FILE*)> pipe(
       popen(run_cmd.c_str(), "r"), pclose);
   if (!pipe) {
-    dlog_print(DLOG_ERROR, LOG_TAG, "popen() failed while executing skill.");
+    LOG(ERROR) << "popen() failed while executing skill.";
     return "{}";
   }
 
@@ -108,8 +99,7 @@ std::string ContainerEngine::ExecuteSkill(const std::string& skill_name, const s
 
   int rc = pclose(pipe.release());
   if (rc != 0) {
-    dlog_print(DLOG_ERROR, LOG_TAG, "Skill command failed: %d, output: %s", rc,
-               output.c_str());
+    LOG(ERROR) << "Skill command failed: " << rc << ", output: " << output;
     return "{}";
   }
 
@@ -127,9 +117,7 @@ bool ContainerEngine::EnsureSkillsContainerRunning() {
 
   if (!StartSkillsContainer()) {
     // Auto-restart: force cleanup and try once more
-    dlog_print(DLOG_WARN, LOG_TAG,
-               "Container start failed. "
-               "Attempting auto-restart...");
+    LOG(WARNING) << "Container start failed. Attempting auto-restart...";
     StopSkillsContainer();
     return StartSkillsContainer();
   }
@@ -148,8 +136,7 @@ bool ContainerEngine::PrepareSkillsBundle() {
 
   int ret = std::system(prepare_cmd.c_str());
   if (ret != 0) {
-    dlog_print(DLOG_ERROR, LOG_TAG,
-               "Failed to prepare secure bundle/rootfs. Return: %d", ret);
+    LOG(ERROR) << "Failed to prepare secure bundle/rootfs. Return: " << ret;
     return false;
   }
 
@@ -167,8 +154,7 @@ bool ContainerEngine::StartSkillsContainer() {
       m_runtime_bin + " delete -f " + m_container_id + " > /dev/null 2>&1";
   int delete_ret = std::system(delete_cmd.c_str());
   if (delete_ret != 0) {
-    dlog_print(DLOG_WARN, LOG_TAG,
-               "Pre-delete secure container returned: %d", delete_ret);
+    LOG(WARNING) << "Pre-delete secure container returned: " << delete_ret;
   }
 
   // Workaround for Tizen emulator: disable cgroup manager if using crun to prevent watchdog reboots
@@ -182,8 +168,7 @@ bool ContainerEngine::StartSkillsContainer() {
                         " > /dev/null 2>&1";
   int ret = std::system(run_cmd.c_str());
   if (ret != 0) {
-    dlog_print(DLOG_ERROR, LOG_TAG,
-               "Failed to start secure skills container. Return: %d", ret);
+    LOG(ERROR) << "Failed to start secure skills container. Return: " << ret;
     return false;
   }
   return true;
@@ -198,8 +183,7 @@ void ContainerEngine::StopSkillsContainer() {
       m_runtime_bin + " delete -f " + m_container_id + " > /dev/null 2>&1";
   int stop_ret = std::system(stop_cmd.c_str());
   if (stop_ret != 0) {
-    dlog_print(DLOG_WARN, LOG_TAG,
-               "Delete secure container returned: %d", stop_ret);
+    LOG(WARNING) << "Delete secure container returned: " << stop_ret;
   }
 }
 
@@ -207,7 +191,7 @@ bool ContainerEngine::WriteSkillsConfig() const {
   std::string config_file = m_bundle_dir + "/config.json";
   std::ofstream out_conf(config_file);
   if (!out_conf.is_open()) {
-    dlog_print(DLOG_ERROR, LOG_TAG, "Failed to write secure config.json");
+    LOG(ERROR) << "Failed to write secure config.json";
     return false;
   }
 

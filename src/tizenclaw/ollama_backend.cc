@@ -1,36 +1,19 @@
-#include "openai_backend.hh"
+#include "ollama_backend.hh"
 #include "http_client.hh"
 
-#include <dlog.h>
+#include "../common/logging.hh"
 
-#ifdef  LOG_TAG
-#undef  LOG_TAG
-#endif
-#define LOG_TAG "TizenClaw_OpenAI"
-
-bool OpenAiBackend::Initialize(
+bool OllamaBackend::Initialize(
     const nlohmann::json& config) {
-  api_key_ = config.value("api_key", "");
-  model_ = config.value("model", "gpt-4o");
+  model_ = config.value("model", "llama3");
   endpoint_ = config.value("endpoint",
-      "https://api.openai.com/v1");
-  name_ = config.value("provider_name", "openai");
-
-  if (api_key_.empty()) {
-    dlog_print(DLOG_ERROR, LOG_TAG,
-               "%s API key is empty",
-               name_.c_str());
-    return false;
-  }
-  dlog_print(DLOG_INFO, LOG_TAG,
-             "%s backend initialized "
-             "(model: %s, endpoint: %s)",
-             name_.c_str(), model_.c_str(),
-             endpoint_.c_str());
+      "http://localhost:11434");
+  LOG(INFO) << "Ollama backend initialized (model: "
+            << model_ << ", endpoint: " << endpoint_ << ")";
   return true;
 }
 
-nlohmann::json OpenAiBackend::ToOpenAiMessages(
+nlohmann::json OllamaBackend::ToOllamaMessages(
     const std::vector<LlmMessage>& messages) const {
   nlohmann::json msgs = nlohmann::json::array();
   for (auto& msg : messages) {
@@ -46,32 +29,27 @@ nlohmann::json OpenAiBackend::ToOpenAiMessages(
             nlohmann::json::array();
         for (auto& tc : msg.tool_calls) {
           tcs.push_back({
-              {"id", tc.id},
-              {"type", "function"},
               {"function",
                {{"name", tc.name},
-                {"arguments", tc.args.dump()}}}
+                {"arguments", tc.args}}}
           });
         }
         entry["tool_calls"] = tcs;
-        // Content can be null when tool_calls
-        entry["content"] = nullptr;
+        entry["content"] = "";
       } else {
         entry["content"] = msg.text;
       }
     } else if (msg.role == "tool") {
-      entry = {
-          {"role", "tool"},
-          {"tool_call_id", msg.tool_call_id},
-          {"content", msg.tool_result.dump()}
-      };
+      entry = {{"role", "tool"},
+               {"content",
+                msg.tool_result.dump()}};
     }
     msgs.push_back(entry);
   }
   return msgs;
 }
 
-nlohmann::json OpenAiBackend::ToOpenAiTools(
+nlohmann::json OllamaBackend::ToOllamaTools(
     const std::vector<LlmToolDecl>& tools) const {
   if (tools.empty()) return nullptr;
   nlohmann::json result = nlohmann::json::array();
@@ -87,7 +65,7 @@ nlohmann::json OpenAiBackend::ToOpenAiTools(
   return result;
 }
 
-LlmResponse OpenAiBackend::ParseOpenAiResponse(
+LlmResponse OllamaBackend::ParseOllamaResponse(
     const std::string& body) const {
   LlmResponse resp;
   try {
@@ -96,42 +74,36 @@ LlmResponse OpenAiBackend::ParseOpenAiResponse(
     if (j.contains("error")) {
       resp.success = false;
       resp.error_message =
-          j["error"].value("message",
-                           "Unknown error");
+          j["error"].get<std::string>();
       return resp;
     }
 
-    if (!j.contains("choices") ||
-        j["choices"].empty()) {
+    // Ollama /api/chat response format
+    if (!j.contains("message")) {
       resp.success = false;
-      resp.error_message = "Empty choices";
+      resp.error_message = "No message in response";
       return resp;
     }
 
-    auto& msg = j["choices"][0]["message"];
+    auto& msg = j["message"];
     resp.success = true;
 
     if (msg.contains("tool_calls") &&
         !msg["tool_calls"].empty()) {
-      for (auto& tc : msg["tool_calls"]) {
+      for (size_t i = 0; i < msg["tool_calls"].size(); ++i) {
+        auto& tc = msg["tool_calls"][i];
         LlmToolCall call;
-        call.id = tc.value("id", "");
+        call.id = "ollama_call_" +
+                  std::to_string(i);
         call.name =
             tc["function"]["name"];
-        try {
-          call.args = nlohmann::json::parse(
-              tc["function"]["arguments"]
-                  .get<std::string>());
-        } catch (...) {
-          call.args =
-              tc["function"]["arguments"];
-        }
+        call.args =
+            tc["function"]["arguments"];
         resp.tool_calls.push_back(call);
       }
     }
 
-    if (msg.contains("content") &&
-        !msg["content"].is_null()) {
+    if (msg.contains("content")) {
       resp.text =
           msg["content"].get<std::string>();
     }
@@ -143,27 +115,30 @@ LlmResponse OpenAiBackend::ParseOpenAiResponse(
   return resp;
 }
 
-LlmResponse OpenAiBackend::Chat(
+LlmResponse OllamaBackend::Chat(
     const std::vector<LlmMessage>& messages,
-    const std::vector<LlmToolDecl>& tools) {
+    const std::vector<LlmToolDecl>& tools,
+    std::function<void(const std::string&)> on_chunk) {
   nlohmann::json payload = {
       {"model", model_},
-      {"messages", ToOpenAiMessages(messages)}
+      {"messages", ToOllamaMessages(messages)},
+      {"stream", false}
   };
-  auto oai_tools = ToOpenAiTools(tools);
-  if (!oai_tools.is_null()) {
-    payload["tools"] = oai_tools;
+  auto ollama_tools = ToOllamaTools(tools);
+  if (!ollama_tools.is_null()) {
+    payload["tools"] = ollama_tools;
   }
 
-  std::string url =
-      endpoint_ + "/chat/completions";
+  std::string url = endpoint_ + "/api/chat";
 
   auto http_resp = HttpClient::Post(
       url,
-      {{"Content-Type", "application/json"},
-       {"Authorization",
-        "Bearer " + api_key_}},
-      payload.dump());
+      {{"Content-Type", "application/json"}},
+      payload.dump(),
+      2,     // fewer retries for local
+      5,     // faster connect for localhost
+      120,   // longer timeout for local models
+      on_chunk); // Pass on_chunk callback
 
   if (!http_resp.success) {
     LlmResponse r;
@@ -172,5 +147,5 @@ LlmResponse OpenAiBackend::Chat(
     return r;
   }
 
-  return ParseOpenAiResponse(http_resp.body);
+  return ParseOllamaResponse(http_resp.body);
 }

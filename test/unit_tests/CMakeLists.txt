@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.5)
 
 # Make sure we build unittests if not a subproject
 if(NOT TARGET ${PACKAGE})
@@ -16,7 +16,7 @@ set(UNIT_TEST_SRCS
     main.cc
     agent_core_test.cc
     container_engine_test.cc
-    telegram_bridge_test.cc
+    telegram_client_test.cc
     llm_backend_test.cc
     http_client_test.cc
     session_store_test.cc
@@ -29,16 +29,18 @@ set(MOCK_SRCS
 
 # Main project sources to test (excluding main())
 set(CORE_SRCS
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/agent_core.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/container_engine.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/http_client.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/llm_backend_factory.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/gemini_backend.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/openai_backend.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/anthropic_backend.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/ollama_backend.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/telegram_bridge.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/session_store.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/common/logging.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/common/file_log_backend.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/agent_core.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/container_engine.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/http_client.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/llm_backend_factory.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/gemini_backend.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/openai_backend.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/anthropic_backend.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/ollama_backend.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/telegram_client.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/session_store.cc
 )
 
 add_executable(tizenclaw-unittests
@@ -50,8 +52,8 @@ add_executable(tizenclaw-unittests
 target_include_directories(tizenclaw-unittests PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/mock
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../inc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../inc/nlohmann
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/common/nlohmann
     ${GTEST_DEPS_INCLUDE_DIRS}
     ${CORE_DEPS_INCLUDE_DIRS}
 )

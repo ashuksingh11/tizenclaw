@@ -1,8 +1,9 @@
 #ifndef __HTTP_CLIENT_H__
 #define __HTTP_CLIENT_H__
 
-#include <map>
 #include <string>
+#include <map>
+#include <functional>
 
 struct HttpResponse {
   long status_code = 0;
@@ -21,7 +22,17 @@ public:
       const std::string& json_body,
       int max_retries = 3,
       long connect_timeout_sec = 10,
-      long request_timeout_sec = 30);
+      long request_timeout_sec = 30,
+      std::function<void(const std::string&)> stream_cb = nullptr);
+
+  // GET with retry + timeouts (for long polling)
+  static HttpResponse Get(
+      const std::string& url,
+      const std::map<std::string, std::string>&
+          headers = {},
+      int max_retries = 3,
+      long connect_timeout_sec = 10,
+      long request_timeout_sec = 40);
 };
 
 #endif  // __HTTP_CLIENT_H__

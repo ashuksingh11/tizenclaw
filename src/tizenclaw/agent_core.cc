@@ -1,4 +1,3 @@
-#include <dlog.h>
 #include <curl/curl.h>
 #include <fstream>
 #include <iostream>
@@ -6,11 +5,7 @@
 #include <sys/stat.h>
 
 #include "agent_core.hh"
-
-#ifdef  LOG_TAG
-#undef  LOG_TAG
-#endif
-#define LOG_TAG "TizenClaw_AgentCore"
+#include "../common/logging.hh"
 
 AgentCore::AgentCore()
     : m_container(new ContainerEngine()),
@@ -24,12 +19,10 @@ AgentCore::~AgentCore() {
 bool AgentCore::Initialize() {
   if (m_initialized) return true;
 
-  dlog_print(DLOG_INFO, LOG_TAG,
-             "AgentCore Initializing...");
+  LOG(INFO) << "AgentCore Initializing...";
 
   if (!m_container->Initialize()) {
-    dlog_print(DLOG_ERROR, LOG_TAG,
-               "Failed to initialize ContainerEngine");
+    LOG(ERROR) << "Failed to initialize ContainerEngine";
     return false;
   }
 
@@ -44,17 +37,13 @@ bool AgentCore::Initialize() {
       cf >> llm_config;
       cf.close();
     } catch (const std::exception& e) {
-      dlog_print(DLOG_ERROR, LOG_TAG,
-                 "Failed to parse %s: %s",
-                 config_path.c_str(), e.what());
+      LOG(ERROR) << "Failed to parse " << config_path << ": " << e.what();
     }
   }
 
   // Fallback: try legacy gemini_api_key.txt
   if (llm_config.empty()) {
-    dlog_print(DLOG_WARN, LOG_TAG,
-               "llm_config.json not found, "
-               "using legacy gemini key file");
+    LOG(WARNING) << "llm_config.json not found, using legacy gemini key file";
     std::string api_key;
     std::ifstream kf(
         "/opt/usr/share/tizenclaw/"
@@ -81,9 +70,7 @@ bool AgentCore::Initialize() {
   m_backend =
       LlmBackendFactory::Create(backend_name);
   if (!m_backend) {
-    dlog_print(DLOG_ERROR, LOG_TAG,
-               "Failed to create LLM backend: %s",
-               backend_name.c_str());
+    LOG(ERROR) << "Failed to create LLM backend: " << backend_name;
     return false;
   }
 
@@ -108,19 +95,14 @@ bool AgentCore::Initialize() {
   }
 
   if (!m_backend->Initialize(backend_config)) {
-    dlog_print(DLOG_ERROR, LOG_TAG,
-               "Failed to init backend: %s",
-               backend_name.c_str());
+    LOG(ERROR) << "Failed to init backend: " << backend_name;
     m_backend.reset();
     return false;
   }
 
   curl_global_init(CURL_GLOBAL_DEFAULT);
 
-  dlog_print(DLOG_INFO, LOG_TAG,
-             "AgentCore initialized with "
-             "backend: %s",
-             m_backend->GetName().c_str());
+  LOG(INFO) << "AgentCore initialized with backend: " << m_backend->GetName();
   m_initialized = true;
   return true;
 }
@@ -128,14 +110,16 @@ bool AgentCore::Initialize() {
 void AgentCore::Shutdown() {
   if (!m_initialized) return;
 
-  dlog_print(DLOG_INFO, LOG_TAG,
-             "AgentCore Shutting down...");
+  LOG(INFO) << "AgentCore Shutting down...";
 
   // Save all sessions before shutting down
-  for (auto& [sid, history] : m_sessions) {
-    session_store_.SaveSession(sid, history);
+  {
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    for (auto& [sid, history] : m_sessions) {
+      session_store_.SaveSession(sid, history);
+    }
+    m_sessions.clear();
   }
-  m_sessions.clear();
   if (m_backend) {
     m_backend->Shutdown();
     m_backend.reset();
@@ -148,47 +132,47 @@ void AgentCore::Shutdown() {
 
 std::string AgentCore::ProcessPrompt(
     const std::string& session_id,
-    const std::string& prompt) {
+    const std::string& prompt,
+    std::function<void(const std::string&)> on_chunk) {
   if (!m_initialized || !m_backend) {
-    dlog_print(DLOG_ERROR, LOG_TAG,
-               "AgentCore not initialized.");
+    LOG(ERROR) << "AgentCore not initialized.";
     return "Error: AgentCore is not initialized.";
   }
 
-  dlog_print(DLOG_INFO, LOG_TAG,
-             "ProcessPrompt [%s]: %s",
-             session_id.c_str(), prompt.c_str());
+  LOG(INFO) << "ProcessPrompt [" << session_id << "]: " << prompt;
 
   auto tools = LoadSkillDeclarations();
 
-  // Add user message to session history
-  // Load from disk if not in memory
-  if (m_sessions.find(session_id) ==
-      m_sessions.end()) {
-    auto loaded =
-        session_store_.LoadSession(session_id);
-    if (!loaded.empty()) {
-      m_sessions[session_id] = std::move(loaded);
+  std::vector<LlmMessage> local_history;
+  {
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    // Load from disk if not in memory
+    if (m_sessions.find(session_id) == m_sessions.end()) {
+      auto loaded = session_store_.LoadSession(session_id);
+      if (!loaded.empty()) {
+        m_sessions[session_id] = std::move(loaded);
+      }
     }
-  }
 
-  LlmMessage user_msg;
-  user_msg.role = "user";
-  user_msg.text = prompt;
-  m_sessions[session_id].push_back(user_msg);
-  TrimHistory(session_id);
+    LlmMessage user_msg;
+    user_msg.role = "user";
+    user_msg.text = prompt;
+    m_sessions[session_id].push_back(user_msg);
+    TrimHistory(session_id);
+
+    // Copy history to local variable to avoid holding lock during LLM API call
+    local_history = m_sessions[session_id];
+  }
 
   int iterations = 0;
   std::string last_text;
 
   while (iterations < kMaxIterations) {
-    auto& history = m_sessions[session_id];
-
-    // Query LLM backend
-    LlmResponse resp = m_backend->Chat(history, tools);
+    // Query LLM backend without holding lock
+    LlmResponse resp = m_backend->Chat(local_history, tools, on_chunk);
 
     if (!resp.success) {
-      dlog_print(DLOG_ERROR, LOG_TAG, "LLM error: %s", resp.error_message.c_str());
+      LOG(ERROR) << "LLM error: " << resp.error_message;
       return "Error: " + resp.error_message;
     }
 
@@ -197,14 +181,17 @@ std::string AgentCore::ProcessPrompt(
       LlmMessage model_msg;
       model_msg.role = "assistant";
       model_msg.text = resp.text;
-      history.push_back(model_msg);
-      TrimHistory(session_id);
+      
+      {
+        std::lock_guard<std::mutex> lock(session_mutex_);
+        m_sessions[session_id].push_back(model_msg);
+        TrimHistory(session_id);
+        
+        session_store_.SaveSession(
+            session_id, m_sessions[session_id]);
+      }
 
-      dlog_print(DLOG_INFO, LOG_TAG, "Final response: %s", resp.text.c_str());
-
-      // Save session to disk
-      session_store_.SaveSession(
-          session_id, history);
+      LOG(INFO) << "Final response: " << resp.text;
 
       return resp.text.empty() ? "No response text." : resp.text;
     }
@@ -215,10 +202,15 @@ std::string AgentCore::ProcessPrompt(
     assistant_msg.role = "assistant";
     assistant_msg.text = resp.text;
     assistant_msg.tool_calls = resp.tool_calls;
-    history.push_back(assistant_msg);
+    
+    // Add to local history and global session
+    local_history.push_back(assistant_msg);
+    {
+      std::lock_guard<std::mutex> lock(session_mutex_);
+      m_sessions[session_id].push_back(assistant_msg);
+    }
 
-    dlog_print(DLOG_INFO, LOG_TAG, "Iteration %d: Executing %zu tools in parallel",
-               iterations + 1, resp.tool_calls.size());
+    LOG(INFO) << "Iteration " << (iterations + 1) << ": Executing " << resp.tool_calls.size() << " tools in parallel";
 
     // Execute multiple tools in parallel using std::async
     struct ToolExecResult {
@@ -238,6 +230,7 @@ std::string AgentCore::ProcessPrompt(
       }));
     }
 
+    std::vector<LlmMessage> tool_msgs;
     // Collect results with accurate tool_call_id
     for (auto& f : futures) {
       auto result = f.get();
@@ -252,18 +245,29 @@ std::string AgentCore::ProcessPrompt(
         tool_msg.tool_result =
             {{"output", result.output}};
       }
-      history.push_back(tool_msg);
+      
+      tool_msgs.push_back(tool_msg);
+      local_history.push_back(tool_msg);
     }
 
-    TrimHistory(session_id);
+    {
+      std::lock_guard<std::mutex> lock(session_mutex_);
+      m_sessions[session_id].insert(
+          m_sessions[session_id].end(),
+          tool_msgs.begin(),
+          tool_msgs.end());
+      TrimHistory(session_id);
+    }
     iterations++;
   }
 
-  dlog_print(DLOG_WARN, LOG_TAG, "Reached max tool iterations (%d)", kMaxIterations);
+  LOG(WARNING) << "Reached max tool iterations (" << kMaxIterations << ")";
 
-  // Save session even on iteration limit
-  session_store_.SaveSession(
-      session_id, m_sessions[session_id]);
+  {
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    session_store_.SaveSession(
+        session_id, m_sessions[session_id]);
+  }
 
   return last_text.empty() ? "Task partially completed (reached iteration limit)." : last_text;
 }
@@ -271,9 +275,7 @@ std::string AgentCore::ProcessPrompt(
 std::string AgentCore::ExecuteSkill(
     const std::string& skill_name,
     const nlohmann::json& args) {
-  dlog_print(DLOG_INFO, LOG_TAG,
-             "Executing skill: %s",
-             skill_name.c_str());
+  LOG(INFO) << "Executing skill: " << skill_name;
 
   std::string arg_str = args.dump();
   std::string response =
@@ -281,14 +283,11 @@ std::string AgentCore::ExecuteSkill(
                                 arg_str);
 
   if (response.empty()) {
-    dlog_print(DLOG_ERROR, LOG_TAG,
-               "Skill execution failed");
+    LOG(ERROR) << "Skill execution failed";
     return "{\"error\": \"Skill failed\"}";
   }
 
-  dlog_print(DLOG_INFO, LOG_TAG,
-             "Skill output: %s",
-             response.c_str());
+  LOG(INFO) << "Skill output: " << response;
   return response;
 }
 
@@ -323,9 +322,7 @@ AgentCore::LoadSkillDeclarations() {
         tools.push_back(t);
       }
     } catch (...) {
-      dlog_print(DLOG_WARN, LOG_TAG,
-                 "Failed to parse manifest: %s",
-                 manifest_path.c_str());
+      LOG(WARNING) << "Failed to parse manifest: " << manifest_path;
     }
   }
   closedir(dir);
@@ -334,8 +331,16 @@ AgentCore::LoadSkillDeclarations() {
 
 void AgentCore::TrimHistory(
     const std::string& session_id) {
+  // MUST be called with session_mutex_ held
   auto& history = m_sessions[session_id];
   while (history.size() > kMaxHistorySize) {
     history.erase(history.begin());
   }
+}
+
+void AgentCore::ClearSession(
+    const std::string& session_id) {
+  std::lock_guard<std::mutex> lock(session_mutex_);
+  m_sessions.erase(session_id);
+  session_store_.DeleteSession(session_id);
 }

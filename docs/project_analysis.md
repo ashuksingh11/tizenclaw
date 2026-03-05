@@ -65,7 +65,9 @@ graph LR
 
 ```
 tizenclaw/
-├── src/                             # C++ 소스 (10개 파일, ~2,070 LOC)
+├── src/                             # 소스 및 헤더
+│   ├── tizenclaw/                   # 데몬 코어 소스코드 및 헤더
+│   └── common/                      # 공통 유틸리티 (로깅 등)
 │   ├── tizenclaw.cc                 # 데몬 메인, IPC 서버, 시그널 핸들링
 │   ├── agent_core.cc                # Agentic Loop, 스킬 디스패치, 세션 관리
 │   ├── container_engine.cc          # OCI 컨테이너 생명주기 관리 (crun)
@@ -76,7 +78,7 @@ tizenclaw/
 │   ├── anthropic_backend.cc         # Anthropic Claude API 연동
 │   ├── ollama_backend.cc            # Ollama 로컬 LLM 연동
 │   └── telegram_bridge.cc           # Telegram Listener 프로세스 관리 (fork+exec, watchdog)
-├── inc/                             # 헤더 파일 (10개 + nlohmann/json.hpp)
+├── CMakeLists.txt
 │   ├── tizenclaw.hh                 # TizenClawDaemon 클래스
 │   ├── agent_core.hh                # AgentCore 클래스
 │   ├── container_engine.hh          # ContainerEngine 클래스
@@ -319,8 +321,8 @@ tizenclaw/
 
 | 카테고리 | 파일 수 | LOC |
 |---------|--------|-----|
-| C++ 소스 (`src/*.cc`) | 10 | ~2,070 |
-| C++ 헤더 (`inc/*.hh`) | 10 | ~440 |
+| C++ 소스 (`src/tizenclaw/*.cc`) | 10 | ~2,070 |
+| C++ 헤더 (`src/tizenclaw/*.hh`) | 10 | ~440 |
 | Python 스킬 & 유틸 | ~20 | ~1,100 |
 | Shell 스크립트 | 6 | ~500 |
 | **총계** | ~44 | ~3,770 |

@@ -1,12 +1,7 @@
 #include "gemini_backend.hh"
 #include "http_client.hh"
 
-#include <dlog.h>
-
-#ifdef  LOG_TAG
-#undef  LOG_TAG
-#endif
-#define LOG_TAG "TizenClaw_Gemini"
+#include "../common/logging.hh"
 
 bool GeminiBackend::Initialize(
     const nlohmann::json& config) {
@@ -14,13 +9,10 @@ bool GeminiBackend::Initialize(
   model_ = config.value("model",
                          "gemini-2.5-flash");
   if (api_key_.empty()) {
-    dlog_print(DLOG_ERROR, LOG_TAG,
-               "Gemini API key is empty");
+    LOG(ERROR) << "Gemini API key is empty";
     return false;
   }
-  dlog_print(DLOG_INFO, LOG_TAG,
-             "Gemini backend initialized "
-             "(model: %s)", model_.c_str());
+  LOG(INFO) << "Gemini backend initialized (model: " << model_ << ")";
   return true;
 }
 
@@ -136,7 +128,8 @@ LlmResponse GeminiBackend::ParseGeminiResponse(
 
 LlmResponse GeminiBackend::Chat(
     const std::vector<LlmMessage>& messages,
-    const std::vector<LlmToolDecl>& tools) {
+    const std::vector<LlmToolDecl>& tools,
+    std::function<void(const std::string&)> on_chunk) {
   nlohmann::json payload = {
       {"contents", ToGeminiContents(messages)}
   };
@@ -153,7 +146,8 @@ LlmResponse GeminiBackend::Chat(
   auto http_resp = HttpClient::Post(
       url,
       {{"Content-Type", "application/json"}},
-      payload.dump());
+      payload.dump(),
+      3, 10, 30, on_chunk); // Pass on_chunk callback
 
   if (!http_resp.success) {
     LlmResponse r;

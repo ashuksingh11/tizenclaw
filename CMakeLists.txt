@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.5)
 project(tizenclaw CXX)
 
 # Tizen native compiler flags
@@ -26,26 +26,28 @@ pkg_check_modules(PKGS REQUIRED
 
 # Include directories (plus nlohmann_json)
 include_directories(
-    inc
+    src/tizenclaw
     ${PKGS_INCLUDE_DIRS}
-    "inc/nlohmann"
+    "src/common/nlohmann"
 )
 
 add_definitions("-DAPP_DATA_DIR=\"${APP_DATA_DIR}\"")
 
 # Source files
 set(SOURCES
-    src/tizenclaw.cc
-    src/agent_core.cc
-    src/container_engine.cc
-    src/http_client.cc
-    src/llm_backend_factory.cc
-    src/gemini_backend.cc
-    src/openai_backend.cc
-    src/anthropic_backend.cc
-    src/ollama_backend.cc
-    src/telegram_bridge.cc
-    src/session_store.cc
+    src/common/logging.cc
+    src/common/file_log_backend.cc
+    src/tizenclaw/tizenclaw.cc
+    src/tizenclaw/agent_core.cc
+    src/tizenclaw/container_engine.cc
+    src/tizenclaw/http_client.cc
+    src/tizenclaw/llm_backend_factory.cc
+    src/tizenclaw/gemini_backend.cc
+    src/tizenclaw/openai_backend.cc
+    src/tizenclaw/anthropic_backend.cc
+    src/tizenclaw/ollama_backend.cc
+    src/tizenclaw/telegram_client.cc
+    src/tizenclaw/session_store.cc
 )
 
 # Executable

@@ -1,12 +1,7 @@
 #include "anthropic_backend.hh"
 #include "http_client.hh"
 
-#include <dlog.h>
-
-#ifdef  LOG_TAG
-#undef  LOG_TAG
-#endif
-#define LOG_TAG "TizenClaw_Anthropic"
+#include "../common/logging.hh"
 
 bool AnthropicBackend::Initialize(
     const nlohmann::json& config) {
@@ -14,13 +9,10 @@ bool AnthropicBackend::Initialize(
   model_ = config.value("model",
       "claude-sonnet-4-20250514");
   if (api_key_.empty()) {
-    dlog_print(DLOG_ERROR, LOG_TAG,
-               "Anthropic API key is empty");
+    LOG(ERROR) << "Anthropic API key is empty";
     return false;
   }
-  dlog_print(DLOG_INFO, LOG_TAG,
-             "Anthropic backend initialized "
-             "(model: %s)", model_.c_str());
+  LOG(INFO) << "Anthropic backend initialized (model: " << model_ << ")";
   return true;
 }
 
@@ -129,7 +121,8 @@ AnthropicBackend::ParseAnthropicResponse(
 
 LlmResponse AnthropicBackend::Chat(
     const std::vector<LlmMessage>& messages,
-    const std::vector<LlmToolDecl>& tools) {
+    const std::vector<LlmToolDecl>& tools,
+    std::function<void(const std::string&)> on_chunk) {
   nlohmann::json payload = {
       {"model", model_},
       {"max_tokens", 4096},
@@ -149,7 +142,8 @@ LlmResponse AnthropicBackend::Chat(
       {{"Content-Type", "application/json"},
        {"x-api-key", api_key_},
        {"anthropic-version", "2023-06-01"}},
-      payload.dump());
+      payload.dump(),
+      3, 10, 30, on_chunk); // Pass on_chunk callback
 
   if (!http_resp.success) {
     LlmResponse r;

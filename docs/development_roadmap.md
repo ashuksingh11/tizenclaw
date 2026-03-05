@@ -47,8 +47,8 @@ timeline
 | **구현 범위** | `AgentCore::ProcessToolCalls()`에서 LLM 응답의 실제 ID를 추적하여 피드백 시 정확 매핑 |
 
 **수정 대상 파일:**
-- `src/agent_core.cc` — tool_call 결과 매핑 로직
-- `inc/llm_backend.hh` — `LlmToolCall` 구조체에 ID 필드 확인
+- `src/tizenclaw/agent_core.cc` — tool_call 결과 매핑 로직
+- `src/tizenclaw/llm_backend.hh` — `LlmToolCall` 구조체에 ID 필드 확인
 - 각 백엔드 (`gemini_backend.cc`, `openai_backend.cc`, `anthropic_backend.cc`, `ollama_backend.cc`) — 응답 파싱 시 실제 ID 추출
 
 **완료 기준:**
@@ -66,9 +66,9 @@ timeline
 | **구현 방식** | JSON 파일 기반 (`/opt/usr/share/tizenclaw/sessions/{session_id}.json`) |
 
 **수정 대상 파일:**
-- [NEW] `src/session_store.cc/hh` — 세션 직렬화/역직렬화
-- `src/agent_core.cc` — 초기화 시 로드, 턴 완료 시 저장
-- `inc/agent_core.hh` — `SessionStore` 멤버 추가
+- [NEW] `src/tizenclaw/session_store.cc/hh` — 세션 직렬화/역직렬화
+- `src/tizenclaw/agent_core.cc` — 초기화 시 로드, 턴 완료 시 저장
+- `src/tizenclaw/agent_core.hh` — `SessionStore` 멤버 추가
 
 **완료 기준:**
 - [ ] 데몬 재시작 후 이전 대화 컨텍스트 유지
@@ -108,7 +108,7 @@ timeline
 | **구현 방식** | `[4바이트 길이][JSON 페이로드]` 프레이밍 |
 
 **수정 대상 파일:**
-- `src/tizenclaw.cc` — `IpcServerLoop()` 리팩터링
+- `src/tizenclaw/tizenclaw.cc` — `IpcServerLoop()` 리팩터링
 - `skills/telegram_listener/telegram_listener.py` — 클라이언트 측 프로토콜 업데이트
 - `skills/mcp_server/server.py` — MCP 클라이언트 프로토콜 업데이트
 
@@ -127,9 +127,9 @@ timeline
 | **구현 방식** | `std::thread` 풀 또는 `accept()` 후 개별 스레드 생성 |
 
 **수정 대상 파일:**
-- `src/tizenclaw.cc` — 클라이언트 연결당 스레드 생성
-- `src/agent_core.cc` — 세션별 뮤텍스 (동시 접근 보호)
-- `inc/agent_core.hh` — `std::mutex` 멤버 추가
+- `src/tizenclaw/tizenclaw.cc` — 클라이언트 연결당 스레드 생성
+- `src/tizenclaw/agent_core.cc` — 세션별 뮤텍스 (동시 접근 보호)
+- `src/tizenclaw/agent_core.hh` — `std::mutex` 멤버 추가
 
 **완료 기준:**
 - [ ] Telegram + MCP 동시 요청 시 양쪽 모두 응답
@@ -146,8 +146,8 @@ timeline
 
 **수정 대상 파일:**
 - 각 LLM 백엔드 — 스트리밍 API 호출 지원
-- `src/agent_core.cc` — 스트리밍 콜백 전파
-- `src/tizenclaw.cc` — IPC 소켓으로 청크 전달
+- `src/tizenclaw/agent_core.cc` — 스트리밍 콜백 전파
+- `src/tizenclaw/tizenclaw.cc` — IPC 소켓으로 청크 전달
 - `skills/telegram_listener/telegram_listener.py` — 스트리밍 수신 처리
 
 **완료 기준:**
@@ -168,9 +168,9 @@ timeline
 | **구현 방식** | `llm_config.json`에 `fallback_backends` 배열 추가, 실패 시 순차 시도 |
 
 **수정 대상 파일:**
-- `src/agent_core.cc` — 폴백 리트라이 로직
+- `src/tizenclaw/agent_core.cc` — 폴백 리트라이 로직
 - `data/llm_config.json.sample` — `fallback_backends` 필드 추가
-- `inc/llm_backend.hh` — 에러 타입 분류 (rate_limit, auth_error, server_error)
+- `src/tizenclaw/llm_backend.hh` — 에러 타입 분류 (rate_limit, auth_error, server_error)
 
 **완료 기준:**
 - [ ] Gemini API 실패 → 자동으로 OpenAI/Ollama로 전환
@@ -187,8 +187,8 @@ timeline
 | **구현 방식** | 임계치 초과 시 오래된 턴을 LLM으로 요약 → 1턴으로 압축 |
 
 **수정 대상 파일:**
-- `src/agent_core.cc` — `CompactHistory()` 메서드 추가
-- `inc/agent_core.hh` — compaction 관련 상수/메서드
+- `src/tizenclaw/agent_core.cc` — `CompactHistory()` 메서드 추가
+- `src/tizenclaw/agent_core.hh` — compaction 관련 상수/메서드
 
 **완료 기준:**
 - [ ] 15턴 초과 시 가장 오래된 10턴을 LLM 요약으로 대체
@@ -205,7 +205,7 @@ timeline
 | **구현 방식** | `llm_config.json`의 `system_prompt` 필드 또는 외부 텍스트 파일 |
 
 **수정 대상 파일:**
-- `src/agent_core.cc` — 시스템 프롬프트 외부 로딩
+- `src/tizenclaw/agent_core.cc` — 시스템 프롬프트 외부 로딩
 - `data/llm_config.json.sample` — `system_prompt` 또는 `system_prompt_file` 필드
 
 **완료 기준:**
@@ -228,8 +228,8 @@ timeline
 
 **수정 대상 파일:**
 - 각 스킬 `manifest.json` — `risk_level` 필드 추가
-- `src/agent_core.cc` — 정책 검증 로직
-- [NEW] `inc/tool_policy.hh` — 정책 규칙 정의
+- `src/tizenclaw/agent_core.cc` — 정책 검증 로직
+- [NEW] `src/tizenclaw/tool_policy.hh` — 정책 규칙 정의
 
 **완료 기준:**
 - [ ] `launch_app`, `vibrate_device` 등 부작용 있는 스킬에 `risk_level: "medium"` 이상 부여
@@ -246,9 +246,9 @@ timeline
 | **구현 방식** | 새 스킬 세트 (`create_task`, `list_tasks`, `cancel_task`) + 데몬 내 스케줄러 루프 |
 
 **수정 대상 파일:**
-- [NEW] `src/task_scheduler.cc/hh` — cron 파싱, 스케줄 루프
+- [NEW] `src/tizenclaw/task_scheduler.cc/hh` — cron 파싱, 스케줄 루프
 - [NEW] `skills/create_task/`, `skills/list_tasks/`, `skills/cancel_task/`
-- `src/tizenclaw.cc` — 스케줄러 스레드 시작
+- `src/tizenclaw/tizenclaw.cc` — 스케줄러 스레드 시작
 
 **완료 기준:**
 - [ ] "매일 오전 9시에 날씨 알려줘" → cron 태스크 생성 → 자동 실행
@@ -265,8 +265,8 @@ timeline
 | **구현 방식** | Tizen KeyManager C-API 연동 또는 암호화 파일 |
 
 **수정 대상 파일:**
-- [NEW] `src/secret_store.cc/hh` — KeyManager 래퍼
-- `src/agent_core.cc` — 키 로드 시 SecretStore 우선 사용
+- [NEW] `src/tizenclaw/secret_store.cc/hh` — KeyManager 래퍼
+- `src/tizenclaw/agent_core.cc` — 키 로드 시 SecretStore 우선 사용
 
 **완료 기준:**
 - [ ] KeyManager 사용 가능 시 API 키 암호화 저장/조회
@@ -287,9 +287,9 @@ timeline
 | **구현 방식** | `Channel` 인터페이스 (C++) → `TelegramChannel`, `McpChannel` 구현 |
 
 **수정 대상 파일:**
-- [NEW] `inc/channel.hh` — 추상 채널 인터페이스
-- [NEW] `src/telegram_channel.cc` — 기존 TelegramBridge 리팩터링
-- [NEW] `src/mcp_channel.cc` — MCP 서버 채널화
+- [NEW] `src/tizenclaw/channel.hh` — 추상 채널 인터페이스
+- [NEW] `src/tizenclaw/telegram_channel.cc` — 기존 TelegramBridge 리팩터링
+- [NEW] `src/tizenclaw/mcp_channel.cc` — MCP 서버 채널화
 
 **완료 기준:**
 - [ ] 새 채널 추가 시 인터페이스 구현만으로 가능
@@ -305,7 +305,7 @@ timeline
 | **구현 방식** | Tizen 기본 제공 SQLite 활용 |
 
 **수정 대상 파일:**
-- [NEW] `src/database.cc/hh` — SQLite 래퍼
+- [NEW] `src/tizenclaw/database.cc/hh` — SQLite 래퍼
 - `CMakeLists.txt` — `sqlite3` 의존성 추가
 - 기존 `SessionStore`, `TaskScheduler` → DB 백엔드로 전환
 
@@ -325,8 +325,8 @@ timeline
 | **구현 방식** | `inotify` 파일 변경 감지 → 매니페스트 자동 리로드 |
 
 **수정 대상 파일:**
-- `src/agent_core.cc` — `ReloadSkillDeclarations()` 메서드
-- [NEW] `src/file_watcher.cc/hh` — inotify 래퍼
+- `src/tizenclaw/agent_core.cc` — `ReloadSkillDeclarations()` 메서드
+- [NEW] `src/tizenclaw/file_watcher.cc/hh` — inotify 래퍼
 
 **완료 기준:**
 - [ ] `/opt/usr/share/tizenclaw/skills/` 에 새 스킬 디렉터리 추가 시 자동 인식
@@ -342,9 +342,9 @@ timeline
 | **구현 방식** | 각 백엔드의 응답에서 `usage` 필드 파싱 → 누적 집계 |
 
 **수정 대상 파일:**
-- `inc/llm_backend.hh` — `LlmResponse`에 `prompt_tokens`, `completion_tokens` 필드
+- `src/tizenclaw/llm_backend.hh` — `LlmResponse`에 `prompt_tokens`, `completion_tokens` 필드
 - 각 백엔드 — usage 파싱 추가
-- [NEW] `src/usage_tracker.cc/hh` — 세션별/일별 사용량 집계
+- [NEW] `src/tizenclaw/usage_tracker.cc/hh` — 세션별/일별 사용량 집계
 
 **완료 기준:**
 - [ ] 세션별 토큰 사용량 `dlog` 출력

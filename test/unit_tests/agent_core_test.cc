@@ -10,7 +10,7 @@ protected:
         // Create a dummy config for testing
         const char* test_config = "test_llm_config.json";
         std::ofstream f(test_config);
-        f << "{\"active_backend\":\"gemini\",\"backends\":{\"gemini\":{\"api_key\":\"dummy_key\"}}}" << std::endl;
+        f << "{\"active_backend\":\"ollama\",\"backends\":{\"ollama\":{\"endpoint\":\"http://localhost:9999\",\"model\":\"dummy\"}}}" << std::endl;
         f.close();
         setenv("TIZENCLAW_CONFIG_PATH", test_config, 1);
         
