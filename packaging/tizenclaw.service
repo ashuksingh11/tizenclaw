@@ -1,20 +1,18 @@
 [Unit]
 Description=TizenClaw Agent System Service
-After=network.target
+After=network.target tizenclaw-skills-secure.service
+Requires=tizenclaw-skills-secure.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/tizenclaw
+ExecStart=/usr/libexec/tizenclaw/run_standard_container.sh start
 Restart=on-failure
 User=root
 Group=root
 
-# Allow process to use SMACK correctly
-SmackProcessLabel=User
-
 # Capability needs for LXC/kUEP bypass, adjust if further restricted
-CapabilityBoundingSet=CAP_SYS_ADMIN CAP_MAC_ADMIN CAP_NET_ADMIN CAP_SYS_PTRACE
-AmbientCapabilities=CAP_SYS_ADMIN CAP_MAC_ADMIN CAP_NET_ADMIN CAP_SYS_PTRACE
+CapabilityBoundingSet=CAP_SYS_ADMIN CAP_MAC_ADMIN CAP_NET_ADMIN CAP_SYS_PTRACE CAP_SETUID CAP_SETGID CAP_SYS_CHROOT
+AmbientCapabilities=CAP_SYS_ADMIN CAP_MAC_ADMIN CAP_NET_ADMIN CAP_SYS_PTRACE CAP_SETUID CAP_SETGID CAP_SYS_CHROOT
 
 [Install]
 WantedBy=multi-user.target

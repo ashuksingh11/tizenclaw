@@ -1,4 +1,4 @@
-#include "tizenclaw.h"
+#include "tizenclaw.hh"
 
 #include <iostream>
 #include <string>

@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "agent_core.h"
+#include "agent_core.hh"
 
 class AgentCoreTest : public ::testing::Test {
 protected:

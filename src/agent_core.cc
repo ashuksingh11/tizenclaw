@@ -5,7 +5,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
-#include "agent_core.h"
+#include "agent_core.hh"
 
 #ifdef  LOG_TAG
 #undef  LOG_TAG

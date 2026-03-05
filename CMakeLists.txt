@@ -35,9 +35,9 @@ add_definitions("-DAPP_DATA_DIR=\"${APP_DATA_DIR}\"")
 
 # Source files
 set(SOURCES
-    src/tizenclaw.cpp
-    src/agent_core.cpp
-    src/container_engine.cpp
+    src/tizenclaw.cc
+    src/agent_core.cc
+    src/container_engine.cc
 )
 
 # Executable
@@ -46,7 +46,16 @@ target_link_libraries(${PACKAGE} ${PKGS_LIBRARIES})
 
 # Installation rules
 install(TARGETS ${PACKAGE} DESTINATION ${APP_EXEC_DIR})
-install(FILES packaging/tizenclaw.service DESTINATION /usr/lib/systemd/system/)
+install(FILES
+    packaging/tizenclaw.service
+    packaging/tizenclaw-skills-secure.service
+    DESTINATION /usr/lib/systemd/system/
+)
+install(PROGRAMS
+    scripts/run_standard_container.sh
+    scripts/skills_secure_container.sh
+    DESTINATION /usr/libexec/tizenclaw/
+)
 install(FILES data/rootfs.tar.gz DESTINATION /opt/usr/share/tizenclaw/)
 install(DIRECTORY skills/ DESTINATION /opt/usr/share/tizenclaw/skills/)
 

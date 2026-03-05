@@ -25,8 +25,8 @@ set(MOCK_SRCS
 
 # Main project sources to test (excluding main())
 set(CORE_SRCS
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/agent_core.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/container_engine.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/agent_core.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/container_engine.cc
 )
 
 add_executable(tizenclaw-unittests
