@@ -94,7 +94,7 @@ void TizenClawDaemon::IpcServerLoop() {
     
     int sock = socket(AF_UNIX, SOCK_STREAM, 0);
     if (sock < 0) {
-        dlog_print(DLOG_ERROR, LOG_TAG, "Failed to create IPC socket");
+        dlog_print(DLOG_ERROR, LOG_TAG, "Failed to create IPC socket: %s", strerror(errno));
         return;
     }
     ipc_socket_ = sock;
@@ -103,34 +103,41 @@ void TizenClawDaemon::IpcServerLoop() {
     std::memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
     
-    // Abstract namespace socket
-    const char* socket_path = "\0tizenclaw.ipc";
-    std::memcpy(addr.sun_path, socket_path, 15);
+    // Abstract namespace socket: "\0tizenclaw.ipc" = 14 bytes
+    // addr.sun_path[0] is already '\0' from memset (abstract namespace indicator)
+    // Copy "tizenclaw.ipc" starting at sun_path[1]
+    const char kSocketName[] = "tizenclaw.ipc";
+    constexpr size_t kNameLen = 1 + sizeof(kSocketName) - 1;  // '\0' + "tizenclaw.ipc" = 14
+    std::memcpy(addr.sun_path + 1, kSocketName, sizeof(kSocketName) - 1);
     
-    if (bind(ipc_socket_, (struct sockaddr*)&addr, sizeof(sa_family_t) + 15) < 0) {
-        dlog_print(DLOG_ERROR, LOG_TAG, "Failed to bind IPC socket");
+    socklen_t addr_len = offsetof(struct sockaddr_un, sun_path) + kNameLen;
+    
+    if (bind(ipc_socket_, (struct sockaddr*)&addr, addr_len) < 0) {
+        dlog_print(DLOG_ERROR, LOG_TAG, "Failed to bind IPC socket: %s", strerror(errno));
         close(ipc_socket_);
         ipc_socket_ = -1;
         return;
     }
     
     if (listen(ipc_socket_, 5) < 0) {
-        dlog_print(DLOG_ERROR, LOG_TAG, "Failed to listen on IPC socket");
+        dlog_print(DLOG_ERROR, LOG_TAG, "Failed to listen on IPC socket: %s", strerror(errno));
         close(ipc_socket_);
         ipc_socket_ = -1;
         return;
     }
     
-    dlog_print(DLOG_INFO, LOG_TAG, "IPC Server listening on abstract socket \\0tizenclaw.ipc");
+    dlog_print(DLOG_INFO, LOG_TAG, "IPC Server listening on abstract socket \\0tizenclaw.ipc (addr_len=%d)", addr_len);
     
     while (ipc_running_) {
         int client_sock = accept(ipc_socket_, nullptr, nullptr);
         if (client_sock < 0) {
             if (ipc_running_) {
-                dlog_print(DLOG_ERROR, LOG_TAG, "Failed to accept IPC connection");
+                dlog_print(DLOG_WARN, LOG_TAG, "accept() failed: %s", strerror(errno));
             }
             continue;
         }
+        
+        dlog_print(DLOG_INFO, LOG_TAG, "IPC client connected");
         
         std::vector<char> buffer(4096);
         std::string prompt;
@@ -142,7 +149,8 @@ void TizenClawDaemon::IpcServerLoop() {
         close(client_sock);
         
         if (!prompt.empty() && agent_) {
-            dlog_print(DLOG_INFO, LOG_TAG, "Received IPC prompt: %s", prompt.c_str());
+            dlog_print(DLOG_INFO, LOG_TAG, "Received IPC prompt (%zu bytes): %s",
+                        prompt.size(), prompt.c_str());
             agent_->ProcessPrompt(prompt);
         }
     }
