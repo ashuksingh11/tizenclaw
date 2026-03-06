@@ -31,7 +31,7 @@ bool AgentCore::Initialize() {
 
   // Load LLM config
   const char* env_path = std::getenv("TIZENCLAW_CONFIG_PATH");
-  std::string config_path = env_path ? env_path : "/opt/usr/share/tizenclaw/llm_config.json";
+  std::string config_path = env_path ? env_path : "/opt/usr/share/tizenclaw/config/llm_config.json";
   nlohmann::json llm_config;
 
   std::ifstream cf(config_path);
@@ -49,7 +49,7 @@ bool AgentCore::Initialize() {
     LOG(WARNING) << "llm_config.json not found, using legacy gemini key file";
     std::string api_key;
     std::ifstream kf(
-        "/opt/usr/share/tizenclaw/"
+        "/opt/usr/share/tizenclaw/config/"
         "gemini_api_key.txt");
     if (kf.is_open()) {
       std::getline(kf, api_key);
@@ -474,6 +474,12 @@ void AgentCore::ClearSession(
   std::lock_guard<std::mutex> lock(session_mutex_);
   m_sessions.erase(session_id);
   session_store_.DeleteSession(session_id);
+}
+
+std::string AgentCore::ExecuteSkillForMcp(
+    const std::string& skill_name,
+    const nlohmann::json& args) {
+  return ExecuteSkill(skill_name, args);
 }
 
 } // namespace tizenclaw

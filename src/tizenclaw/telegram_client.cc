@@ -20,7 +20,7 @@ TelegramClient::~TelegramClient() {
 
 bool TelegramClient::LoadConfig() {
     std::string config_path =
-        "/opt/usr/share/tizenclaw/"
+        "/opt/usr/share/tizenclaw/config/"
         "telegram_config.json";
     std::ifstream f(config_path);
     if (!f.is_open()) {

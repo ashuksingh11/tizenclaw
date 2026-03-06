@@ -101,6 +101,7 @@ install -D -m 0755 "${CRUN_SRC}" \
 mkdir -p %{buildroot}/usr/bin
 mkdir -p %{buildroot}/usr/lib/systemd/system/
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/skills
+mkdir -p %{buildroot}/opt/usr/share/tizenclaw/config
 
 %files
 %defattr(-,root,root,-)
@@ -114,9 +115,10 @@ mkdir -p %{buildroot}/opt/usr/share/tizenclaw/skills
 /usr/libexec/tizenclaw/skills_secure_container.sh
 /usr/libexec/tizenclaw/crun
 /opt/usr/share/tizenclaw/rootfs.tar.gz
-/opt/usr/share/tizenclaw/llm_config.json.sample
-/opt/usr/share/tizenclaw/telegram_config.json.sample
+/opt/usr/share/tizenclaw/config/llm_config.json.sample
+/opt/usr/share/tizenclaw/config/telegram_config.json.sample
 /opt/usr/share/tizenclaw/skills/
+%dir /opt/usr/share/tizenclaw/config/
 %dir /opt/usr/share/tizenclaw/
 
 %files unittests
