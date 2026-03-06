@@ -1,7 +1,55 @@
-# TizenClaw 개발 로드맵 v2.0
+# TizenClaw 개발 로드맵 v3.0
 
-> **작성일**: 2026-03-05
+> **작성일**: 2026-03-06
 > **기반 문서**: [프로젝트 분석](ANALYSIS.md) | [설계 문서](DESIGN.md)
+
+---
+
+## 기능 비교 매트릭스
+
+> **OpenClaw** (TypeScript, ~700+ 파일) 및 **NanoClaw** (TypeScript, ~50 파일)과의 경쟁 분석
+
+| 카테고리 | 기능 | OpenClaw | NanoClaw | TizenClaw | 갭 |
+|----------|------|:--------:|:--------:|:---------:|:--:|
+| **IPC** | 다중 클라이언트 동시 처리 | ✅ 병렬 세션 | ✅ 그룹 큐 | ❌ 순차 처리 | 🔴 |
+| **IPC** | 스트리밍 응답 | ✅ SSE / WebSocket | ✅ `onOutput` 콜백 | ❌ 블로킹 | 🔴 |
+| **IPC** | 견고한 메시지 프레이밍 | ✅ WebSocket + JSON-RPC | ✅ 센티널 마커 | ⚠️ 길이-프리픽스 (부분) | 🟡 |
+| **메모리** | 대화 영구 저장 | ✅ SQLite + Vector DB | ✅ SQLite | ⚠️ JSON 파일 (부분) | 🟡 |
+| **메모리** | 컨텍스트 압축 | ✅ LLM 자동 요약 | ❌ | ❌ 20턴 FIFO | 🔴 |
+| **메모리** | 시맨틱 검색 (RAG) | ✅ MMR + 임베딩 | ❌ | ❌ | 🔴 |
+| **LLM** | 모델 폴백 | ✅ 자동 전환 (18K LOC) | ❌ | ❌ 에러만 반환 | 🔴 |
+| **LLM** | 토큰 카운팅 | ✅ 모델별 정확 계산 | ❌ | ❌ | 🟡 |
+| **LLM** | 사용량 추적 | ✅ 모델별 토큰 사용량 | ❌ | ❌ | 🟡 |
+| **보안** | 도구 실행 정책 | ✅ 화이트/블랙리스트 | ❌ | ❌ | 🔴 |
+| **보안** | 발신자 허용목록 | ✅ `allowlist-match.ts` | ✅ `sender-allowlist.ts` | ⚠️ UID만 | 🟡 |
+| **보안** | API 키 관리 | ✅ 로테이션 + 암호화 | ✅ stdin 전달 | ❌ 평문 JSON | 🔴 |
+| **보안** | 감사 로깅 | ✅ 45K LOC `audit.ts` | ✅ `ipc-auth.test.ts` | ⚠️ dlog만 | 🟡 |
+| **자동화** | 태스크 스케줄러 | ✅ 기본 cron | ✅ cron/interval/일회성 | ❌ `schedule_alarm`만 | 🔴 |
+| **채널** | 멀티 채널 지원 | ✅ 22개 이상 | ✅ 5개 (스킬 기반) | ⚠️ 2개 (Telegram, MCP) | 🟡 |
+| **채널** | 채널 추상화 | ✅ 정적 레지스트리 | ✅ 자기 등록 | ❌ 하드코딩 | 🔴 |
+| **프롬프트** | 시스템 프롬프트 | ✅ 동적 생성 | ✅ 그룹별 `CLAUDE.md` | ❌ C++ 하드코딩 | 🔴 |
+| **에이전트** | 에이전트 간 통신 | ✅ `sessions_send` | ✅ Agent Swarms | ❌ | 🟢 |
+| **에이전트** | 루프 감지 | ✅ 18K LOC 감지기 | ✅ 타임아웃 + idle | ⚠️ `kMaxIterations=5` | 🟡 |
+| **에이전트** | tool_call_id 매핑 | ✅ 정확 추적 | ✅ SDK 네이티브 | ⚠️ 하드코딩 ID | 🟡 |
+| **인프라** | DB 엔진 | ✅ SQLite + sqlite-vec | ✅ SQLite | ❌ | 🔴 |
+| **인프라** | 구조화 로깅 | ✅ Pino (JSON) | ✅ Pino (JSON) | ❌ dlog 평문 | 🟡 |
+| **인프라** | 스킬 핫리로드 | ✅ 런타임 설치 | ✅ apply/rebase | ❌ 수동 복사 | 🟢 |
+| **UX** | 브라우저 제어 | ✅ CDP Chrome | ❌ | ❌ | 🟢 |
+| **UX** | 음성 인터페이스 | ✅ 웨이크 워드 + TTS | ❌ | ❌ | 🟢 |
+| **UX** | 웹 UI | ✅ 제어 UI + 웹챗 | ❌ | ❌ | 🟢 |
+
+---
+
+## TizenClaw 고유 강점
+
+| 강점 | 설명 |
+|------|------|
+| **네이티브 C++ 성능** | TypeScript 대비 낮은 메모리/CPU — Tizen 임베디드 환경에 최적 |
+| **OCI 컨테이너 격리** | crun 기반 `seccomp` + `namespace` — 앱 수준 샌드박싱보다 정밀한 시스콜 제어 |
+| **Tizen C-API 직접 접근** | ctypes 래퍼로 디바이스 하드웨어 (배터리, Wi-Fi, BT, 햅틱, 알람) 직접 제어 |
+| **멀티 LLM 지원** | 5개 백엔드 (Gemini, OpenAI, Claude, xAI, Ollama) 런타임 전환 가능 |
+| **경량 배포** | systemd + RPM — Node.js/Docker 없이 단독 디바이스 실행 |
+| **네이티브 MCP 서버** | C++ MCP 서버가 데몬에 내장 — Claude Desktop에서 sdb를 통해 Tizen 디바이스 제어 |
 
 ---
 
@@ -9,357 +57,474 @@
 
 ```mermaid
 timeline
-    title TizenClaw 개발 로드맵
-    Phase 6 (완료) : 🔴 IPC/Agentic Loop 안정화
-                   : tool_call_id 정확 매핑
-                   : 세션 히스토리 영구 저장
-                   : Telegram 발신자 허용목록
-    Phase 7        : 🔴 IPC 고도화 + 스트리밍
-                   : 길이-프리픽스 프로토콜
-                   : 다중 클라이언트 동시 처리
-                   : LLM 스트리밍 응답 전달
-    Phase 8        : 🟡 지능 강화
-                   : 모델 폴백 자동 전환
-                   : 컨텍스트 압축 (Compaction)
-                   : 시스템 프롬프트 외부화
-    Phase 9        : 🟡 보안 + 자동화
-                   : 도구 실행 정책 시스템
-                   : 태스크 스케줄러
-                   : API 키 보안 저장
-    Phase 10       : 🟢 확장성 + UX
-                   : 채널 추상화 레이어
-                   : SQLite 영구 저장소
-                   : 스킬 핫리로드
-                   : LLM 사용량 추적
+    title TizenClaw 개발 로드맵 (Phase 6–15)
+    section 핵심 기반
+        Phase 6 (완료) : IPC 안정화
+                       : 길이-프리픽스 프로토콜
+                       : 세션 영구 저장 (JSON)
+                       : Telegram 허용목록
+        Phase 7 (완료) : 보안 컨테이너 스킬 실행
+                       : OCI crun 네임스페이스 격리
+                       : Skill Executor IPC
+                       : 네이티브 MCP 서버
+    section 핵심 지능
+        Phase 8        : 🔴 스트리밍 & 동시성
+                       : LLM 스트리밍 응답
+                       : 다중 클라이언트 스레드 풀
+                       : tool_call_id 정확 매핑
+        Phase 9        : 🔴 컨텍스트 & 메모리
+                       : 컨텍스트 압축 (LLM 요약)
+                       : SQLite 영구 저장소
+                       : 모델별 토큰 카운팅
+    section 보안 & 자동화
+        Phase 10       : 🟡 보안 강화
+                       : 도구 실행 정책
+                       : API 키 암호화 저장
+                       : 구조화 감사 로깅
+        Phase 11       : 🟡 태스크 스케줄러 & Cron
+                       : Cron/interval 태스크 시스템
+                       : 태스크 CRUD 스킬
+                       : 실행 이력 DB
+    section 플랫폼 확장
+        Phase 12       : 🟡 확장성 레이어
+                       : 채널 추상화 (C++ 인터페이스)
+                       : 시스템 프롬프트 외부화
+                       : LLM 사용량 추적
+        Phase 13       : 🟡 스킬 생태계
+                       : 스킬 핫리로드 (inotify)
+                       : 모델 폴백 자동 전환
+                       : 루프 감지 강화
+    section 고급 UX
+        Phase 14       : 🟢 신규 채널 & 통합
+                       : Slack / Discord 채널
+                       : 웹훅 인바운드 트리거
+                       : 에이전트 간 메시징
+        Phase 15       : 🟢 고급 플랫폼 기능
+                       : 시맨틱 검색 (RAG)
+                       : 웹 UI 대시보드
+                       : 음성 제어 (TTS/STT)
 ```
 
 ---
 
-## Phase 6: IPC/Agentic Loop 안정화 🔴
+## 완료된 Phase
 
-> **목표**: Agentic Loop의 핵심 결함 수정, 데이터 지속성 확보, 기본 보안 강화
+### Phase 1–5: 기반 → 엔드-투-엔드 파이프라인 ✅
 
-### 6.1 tool_call_id 정확 매핑
-| 항목 | 내용 |
-|------|------|
-| **현재 문제** | `call_0`, `toolu_0` 하드코딩으로 병렬 tool 호출 시 결과가 뒤섞임 |
-| **참고** | OpenClaw `tool-call-id.ts` (8,197 LOC) |
-| **구현 범위** | `AgentCore::ProcessToolCalls()`에서 LLM 응답의 실제 ID를 추적하여 피드백 시 정확 매핑 |
+| Phase | 주요 결과물 |
+|:-----:|-----------|
+| 1 | C++ 데몬, 5개 LLM 백엔드, `HttpClient`, 팩토리 패턴 |
+| 2 | `ContainerEngine` (crun OCI), 이중 컨테이너 아키텍처, `unshare+chroot` 폴백 |
+| 3 | Agentic Loop (최대 5회 반복), 병렬 도구 실행 (`std::async`), 세션 메모리 |
+| 4 | 9개 스킬, `tizen_capi_utils.py` ctypes 래퍼, `CLAW_ARGS` 규약 |
+| 5 | 추상 유닉스 소켓 IPC, `SO_PEERCRED` 인증, Telegram 브릿지, MCP 서버 |
 
-**수정 대상 파일:**
-- `src/tizenclaw/agent_core.cc` — tool_call 결과 매핑 로직
-- `src/tizenclaw/llm_backend.hh` — `LlmToolCall` 구조체에 ID 필드 확인
-- 각 백엔드 (`gemini_backend.cc`, `openai_backend.cc`, `anthropic_backend.cc`, `ollama_backend.cc`) — 응답 파싱 시 실제 ID 추출
+### Phase 6: IPC/Agentic Loop 안정화 ✅
 
-**완료 기준:**
-- [ ] 각 백엔드에서 `tool_call_id`를 정확히 파싱
-- [ ] `AgentCore`에서 결과 피드백 시 원본 ID로 매핑
-- [ ] 병렬 2개 이상 tool 호출 E2E 테스트 통과
+- ✅ 길이-프리픽스 IPC 프로토콜 (`[4바이트 길이][JSON]`)
+- ✅ 세션 영구 저장 (JSON 파일 기반, `/opt/usr/share/tizenclaw/sessions/`)
+- ✅ Telegram 발신자 `allowed_chat_ids` 검증
+- ✅ 모든 백엔드에서 `tool_call_id` 정확 매핑
 
----
+### Phase 7: 보안 컨테이너 스킬 실행 ✅
 
-### 6.2 세션 히스토리 영구 저장
-| 항목 | 내용 |
-|------|------|
-| **현재 문제** | `std::map<string, vector<LlmMessage>>` 인메모리 — 데몬 재시작 시 전체 소멸 |
-| **참고** | NanoClaw `db.ts` (SQLite), OpenClaw `session-files.ts` (파일 기반) |
-| **구현 방식** | JSON 파일 기반 (`/opt/usr/share/tizenclaw/sessions/{session_id}.json`) |
-
-**수정 대상 파일:**
-- [NEW] `src/tizenclaw/session_store.cc/hh` — 세션 직렬화/역직렬화
-- `src/tizenclaw/agent_core.cc` — 초기화 시 로드, 턴 완료 시 저장
-- `src/tizenclaw/agent_core.hh` — `SessionStore` 멤버 추가
-
-**완료 기준:**
-- [ ] 데몬 재시작 후 이전 대화 컨텍스트 유지
-- [ ] 세션당 최대 파일 크기 제한 (예: 512KB)
-- [ ] 비정상 JSON 파일 로드 시 graceful fallback
-- [ ] 단위 테스트: 저장/로드/트리밍
+- ✅ OCI 컨테이너 스킬 샌드박스 — 네임스페이스 격리 (PID/Mount)
+- ✅ Skill Executor IPC 패턴 (길이-프리픽스 JSON + 유닉스 도메인 소켓)
+- ✅ 호스트 바인드 마운트 전략 — 컨테이너 내부에서 Tizen C-API 접근
+- ✅ 네이티브 C++ MCP 서버 (`--mcp-stdio`, JSON-RPC 2.0)
+- ✅ 내장 도구: `execute_code`, `file_manager`
 
 ---
 
-### 6.3 Telegram 발신자 허용목록
+## Phase 8: 스트리밍 & 동시성 🔴
+
+> **목표**: 응답 지연 제거, 다중 클라이언트 동시 사용 지원
+
+### 8.1 LLM 스트리밍 응답 전달
 | 항목 | 내용 |
 |------|------|
-| **현재 문제** | Telegram 봇 토큰만 있으면 누구나 명령 가능 |
-| **참고** | NanoClaw `sender-allowlist.ts` (3,142 LOC) |
-| **구현 방식** | `telegram_config.json`에 `allowed_chat_ids` 배열 추가 |
+| **갭** | 전체 응답 버퍼링 후 전달 — 긴 응답 시 체감 지연 발생 |
+| **참고** | OpenClaw: SSE/WebSocket 스트리밍 · NanoClaw: `onOutput` 콜백 |
+| **계획** | 청크 단위 IPC 응답 (`type: "stream_chunk"` / `"stream_end"`) |
 
 **수정 대상 파일:**
-- `skills/telegram_listener/telegram_listener.py` — `allowed_chat_ids` 검증 로직
-- `data/telegram_config.json.sample` — 샘플에 필드 추가
-
-**완료 기준:**
-- [ ] `allowed_chat_ids`가 비어있으면 모든 사용자 허용 (하위 호환)
-- [ ] 목록에 없는 `chat_id`의 메시지는 무시 + 로그
-- [ ] 단위 테스트
-
----
-
-## Phase 7: IPC 고도화 + 스트리밍 🔴
-
-> **목표**: 다중 클라이언트 동시 처리, 스트리밍 응답, 견고한 메시지 프레이밍
-
-### 7.1 길이-프리픽스 IPC 프로토콜
-| 항목 | 내용 |
-|------|------|
-| **현재 문제** | `shutdown(SHUT_WR)` 기반 EOF 감지 — 연결당 1요청만 가능 |
-| **참고** | NanoClaw 센티널 마커 기반, OpenClaw WebSocket |
-| **구현 방식** | `[4바이트 길이][JSON 페이로드]` 프레이밍 |
-
-**수정 대상 파일:**
-- `src/tizenclaw/tizenclaw.cc` — `IpcServerLoop()` 리팩터링
-- `skills/telegram_listener/telegram_listener.py` — 클라이언트 측 프로토콜 업데이트
-- `skills/mcp_server/server.py` — MCP 클라이언트 프로토콜 업데이트
-
-**완료 기준:**
-- [ ] 단일 연결에서 다중 요청/응답 가능
-- [ ] 기존 `shutdown(SHUT_WR)` 방식 하위 호환 (감지 후 fallback)
-- [ ] IPC 통합 테스트
-
----
-
-### 7.2 다중 클라이언트 동시 처리
-| 항목 | 내용 |
-|------|------|
-| **현재 문제** | `while` 루프에서 순차 `accept()` → 한 번에 하나의 클라이언트만 처리 |
-| **참고** | NanoClaw `GroupQueue` (공정 스케줄링), OpenClaw 병렬 세션 |
-| **구현 방식** | `std::thread` 풀 또는 `accept()` 후 개별 스레드 생성 |
-
-**수정 대상 파일:**
-- `src/tizenclaw/tizenclaw.cc` — 클라이언트 연결당 스레드 생성
-- `src/tizenclaw/agent_core.cc` — 세션별 뮤텍스 (동시 접근 보호)
-- `src/tizenclaw/agent_core.hh` — `std::mutex` 멤버 추가
-
-**완료 기준:**
-- [ ] Telegram + MCP 동시 요청 시 양쪽 모두 응답
-- [ ] 세션 데이터 race condition 없음 (TSAN 통과)
-
----
-
-### 7.3 LLM 스트리밍 응답 전달
-| 항목 | 내용 |
-|------|------|
-| **현재 문제** | LLM 전체 응답을 기다린 후 한 번에 전달 — 긴 응답 시 사용자 체감 지연 |
-| **참고** | OpenClaw SSE/WebSocket 실시간 스트리밍, NanoClaw `onOutput` 콜백 |
-| **구현 방식** | IPC 응답을 청크 단위로 전송 (`type: "stream_chunk"` / `"stream_end"`) |
-
-**수정 대상 파일:**
-- 각 LLM 백엔드 — 스트리밍 API 호출 지원
-- `src/tizenclaw/agent_core.cc` — 스트리밍 콜백 전파
-- `src/tizenclaw/tizenclaw.cc` — IPC 소켓으로 청크 전달
-- `skills/telegram_listener/telegram_listener.py` — 스트리밍 수신 처리
+- 각 LLM 백엔드 (`gemini_backend.cc`, `openai_backend.cc`, `anthropic_backend.cc`, `ollama_backend.cc`) — 스트리밍 API 지원
+- `agent_core.cc` — 스트리밍 콜백 전파
+- `tizenclaw.cc` — IPC 소켓 청크 전달
+- `telegram_listener.py` — "입력 중..." 동안 점진적 표시
 
 **완료 기준:**
 - [ ] LLM 토큰 생성과 동시에 클라이언트에 전달
-- [ ] Telegram에서 "typing..." 표시 동안 점진적 응답
+- [ ] Telegram에서 점진적 응답 표시
+- [ ] 스트리밍 미지원 백엔드에 대한 비스트리밍 폴백
 
 ---
 
-## Phase 8: 지능 강화 🟡
-
-> **목표**: LLM 활용 효율 극대화, 장애 복원력, 사용자 경험 개선
-
-### 8.1 모델 폴백 자동 전환
+### 8.2 다중 클라이언트 동시 처리
 | 항목 | 내용 |
 |------|------|
-| **현재 문제** | LLM API 호출 실패 시 에러만 반환 — 다른 백엔드가 설정되어 있어도 시도 안 함 |
-| **참고** | OpenClaw `model-fallback.ts` (18,501 LOC) |
-| **구현 방식** | `llm_config.json`에 `fallback_backends` 배열 추가, 실패 시 순차 시도 |
+| **갭** | 순차 `accept()` — 한 번에 하나의 클라이언트만 처리 |
+| **참고** | NanoClaw: `GroupQueue` 공정 스케줄링 · OpenClaw: 병렬 세션 |
+| **계획** | 스레드 풀 (`std::thread`) + 세션별 뮤텍스 |
 
 **수정 대상 파일:**
-- `src/tizenclaw/agent_core.cc` — 폴백 리트라이 로직
-- `data/llm_config.json.sample` — `fallback_backends` 필드 추가
-- `src/tizenclaw/llm_backend.hh` — 에러 타입 분류 (rate_limit, auth_error, server_error)
+- `tizenclaw.cc` — 풀 제한 있는 클라이언트별 스레드 생성
+- `agent_core.cc` — 동시 접근 보호를 위한 세션별 뮤텍스
 
 **완료 기준:**
-- [ ] Gemini API 실패 → 자동으로 OpenAI/Ollama로 전환
-- [ ] 폴백 시도 dlog 로그
-- [ ] rate_limit 에러 시 백오프 후 재시도
+- [ ] Telegram + MCP 동시 요청 시 양쪽 모두 응답
+- [ ] 데이터 레이스 없음 (TSAN 클린)
+- [ ] 연결 제한 설정 가능
 
 ---
 
-### 8.2 컨텍스트 압축 (Compaction)
+### 8.3 tool_call_id 정확 매핑
 | 항목 | 내용 |
 |------|------|
-| **현재 문제** | 20턴 초과 시 단순 FIFO 삭제 — 중요 컨텍스트 손실 |
-| **참고** | OpenClaw `compaction.ts` (15,274 LOC) |
-| **구현 방식** | 임계치 초과 시 오래된 턴을 LLM으로 요약 → 1턴으로 압축 |
-
-**수정 대상 파일:**
-- `src/tizenclaw/agent_core.cc` — `CompactHistory()` 메서드 추가
-- `src/tizenclaw/agent_core.hh` — compaction 관련 상수/메서드
+| **갭** | `call_0`, `toolu_0` 하드코딩 — 병렬 도구 결과 혼동 가능 |
+| **참고** | OpenClaw: `tool-call-id.ts` 정확 추적 |
+| **계획** | 각 LLM 응답에서 실제 ID 파싱, 피드백까지 일관 전달 |
 
 **완료 기준:**
-- [ ] 15턴 초과 시 가장 오래된 10턴을 LLM 요약으로 대체
-- [ ] 요약 실패 시 기존 FIFO 트리밍으로 fallback
-- [ ] 요약 된 턴에 `[compressed]` 마커 표시
+- [ ] 각 백엔드에서 실제 `tool_call_id` 파싱
+- [ ] 3개 이상 병렬 도구 호출 E2E 테스트 — 올바른 결과 반환
 
 ---
 
-### 8.3 시스템 프롬프트 외부화
+## Phase 9: 컨텍스트 & 메모리 🔴
+
+> **목표**: 지능적 컨텍스트 관리, 구조화된 영구 저장소
+
+### 9.1 컨텍스트 압축
 | 항목 | 내용 |
 |------|------|
-| **현재 문제** | 시스템 프롬프트가 C++ 코드 내 하드코딩 — 변경 시 재빌드 필요 |
-| **참고** | NanoClaw 그룹별 `CLAUDE.md`, OpenClaw `system-prompt.ts` |
-| **구현 방식** | `llm_config.json`의 `system_prompt` 필드 또는 외부 텍스트 파일 |
-
-**수정 대상 파일:**
-- `src/tizenclaw/agent_core.cc` — 시스템 프롬프트 외부 로딩
-- `data/llm_config.json.sample` — `system_prompt` 또는 `system_prompt_file` 필드
+| **갭** | 20턴 초과 시 단순 FIFO 삭제 — 초기 중요 컨텍스트 손실 |
+| **참고** | OpenClaw: `compaction.ts` LLM 자동 요약 (15K LOC) |
+| **계획** | 임계치 초과 시 오래된 N턴을 LLM으로 요약 → 1턴으로 압축 |
 
 **완료 기준:**
-- [ ] 외부 파일/설정에서 시스템 프롬프트 로드
-- [ ] 스킬 목록을 프롬프트에 동적 포함
-- [ ] 설정 없으면 기본 하드코딩 프롬프트 사용 (하위 호환)
+- [ ] 15턴 초과 시 가장 오래된 10턴 요약
+- [ ] `[compressed]` 마커 표시
+- [ ] 요약 실패 시 FIFO 트리밍 폴백
 
 ---
 
-## Phase 9: 보안 + 자동화 🟡
-
-> **목표**: 도구 실행 안전성, 예약 작업, API 키 보안
-
-### 9.1 도구 실행 정책 시스템
+### 9.2 SQLite 영구 저장소
 | 항목 | 내용 |
 |------|------|
-| **현재 문제** | LLM이 요청하는 모든 스킬을 무조건 실행 |
-| **참고** | OpenClaw `tool-policy.ts` (5,902 LOC), `tool-loop-detection.ts` |
-| **구현 방식** | 스킬별 `risk_level` (low/medium/high) + high-risk 스킬 실행 전 확인 |
+| **갭** | 세션 데이터를 JSON 파일로 관리 — 취약하고 쿼리 불가 |
+| **참고** | NanoClaw: `db.ts` (19K LOC) — 메시지, 태스크, 세션, 그룹 |
+| **계획** | Tizen 내장 SQLite3 — 단일 DB 파일에 모든 구조화 데이터 저장 |
 
-**수정 대상 파일:**
-- 각 스킬 `manifest.json` — `risk_level` 필드 추가
-- `src/tizenclaw/agent_core.cc` — 정책 검증 로직
-- [NEW] `src/tizenclaw/tool_policy.hh` — 정책 규칙 정의
+**스키마 대상:**
+- `sessions` — JSON 파일에서 마이그레이션 (Phase 6)
+- `skill_executions` — 스킬명, 인자, 결과, 소요시간
+- `tasks` — 예약 태스크 (Phase 11 연동)
+- `llm_usage` — 모델별 세션별 토큰 수
 
 **완료 기준:**
-- [ ] `launch_app`, `vibrate_device` 등 부작용 있는 스킬에 `risk_level: "medium"` 이상 부여
-- [ ] 동일 스킬 + 동일 인자 3회 반복 감지 시 루프 차단
-- [ ] 정책 위반 시 LLM에 사유 설명 피드백
+- [ ] 세션 히스토리 SQLite 저장 (JSON 파일에서 마이그레이션)
+- [ ] 스킬 실행 로그 쿼리 가능
+- [ ] 데몬 재시작 시 모든 데이터 보존
 
 ---
 
-### 9.2 태스크 스케줄러
+### 9.3 모델별 토큰 카운팅
 | 항목 | 내용 |
 |------|------|
-| **현재 문제** | `schedule_alarm`은 단순 타이머 — 반복/cron 미지원, LLM 연동 없음 |
-| **참고** | NanoClaw `task-scheduler.ts` (8,011 LOC) — cron, interval, 일회성 지원 |
-| **구현 방식** | 새 스킬 세트 (`create_task`, `list_tasks`, `cancel_task`) + 데몬 내 스케줄러 루프 |
-
-**수정 대상 파일:**
-- [NEW] `src/tizenclaw/task_scheduler.cc/hh` — cron 파싱, 스케줄 루프
-- [NEW] `skills/create_task/`, `skills/list_tasks/`, `skills/cancel_task/`
-- `src/tizenclaw/tizenclaw.cc` — 스케줄러 스레드 시작
+| **갭** | 컨텍스트 윈도우 소비량 파악 불가 |
+| **참고** | OpenClaw: 모델별 정확 토큰 카운팅 |
+| **계획** | 각 백엔드 응답의 `usage` 필드 파싱 → SQLite 저장 |
 
 **완료 기준:**
-- [ ] "매일 오전 9시에 날씨 알려줘" → cron 태스크 생성 → 자동 실행
-- [ ] 태스크 목록 조회 및 취소 가능
-- [ ] 태스크 실행 이력 로그 저장
+- [ ] 요청별 토큰 사용량 로깅
+- [ ] 컨텍스트 윈도우 한계 접근 시 경고
+- [ ] 세션별 사용량 요약 dlog 출력
 
 ---
 
-### 9.3 API 키 보안 저장
+## Phase 10: 보안 강화 🟡
+
+> **목표**: 도구 실행 안전성, 자격증명 보호, 감사 추적
+
+### 10.1 도구 실행 정책 시스템
 | 항목 | 내용 |
 |------|------|
-| **현재 문제** | `llm_config.json`에 API 키 평문 저장 |
-| **참고** | OpenClaw `secrets/`, NanoClaw stdin 전달 방식 |
-| **구현 방식** | Tizen KeyManager C-API 연동 또는 암호화 파일 |
-
-**수정 대상 파일:**
-- [NEW] `src/tizenclaw/secret_store.cc/hh` — KeyManager 래퍼
-- `src/tizenclaw/agent_core.cc` — 키 로드 시 SecretStore 우선 사용
+| **갭** | LLM이 요청하는 모든 도구를 무조건 실행 |
+| **참고** | OpenClaw: `tool-policy.ts` (화이트/블랙리스트) |
+| **계획** | 스킬별 `risk_level` + 루프 감지 + 정책 위반 피드백 |
 
 **완료 기준:**
-- [ ] KeyManager 사용 가능 시 API 키 암호화 저장/조회
-- [ ] KeyManager 미지원 시 기존 평문 파일 fallback
-- [ ] `llm_config.json`에서 API 키 제거 가이드 문서
+- [ ] 부작용 스킬 (`launch_app`, `vibrate_device`) `risk_level: "high"` 지정
+- [ ] 동일 스킬 + 동일 인자 3회 반복 → 차단 (루프 방지)
+- [ ] 정책 위반 사유를 LLM 피드백에 포함
 
 ---
 
-## Phase 10: 확장성 + UX 🟢
-
-> **목표**: 아키텍처 유연성, 장기 데이터 관리, 사용자 편의
-
-### 10.1 채널 추상화 레이어
+### 10.2 API 키 암호화 저장
 | 항목 | 내용 |
 |------|------|
-| **현재 문제** | Telegram, MCP가 완전히 별개 구현 — 새 채널 추가 시 대규모 코드 작성 필요 |
-| **참고** | NanoClaw `channels/registry.ts` (자기 등록 패턴) |
-| **구현 방식** | `Channel` 인터페이스 (C++) → `TelegramChannel`, `McpChannel` 구현 |
-
-**수정 대상 파일:**
-- [NEW] `src/tizenclaw/channel.hh` — 추상 채널 인터페이스
-- [NEW] `src/tizenclaw/telegram_channel.cc` — 기존 TelegramBridge 리팩터링
-- [NEW] `src/tizenclaw/mcp_channel.cc` — MCP 서버 채널화
+| **갭** | `llm_config.json`에 API 키 평문 저장 |
+| **참고** | OpenClaw: `secrets/` · NanoClaw: stdin 전달 |
+| **계획** | Tizen KeyManager C-API 연동 또는 AES 암호화 파일 |
 
 **완료 기준:**
-- [ ] 새 채널 추가 시 인터페이스 구현만으로 가능
-- [ ] 채널별 독립 설정 (`channels/` 디렉터리)
+- [ ] KeyManager 사용 가능 시 암호화 저장/조회
+- [ ] 기존 평문 파일 폴백
+- [ ] `llm_config.json`에서 키 제거 마이그레이션 가이드
 
 ---
 
-### 10.2 SQLite 영구 저장소
+### 10.3 구조화 감사 로깅
 | 항목 | 내용 |
 |------|------|
-| **현재 문제** | 모든 데이터가 인메모리 또는 개별 JSON 파일 |
-| **참고** | NanoClaw `db.ts` (19,515 LOC) — 메시지, 태스크, 세션, 그룹 |
-| **구현 방식** | Tizen 기본 제공 SQLite 활용 |
-
-**수정 대상 파일:**
-- [NEW] `src/tizenclaw/database.cc/hh` — SQLite 래퍼
-- `CMakeLists.txt` — `sqlite3` 의존성 추가
-- 기존 `SessionStore`, `TaskScheduler` → DB 백엔드로 전환
-
-**저장 대상:**
-- [ ] 세션 히스토리 (Phase 6.2에서 파일 → DB 마이그레이션)
-- [ ] 스킬 실행 이력 (스킬명, 인자, 결과, 소요시간)
-- [ ] 예약 태스크 (Phase 9.2 연동)
-- [ ] LLM API 호출 로그 (토큰 사용량)
-
----
-
-### 10.3 스킬 핫리로드
-| 항목 | 내용 |
-|------|------|
-| **현재 문제** | 새 스킬 추가 시 데몬 재시작 필요 |
-| **참고** | OpenClaw 런타임 스킬 업데이트 |
-| **구현 방식** | `inotify` 파일 변경 감지 → 매니페스트 자동 리로드 |
-
-**수정 대상 파일:**
-- `src/tizenclaw/agent_core.cc` — `ReloadSkillDeclarations()` 메서드
-- [NEW] `src/tizenclaw/file_watcher.cc/hh` — inotify 래퍼
+| **갭** | dlog 평문 — 구조화 쿼리 불가, 원격 수집 미지원 |
+| **참고** | OpenClaw: Pino JSON 로깅 · NanoClaw: Pino JSON 로깅 |
+| **계획** | 보안 민감 이벤트에 대한 구조화 JSON 로그 엔트리 |
 
 **완료 기준:**
-- [ ] `/opt/usr/share/tizenclaw/skills/` 에 새 스킬 디렉터리 추가 시 자동 인식
-- [ ] 기존 스킬 `manifest.json` 수정 시 재로드
+- [ ] 모든 IPC 요청, 도구 실행, 인증 이벤트를 구조화 JSON으로 로깅
+- [ ] 설정 가능한 보존 기간의 로그 로테이션
+- [ ] dlog + 파일 이중 출력
 
 ---
 
-### 10.4 LLM 사용량 추적
+## Phase 11: 태스크 스케줄러 & Cron 🟡
+
+> **목표**: LLM 연동 시간 기반 자동화
+
+### 11.1 Cron/Interval 태스크 시스템
 | 항목 | 내용 |
 |------|------|
-| **현재 문제** | API 호출 비용/사용량 추적 불가 |
-| **참고** | OpenClaw `usage.ts` (4,898 LOC) |
-| **구현 방식** | 각 백엔드의 응답에서 `usage` 필드 파싱 → 누적 집계 |
-
-**수정 대상 파일:**
-- `src/tizenclaw/llm_backend.hh` — `LlmResponse`에 `prompt_tokens`, `completion_tokens` 필드
-- 각 백엔드 — usage 파싱 추가
-- [NEW] `src/tizenclaw/usage_tracker.cc/hh` — 세션별/일별 사용량 집계
+| **갭** | `schedule_alarm`은 단순 타이머 — 반복, cron, LLM 연동 없음 |
+| **참고** | NanoClaw: `task-scheduler.ts` (8K LOC) — cron, interval, 일회성 |
+| **계획** | 새 스킬 (`create_task`, `list_tasks`, `cancel_task`) + 데몬 스케줄러 루프 |
 
 **완료 기준:**
-- [ ] 세션별 토큰 사용량 `dlog` 출력
-- [ ] 일별/월별 누적 집계 저장 (SQLite 연동)
+- [ ] "매일 오전 9시에 날씨 알려줘" → cron 태스크 → 자동 실행
+- [ ] 자연어로 태스크 목록 조회 및 취소
+- [ ] 실행 이력 SQLite 저장 (Phase 9.2)
+- [ ] 실패 태스크 백오프 재시도
 
 ---
 
-## Phase 진행 순서 요약
+## Phase 12: 확장성 레이어 🟡
 
-| Phase | 핵심 목표 | 예상 규모 | 의존성 |
-|:-----:|---------|:---------:|:------:|
-| **6** | Agentic Loop 안정화 + 데이터 지속성 | ~800 LOC | 없음 |
-| **7** | IPC 고도화 + 스트리밍 | ~1,200 LOC | Phase 6 |
-| **8** | LLM 활용 효율 극대화 | ~600 LOC | Phase 6 |
-| **9** | 보안 + 자동화 | ~1,500 LOC | Phase 7, 8 |
-| **10** | 확장성 + UX | ~2,000 LOC | Phase 9 |
+> **목표**: 미래 성장을 위한 아키텍처 유연성
 
-> **총 예상 추가 코드**: ~6,100 LOC (현재 ~3,770 LOC → ~9,870 LOC)
+### 12.1 채널 추상화 레이어
+| 항목 | 내용 |
+|------|------|
+| **갭** | Telegram과 MCP가 완전히 별개 — 새 채널 추가 시 대규모 작업 필요 |
+| **참고** | NanoClaw: `channels/registry.ts` 자기 등록 · OpenClaw: 정적 레지스트리 |
+| **계획** | `Channel` 인터페이스 (C++) → `TelegramChannel`, `McpChannel` 구현 |
+
+**완료 기준:**
+- [ ] 새 채널은 `Channel` 인터페이스 구현만으로 추가
+- [ ] `channels/` 디렉터리에 채널별 설정
+- [ ] 기존 Telegram + MCP를 인터페이스로 마이그레이션
+
+---
+
+### 12.2 시스템 프롬프트 외부화
+| 항목 | 내용 |
+|------|------|
+| **갭** | 시스템 프롬프트 C++ 하드코딩 — 변경 시 재빌드 필요 |
+| **참고** | NanoClaw: 그룹별 `CLAUDE.md` · OpenClaw: `system-prompt.ts` |
+| **계획** | `llm_config.json`의 `system_prompt` 또는 `/opt/usr/share/tizenclaw/system_prompt.txt` |
+
+**완료 기준:**
+- [ ] 외부 파일/설정에서 로드
+- [ ] 현재 스킬 목록을 프롬프트에 동적 포함
+- [ ] 설정 없으면 기본 하드코딩 프롬프트 (하위 호환)
+
+---
+
+### 12.3 LLM 사용량 추적
+| 항목 | 내용 |
+|------|------|
+| **갭** | API 비용/사용량 가시성 없음 |
+| **참고** | OpenClaw: `usage.ts` (5K LOC) |
+| **계획** | `usage` 필드 파싱 → SQLite 집계 → 세션/일/월별 보고서 |
+
+**완료 기준:**
+- [ ] 세션별 토큰 사용량 요약
+- [ ] SQLite에 일별/월별 누적 저장
+- [ ] IPC 명령을 통한 사용량 조회
+
+---
+
+## Phase 13: 스킬 생태계 🟡
+
+> **목표**: 강인한 스킬 관리와 LLM 복원력
+
+### 13.1 스킬 핫리로드
+| 항목 | 내용 |
+|------|------|
+| **갭** | 신규/수정 스킬 적용 시 데몬 재시작 필요 |
+| **참고** | OpenClaw: 런타임 스킬 업데이트 · NanoClaw: skills-engine apply/rebase |
+| **계획** | `inotify` 파일 변경 감지 → 매니페스트 자동 리로드 |
+
+**완료 기준:**
+- [ ] 새 스킬 디렉터리 자동 감지
+- [ ] `manifest.json` 수정 시 리로드 트리거
+- [ ] 데몬 재시작 불필요
+
+---
+
+### 13.2 모델 폴백 자동 전환
+| 항목 | 내용 |
+|------|------|
+| **갭** | LLM API 실패 시 에러 반환 — 대안 백엔드 미시도 |
+| **참고** | OpenClaw: `model-fallback.ts` (18K LOC) |
+| **계획** | `llm_config.json`에 `fallback_backends` 배열, 순차 재시도 |
+
+**완료 기준:**
+- [ ] Gemini 실패 → 자동으로 OpenAI → Ollama 시도
+- [ ] 폴백 사유 로깅
+- [ ] rate-limit 에러 시 백오프 후 재시도
+
+---
+
+### 13.3 루프 감지 강화
+| 항목 | 내용 |
+|------|------|
+| **갭** | `kMaxIterations = 5`만 존재 — 컨텐츠 기반 감지 없음 |
+| **참고** | OpenClaw: 18K LOC `tool-loop-detection.ts` · NanoClaw: 타임아웃 + idle 감지 |
+| **계획** | 동일 도구+인자 반복 감지, idle 감지, 세션별 max iterations 설정 |
+
+**완료 기준:**
+- [ ] 동일 도구 + 동일 인자 3회 반복 → 설명과 함께 강제 중단
+- [ ] 반복 간 진행 없음 감지 (idle)
+- [ ] 세션별 `max_iterations` 설정 가능
+
+---
+
+## Phase 14: 신규 채널 & 통합 🟢
+
+> **목표**: 커뮤니케이션 범위 확장, 에이전트 협조 도입
+
+### 14.1 신규 커뮤니케이션 채널
+| 항목 | 내용 |
+|------|------|
+| **갭** | Telegram + MCP만 — Slack, Discord, 웹훅 미지원 |
+| **참고** | OpenClaw: 22개 이상 · NanoClaw: WhatsApp, Telegram, Slack, Discord, Gmail |
+| **계획** | Phase 12 채널 추상화를 활용하여 Slack + Discord 구현 |
+
+**완료 기준:**
+- [ ] Slack 채널 (Bot API Socket Mode)
+- [ ] Discord 채널 (Discord.js 유사 통합)
+- [ ] 각 채널은 독립 프로세스로 실행 (Telegram 브릿지와 유사)
+
+---
+
+### 14.2 웹훅 인바운드 트리거
+| 항목 | 내용 |
+|------|------|
+| **갭** | 외부 이벤트로 작업을 트리거할 방법 없음 |
+| **참고** | OpenClaw: 웹훅 자동화 · NanoClaw: Gmail Pub/Sub |
+| **계획** | 경량 HTTP 리스너로 웹훅 이벤트 수신 → Agentic Loop로 라우팅 |
+
+**완료 기준:**
+- [ ] 수신 웹훅용 HTTP 엔드포인트
+- [ ] 설정 가능한 URL 경로 → 스킬 매핑
+- [ ] HMAC 서명 검증
+
+---
+
+### 14.3 에이전트 간 메시징
+| 항목 | 내용 |
+|------|------|
+| **갭** | 단일 에이전트 세션 — 에이전트 간 협조 불가 |
+| **참고** | OpenClaw: `sessions_send` · NanoClaw: Agent Swarms |
+| **계획** | 다중 세션 관리 + 세션 간 메시지 전달 |
+
+**완료 기준:**
+- [ ] 서로 다른 시스템 프롬프트의 복수 동시 에이전트 세션
+- [ ] `send_to_session` 도구로 에이전트 간 통신
+- [ ] 세션별 격리 (별도 히스토리, 백엔드, 권한)
+
+---
+
+## Phase 15: 고급 플랫폼 기능 🟢
+
+> **목표**: TizenClaw 고유 플랫폼 위치를 활용한 장기 비전 기능
+
+### 15.1 시맨틱 검색 (RAG)
+| 항목 | 내용 |
+|------|------|
+| **갭** | 대화 히스토리 외 지식 검색 불가 |
+| **참고** | OpenClaw: sqlite-vec + 임베딩 검색 + MMR |
+| **계획** | 대화 히스토리 + 문서 저장소에 대한 임베딩 기반 검색 |
+
+**완료 기준:**
+- [ ] 문서 수집 및 임베딩 저장
+- [ ] Agentic Loop 내 시맨틱 검색 쿼리
+- [ ] SQLite 연동 (sqlite-vec 확장)
+
+---
+
+### 15.2 웹 UI 대시보드
+| 항목 | 내용 |
+|------|------|
+| **갭** | 모니터링/제어용 시각 인터페이스 없음 |
+| **참고** | OpenClaw: Gateway에서 제공하는 제어 UI + 웹챗 |
+| **계획** | 내장 HTTP 서버에서 제공하는 경량 HTML+JS 대시보드 |
+
+**완료 기준:**
+- [ ] 세션 상태, 활성 태스크, 스킬 실행 이력 표시
+- [ ] 실시간 로그 스트리밍
+- [ ] 직접 상호작용을 위한 기본 채팅 인터페이스
+
+---
+
+### 15.3 음성 제어 (TTS/STT)
+| 항목 | 내용 |
+|------|------|
+| **갭** | 텍스트 전용 상호작용 |
+| **참고** | OpenClaw: Voice Wake + Talk Mode (ElevenLabs + 시스템 TTS) |
+| **계획** | Tizen 네이티브 TTS/STT C-API 연동 — 음성 입출력 |
+
+**완료 기준:**
+- [ ] Tizen STT C-API를 통한 음성 입력
+- [ ] Tizen TTS C-API를 통한 응답 음성 출력
+- [ ] 웨이크 워드 감지 (선택사항)
+
+---
+
+## Phase 의존성 & 규모 추정
+
+```mermaid
+graph TD
+    P8[Phase 8: 스트리밍 & 동시성] --> P9[Phase 9: 컨텍스트 & 메모리]
+    P9 --> P10[Phase 10: 보안 강화]
+    P9 --> P11[Phase 11: 태스크 스케줄러]
+    P10 --> P12[Phase 12: 확장성 레이어]
+    P11 --> P12
+    P12 --> P13[Phase 13: 스킬 생태계]
+    P12 --> P14[Phase 14: 신규 채널]
+    P13 --> P15[Phase 15: 고급 기능]
+    P14 --> P15
+
+    style P8 fill:#ff6b6b,color:#fff
+    style P9 fill:#ff6b6b,color:#fff
+    style P10 fill:#ffd93d,color:#333
+    style P11 fill:#ffd93d,color:#333
+    style P12 fill:#ffd93d,color:#333
+    style P13 fill:#ffd93d,color:#333
+    style P14 fill:#6bcb77,color:#fff
+    style P15 fill:#6bcb77,color:#fff
+```
+
+| Phase | 핵심 목표 | 예상 LOC | 우선순위 | 의존성 |
+|:-----:|---------|:--------:|:--------:|:------:|
+| **8** | 스트리밍 & 동시성 | ~1,000 | 🔴 긴급 | Phase 7 ✅ |
+| **9** | 컨텍스트 & 메모리 | ~1,200 | 🔴 긴급 | Phase 8 |
+| **10** | 보안 강화 | ~800 | 🟡 중간 | Phase 9 |
+| **11** | 태스크 스케줄러 & cron | ~1,000 | 🟡 중간 | Phase 9 |
+| **12** | 확장성 레이어 | ~600 | 🟡 중간 | Phase 10, 11 |
+| **13** | 스킬 생태계 | ~800 | 🟡 중간 | Phase 12 |
+| **14** | 신규 채널 & 통합 | ~1,200 | 🟢 낮음 | Phase 12 |
+| **15** | 고급 플랫폼 기능 | ~2,000 | 🟢 낮음 | Phase 13, 14 |
+
+> **총 예상 추가 코드**: ~8,600 LOC (현재 ~4,500 LOC → ~13,100 LOC)
