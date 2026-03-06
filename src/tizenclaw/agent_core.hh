@@ -34,6 +34,12 @@ public:
     void ClearSession(
         const std::string& session_id);
 
+    // Direct skill execution for MCP (bypasses LLM,
+    // but still uses container isolation)
+    std::string ExecuteSkillForMcp(
+        const std::string& skill_name,
+        const nlohmann::json& args);
+
 private:
     // Execute a skill and return its JSON output
     std::string ExecuteSkill(

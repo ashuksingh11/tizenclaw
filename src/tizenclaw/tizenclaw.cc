@@ -63,8 +63,8 @@ void TizenClawDaemon::OnCreate() {
         LOG(ERROR) << "Failed to initialize AgentCore";
     }
 
-    // TODO: Initialize LXC Container Engine
-    // TODO: Start MCP Server connection
+    // Initialize MCP Server
+    mcp_server_ = new McpServer(agent_);
     
     ipc_running_ = true;
     ipc_thread_ = std::thread(&TizenClawDaemon::IpcServerLoop, this);
@@ -102,7 +102,9 @@ void TizenClawDaemon::OnDestroy() {
         agent_ = nullptr;
     }
     
-    // TODO: Cleanup LXC processes and MCP sockets here
+    // Cleanup MCP Server
+    delete mcp_server_;
+    mcp_server_ = nullptr;
 }
 
 void TizenClawDaemon::IpcServerLoop() {
@@ -342,6 +344,7 @@ constexpr uid_t TizenClawDaemon::kAllowedUids[];
 } // namespace tizenclaw
 
 #include "../common/file_log_backend.hh"
+#include "mcp_server.hh"
 
 int main(int argc, char *argv[]) {
     using namespace tizenclaw;
@@ -350,6 +353,23 @@ int main(int argc, char *argv[]) {
     tizenclaw::utils::LogCore::GetCore().AddLogBackend(
         std::make_shared<tizenclaw::utils::FileLogBackend>(
             "/tmp/tizenclaw.log", 1024 * 1024, 3));
+
+    // --mcp-stdio mode: run MCP Server on stdio
+    // without daemon event loop
+    if (argc > 1 &&
+        std::string(argv[1]) == "--mcp-stdio") {
+        LOG(INFO) << "Starting MCP stdio mode...";
+        AgentCore agent;
+        if (!agent.Initialize()) {
+            LOG(ERROR) << "Failed to initialize "
+                       << "AgentCore for MCP";
+            return -1;
+        }
+        McpServer mcp(&agent);
+        mcp.RunStdio();
+        agent.Shutdown();
+        return 0;
+    }
 
     LOG(INFO) << "TizenClaw Service starting...";
     try {

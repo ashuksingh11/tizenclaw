@@ -7,6 +7,7 @@
 #include <atomic>
 #include "agent_core.hh"
 #include "telegram_client.hh"
+#include "mcp_server.hh"
 #include "../common/logging.hh"
 
 namespace tizenclaw {
@@ -36,6 +37,7 @@ private:
     int ipc_socket_;
     bool ipc_running_;
     TelegramClient* telegram_client_ = nullptr;
+    McpServer* mcp_server_ = nullptr;
 
     // Allowed UIDs for IPC connections
     // 0=root, 301=app_fw, 200=system, 5001=developer

@@ -12,6 +12,7 @@ fi
 echo "Connecting to TizenClaw MCP Server on $DEVICE_SERIAL..."
 echo "Press Ctrl+C to stop."
 
-# We run the mcp server script directly via sdb shell.
+# Run tizenclaw in MCP stdio mode via sdb shell.
 # stdio will be piped through sdb.
-sdb -s "$DEVICE_SERIAL" shell "python3 /opt/usr/share/tizenclaw/skills/mcp_server/server.py"
+sdb -s "$DEVICE_SERIAL" shell "/usr/bin/tizenclaw --mcp-stdio"
+

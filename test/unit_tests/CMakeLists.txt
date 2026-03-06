@@ -20,6 +20,7 @@ set(UNIT_TEST_SRCS
     llm_backend_test.cc
     http_client_test.cc
     session_store_test.cc
+    mcp_server_test.cc
 )
 
 # Mock Sources
@@ -41,6 +42,7 @@ set(CORE_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/ollama_backend.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/telegram_client.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/session_store.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/mcp_server.cc
 )
 
 add_executable(tizenclaw-unittests
