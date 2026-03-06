@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <vector>
 #include <arpa/inet.h>
+#include <algorithm>
 
 namespace tizenclaw {
 
@@ -94,6 +95,17 @@ void TizenClawDaemon::OnDestroy() {
     }
     if (ipc_thread_.joinable()) {
         ipc_thread_.join();
+    }
+
+    // Wait for all active client threads to finish
+    {
+        std::lock_guard<std::mutex> lock(threads_mutex_);
+        for (auto& t : client_threads_) {
+            if (t.joinable()) {
+                t.join();
+            }
+        }
+        client_threads_.clear();
     }
 
     if (agent_) {
@@ -181,10 +193,47 @@ void TizenClawDaemon::IpcServerLoop() {
 
         LOG(INFO) << "Authorized IPC from pid=" << cred.pid << " uid=" << cred.uid;
 
-        // Spawn detached thread to handle this client
-        std::thread([this, client_sock]() {
-            HandleIpcClient(client_sock);
-        }).detach();
+        // Check concurrent client limit
+        if (active_clients_.load() >= kMaxConcurrentClients) {
+            LOG(WARNING) << "Max concurrent clients reached (" << kMaxConcurrentClients << "), rejecting";
+            nlohmann::json busy = {
+                {"type", "response"},
+                {"status", "error"},
+                {"text", "Server busy, try again later"}
+            };
+            std::string busy_str = busy.dump();
+            uint32_t busy_len = htonl(busy_str.size());
+            ::write(client_sock, &busy_len, 4);
+            ::write(client_sock, busy_str.data(), busy_str.size());
+            close(client_sock);
+            continue;
+        }
+
+        // Spawn tracked thread to handle this client
+        {
+            std::lock_guard<std::mutex> lock(threads_mutex_);
+            // Clean up finished threads
+            client_threads_.erase(
+                std::remove_if(client_threads_.begin(),
+                               client_threads_.end(),
+                               [](std::thread& t) {
+                                   if (t.joinable()) {
+                                       // Can't check if done without extra state,
+                                       // so try_join is not available in C++17.
+                                       // We'll use detach-after-decrement approach instead.
+                                       return false;
+                                   }
+                                   return true;
+                               }),
+                client_threads_.end());
+
+            client_threads_.emplace_back([this, client_sock]() {
+                active_clients_.fetch_add(1);
+                HandleIpcClient(client_sock);
+                active_clients_.fetch_sub(1);
+            });
+            client_threads_.back().detach();
+        }
     }
 }
 

@@ -2,6 +2,7 @@
 #include "http_client.hh"
 
 #include "../common/logging.hh"
+#include <sstream>
 
 namespace tizenclaw {
 
@@ -149,8 +150,95 @@ LlmResponse OpenAiBackend::Chat(
     payload["tools"] = oai_tools;
   }
 
+  bool streaming = (on_chunk != nullptr);
+  if (streaming) {
+    payload["stream"] = true;
+  }
+
   std::string url =
       endpoint_ + "/chat/completions";
+
+  // For streaming: SSE line-buffer parser
+  std::string sse_buffer;
+  std::string accumulated_text;
+  // Accumulate tool_call fragments (index -> {id, name, args_str})
+  struct ToolCallAccum {
+    std::string id;
+    std::string name;
+    std::string arguments;
+  };
+  std::map<int, ToolCallAccum> tc_accum;
+
+  std::function<void(const std::string&)> stream_cb = nullptr;
+  if (streaming) {
+    stream_cb = [&](const std::string& chunk) {
+      sse_buffer += chunk;
+      // Process complete lines
+      size_t pos;
+      while ((pos = sse_buffer.find('\n')) !=
+             std::string::npos) {
+        std::string line =
+            sse_buffer.substr(0, pos);
+        sse_buffer.erase(0, pos + 1);
+        // Remove trailing \r
+        if (!line.empty() && line.back() == '\r') {
+          line.pop_back();
+        }
+        if (line.empty()) continue;
+
+        // Parse SSE data lines
+        if (line.rfind("data: ", 0) != 0) continue;
+        std::string data = line.substr(6);
+        if (data == "[DONE]") continue;
+
+        try {
+          auto j = nlohmann::json::parse(data);
+          if (!j.contains("choices") ||
+              j["choices"].empty()) continue;
+          auto& delta =
+              j["choices"][0]["delta"];
+
+          // Text content delta
+          if (delta.contains("content") &&
+              !delta["content"].is_null()) {
+            std::string text_delta =
+                delta["content"]
+                    .get<std::string>();
+            accumulated_text += text_delta;
+            on_chunk(text_delta);
+          }
+
+          // Tool call delta accumulation
+          if (delta.contains("tool_calls")) {
+            for (auto& tc_delta :
+                 delta["tool_calls"]) {
+              int idx = tc_delta.value("index", 0);
+              if (tc_delta.contains("id")) {
+                tc_accum[idx].id =
+                    tc_delta["id"]
+                        .get<std::string>();
+              }
+              if (tc_delta.contains("function")) {
+                auto& fn = tc_delta["function"];
+                if (fn.contains("name")) {
+                  tc_accum[idx].name =
+                      fn["name"]
+                          .get<std::string>();
+                }
+                if (fn.contains("arguments")) {
+                  tc_accum[idx].arguments +=
+                      fn["arguments"]
+                          .get<std::string>();
+                }
+              }
+            }
+          }
+        } catch (...) {
+          // Skip malformed SSE events
+        }
+      }
+    };
+  }
 
   auto http_resp = HttpClient::Post(
       url,
@@ -158,7 +246,7 @@ LlmResponse OpenAiBackend::Chat(
        {"Authorization",
         "Bearer " + api_key_}},
       payload.dump(),
-      3, 10, 30, on_chunk); // Pass on_chunk callback
+      3, 10, 120, stream_cb);
 
   if (!http_resp.success) {
     LlmResponse r;
@@ -182,6 +270,26 @@ LlmResponse OpenAiBackend::Chat(
     LOG(ERROR) << "API error: "
                << r.error_message;
     return r;
+  }
+
+  // Reconstruct response from streaming
+  if (streaming) {
+    LlmResponse resp;
+    resp.success = true;
+    resp.text = accumulated_text;
+    for (auto& [idx, tc] : tc_accum) {
+      LlmToolCall call;
+      call.id = tc.id;
+      call.name = tc.name;
+      try {
+        call.args =
+            nlohmann::json::parse(tc.arguments);
+      } catch (...) {
+        call.args = tc.arguments;
+      }
+      resp.tool_calls.push_back(call);
+    }
+    return resp;
   }
 
   return ParseOpenAiResponse(http_resp.body);

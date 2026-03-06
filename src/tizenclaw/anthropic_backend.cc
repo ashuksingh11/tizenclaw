@@ -2,6 +2,7 @@
 #include "http_client.hh"
 
 #include "../common/logging.hh"
+#include <sstream>
 
 namespace tizenclaw {
 
@@ -137,8 +138,96 @@ LlmResponse AnthropicBackend::Chat(
     payload["tools"] = ant_tools;
   }
 
+  bool streaming = (on_chunk != nullptr);
+  if (streaming) {
+    payload["stream"] = true;
+  }
+
   std::string url =
       "https://api.anthropic.com/v1/messages";
+
+  // SSE streaming state
+  std::string sse_buffer;
+  std::string current_event;
+  std::string accumulated_text;
+  struct ToolAccum {
+    std::string id;
+    std::string name;
+    std::string input_json;
+  };
+  std::vector<ToolAccum> tool_accums;
+  int current_tool_idx = -1;
+
+  std::function<void(const std::string&)>
+      stream_cb = nullptr;
+  if (streaming) {
+    stream_cb = [&](const std::string& chunk) {
+      sse_buffer += chunk;
+      size_t pos;
+      while ((pos = sse_buffer.find('\n')) !=
+             std::string::npos) {
+        std::string line =
+            sse_buffer.substr(0, pos);
+        sse_buffer.erase(0, pos + 1);
+        if (!line.empty() && line.back() == '\r')
+          line.pop_back();
+
+        // Track event type
+        if (line.rfind("event: ", 0) == 0) {
+          current_event = line.substr(7);
+          continue;
+        }
+
+        if (line.rfind("data: ", 0) != 0) {
+          if (line.empty()) current_event.clear();
+          continue;
+        }
+        std::string data = line.substr(6);
+
+        try {
+          auto j = nlohmann::json::parse(data);
+
+          if (current_event ==
+              "content_block_start") {
+            auto& cb = j["content_block"];
+            std::string type =
+                cb.value("type", "");
+            if (type == "tool_use") {
+              ToolAccum ta;
+              ta.id = cb.value("id", "");
+              ta.name = cb.value("name", "");
+              tool_accums.push_back(ta);
+              current_tool_idx =
+                  tool_accums.size() - 1;
+            } else {
+              current_tool_idx = -1;
+            }
+          } else if (current_event ==
+              "content_block_delta") {
+            auto& delta = j["delta"];
+            std::string type =
+                delta.value("type", "");
+            if (type == "text_delta") {
+              std::string text =
+                  delta["text"]
+                      .get<std::string>();
+              accumulated_text += text;
+              on_chunk(text);
+            } else if (type ==
+                "input_json_delta" &&
+                current_tool_idx >= 0) {
+              tool_accums[current_tool_idx]
+                  .input_json +=
+                  delta["partial_json"]
+                      .get<std::string>();
+            }
+          }
+        } catch (...) {
+          // Skip malformed events
+        }
+      }
+    };
+  }
 
   auto http_resp = HttpClient::Post(
       url,
@@ -146,7 +235,7 @@ LlmResponse AnthropicBackend::Chat(
        {"x-api-key", api_key_},
        {"anthropic-version", "2023-06-01"}},
       payload.dump(),
-      3, 10, 30, on_chunk); // Pass on_chunk callback
+      3, 10, 120, stream_cb);
 
   if (!http_resp.success) {
     LlmResponse r;
@@ -170,6 +259,25 @@ LlmResponse AnthropicBackend::Chat(
     LOG(ERROR) << "API error: "
                << r.error_message;
     return r;
+  }
+
+  if (streaming) {
+    LlmResponse resp;
+    resp.success = true;
+    resp.text = accumulated_text;
+    for (auto& ta : tool_accums) {
+      LlmToolCall tc;
+      tc.id = ta.id;
+      tc.name = ta.name;
+      try {
+        tc.args =
+            nlohmann::json::parse(ta.input_json);
+      } catch (...) {
+        tc.args = ta.input_json;
+      }
+      resp.tool_calls.push_back(tc);
+    }
+    return resp;
   }
 
   return ParseAnthropicResponse(http_resp.body);

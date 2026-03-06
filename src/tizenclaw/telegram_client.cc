@@ -6,6 +6,7 @@
 #include <fstream>
 #include <chrono>
 #include <iostream>
+#include <mutex>
 
 namespace tizenclaw {
 
@@ -121,6 +122,38 @@ void TelegramClient::SendMessage(
     }
 }
 
+bool TelegramClient::EditMessage(
+    long chat_id, long message_id,
+    const std::string& text) {
+    if (bot_token_.empty()) return false;
+
+    std::string url =
+        "https://api.telegram.org/bot" +
+        bot_token_ + "/editMessageText";
+
+    std::string safe_text = text;
+    if (safe_text.length() > 4000) {
+        safe_text = safe_text.substr(0, 4000) +
+                    "\n...(truncated)";
+    }
+    if (safe_text.empty()) {
+        safe_text = "...";
+    }
+
+    nlohmann::json payload = {
+        {"chat_id", chat_id},
+        {"message_id", message_id},
+        {"text", safe_text}
+    };
+
+    auto resp = HttpClient::Post(
+        url,
+        {{"Content-Type", "application/json"}},
+        payload.dump(), 1, 5, 10);
+
+    return resp.success;
+}
+
 void TelegramClient::PollingLoop() {
     std::string url =
         "https://api.telegram.org/bot" + bot_token_;
@@ -187,14 +220,73 @@ void TelegramClient::PollingLoop() {
 
                 LOG(INFO) << "Received from " << chat_id << ": " << text;
 
-                // Directly invoke AgentCore bypassing IPC
-                std::string session_id =
-                    "telegram_" + std::to_string(chat_id);
-                std::string response =
-                    agent_->ProcessPrompt(session_id,
-                                          text);
+                // Send initial placeholder
+                std::string url_send =
+                    "https://api.telegram.org/bot" +
+                    bot_token_ + "/sendMessage";
+                nlohmann::json init_payload = {
+                    {"chat_id", chat_id},
+                    {"text", "\u23f3 Thinking..."}
+                };
+                auto init_resp = HttpClient::Post(
+                    url_send,
+                    {{"Content-Type",
+                      "application/json"}},
+                    init_payload.dump());
 
-                SendMessage(chat_id, response);
+                long msg_id = 0;
+                if (init_resp.success) {
+                    try {
+                        auto jr = nlohmann::json
+                            ::parse(init_resp.body);
+                        msg_id = jr["result"]
+                            .value("message_id", 0L);
+                    } catch (...) {}
+                }
+
+                // Streaming callback with throttled edits
+                std::string accumulated;
+                std::mutex acc_mutex;
+                auto last_edit =
+                    std::chrono::steady_clock::now();
+
+                auto on_chunk = [&](
+                    const std::string& chunk) {
+                    if (msg_id == 0) return;
+                    std::lock_guard<std::mutex> lock(
+                        acc_mutex);
+                    accumulated += chunk;
+                    auto now =
+                        std::chrono::steady_clock
+                            ::now();
+                    auto elapsed =
+                        std::chrono::duration_cast<
+                            std::chrono::
+                                milliseconds>(
+                            now - last_edit)
+                            .count();
+                    if (elapsed >= 1000) {
+                        EditMessage(chat_id, msg_id,
+                                    accumulated);
+                        last_edit = now;
+                    }
+                };
+
+                std::string session_id =
+                    "telegram_" +
+                    std::to_string(chat_id);
+                std::string response =
+                    agent_->ProcessPrompt(
+                        session_id, text,
+                        on_chunk);
+
+                // Final update with complete response
+                if (msg_id > 0) {
+                    EditMessage(chat_id, msg_id,
+                                response);
+                } else {
+                    SendMessage(chat_id, response);
+                }
             }
         } catch (const std::exception& e) {
             LOG(ERROR) << "Polling JSON error: " << e.what();

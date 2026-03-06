@@ -2,6 +2,9 @@
 #include "http_client.hh"
 
 #include "../common/logging.hh"
+#include <chrono>
+#include <sstream>
+#include <iomanip>
 
 namespace tizenclaw {
 
@@ -107,8 +110,12 @@ LlmResponse GeminiBackend::ParseGeminiResponse(
       auto& part = parts[i];
       if (part.contains("functionCall")) {
         LlmToolCall tc;
-        tc.id = "gemini_call_" +
-                std::to_string(i);
+        auto now = std::chrono::steady_clock::now()
+            .time_since_epoch().count();
+        std::ostringstream oss;
+        oss << "gemini_" << std::hex << now
+            << "_" << i;
+        tc.id = oss.str();
         tc.name =
             part["functionCall"]["name"];
         tc.args =
@@ -141,16 +148,83 @@ LlmResponse GeminiBackend::Chat(
     payload["tools"] = gemini_tools;
   }
 
+  bool streaming = (on_chunk != nullptr);
   std::string url =
       "https://generativelanguage.googleapis.com"
-      "/v1beta/models/" + model_ +
-      ":generateContent?key=" + api_key_;
+      "/v1beta/models/" + model_;
+  if (streaming) {
+    url += ":streamGenerateContent?alt=sse&key="
+        + api_key_;
+  } else {
+    url += ":generateContent?key=" + api_key_;
+  }
+
+  // SSE streaming state
+  std::string sse_buffer;
+  std::string accumulated_text;
+  std::vector<LlmToolCall> accumulated_tools;
+  size_t tool_idx = 0;
+
+  std::function<void(const std::string&)>
+      stream_cb = nullptr;
+  if (streaming) {
+    stream_cb = [&](const std::string& chunk) {
+      sse_buffer += chunk;
+      size_t pos;
+      while ((pos = sse_buffer.find('\n')) !=
+             std::string::npos) {
+        std::string line =
+            sse_buffer.substr(0, pos);
+        sse_buffer.erase(0, pos + 1);
+        if (!line.empty() && line.back() == '\r')
+          line.pop_back();
+        if (line.empty()) continue;
+
+        if (line.rfind("data: ", 0) != 0) continue;
+        std::string data = line.substr(6);
+
+        try {
+          auto j = nlohmann::json::parse(data);
+          if (!j.contains("candidates") ||
+              j["candidates"].empty()) continue;
+          auto& parts =
+              j["candidates"][0]["content"]["parts"];
+
+          for (size_t i = 0; i < parts.size(); ++i) {
+            auto& part = parts[i];
+            if (part.contains("text")) {
+              std::string text_delta =
+                  part["text"].get<std::string>();
+              accumulated_text += text_delta;
+              on_chunk(text_delta);
+            } else if (
+                part.contains("functionCall")) {
+              LlmToolCall tc;
+              auto now = std::chrono::steady_clock
+                  ::now().time_since_epoch().count();
+              std::ostringstream oss;
+              oss << "gemini_" << std::hex << now
+                  << "_" << tool_idx++;
+              tc.id = oss.str();
+              tc.name =
+                  part["functionCall"]["name"];
+              tc.args =
+                  part["functionCall"]["args"];
+              accumulated_tools.push_back(tc);
+            }
+          }
+        } catch (...) {
+          // Skip malformed SSE events
+        }
+      }
+    };
+  }
 
   auto http_resp = HttpClient::Post(
       url,
       {{"Content-Type", "application/json"}},
       payload.dump(),
-      3, 10, 30, on_chunk); // Pass on_chunk callback
+      3, 10, 120, stream_cb);
 
   if (!http_resp.success) {
     LlmResponse r;
@@ -174,6 +248,14 @@ LlmResponse GeminiBackend::Chat(
     LOG(ERROR) << "API error: "
                << r.error_message;
     return r;
+  }
+
+  if (streaming) {
+    LlmResponse resp;
+    resp.success = true;
+    resp.text = accumulated_text;
+    resp.tool_calls = accumulated_tools;
+    return resp;
   }
 
   return ParseGeminiResponse(http_resp.body);

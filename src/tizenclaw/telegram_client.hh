@@ -33,6 +33,10 @@ private:
     // Sends a message back to the user via Telegram API
     void SendMessage(long chat_id, const std::string& text);
 
+    // Edits an existing message (returns true on success)
+    bool EditMessage(long chat_id, long message_id,
+                     const std::string& text);
+
     AgentCore* agent_;
     std::string bot_token_;
     std::set<long> allowed_chat_ids_;

@@ -2,6 +2,9 @@
 #include "http_client.hh"
 
 #include "../common/logging.hh"
+#include <chrono>
+#include <sstream>
+#include <iomanip>
 
 namespace tizenclaw {
 
@@ -96,8 +99,12 @@ LlmResponse OllamaBackend::ParseOllamaResponse(
       for (size_t i = 0; i < msg["tool_calls"].size(); ++i) {
         auto& tc = msg["tool_calls"][i];
         LlmToolCall call;
-        call.id = "ollama_call_" +
-                  std::to_string(i);
+        auto now = std::chrono::steady_clock::now()
+            .time_since_epoch().count();
+        std::ostringstream oss;
+        oss << "ollama_" << std::hex << now
+            << "_" << i;
+        call.id = oss.str();
         call.name =
             tc["function"]["name"];
         call.args =
@@ -122,17 +129,58 @@ LlmResponse OllamaBackend::Chat(
     const std::vector<LlmMessage>& messages,
     const std::vector<LlmToolDecl>& tools,
     std::function<void(const std::string&)> on_chunk) {
+  bool streaming = (on_chunk != nullptr);
   nlohmann::json payload = {
       {"model", model_},
       {"messages", ToOllamaMessages(messages)},
-      {"stream", false}
+      {"stream", streaming}
   };
   auto ollama_tools = ToOllamaTools(tools);
   if (!ollama_tools.is_null()) {
     payload["tools"] = ollama_tools;
+    // Ollama doesn't support streaming with tools
+    payload["stream"] = false;
+    streaming = false;
   }
 
   std::string url = endpoint_ + "/api/chat";
+
+  // NDJSON streaming state
+  std::string ndjson_buffer;
+  std::string accumulated_text;
+  std::vector<LlmToolCall> accumulated_tools;
+
+  std::function<void(const std::string&)>
+      stream_cb = nullptr;
+  if (streaming) {
+    stream_cb = [&](const std::string& chunk) {
+      ndjson_buffer += chunk;
+      size_t pos;
+      while ((pos = ndjson_buffer.find('\n')) !=
+             std::string::npos) {
+        std::string line =
+            ndjson_buffer.substr(0, pos);
+        ndjson_buffer.erase(0, pos + 1);
+        if (line.empty()) continue;
+
+        try {
+          auto j = nlohmann::json::parse(line);
+          if (j.contains("message") &&
+              j["message"].contains("content")) {
+            std::string text =
+                j["message"]["content"]
+                    .get<std::string>();
+            if (!text.empty()) {
+              accumulated_text += text;
+              on_chunk(text);
+            }
+          }
+        } catch (...) {
+          // Skip malformed NDJSON lines
+        }
+      }
+    };
+  }
 
   auto http_resp = HttpClient::Post(
       url,
@@ -141,7 +189,7 @@ LlmResponse OllamaBackend::Chat(
       2,     // fewer retries for local
       5,     // faster connect for localhost
       120,   // longer timeout for local models
-      on_chunk); // Pass on_chunk callback
+      stream_cb);
 
   if (!http_resp.success) {
     LlmResponse r;
@@ -169,6 +217,13 @@ LlmResponse OllamaBackend::Chat(
     LOG(ERROR) << "API error: "
                << r.error_message;
     return r;
+  }
+
+  if (streaming) {
+    LlmResponse resp;
+    resp.success = true;
+    resp.text = accumulated_text;
+    return resp;
   }
 
   return ParseOllamaResponse(http_resp.body);

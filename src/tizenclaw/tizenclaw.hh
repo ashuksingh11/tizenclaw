@@ -5,6 +5,8 @@
 #include <json.hpp>
 #include <thread>
 #include <atomic>
+#include <vector>
+#include <mutex>
 #include "agent_core.hh"
 #include "telegram_client.hh"
 #include "mcp_server.hh"
@@ -38,6 +40,12 @@ private:
     bool ipc_running_;
     TelegramClient* telegram_client_ = nullptr;
     McpServer* mcp_server_ = nullptr;
+
+    // Concurrency control
+    std::atomic<int> active_clients_{0};
+    static constexpr int kMaxConcurrentClients = 4;
+    std::vector<std::thread> client_threads_;
+    std::mutex threads_mutex_;
 
     // Allowed UIDs for IPC connections
     // 0=root, 301=app_fw, 200=system, 5001=developer
