@@ -44,6 +44,12 @@ private:
     std::string ExecuteCode(
         const std::string& code);
 
+    // Execute file operations (built-in tool)
+    std::string ExecuteFileOp(
+        const std::string& operation,
+        const std::string& path,
+        const std::string& content);
+
     // Load skill manifests as tool declarations
     std::vector<LlmToolDecl>
     LoadSkillDeclarations();

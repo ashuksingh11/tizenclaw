@@ -122,6 +122,11 @@ bool ContainerEngine::Initialize() {
              EscapeShellArg(m_crun_root));
   LOG(INFO) << "crun root dir: " << m_crun_root;
 
+  // Ensure data directory exists
+  RunCommand("mkdir -p " +
+             EscapeShellArg(
+                 m_app_data_dir + "/data"));
+
   m_initialized = true;
   return true;
 }
@@ -444,6 +449,126 @@ std::string ContainerEngine::ExecuteCode(
   }
 }
 
+std::string ContainerEngine::ExecuteFileOp(
+    const std::string& operation,
+    const std::string& path,
+    const std::string& content) {
+  if (!m_initialized) {
+    LOG(ERROR) << "Cannot execute file op. "
+               << "Engine not initialized.";
+    return "{}";
+  }
+
+  LOG(INFO) << "ExecuteFileOp: op=" << operation
+            << " path=" << path;
+
+  int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (sock < 0) {
+    LOG(WARNING) << "UDS socket() failed: "
+                 << strerror(errno);
+    return "{}";
+  }
+
+  struct sockaddr_un addr;
+  std::memset(&addr, 0, sizeof(addr));
+  addr.sun_family = AF_UNIX;
+  strncpy(addr.sun_path, kSkillSocketPath,
+          sizeof(addr.sun_path) - 1);
+
+  if (connect(sock,
+              reinterpret_cast<struct sockaddr*>(
+                  &addr),
+              sizeof(addr)) < 0) {
+    LOG(WARNING) << "UDS connect failed: "
+                 << strerror(errno);
+    close(sock);
+    return "{}";
+  }
+
+  nlohmann::json req;
+  req["command"] = "file_manager";
+  req["operation"] = operation;
+  req["path"] = path;
+  if (!content.empty()) {
+    req["content"] = content;
+  }
+  std::string payload = req.dump();
+
+  uint32_t net_len = htonl(payload.size());
+  if (::write(sock, &net_len, 4) != 4) {
+    LOG(ERROR) << "UDS write header failed";
+    close(sock);
+    return "{}";
+  }
+
+  ssize_t total = 0;
+  ssize_t len =
+      static_cast<ssize_t>(payload.size());
+  while (total < len) {
+    ssize_t w = ::write(
+        sock, payload.data() + total,
+        len - total);
+    if (w <= 0) {
+      LOG(ERROR) << "UDS write body failed";
+      close(sock);
+      return "{}";
+    }
+    total += w;
+  }
+
+  uint32_t resp_net_len = 0;
+  ssize_t hr = ::recv(
+      sock, &resp_net_len, 4, MSG_WAITALL);
+  if (hr != 4) {
+    LOG(ERROR) << "UDS recv header failed";
+    close(sock);
+    return "{}";
+  }
+
+  uint32_t resp_len = ntohl(resp_net_len);
+  if (resp_len > 10 * 1024 * 1024) {
+    LOG(ERROR) << "UDS response too large: "
+               << resp_len;
+    close(sock);
+    return "{}";
+  }
+
+  std::vector<char> resp_buf(resp_len);
+  ssize_t br = ::recv(
+      sock, resp_buf.data(), resp_len,
+      MSG_WAITALL);
+  close(sock);
+
+  if (br != static_cast<ssize_t>(resp_len)) {
+    LOG(ERROR) << "UDS recv body incomplete";
+    return "{}";
+  }
+
+  std::string resp_str(
+      resp_buf.data(), resp_len);
+  LOG(INFO) << "ExecuteFileOp response ("
+            << resp_len << " bytes)";
+
+  try {
+    auto resp = nlohmann::json::parse(resp_str);
+    std::string status =
+        resp.value("status", "error");
+    std::string output =
+        resp.value("output", "");
+    if (status == "ok") {
+      return output;
+    }
+    LOG(ERROR) << "FileOp error: " << output;
+    nlohmann::json err;
+    err["error"] = output;
+    return err.dump();
+  } catch (const std::exception& e) {
+    LOG(ERROR) << "UDS JSON parse error: "
+               << e.what();
+    return "{}";
+  }
+}
+
 std::string ContainerEngine::ExecuteSkillViaCrun(
     const std::string& skill_name,
     const std::string& arg_str) {
@@ -631,7 +756,13 @@ bool ContainerEngine::WriteSkillsConfig() const {
       "destination": "/skills",
       "type": "bind",
       "source": ")" + m_skills_dir + R"(",
-      "options": ["rbind", "ro"]
+      "options": ["rbind", "rw"]
+    },
+    {
+      "destination": "/data",
+      "type": "bind",
+      "source": ")" + m_app_data_dir + R"(/data",
+      "options": ["rbind", "rw"]
     },
     {
       "destination": "/usr",

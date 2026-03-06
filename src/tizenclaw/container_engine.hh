@@ -25,6 +25,13 @@ public:
     std::string ExecuteCode(
         const std::string& code);
 
+    // Execute file operations via the skill
+    // executor's file_manager command.
+    std::string ExecuteFileOp(
+        const std::string& operation,
+        const std::string& path,
+        const std::string& content);
+
 private:
     // Execute skill via Unix Domain Socket to the
     // skill_executor running in the secure container.

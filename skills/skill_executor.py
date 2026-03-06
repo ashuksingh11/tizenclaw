@@ -171,6 +171,151 @@ def execute_dynamic_code(code_str, timeout=None):
     }
 
 
+ALLOWED_PATHS = ["/skills", "/data"]
+MAX_READ_SIZE = 1024 * 1024  # 1 MB
+
+
+def validate_path(path):
+    """Validate that path is under allowed directories."""
+    real = os.path.realpath(path)
+    for allowed in ALLOWED_PATHS:
+        allowed_real = os.path.realpath(allowed)
+        if real == allowed_real or real.startswith(
+            allowed_real + "/"
+        ):
+            return real, None
+    return None, (
+        f"Path '{path}' is outside allowed directories: "
+        f"{ALLOWED_PATHS}"
+    )
+
+
+def handle_file_manager(req):
+    """Handle file management operations."""
+    operation = req.get("operation", "")
+    path = req.get("path", "")
+
+    if not path:
+        return {
+            "status": "error",
+            "output": "No path provided",
+        }
+
+    real_path, err = validate_path(path)
+    if err:
+        return {"status": "error", "output": err}
+
+    log(f"file_manager: op={operation} path={real_path}")
+
+    try:
+        if operation == "write_file":
+            content = req.get("content", "")
+            parent = os.path.dirname(real_path)
+            os.makedirs(parent, exist_ok=True)
+            with open(real_path, "w") as f:
+                f.write(content)
+            return {
+                "status": "ok",
+                "output": json.dumps({
+                    "result": "file_written",
+                    "path": path,
+                    "size": len(content),
+                }),
+            }
+
+        elif operation == "read_file":
+            if not os.path.isfile(real_path):
+                return {
+                    "status": "error",
+                    "output": f"File not found: {path}",
+                }
+            size = os.path.getsize(real_path)
+            if size > MAX_READ_SIZE:
+                return {
+                    "status": "error",
+                    "output": (
+                        f"File too large: {size} bytes "
+                        f"(max {MAX_READ_SIZE})"
+                    ),
+                }
+            with open(real_path, "r") as f:
+                content = f.read()
+            return {
+                "status": "ok",
+                "output": json.dumps({
+                    "result": "file_read",
+                    "path": path,
+                    "content": content,
+                    "size": len(content),
+                }),
+            }
+
+        elif operation == "delete_file":
+            if not os.path.exists(real_path):
+                return {
+                    "status": "error",
+                    "output": f"Path not found: {path}",
+                }
+            if os.path.isdir(real_path):
+                import shutil
+                shutil.rmtree(real_path)
+            else:
+                os.unlink(real_path)
+            return {
+                "status": "ok",
+                "output": json.dumps({
+                    "result": "deleted",
+                    "path": path,
+                }),
+            }
+
+        elif operation == "list_dir":
+            target = real_path
+            if not os.path.isdir(target):
+                return {
+                    "status": "error",
+                    "output": f"Not a directory: {path}",
+                }
+            entries = []
+            for name in sorted(os.listdir(target)):
+                full = os.path.join(target, name)
+                entries.append({
+                    "name": name,
+                    "type": (
+                        "dir" if os.path.isdir(full)
+                        else "file"
+                    ),
+                    "size": (
+                        os.path.getsize(full)
+                        if os.path.isfile(full) else 0
+                    ),
+                })
+            return {
+                "status": "ok",
+                "output": json.dumps({
+                    "result": "listing",
+                    "path": path,
+                    "entries": entries,
+                }),
+            }
+
+        else:
+            return {
+                "status": "error",
+                "output": (
+                    f"Unknown operation: {operation}. "
+                    "Supported: write_file, read_file, "
+                    "delete_file, list_dir"
+                ),
+            }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "output": f"file_manager error: {e}",
+        }
+
+
 def handle_client(conn):
     """Handle a single client connection."""
     try:
@@ -216,6 +361,8 @@ def handle_client(conn):
                     continue
                 log(f"execute_code request")
                 resp = execute_dynamic_code(code, timeout)
+            elif command == "file_manager":
+                resp = handle_file_manager(req)
             else:
                 # Legacy skill execution
                 skill = req.get("skill", "")

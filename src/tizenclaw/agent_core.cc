@@ -243,6 +243,15 @@ std::string AgentCore::ProcessPrompt(
           std::string code =
               tc.args.value("code", "");
           r.output = ExecuteCode(code);
+        } else if (tc.name == "file_manager") {
+          std::string op =
+              tc.args.value("operation", "");
+          std::string path =
+              tc.args.value("path", "");
+          std::string content =
+              tc.args.value("content", "");
+          r.output = ExecuteFileOp(
+              op, path, content);
         } else {
           r.output = ExecuteSkill(
               tc.name, tc.args);
@@ -329,6 +338,26 @@ std::string AgentCore::ExecuteCode(
   return response;
 }
 
+std::string AgentCore::ExecuteFileOp(
+    const std::string& operation,
+    const std::string& path,
+    const std::string& content) {
+  LOG(INFO) << "ExecuteFileOp: op=" << operation
+            << " path=" << path;
+
+  std::string response =
+      m_container->ExecuteFileOp(
+          operation, path, content);
+
+  if (response.empty()) {
+    LOG(ERROR) << "File operation failed";
+    return "{\"error\": \"File operation failed\"}";
+  }
+
+  LOG(INFO) << "FileOp output: " << response;
+  return response;
+}
+
 std::vector<LlmToolDecl>
 AgentCore::LoadSkillDeclarations() {
   std::vector<LlmToolDecl> tools;
@@ -389,6 +418,44 @@ AgentCore::LoadSkillDeclarations() {
       {"required", nlohmann::json::array({"code"})}
   };
   tools.push_back(code_tool);
+
+  // Built-in tool: file_manager
+  LlmToolDecl file_tool;
+  file_tool.name = "file_manager";
+  file_tool.description =
+      "Manage files on the Tizen device. "
+      "Create, read, delete files or list "
+      "directory contents. Paths MUST start "
+      "with /skills/ or /data/ — other paths "
+      "are rejected. Use /skills/ to save new "
+      "skill scripts, /data/ for persistent data.";
+  file_tool.parameters = {
+      {"type", "object"},
+      {"properties", {
+          {"operation", {
+              {"type", "string"},
+              {"enum", nlohmann::json::array(
+                  {"write_file", "read_file",
+                   "delete_file", "list_dir"})},
+              {"description",
+               "The file operation to perform"}
+          }},
+          {"path", {
+              {"type", "string"},
+              {"description",
+               "File or directory path. Must start "
+               "with /skills/ or /data/"}
+          }},
+          {"content", {
+              {"type", "string"},
+              {"description",
+               "File content (for write_file only)"}
+          }}
+      }},
+      {"required", nlohmann::json::array(
+          {"operation", "path"})}
+  };
+  tools.push_back(file_tool);
 
   return tools;
 }

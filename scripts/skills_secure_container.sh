@@ -70,7 +70,13 @@ write_config() {
       "destination": "/skills",
       "type": "bind",
       "source": "${APP_DATA_DIR}/skills",
-      "options": ["rbind", "ro"]
+      "options": ["rbind", "rw"]
+    },
+    {
+      "destination": "/data",
+      "type": "bind",
+      "source": "${APP_DATA_DIR}/data",
+      "options": ["rbind", "rw"]
     },
     {
       "destination": "/usr",
@@ -184,13 +190,15 @@ run_without_container() {
   mkdir -p "${BUNDLE_DIR}/rootfs/skills" "${BUNDLE_DIR}/rootfs/proc" \
            "${BUNDLE_DIR}/rootfs/dev" "${BUNDLE_DIR}/rootfs/tmp" \
            "${BUNDLE_DIR}/rootfs/usr" "${BUNDLE_DIR}/rootfs/etc" \
-           "${BUNDLE_DIR}/rootfs/lib64" "${BUNDLE_DIR}/rootfs/run"
+           "${BUNDLE_DIR}/rootfs/lib64" "${BUNDLE_DIR}/rootfs/run" \
+           "${BUNDLE_DIR}/rootfs/data" "${APP_DATA_DIR}/data"
 
   exec unshare -m /bin/sh -c "
     mount --make-rprivate / || true
     mount -t proc proc \"${BUNDLE_DIR}/rootfs/proc\" || true
     mount --rbind /dev \"${BUNDLE_DIR}/rootfs/dev\" || true
     mount --rbind \"${APP_DATA_DIR}/skills\" \"${BUNDLE_DIR}/rootfs/skills\" || true
+    mount --rbind \"${APP_DATA_DIR}/data\" \"${BUNDLE_DIR}/rootfs/data\" || true
     mount --rbind /tmp \"${BUNDLE_DIR}/rootfs/tmp\" || true
 
     # Read-only mounts: host /usr, /etc, /lib64
