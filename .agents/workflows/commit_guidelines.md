@@ -50,4 +50,10 @@ Verification:
 2. `gbs build` (내부 `%check`의 gtest 포함)가 완벽하게 에러 없이 통과됨 (에러 발생 시 코드 수정)
 3. 해당 워크플로 룰에 맞춰 `git add .` 후 `git commit -m "$(상기 포맷의 메시지)"` 수행
 
+## 5. Push (원격 저장소 반영)
+커밋이 완료되면 원격 저장소에 push합니다.
+```bash
+git push origin main
+```
+
 // turbo-all

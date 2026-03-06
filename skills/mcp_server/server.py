@@ -44,7 +44,7 @@ class McpServer:
         
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
-            sock.connect("\0tizenclaw.ipc")
+            sock.connect("\0tizenclaw.sock")
             
             # Send length-prefixed payload
             length_prefix = struct.pack("!I", len(payload))

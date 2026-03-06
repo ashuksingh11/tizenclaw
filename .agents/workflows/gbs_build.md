@@ -24,4 +24,27 @@ description: Tizen gbs build workflow
 
    빌드 결과 확인이 필요한 경우, 빌드 완료 후 로그 파일을 직접 확인하세요.
 
+5. **AGENT 전용: 빌드 완료 감지 방법**
+   `gbs build`는 내부적으로 `sudo`와 `chroot` 환경에서 실행되므로, `command_status` 도구가 stdout/stderr를 전혀 캡처하지 못합니다 (항상 "No output"으로 표시됨).
+
+   따라서 다음 방법으로 빌드 완료를 감지하세요:
+   ```bash
+   # 빌드 실행 (WaitMsBeforeAsync=3000 으로 백그라운드 전환)
+   gbs build -A x86_64 --include-all 2>&1
+
+   # 빌드 완료 감지: RPM 파일의 수정시간 확인 (폴링)
+   # command_status의 WaitDurationSeconds=60 으로 설정하고,
+   # 최대 5회 반복하여 RPM 파일이 최신인지 확인
+   stat -c '%Y' ~/GBS-ROOT/local/repos/tizen/x86_64/RPMS/tizenclaw-*.x86_64.rpm 2>/dev/null
+   ```
+
+   **빌드 성공/실패 판별:**
+   - 성공: `~/GBS-ROOT/local/repos/tizen/x86_64/logs/success/` 디렉토리에 최신 로그 확인
+   - 실패: `~/GBS-ROOT/local/repos/tizen/x86_64/logs/fail/` 디렉토리에 최신 로그 확인
+   ```bash
+   # 빌드 결과 확인 (성공 여부)
+   ls -lt ~/GBS-ROOT/local/repos/tizen/x86_64/logs/success/ 2>/dev/null | head -5
+   ls -lt ~/GBS-ROOT/local/repos/tizen/x86_64/logs/fail/ 2>/dev/null | head -5
+   ```
+
 // turbo-all

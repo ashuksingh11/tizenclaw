@@ -19,7 +19,7 @@ import subprocess
 import sys
 import threading
 
-SOCKET_PATH = "/tmp/tizenclaw_skill.sock"
+SOCKET_PATH = "\0tizenclaw_skill.sock"
 SKILLS_DIR = "/skills"
 PYTHON_BIN = "/usr/bin/python3"
 MAX_PAYLOAD = 10 * 1024 * 1024  # 10 MB
@@ -155,17 +155,10 @@ def handle_client(conn):
 def main():
     log("Starting...")
 
-    # Clean up stale socket
-    try:
-        os.unlink(SOCKET_PATH)
-    except FileNotFoundError:
-        pass
-
     srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     srv.bind(SOCKET_PATH)
-    os.chmod(SOCKET_PATH, 0o666)
     srv.listen(5)
-    log(f"Listening on {SOCKET_PATH}")
+    log(f"Listening on abstract namespace: tizenclaw_skill.sock")
 
     # Graceful shutdown
     running = True

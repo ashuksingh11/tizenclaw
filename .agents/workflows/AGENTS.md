@@ -49,7 +49,7 @@ description: Main Development Workflow (Plan -> Develop -> Verify)
 Conventional Commits 스타일로 작성하며, **커밋 메시지는 반드시 영어(English)로** 작성합니다.
 
 ```text
-[Phase X] Title (Under 50 chars, clear and concise English)
+Title (Under 50 chars, clear and concise English)
 
 Provide a detailed explanation of the implemented features, bug fixes,
 or structural changes. Describe 'Why' and 'What' was done extensively
@@ -58,7 +58,7 @@ but clearly. (Wrap text at 72 characters)
 
 ### 작성 예시 (Good)
 ```text
-[Phase 2] Switch from LXC to lightweight runc for ContainerEngine
+Switch from LXC to lightweight runc for ContainerEngine
 
 Refactored the ContainerEngine implementation to use the lightweight
 `runc` CLI via `std::system` instead of relying on `liblxc` APIs.

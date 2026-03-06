@@ -86,8 +86,8 @@ int ConnectToSocket() {
   struct sockaddr_un addr;
   std::memset(&addr, 0, sizeof(addr));
   addr.sun_family = AF_UNIX;
-  // Abstract namespace: \0tizenclaw.ipc
-  const char kName[] = "tizenclaw.ipc";
+  // Abstract namespace: \0tizenclaw.sock
+  const char kName[] = "tizenclaw.sock";
   std::memcpy(addr.sun_path + 1, kName,
               sizeof(kName) - 1);
   socklen_t addr_len =
@@ -97,7 +97,7 @@ int ConnectToSocket() {
   if (connect(sock,
               reinterpret_cast<struct sockaddr*>(&addr),
               addr_len) < 0) {
-    std::cerr << "Error: connect(\\0tizenclaw.ipc) failed: "
+    std::cerr << "Error: connect(\\0tizenclaw.sock) failed: "
               << strerror(errno) << "\n"
               << "Is *tizenclaw.service* running?\n";
     close(sock);

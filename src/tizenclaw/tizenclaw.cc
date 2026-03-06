@@ -119,8 +119,8 @@ void TizenClawDaemon::IpcServerLoop() {
     std::memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
 
-    // Abstract namespace socket: "\0tizenclaw.ipc"
-    const char kSocketName[] = "tizenclaw.ipc";
+    // Abstract namespace socket: "\0tizenclaw.sock"
+    const char kSocketName[] = "tizenclaw.sock";
     constexpr size_t kNameLen =
         1 + sizeof(kSocketName) - 1;
     std::memcpy(addr.sun_path + 1, kSocketName,
@@ -146,7 +146,7 @@ void TizenClawDaemon::IpcServerLoop() {
         return;
     }
 
-    LOG(INFO) << "IPC Server listening on \\0tizenclaw.ipc (addr_len=" << addr_len << ")";
+    LOG(INFO) << "IPC Server listening on \\0tizenclaw.sock (addr_len=" << addr_len << ")";
 
     while (ipc_running_) {
         int client_sock =
