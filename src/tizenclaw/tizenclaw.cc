@@ -1,4 +1,6 @@
 #include "tizenclaw.hh"
+#include "key_store.hh"
+#include "audit_logger.hh"
 
 #include <iostream>
 #include <string>
@@ -187,11 +189,31 @@ void TizenClawDaemon::IpcServerLoop() {
 
         if (!IsAllowedUid(cred.uid)) {
             LOG(WARNING) << "Rejected IPC from uid=" << cred.uid << " pid=" << cred.pid;
+            AuditLogger::Instance().Log(
+                AuditLogger::MakeEvent(
+                    AuditEventType::kIpcAuth,
+                    "",
+                    {{"uid",
+                      static_cast<int>(
+                          cred.uid)},
+                     {"pid",
+                      static_cast<int>(
+                          cred.pid)},
+                     {"allowed", false}}));
             close(client_sock);
             continue;
         }
 
         LOG(INFO) << "Authorized IPC from pid=" << cred.pid << " uid=" << cred.uid;
+        AuditLogger::Instance().Log(
+            AuditLogger::MakeEvent(
+                AuditEventType::kIpcAuth,
+                "",
+                {{"uid",
+                  static_cast<int>(cred.uid)},
+                 {"pid",
+                  static_cast<int>(cred.pid)},
+                 {"allowed", true}}));
 
         // Check concurrent client limit
         if (active_clients_.load() >= kMaxConcurrentClients) {
@@ -418,6 +440,22 @@ int main(int argc, char *argv[]) {
         mcp.RunStdio();
         agent.Shutdown();
         return 0;
+    }
+
+    // --encrypt-keys mode: encrypt plaintext API
+    // keys in llm_config.json in-place
+    if (argc > 1 &&
+        std::string(argv[1]) ==
+            "--encrypt-keys") {
+        std::string config_path =
+            "/opt/usr/share/tizenclaw/config/"
+            "llm_config.json";
+        if (argc > 2) config_path = argv[2];
+        LOG(INFO) << "Encrypting keys in: "
+                  << config_path;
+        bool ok =
+            KeyStore::EncryptConfig(config_path);
+        return ok ? 0 : 1;
     }
 
     LOG(INFO) << "TizenClaw Service starting...";

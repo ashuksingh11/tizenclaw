@@ -21,6 +21,9 @@ set(UNIT_TEST_SRCS
     http_client_test.cc
     session_store_test.cc
     mcp_server_test.cc
+    tool_policy_test.cc
+    key_store_test.cc
+    audit_logger_test.cc
 )
 
 # Mock Sources
@@ -43,6 +46,9 @@ set(CORE_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/telegram_client.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/session_store.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/mcp_server.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/tool_policy.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/key_store.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/audit_logger.cc
 )
 
 add_executable(tizenclaw-unittests

@@ -118,6 +118,7 @@ mkdir -p %{buildroot}/opt/usr/share/tizenclaw/config
 /opt/usr/share/tizenclaw/config/llm_config.json.sample
 /opt/usr/share/tizenclaw/config/telegram_config.json.sample
 /opt/usr/share/tizenclaw/config/system_prompt.txt
+/opt/usr/share/tizenclaw/config/tool_policy.json
 /opt/usr/share/tizenclaw/skills/
 %dir /opt/usr/share/tizenclaw/config/
 %dir /opt/usr/share/tizenclaw/

@@ -24,6 +24,7 @@ pkg_check_modules(PKGS REQUIRED
     libcurl
 )
 
+
 # Include directories (plus nlohmann_json)
 include_directories(
     src/tizenclaw
@@ -49,11 +50,16 @@ set(SOURCES
     src/tizenclaw/telegram_client.cc
     src/tizenclaw/session_store.cc
     src/tizenclaw/mcp_server.cc
+    src/tizenclaw/tool_policy.cc
+    src/tizenclaw/key_store.cc
+    src/tizenclaw/audit_logger.cc
 )
 
 # Executable
 add_executable(${PACKAGE} ${SOURCES})
-target_link_libraries(${PACKAGE} ${PKGS_LIBRARIES})
+target_link_libraries(${PACKAGE}
+    ${PKGS_LIBRARIES}
+)
 
 # CLI test tool (no Tizen deps — pure POSIX sockets)
 add_executable(tizenclaw-cli src/tools/tizenclaw_cli.cc)
@@ -72,7 +78,7 @@ install(PROGRAMS
     DESTINATION /usr/libexec/tizenclaw/
 )
 install(FILES data/rootfs.tar.gz DESTINATION /opt/usr/share/tizenclaw/)
-install(FILES data/llm_config.json.sample data/telegram_config.json.sample data/system_prompt.txt DESTINATION /opt/usr/share/tizenclaw/config/)
+install(FILES data/llm_config.json.sample data/telegram_config.json.sample data/system_prompt.txt data/tool_policy.json DESTINATION /opt/usr/share/tizenclaw/config/)
 install(DIRECTORY skills/ DESTINATION /opt/usr/share/tizenclaw/skills/)
 install(PROGRAMS scripts/start_mcp_tunnel.sh DESTINATION /usr/bin/)
 # Unit Tests (run during %check)

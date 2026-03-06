@@ -1,5 +1,6 @@
 {
     "name": "terminate_app",
+    "risk_level": "high",
     "description": "Terminate a running Tizen application by its app_id. Use this to stop or close an app that is currently running.",
     "parameters": {
         "type": "object",

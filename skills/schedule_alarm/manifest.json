@@ -3,6 +3,7 @@
     "version": "1.0",
     "description": "Uses Tizen CAPI alarm to schedule a task to run after a certain delay matching a cron/scheduler feature.",
     "entrypoint": "python3 schedule_alarm.py",
+    "risk_level": "high",
     "dependencies": [],
     "parameters": {
         "type": "object",

@@ -77,7 +77,7 @@ timeline
                        : Markdown persistent storage
                        : Token counting per model
     section Security & Automation
-        Phase 10       : 🟡 Security Hardening
+        Phase 10       : ✅ Security Hardening
                        : Tool execution policy
                        : API key encrypted storage
                        : Structured audit logging
@@ -262,7 +262,7 @@ timeline
 
 ---
 
-## Phase 10: Security Hardening 🟡
+## Phase 10: Security Hardening ✅
 
 > **Goal**: Tool execution safety, credential protection, audit trail
 
@@ -274,9 +274,11 @@ timeline
 | **Plan** | Per-skill `risk_level` + loop detection + policy violation feedback |
 
 **Done When:**
-- [ ] Side-effect skills (`launch_app`, `vibrate_device`) marked `risk_level: "high"`
-- [ ] Same skill + same args repeated 3x → blocked (loop prevention)
-- [ ] Policy violation reason in LLM feedback
+- [x] Side-effect skills (`launch_app`, `vibrate_device`, `terminate_app`, `schedule_alarm`) marked `risk_level: "high"`
+- [x] Read-only skills (`get_battery_info`, `get_wifi_info`, `get_bluetooth_info`, `list_apps`, `get_device_info`) marked `risk_level: "low"`
+- [x] Same skill + same args repeated 3x → blocked (loop prevention)
+- [x] Policy violation reason fed back to LLM as tool result
+- [x] Configurable policy via `tool_policy.json` (`max_repeat_count`, `blocked_skills`, `risk_overrides`)
 
 ---
 
@@ -285,12 +287,13 @@ timeline
 |------|---------|
 | **Gap** | API keys plaintext in `llm_config.json` |
 | **Ref** | OpenClaw: `secrets/` · NanoClaw: stdin delivery |
-| **Plan** | Tizen KeyManager C-API integration or AES-encrypted file |
+| **Plan** | GLib SHA-256 key derivation + XOR stream cipher (device-bound encryption) |
 
 **Done When:**
-- [ ] Encrypted storage/retrieval via KeyManager (when available)
-- [ ] Fallback to existing plaintext file
-- [ ] Migration guide for removing keys from `llm_config.json`
+- [x] Encrypted storage with `ENC:` prefix + base64 format (backward compatible with plaintext)
+- [x] Device-bound key derivation from `/etc/machine-id` via GLib GChecksum
+- [x] CLI migration tool: `tizenclaw --encrypt-keys [config_path]`
+- [x] Auto-decrypt at startup in `AgentCore::Initialize()`
 
 ---
 
@@ -299,12 +302,13 @@ timeline
 |------|---------|
 | **Gap** | dlog plain text — no structured query or remote collection |
 | **Ref** | OpenClaw: Pino JSON logging · NanoClaw: Pino JSON logging |
-| **Plan** | Structured JSON log entries for security-sensitive events |
+| **Plan** | Markdown audit log files (consistent with Phase 9 storage format) |
 
 **Done When:**
-- [ ] All IPC requests, tool executions, auth events logged as structured JSON
-- [ ] Log rotation with configurable retention
-- [ ] dlog + file dual output
+- [x] All IPC auth, tool executions, policy violations, config changes logged as Markdown table rows
+- [x] Daily audit files at `audit/YYYY-MM-DD.md` with YAML frontmatter
+- [x] Size-based log rotation (5MB, max 5 rotated files)
+- [x] dlog + file dual output
 
 ---
 

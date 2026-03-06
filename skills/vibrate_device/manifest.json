@@ -3,6 +3,7 @@
     "version": "1.0",
     "description": "An OpenClaw compatible skill to trigger haptic vibration feedback on the Tizen device.",
     "entrypoint": "python3 vibrate_device.py",
+    "risk_level": "high",
     "dependencies": [],
     "parameters": {
         "type": "object",

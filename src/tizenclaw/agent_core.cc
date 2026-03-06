@@ -6,6 +6,8 @@
 #include <sys/stat.h>
 
 #include "agent_core.hh"
+#include "audit_logger.hh"
+#include "key_store.hh"
 #include "../common/logging.hh"
 
 namespace tizenclaw {
@@ -87,6 +89,25 @@ bool AgentCore::Initialize() {
         llm_config["backends"][backend_name];
   }
 
+  // Decrypt API key if encrypted
+  if (backend_config.contains("api_key")) {
+    std::string api_key =
+        backend_config["api_key"]
+            .get<std::string>();
+    if (KeyStore::IsEncrypted(api_key)) {
+      std::string decrypted =
+          KeyStore::Decrypt(api_key);
+      if (!decrypted.empty()) {
+        backend_config["api_key"] = decrypted;
+        LOG(INFO) << "API key decrypted for: "
+                  << backend_name;
+      } else {
+        LOG(ERROR)
+            << "Failed to decrypt API key";
+      }
+    }
+  }
+
   // For xAI, inject provider_name so OpenAiBackend
   // knows its identity
   if (backend_name == "xai" ||
@@ -109,12 +130,30 @@ bool AgentCore::Initialize() {
   // Load system prompt
   m_system_prompt = LoadSystemPrompt(llm_config);
   if (!m_system_prompt.empty()) {
-    LOG(INFO) << "System prompt loaded (" << m_system_prompt.size() << " chars)";
+    LOG(INFO) << "System prompt loaded ("
+              << m_system_prompt.size()
+              << " chars)";
   } else {
     LOG(WARNING) << "No system prompt configured";
   }
 
-  LOG(INFO) << "AgentCore initialized with backend: " << m_backend->GetName();
+  // Load tool execution policy
+  std::string policy_path =
+      "/opt/usr/share/tizenclaw/config/"
+      "tool_policy.json";
+  tool_policy_.LoadConfig(policy_path);
+
+  // Audit: config loaded
+  AuditLogger::Instance().Log(
+      AuditLogger::MakeEvent(
+          AuditEventType::kConfigChange,
+          "",
+          {{"backend",
+            m_backend->GetName()}}));
+
+  LOG(INFO) << "AgentCore initialized with "
+            << "backend: "
+            << m_backend->GetName();
   m_initialized = true;
   return true;
 }
@@ -268,6 +307,27 @@ std::string AgentCore::ProcessPrompt(
         ToolExecResult r;
         r.id = tc.id;
         r.name = tc.name;
+
+        // Check tool execution policy
+        std::string violation =
+            tool_policy_.CheckPolicy(
+                session_id, tc.name, tc.args);
+        if (!violation.empty()) {
+          LOG(WARNING)
+              << "Tool blocked by policy: "
+              << tc.name << " - "
+              << violation;
+          r.output = "{\"error\": \""
+              + violation + "\"}";
+          AuditLogger::Instance().Log(
+              AuditLogger::MakeEvent(
+                  AuditEventType::kToolBlocked,
+                  session_id,
+                  {{"skill", tc.name},
+                   {"reason", violation}}));
+          return r;
+        }
+
         auto start =
             std::chrono::steady_clock::now();
         if (tc.name == "execute_code") {
@@ -299,6 +359,14 @@ std::string AgentCore::ProcessPrompt(
                 0, std::min((size_t)200,
                             r.output.size())),
             static_cast<int>(elapsed));
+        AuditLogger::Instance().Log(
+            AuditLogger::MakeEvent(
+                AuditEventType::kToolExecution,
+                session_id,
+                {{"skill", tc.name},
+                 {"duration",
+                  std::to_string(elapsed)
+                      + "ms"}}));
         return r;
       }));
     }
@@ -430,6 +498,9 @@ AgentCore::LoadSkillDeclarations() {
             j.value("description", "");
         t.parameters = j["parameters"];
         tools.push_back(t);
+        // Load risk_level from manifest
+        tool_policy_.LoadManifestRiskLevel(
+            t.name, j);
       }
     } catch (...) {
       LOG(WARNING) << "Failed to parse manifest: " << manifest_path;
@@ -724,6 +795,7 @@ void AgentCore::ClearSession(
   std::lock_guard<std::mutex> lock(session_mutex_);
   m_sessions.erase(session_id);
   session_store_.DeleteSession(session_id);
+  tool_policy_.ResetSession(session_id);
 }
 
 std::string AgentCore::ExecuteSkillForMcp(

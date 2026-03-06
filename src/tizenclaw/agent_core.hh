@@ -11,6 +11,7 @@
 #include "container_engine.hh"
 #include "llm_backend.hh"
 #include "session_store.hh"
+#include "tool_policy.hh"
 #include <mutex>
 
 namespace tizenclaw {
@@ -96,6 +97,7 @@ private:
     static constexpr int kMaxIterations = 5;
 
     SessionStore session_store_;
+    ToolPolicy tool_policy_;
 };
 
 } // namespace tizenclaw

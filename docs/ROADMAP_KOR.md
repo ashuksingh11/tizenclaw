@@ -77,7 +77,7 @@ timeline
                        : Markdown 영구 저장소
                        : 모델별 토큰 카운팅
     section 보안 & 자동화
-        Phase 10       : 🟡 보안 강화
+        Phase 10       : ✅ 보안 강화
                        : 도구 실행 정책
                        : API 키 암호화 저장
                        : 구조화 감사 로깅
@@ -262,7 +262,7 @@ timeline
 
 ---
 
-## Phase 10: 보안 강화 🟡
+## Phase 10: 보안 강화 ✅
 
 > **목표**: 도구 실행 안전성, 자격증명 보호, 감사 추적
 
@@ -274,9 +274,11 @@ timeline
 | **계획** | 스킬별 `risk_level` + 루프 감지 + 정책 위반 피드백 |
 
 **완료 기준:**
-- [ ] 부작용 스킬 (`launch_app`, `vibrate_device`) `risk_level: "high"` 지정
-- [ ] 동일 스킬 + 동일 인자 3회 반복 → 차단 (루프 방지)
-- [ ] 정책 위반 사유를 LLM 피드백에 포함
+- [x] 부작용 스킬 (`launch_app`, `vibrate_device`, `terminate_app`, `schedule_alarm`) `risk_level: "high"` 지정
+- [x] 읽기 전용 스킬 (`get_battery_info`, `get_wifi_info`, `get_bluetooth_info`, `list_apps`, `get_device_info`) `risk_level: "low"` 지정
+- [x] 동일 스킬 + 동일 인자 3회 반복 → 차단 (루프 방지)
+- [x] 정책 위반 사유를 LLM에 도구 결과로 피드백
+- [x] `tool_policy.json`으로 정책 설정 가능 (`max_repeat_count`, `blocked_skills`, `risk_overrides`)
 
 ---
 
@@ -285,12 +287,13 @@ timeline
 |------|------|
 | **갭** | `llm_config.json`에 API 키 평문 저장 |
 | **참고** | OpenClaw: `secrets/` · NanoClaw: stdin 전달 |
-| **계획** | Tizen KeyManager C-API 연동 또는 AES 암호화 파일 |
+| **계획** | GLib SHA-256 키 유도 + XOR 스트림 암호화 (디바이스 바인딩) |
 
 **완료 기준:**
-- [ ] KeyManager 사용 가능 시 암호화 저장/조회
-- [ ] 기존 평문 파일 폴백
-- [ ] `llm_config.json`에서 키 제거 마이그레이션 가이드
+- [x] `ENC:` 접두사 + base64 형식의 암호화 저장 (평문 하위 호환)
+- [x] `/etc/machine-id` 기반 GLib GChecksum 키 유도
+- [x] CLI 마이그레이션 도구: `tizenclaw --encrypt-keys [config_path]`
+- [x] `AgentCore::Initialize()`에서 자동 복호화
 
 ---
 
@@ -299,12 +302,13 @@ timeline
 |------|------|
 | **갭** | dlog 평문 — 구조화 쿼리 불가, 원격 수집 미지원 |
 | **참고** | OpenClaw: Pino JSON 로깅 · NanoClaw: Pino JSON 로깅 |
-| **계획** | 보안 민감 이벤트에 대한 구조화 JSON 로그 엔트리 |
+| **계획** | Markdown 감사 로그 파일 (Phase 9 저장 형식과 일관) |
 
 **완료 기준:**
-- [ ] 모든 IPC 요청, 도구 실행, 인증 이벤트를 구조화 JSON으로 로깅
-- [ ] 설정 가능한 보존 기간의 로그 로테이션
-- [ ] dlog + 파일 이중 출력
+- [x] 모든 IPC 인증, 도구 실행, 정책 위반, 설정 변경을 Markdown 테이블 행으로 로깅
+- [x] `audit/YYYY-MM-DD.md` 일별 감사 파일 (YAML frontmatter 포함)
+- [x] 크기 기반 로그 로테이션 (5MB, 최대 5개 로테이션)
+- [x] dlog + 파일 이중 출력
 
 ---
 
