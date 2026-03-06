@@ -1,6 +1,6 @@
 # TizenClaw Development Roadmap v3.0
 
-> **Date**: 2026-03-06
+> **Date**: 2026-03-07
 > **Reference**: [Project Analysis](ANALYSIS.md) | [System Design](DESIGN.md)
 
 ---
@@ -11,29 +11,29 @@
 
 | Category | Feature | OpenClaw | NanoClaw | TizenClaw | Gap |
 |----------|---------|:--------:|:--------:|:---------:|:---:|
-| **IPC** | Multi-client concurrency | ✅ Parallel sessions | ✅ Group queue | ❌ Sequential | 🔴 |
-| **IPC** | Streaming responses | ✅ SSE / WebSocket | ✅ `onOutput` callback | ❌ Blocking | 🔴 |
-| **IPC** | Robust message framing | ✅ WebSocket + JSON-RPC | ✅ Sentinel markers | ⚠️ Length-prefix (partial) | 🟡 |
-| **Memory** | Conversation persistence | ✅ SQLite + Vector DB | ✅ SQLite | ⚠️ JSON file (partial) | 🟡 |
-| **Memory** | Context compaction | ✅ LLM auto-summarize | ❌ | ❌ 20-turn FIFO | 🔴 |
+| **IPC** | Multi-client concurrency | ✅ Parallel sessions | ✅ Group queue | ✅ Thread pool | ✅ |
+| **IPC** | Streaming responses | ✅ SSE / WebSocket | ✅ `onOutput` callback | ✅ Chunked IPC | ✅ |
+| **IPC** | Robust message framing | ✅ WebSocket + JSON-RPC | ✅ Sentinel markers | ✅ Length-prefix + JSON-RPC | ✅ |
+| **Memory** | Conversation persistence | ✅ SQLite + Vector DB | ✅ SQLite | ✅ Markdown (YAML frontmatter) | ✅ |
+| **Memory** | Context compaction | ✅ LLM auto-summarize | ❌ | ✅ LLM auto-summarize | ✅ |
 | **Memory** | Semantic search (RAG) | ✅ MMR + embeddings | ❌ | ❌ | 🔴 |
-| **LLM** | Model fallback | ✅ Auto-switch (18K LOC) | ❌ | ❌ Error only | 🔴 |
-| **LLM** | Token counting | ✅ Per-model accurate | ❌ | ❌ | 🟡 |
-| **LLM** | Usage tracking | ✅ Per-model token usage | ❌ | ❌ | 🟡 |
-| **Security** | Tool execution policy | ✅ Whitelist/blacklist | ❌ | ❌ | 🔴 |
-| **Security** | Sender allowlist | ✅ `allowlist-match.ts` | ✅ `sender-allowlist.ts` | ⚠️ UID only | 🟡 |
-| **Security** | API key management | ✅ Rotation + encrypted | ✅ stdin delivery | ❌ Plaintext JSON | 🔴 |
-| **Security** | Audit logging | ✅ 45K LOC `audit.ts` | ✅ `ipc-auth.test.ts` | ⚠️ dlog only | 🟡 |
-| **Automation** | Task scheduler | ✅ Basic cron | ✅ cron/interval/one-shot | ❌ `schedule_alarm` only | 🔴 |
-| **Channel** | Multi-channel support | ✅ 22+ channels | ✅ 5 channels (via skills) | ⚠️ 2 (Telegram, MCP) | 🟡 |
-| **Channel** | Channel abstraction | ✅ Static registry | ✅ Self-registration | ❌ Hardcoded | 🔴 |
+| **LLM** | Model fallback | ✅ Auto-switch (18K LOC) | ❌ | ✅ Auto-switch + backoff | ✅ |
+| **LLM** | Token counting | ✅ Per-model accurate | ❌ | ✅ Per-model parsing | ✅ |
+| **LLM** | Usage tracking | ✅ Per-model token usage | ❌ | ✅ Daily/monthly Markdown | ✅ |
+| **Security** | Tool execution policy | ✅ Whitelist/blacklist | ❌ | ✅ Risk-level + loop detect | ✅ |
+| **Security** | Sender allowlist | ✅ `allowlist-match.ts` | ✅ `sender-allowlist.ts` | ✅ UID + chat_id | ✅ |
+| **Security** | API key management | ✅ Rotation + encrypted | ✅ stdin delivery | ✅ Device-bound encryption | ✅ |
+| **Security** | Audit logging | ✅ 45K LOC `audit.ts` | ✅ `ipc-auth.test.ts` | ✅ Markdown audit + dlog | ✅ |
+| **Automation** | Task scheduler | ✅ Basic cron | ✅ cron/interval/one-shot | ✅ cron/interval/once/weekly | ✅ |
+| **Channel** | Multi-channel support | ✅ 22+ channels | ✅ 5 channels (via skills) | ✅ 2 (Telegram, MCP) + extensible | 🟡 |
+| **Channel** | Channel abstraction | ✅ Static registry | ✅ Self-registration | ✅ C++ Channel interface | ✅ |
 | **Prompt** | System prompt | ✅ Dynamic generation | ✅ Per-group `CLAUDE.md` | ✅ External file + dynamic | ✅ |
 | **Agent** | Agent-to-Agent | ✅ `sessions_send` | ✅ Agent Swarms | ❌ | 🟢 |
-| **Agent** | Loop detection | ✅ 18K LOC detector | ✅ Timeout + idle | ⚠️ `kMaxIterations=5` | 🟡 |
-| **Agent** | tool_call_id mapping | ✅ Accurate tracking | ✅ SDK native | ⚠️ Hardcoded IDs | 🟡 |
+| **Agent** | Loop detection | ✅ 18K LOC detector | ✅ Timeout + idle | ✅ Repeat + idle + configurable | ✅ |
+| **Agent** | tool_call_id mapping | ✅ Accurate tracking | ✅ SDK native | ✅ Per-backend parsing | ✅ |
 | **Infra** | DB engine | ✅ SQLite + sqlite-vec | ✅ SQLite | ❌ | 🔴 |
-| **Infra** | Structured logging | ✅ Pino (JSON) | ✅ Pino (JSON) | ❌ dlog plain | 🟡 |
-| **Infra** | Skill hot-reload | ✅ Runtime install | ✅ apply/rebase | ❌ Manual copy | 🟢 |
+| **Infra** | Structured logging | ✅ Pino (JSON) | ✅ Pino (JSON) | ✅ Markdown audit tables | ✅ |
+| **Infra** | Skill hot-reload | ✅ Runtime install | ✅ apply/rebase | ✅ inotify auto-reload | ✅ |
 | **UX** | Browser control | ✅ CDP Chrome | ❌ | ❌ | 🟢 |
 | **UX** | Voice interface | ✅ Wake word + TTS | ❌ | ❌ | 🟢 |
 | **UX** | Web UI | ✅ Control UI + WebChat | ❌ | ❌ | 🟢 |
@@ -77,20 +77,20 @@ timeline
                        : Markdown persistent storage
                        : Token counting per model
     section Security & Automation
-        Phase 10       : ✅ Security Hardening
+        Phase 10 (Done) : Security Hardening
                        : Tool execution policy
                        : API key encrypted storage
                        : Structured audit logging
-        Phase 11       : ✅ Task Scheduler & Cron
+        Phase 11 (Done) : Task Scheduler & Cron
                        : In-process scheduler thread
                        : Task CRUD built-in tools
                        : Markdown task persistence
     section Platform Extensibility
-        Phase 12       : ✅ Extensibility Layer
+        Phase 12 (Done) : Extensibility Layer
                        : Channel abstraction (C++ interface)
                        : System prompt externalization
                        : LLM usage tracking (Markdown)
-        Phase 13       : 🟡 Skill Ecosystem
+        Phase 13 (Done) : Skill Ecosystem
                        : Skill hot-reload (inotify)
                        : Model fallback auto-switch
                        : Loop detection enhancement
@@ -404,7 +404,7 @@ timeline
 
 ---
 
-## Phase 13: Skill Ecosystem 🟡
+## Phase 13: Skill Ecosystem ✅ (Done)
 
 > **Goal**: Robust skill management and LLM resilience
 
@@ -413,12 +413,19 @@ timeline
 |------|---------|
 | **Gap** | Daemon restart required for new/modified skills |
 | **Ref** | OpenClaw: runtime skill updates · NanoClaw: skills-engine apply/rebase |
-| **Plan** | `inotify` file change detection → auto manifest reload |
+| **Impl** | `SkillWatcher` class using Linux `inotify` API with 500ms debouncing |
+
+**Implementation:**
+- `SkillWatcher` monitors `/opt/usr/share/tizenclaw/skills/` for `manifest.json` changes
+- 500ms debouncing to batch rapid file changes
+- Auto-watch for newly created skill subdirectories
+- Thread-safe `ReloadSkills()` in `AgentCore` clears cache and rebuilds system prompt
+- Integrated into `TizenClawDaemon` lifecycle (`OnCreate`/`OnDestroy`)
 
 **Done When:**
-- [ ] New skill directory detected automatically
-- [ ] Modified `manifest.json` triggers reload
-- [ ] No daemon restart needed
+- [x] New skill directory detected automatically
+- [x] Modified `manifest.json` triggers reload
+- [x] No daemon restart needed
 
 ---
 
@@ -427,12 +434,19 @@ timeline
 |------|---------|
 | **Gap** | LLM API failure returns error — no retry with alternatives |
 | **Ref** | OpenClaw: `model-fallback.ts` (18K LOC) |
-| **Plan** | `fallback_backends` array in `llm_config.json`, sequential retry |
+| **Impl** | `fallback_backends` array in `llm_config.json`, `TryFallbackBackends()` sequential retry |
+
+**Implementation:**
+- `fallback_backends` array in `llm_config.json` for sequential LLM backend retry
+- `TryFallbackBackends()` creates and initializes fallback backends lazily
+- API key decryption and xAI identity injection for fallback backends
+- Rate-limit (HTTP 429) detection with exponential backoff
+- Successful fallback switches primary backend and logs audit event
 
 **Done When:**
-- [ ] Gemini failure → auto try OpenAI → Ollama
-- [ ] Fallback logged with reason
-- [ ] Rate-limit errors trigger backoff before retry
+- [x] Gemini failure → auto try OpenAI → Ollama
+- [x] Fallback logged with reason
+- [x] Rate-limit errors trigger backoff before retry
 
 ---
 
@@ -441,12 +455,18 @@ timeline
 |------|---------|
 | **Gap** | Only `kMaxIterations = 5` — no content-aware detection |
 | **Ref** | OpenClaw: 18K LOC `tool-loop-detection.ts` · NanoClaw: timeout + idle detection |
-| **Plan** | Detect same tool+args repetition, idle detection, configurable max iterations |
+| **Impl** | `ToolPolicy::CheckIdleProgress()` + configurable `max_iterations` in `tool_policy.json` |
+
+**Implementation:**
+- Idle detection via `ToolPolicy::CheckIdleProgress()`: tracks last 3 iteration outputs
+- Stops if all identical (no progress) with user-friendly message
+- Configurable `max_iterations` in `tool_policy.json` (replaces hardcoded `kMaxIterations=5`)
+- `ResetIdleTracking()` called at `ProcessPrompt` start
 
 **Done When:**
-- [ ] Same tool + same args repeated 3x → force stop with explanation
-- [ ] Idle detection (no progress across iterations)
-- [ ] `max_iterations` configurable per session
+- [x] Same tool + same args repeated 3x → force stop with explanation
+- [x] Idle detection (no progress across iterations)
+- [x] `max_iterations` configurable per session
 
 ---
 
@@ -557,11 +577,11 @@ graph TD
     P14 --> P15
 
     style P8 fill:#4ecdc4,color:#fff
-    style P9 fill:#ff6b6b,color:#fff
-    style P10 fill:#ffd93d,color:#333
-    style P11 fill:#ffd93d,color:#333
-    style P12 fill:#ffd93d,color:#333
-    style P13 fill:#ffd93d,color:#333
+    style P9 fill:#4ecdc4,color:#fff
+    style P10 fill:#4ecdc4,color:#fff
+    style P11 fill:#4ecdc4,color:#fff
+    style P12 fill:#4ecdc4,color:#fff
+    style P13 fill:#4ecdc4,color:#fff
     style P14 fill:#6bcb77,color:#fff
     style P15 fill:#6bcb77,color:#fff
 ```
@@ -569,12 +589,12 @@ graph TD
 | Phase | Core Goal | Est. LOC | Priority | Dependencies |
 |:-----:|-----------|:--------:|:--------:|:------------:|
 | **8** | Streaming & concurrency | ~1,000 | ✅ Done | Phase 7 ✅ |
-| **9** | Context & memory | ~1,200 | 🔴 Critical | Phase 8 ✅ |
-| **10** | Security hardening | ~800 | 🟡 Medium | Phase 9 |
+| **9** | Context & memory | ~1,200 | ✅ Done | Phase 8 ✅ |
+| **10** | Security hardening | ~800 | ✅ Done | Phase 9 ✅ |
 | **11** | Task scheduler & cron | ~1,000 | ✅ Done | Phase 9 ✅ |
-| **12** | Extensibility layer | ~600 | ✅ Done | Phase 10, 11 |
-| **13** | Skill ecosystem | ~800 | 🟡 Medium | Phase 12 |
-| **14** | New channels & integrations | ~1,200 | 🟢 Low | Phase 12 |
+| **12** | Extensibility layer | ~600 | ✅ Done | Phase 10, 11 ✅ |
+| **13** | Skill ecosystem | ~800 | ✅ Done | Phase 12 ✅ |
+| **14** | New channels & integrations | ~1,200 | 🟢 Low | Phase 12 ✅ |
 | **15** | Advanced platform features | ~2,000 | 🟢 Low | Phase 13, 14 |
 
 > **Total estimated additional code**: ~8,600 LOC (current ~4,500 LOC → ~13,100 LOC)

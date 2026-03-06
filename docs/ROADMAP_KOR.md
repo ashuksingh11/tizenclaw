@@ -1,6 +1,6 @@
 # TizenClaw 개발 로드맵 v3.0
 
-> **작성일**: 2026-03-06
+> **작성일**: 2026-03-07
 > **기반 문서**: [프로젝트 분석](ANALYSIS.md) | [설계 문서](DESIGN.md)
 
 ---
@@ -11,29 +11,29 @@
 
 | 카테고리 | 기능 | OpenClaw | NanoClaw | TizenClaw | 갭 |
 |----------|------|:--------:|:--------:|:---------:|:--:|
-| **IPC** | 다중 클라이언트 동시 처리 | ✅ 병렬 세션 | ✅ 그룹 큐 | ❌ 순차 처리 | 🔴 |
-| **IPC** | 스트리밍 응답 | ✅ SSE / WebSocket | ✅ `onOutput` 콜백 | ❌ 블로킹 | 🔴 |
-| **IPC** | 견고한 메시지 프레이밍 | ✅ WebSocket + JSON-RPC | ✅ 센티널 마커 | ⚠️ 길이-프리픽스 (부분) | 🟡 |
-| **메모리** | 대화 영구 저장 | ✅ SQLite + Vector DB | ✅ SQLite | ⚠️ JSON 파일 (부분) | 🟡 |
-| **메모리** | 컨텍스트 압축 | ✅ LLM 자동 요약 | ❌ | ❌ 20턴 FIFO | 🔴 |
+| **IPC** | 다중 클라이언트 동시 처리 | ✅ 병렬 세션 | ✅ 그룹 큐 | ✅ 스레드 풀 | ✅ |
+| **IPC** | 스트리밍 응답 | ✅ SSE / WebSocket | ✅ `onOutput` 콜백 | ✅ 청크 IPC | ✅ |
+| **IPC** | 견고한 메시지 프레이밍 | ✅ WebSocket + JSON-RPC | ✅ 센티널 마커 | ✅ 길이-프리픽스 + JSON-RPC | ✅ |
+| **메모리** | 대화 영구 저장 | ✅ SQLite + Vector DB | ✅ SQLite | ✅ Markdown (YAML frontmatter) | ✅ |
+| **메모리** | 컨텍스트 압축 | ✅ LLM 자동 요약 | ❌ | ✅ LLM 자동 요약 | ✅ |
 | **메모리** | 시맨틱 검색 (RAG) | ✅ MMR + 임베딩 | ❌ | ❌ | 🔴 |
-| **LLM** | 모델 폴백 | ✅ 자동 전환 (18K LOC) | ❌ | ❌ 에러만 반환 | 🔴 |
-| **LLM** | 토큰 카운팅 | ✅ 모델별 정확 계산 | ❌ | ❌ | 🟡 |
-| **LLM** | 사용량 추적 | ✅ 모델별 토큰 사용량 | ❌ | ❌ | 🟡 |
-| **보안** | 도구 실행 정책 | ✅ 화이트/블랙리스트 | ❌ | ❌ | 🔴 |
-| **보안** | 발신자 허용목록 | ✅ `allowlist-match.ts` | ✅ `sender-allowlist.ts` | ⚠️ UID만 | 🟡 |
-| **보안** | API 키 관리 | ✅ 로테이션 + 암호화 | ✅ stdin 전달 | ❌ 평문 JSON | 🔴 |
-| **보안** | 감사 로깅 | ✅ 45K LOC `audit.ts` | ✅ `ipc-auth.test.ts` | ⚠️ dlog만 | 🟡 |
-| **자동화** | 태스크 스케줄러 | ✅ 기본 cron | ✅ cron/interval/일회성 | ❌ `schedule_alarm`만 | 🔴 |
-| **채널** | 멀티 채널 지원 | ✅ 22개 이상 | ✅ 5개 (스킬 기반) | ⚠️ 2개 (Telegram, MCP) | 🟡 |
-| **채널** | 채널 추상화 | ✅ 정적 레지스트리 | ✅ 자기 등록 | ❌ 하드코딩 | 🔴 |
+| **LLM** | 모델 폴백 | ✅ 자동 전환 (18K LOC) | ❌ | ✅ 자동 전환 + 백오프 | ✅ |
+| **LLM** | 토큰 카운팅 | ✅ 모델별 정확 계산 | ❌ | ✅ 모델별 파싱 | ✅ |
+| **LLM** | 사용량 추적 | ✅ 모델별 토큰 사용량 | ❌ | ✅ 일별/월별 Markdown | ✅ |
+| **보안** | 도구 실행 정책 | ✅ 화이트/블랙리스트 | ❌ | ✅ 위험등급 + 루프 감지 | ✅ |
+| **보안** | 발신자 허용목록 | ✅ `allowlist-match.ts` | ✅ `sender-allowlist.ts` | ✅ UID + chat_id | ✅ |
+| **보안** | API 키 관리 | ✅ 로테이션 + 암호화 | ✅ stdin 전달 | ✅ 디바이스 바인딩 암호화 | ✅ |
+| **보안** | 감사 로깅 | ✅ 45K LOC `audit.ts` | ✅ `ipc-auth.test.ts` | ✅ Markdown 감사 + dlog | ✅ |
+| **자동화** | 태스크 스케줄러 | ✅ 기본 cron | ✅ cron/interval/일회성 | ✅ cron/interval/once/weekly | ✅ |
+| **채널** | 멀티 채널 지원 | ✅ 22개 이상 | ✅ 5개 (스킬 기반) | ✅ 2개 (Telegram, MCP) + 확장 가능 | 🟡 |
+| **채널** | 채널 추상화 | ✅ 정적 레지스트리 | ✅ 자기 등록 | ✅ C++ Channel 인터페이스 | ✅ |
 | **프롬프트** | 시스템 프롬프트 | ✅ 동적 생성 | ✅ 그룹별 `CLAUDE.md` | ✅ 외부 파일 + 동적 생성 | ✅ |
 | **에이전트** | 에이전트 간 통신 | ✅ `sessions_send` | ✅ Agent Swarms | ❌ | 🟢 |
-| **에이전트** | 루프 감지 | ✅ 18K LOC 감지기 | ✅ 타임아웃 + idle | ⚠️ `kMaxIterations=5` | 🟡 |
-| **에이전트** | tool_call_id 매핑 | ✅ 정확 추적 | ✅ SDK 네이티브 | ⚠️ 하드코딩 ID | 🟡 |
+| **에이전트** | 루프 감지 | ✅ 18K LOC 감지기 | ✅ 타임아웃 + idle | ✅ 반복 + idle + 설정 가능 | ✅ |
+| **에이전트** | tool_call_id 매핑 | ✅ 정확 추적 | ✅ SDK 네이티브 | ✅ 백엔드별 파싱 | ✅ |
 | **인프라** | DB 엔진 | ✅ SQLite + sqlite-vec | ✅ SQLite | ❌ | 🔴 |
-| **인프라** | 구조화 로깅 | ✅ Pino (JSON) | ✅ Pino (JSON) | ❌ dlog 평문 | 🟡 |
-| **인프라** | 스킬 핫리로드 | ✅ 런타임 설치 | ✅ apply/rebase | ❌ 수동 복사 | 🟢 |
+| **인프라** | 구조화 로깅 | ✅ Pino (JSON) | ✅ Pino (JSON) | ✅ Markdown 감사 테이블 | ✅ |
+| **인프라** | 스킬 핫리로드 | ✅ 런타임 설치 | ✅ apply/rebase | ✅ inotify 자동 리로드 | ✅ |
 | **UX** | 브라우저 제어 | ✅ CDP Chrome | ❌ | ❌ | 🟢 |
 | **UX** | 음성 인터페이스 | ✅ 웨이크 워드 + TTS | ❌ | ❌ | 🟢 |
 | **UX** | 웹 UI | ✅ 제어 UI + 웹챗 | ❌ | ❌ | 🟢 |
@@ -77,20 +77,20 @@ timeline
                        : Markdown 영구 저장소
                        : 모델별 토큰 카운팅
     section 보안 & 자동화
-        Phase 10       : ✅ 보안 강화
+        Phase 10 (완료) : 보안 강화
                        : 도구 실행 정책
                        : API 키 암호화 저장
                        : 구조화 감사 로깅
-        Phase 11       : ✅ 태스크 스케줄러 & Cron
+        Phase 11 (완료) : 태스크 스케줄러 & Cron
                        : 인프로세스 스케줄러 스레드
                        : 태스크 CRUD 내장 도구
                        : Markdown 태스크 영구 저장
     section 플랫폼 확장
-        Phase 12       : ✅ 확장성 레이어
+        Phase 12 (완료) : 확장성 레이어
                        : 채널 추상화 (C++ 인터페이스)
                        : 시스템 프롬프트 외부화
                        : LLM 사용량 추적 (Markdown)
-        Phase 13       : 🟡 스킬 생태계
+        Phase 13 (완료) : 스킬 생태계
                        : 스킬 핫리로드 (inotify)
                        : 모델 폴백 자동 전환
                        : 루프 감지 강화
@@ -404,7 +404,7 @@ timeline
 
 ---
 
-## Phase 13: 스킬 생태계 🟡
+## Phase 13: 스킬 생태계 ✅ (완료)
 
 > **목표**: 강인한 스킬 관리와 LLM 복원력
 
@@ -413,12 +413,19 @@ timeline
 |------|------|
 | **갭** | 신규/수정 스킬 적용 시 데몬 재시작 필요 |
 | **참고** | OpenClaw: 런타임 스킬 업데이트 · NanoClaw: skills-engine apply/rebase |
-| **계획** | `inotify` 파일 변경 감지 → 매니페스트 자동 리로드 |
+| **구현** | `SkillWatcher` 클래스 — Linux `inotify` API + 500ms 디바운싱 |
+
+**구현 내용:**
+- `SkillWatcher`가 `/opt/usr/share/tizenclaw/skills/`에서 `manifest.json` 변경 감시
+- 500ms 디바운싱으로 빠른 파일 변경 배치 처리
+- 새로 생성된 스킬 하위 디렉터리 자동 감시
+- `AgentCore`의 스레드 안전 `ReloadSkills()` — 캐시 삭제 및 시스템 프롬프트 재생성
+- `TizenClawDaemon` 라이프사이클에 통합 (`OnCreate`/`OnDestroy`)
 
 **완료 기준:**
-- [ ] 새 스킬 디렉터리 자동 감지
-- [ ] `manifest.json` 수정 시 리로드 트리거
-- [ ] 데몬 재시작 불필요
+- [x] 새 스킬 디렉터리 자동 감지
+- [x] `manifest.json` 수정 시 리로드 트리거
+- [x] 데몬 재시작 불필요
 
 ---
 
@@ -427,12 +434,19 @@ timeline
 |------|------|
 | **갭** | LLM API 실패 시 에러 반환 — 대안 백엔드 미시도 |
 | **참고** | OpenClaw: `model-fallback.ts` (18K LOC) |
-| **계획** | `llm_config.json`에 `fallback_backends` 배열, 순차 재시도 |
+| **구현** | `llm_config.json`에 `fallback_backends` 배열, `TryFallbackBackends()` 순차 재시도 |
+
+**구현 내용:**
+- `llm_config.json`의 `fallback_backends` 배열로 순차 LLM 백엔드 재시도
+- `TryFallbackBackends()`가 폴백 백엔드를 지연 생성 및 초기화
+- 폴백 백엔드에 대한 API 키 복호화 및 xAI 아이덴티티 주입
+- rate-limit (HTTP 429) 감지 + 지수 백오프
+- 폴백 성공 시 주 백엔드 전환 및 감사 이벤트 로깅
 
 **완료 기준:**
-- [ ] Gemini 실패 → 자동으로 OpenAI → Ollama 시도
-- [ ] 폴백 사유 로깅
-- [ ] rate-limit 에러 시 백오프 후 재시도
+- [x] Gemini 실패 → 자동으로 OpenAI → Ollama 시도
+- [x] 폴백 사유 로깅
+- [x] rate-limit 에러 시 백오프 후 재시도
 
 ---
 
@@ -441,12 +455,18 @@ timeline
 |------|------|
 | **갭** | `kMaxIterations = 5`만 존재 — 컨텐츠 기반 감지 없음 |
 | **참고** | OpenClaw: 18K LOC `tool-loop-detection.ts` · NanoClaw: 타임아웃 + idle 감지 |
-| **계획** | 동일 도구+인자 반복 감지, idle 감지, 세션별 max iterations 설정 |
+| **구현** | `ToolPolicy::CheckIdleProgress()` + `tool_policy.json`의 `max_iterations` 설정 |
+
+**구현 내용:**
+- `ToolPolicy::CheckIdleProgress()`를 통한 idle 감지: 최근 3회 반복 출력 추적
+- 모든 출력이 동일하면 (진행 없음) 사용자 친화적 메시지와 함께 중단
+- `tool_policy.json`의 `max_iterations` 설정 (하드코딩된 `kMaxIterations=5` 대체)
+- `ProcessPrompt` 시작 시 `ResetIdleTracking()` 호출
 
 **완료 기준:**
-- [ ] 동일 도구 + 동일 인자 3회 반복 → 설명과 함께 강제 중단
-- [ ] 반복 간 진행 없음 감지 (idle)
-- [ ] 세션별 `max_iterations` 설정 가능
+- [x] 동일 도구 + 동일 인자 3회 반복 → 설명과 함께 강제 중단
+- [x] 반복 간 진행 없음 감지 (idle)
+- [x] 세션별 `max_iterations` 설정 가능
 
 ---
 
@@ -557,11 +577,11 @@ graph TD
     P14 --> P15
 
     style P8 fill:#4ecdc4,color:#fff
-    style P9 fill:#ff6b6b,color:#fff
-    style P10 fill:#ffd93d,color:#333
-    style P11 fill:#ffd93d,color:#333
-    style P12 fill:#ffd93d,color:#333
-    style P13 fill:#ffd93d,color:#333
+    style P9 fill:#4ecdc4,color:#fff
+    style P10 fill:#4ecdc4,color:#fff
+    style P11 fill:#4ecdc4,color:#fff
+    style P12 fill:#4ecdc4,color:#fff
+    style P13 fill:#4ecdc4,color:#fff
     style P14 fill:#6bcb77,color:#fff
     style P15 fill:#6bcb77,color:#fff
 ```
@@ -569,12 +589,12 @@ graph TD
 | Phase | 핵심 목표 | 예상 LOC | 우선순위 | 의존성 |
 |:-----:|---------|:--------:|:--------:|:------:|
 | **8** | 스트리밍 & 동시성 | ~1,000 | ✅ 완료 | Phase 7 ✅ |
-| **9** | 컨텍스트 & 메모리 | ~1,200 | 🔴 긴급 | Phase 8 ✅ |
-| **10** | 보안 강화 | ~800 | 🟡 중간 | Phase 9 |
+| **9** | 컨텍스트 & 메모리 | ~1,200 | ✅ 완료 | Phase 8 ✅ |
+| **10** | 보안 강화 | ~800 | ✅ 완료 | Phase 9 ✅ |
 | **11** | 태스크 스케줄러 & cron | ~1,000 | ✅ 완료 | Phase 9 ✅ |
-| **12** | 확장성 레이어 | ~600 | ✅ 완료 | Phase 10, 11 |
-| **13** | 스킬 생태계 | ~800 | 🟡 중간 | Phase 12 |
-| **14** | 신규 채널 & 통합 | ~1,200 | 🟢 낮음 | Phase 12 |
+| **12** | 확장성 레이어 | ~600 | ✅ 완료 | Phase 10, 11 ✅ |
+| **13** | 스킬 생태계 | ~800 | ✅ 완료 | Phase 12 ✅ |
+| **14** | 신규 채널 & 통합 | ~1,200 | 🟢 낮음 | Phase 12 ✅ |
 | **15** | 고급 플랫폼 기능 | ~2,000 | 🟢 낮음 | Phase 13, 14 |
 
 > **총 예상 추가 코드**: ~8,600 LOC (현재 ~4,500 LOC → ~13,100 LOC)
