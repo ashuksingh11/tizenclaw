@@ -9,7 +9,7 @@ endif()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTEST_DEPS REQUIRED gtest gmock)
-pkg_check_modules(CORE_DEPS REQUIRED tizen-core glib-2.0 dlog libcurl)
+pkg_check_modules(CORE_DEPS REQUIRED tizen-core glib-2.0 dlog libcurl sqlite3)
 pkg_check_modules(LIBSOUP REQUIRED libsoup-2.4)
 pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
 
@@ -32,6 +32,9 @@ set(UNIT_TEST_SRCS
     webhook_channel_test.cc
     agent_core_session_test.cc
     slack_discord_channel_test.cc
+    embedding_store_test.cc
+    web_dashboard_test.cc
+    voice_channel_test.cc
 )
 
 # Mock Sources
@@ -63,6 +66,9 @@ set(CORE_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/webhook_channel.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/slack_channel.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/discord_channel.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/embedding_store.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/web_dashboard.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/voice_channel.cc
 )
 
 add_executable(tizenclaw-unittests

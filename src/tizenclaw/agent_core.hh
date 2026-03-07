@@ -13,6 +13,7 @@
 #include "llm_backend.hh"
 #include "session_store.hh"
 #include "tool_policy.hh"
+#include "embedding_store.hh"
 #include "task_scheduler.hh"
 #include <mutex>
 
@@ -86,6 +87,16 @@ private:
         const std::string& operation,
         const nlohmann::json& args);
 
+    // Execute RAG operations
+    // (ingest_document, search_knowledge)
+    std::string ExecuteRagOp(
+        const std::string& operation,
+        const nlohmann::json& args);
+
+    // Generate embedding vector via LLM API
+    std::vector<float> GenerateEmbedding(
+        const std::string& text);
+
     // Load skill manifests as tool declarations
     std::vector<LlmToolDecl>
     LoadSkillDeclarations();
@@ -149,6 +160,9 @@ private:
     // Model fallback configuration
     std::vector<std::string> fallback_names_;
     nlohmann::json llm_config_;
+
+    // Embedding store for RAG
+    EmbeddingStore embedding_store_;
 
     // Task scheduler (owned by daemon)
     TaskScheduler* scheduler_ = nullptr;

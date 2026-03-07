@@ -8,6 +8,7 @@
 #include <thread>
 
 #include "agent_core.hh"
+#include "http_client.hh"
 #include "audit_logger.hh"
 #include "key_store.hh"
 #include "../common/logging.hh"
@@ -177,6 +178,22 @@ bool AgentCore::Initialize() {
             << "backend: "
             << m_backend->GetName();
   m_initialized = true;
+
+  // Initialize embedding store for RAG
+  std::string rag_db =
+      std::string(APP_DATA_DIR) +
+      "/rag/embeddings.db";
+  // Ensure rag directory exists
+  std::string rag_dir =
+      std::string(APP_DATA_DIR) + "/rag";
+  mkdir(rag_dir.c_str(), 0755);
+  if (embedding_store_.Initialize(rag_db)) {
+    LOG(INFO) << "RAG embedding store ready";
+  } else {
+    LOG(WARNING) << "RAG embedding store "
+                 << "init failed (non-fatal)";
+  }
+
   return true;
 }
 
@@ -197,6 +214,7 @@ void AgentCore::Shutdown() {
     m_backend->Shutdown();
     m_backend.reset();
   }
+  embedding_store_.Close();
   m_container.reset();
   curl_global_cleanup();
 
@@ -393,6 +411,11 @@ std::string AgentCore::ProcessPrompt(
           r.output = ExecuteSessionOp(
               tc.name, tc.args,
               session_id);
+        } else if (
+            tc.name == "ingest_document" ||
+            tc.name == "search_knowledge") {
+          r.output = ExecuteRagOp(
+              tc.name, tc.args);
         } else {
           r.output = ExecuteSkill(
               tc.name, tc.args);
@@ -822,6 +845,60 @@ AgentCore::LoadSkillDeclarations() {
           {"target_session", "message"})}
   };
   tools.push_back(send_to_session_tool);
+
+  // Built-in tool: ingest_document (RAG)
+  LlmToolDecl ingest_tool;
+  ingest_tool.name = "ingest_document";
+  ingest_tool.description =
+      "Ingest a document into the knowledge "
+      "base for semantic search. The text is "
+      "split into chunks, embedded, and "
+      "stored in the local vector database.";
+  ingest_tool.parameters = {
+      {"type", "object"},
+      {"properties", {
+          {"source", {
+              {"type", "string"},
+              {"description",
+               "Source identifier (filename, "
+               "URL, or label)"}
+          }},
+          {"text", {
+              {"type", "string"},
+              {"description",
+               "The document text to ingest"}
+          }}
+      }},
+      {"required", nlohmann::json::array(
+          {"source", "text"})}
+  };
+  tools.push_back(ingest_tool);
+
+  // Built-in tool: search_knowledge (RAG)
+  LlmToolDecl search_tool;
+  search_tool.name = "search_knowledge";
+  search_tool.description =
+      "Search the knowledge base using "
+      "semantic similarity. Returns the "
+      "most relevant document chunks.";
+  search_tool.parameters = {
+      {"type", "object"},
+      {"properties", {
+          {"query", {
+              {"type", "string"},
+              {"description",
+               "The search query"}
+          }},
+          {"top_k", {
+              {"type", "integer"},
+              {"description",
+               "Number of results (default 5)"}
+          }}
+      }},
+      {"required", nlohmann::json::array(
+          {"query"})}
+  };
+  tools.push_back(search_tool);
 
   cached_tools_ = tools;
   cached_tools_loaded_.store(true);
@@ -1443,6 +1520,228 @@ std::string AgentCore::GetSessionPrompt(
 
   // Fallback to global system prompt
   return BuildSystemPrompt(tools);
+}
+
+std::string AgentCore::ExecuteRagOp(
+    const std::string& operation,
+    const nlohmann::json& args) {
+  if (operation == "ingest_document") {
+    std::string source =
+        args.value("source", "");
+    std::string text =
+        args.value("text", "");
+
+    if (source.empty() || text.empty()) {
+      return "{\"error\": \"source and text "
+             "are required\"}";
+    }
+
+    auto chunks =
+        EmbeddingStore::ChunkText(text);
+    int stored = 0;
+    for (const auto& chunk : chunks) {
+      auto emb = GenerateEmbedding(chunk);
+      if (emb.empty()) {
+        LOG(WARNING)
+            << "Failed to generate embedding "
+            << "for chunk (" << chunk.size()
+            << " chars)";
+        continue;
+      }
+      if (embedding_store_.StoreChunk(
+              source, chunk, emb)) {
+        stored++;
+      }
+    }
+
+    nlohmann::json result = {
+        {"status", "ok"},
+        {"source", source},
+        {"chunks_total",
+         static_cast<int>(chunks.size())},
+        {"chunks_stored", stored},
+        {"total_documents",
+         embedding_store_.GetChunkCount()}
+    };
+    return result.dump();
+  }
+
+  if (operation == "search_knowledge") {
+    std::string query =
+        args.value("query", "");
+    int top_k = args.value("top_k", 5);
+
+    if (query.empty()) {
+      return "{\"error\": \"query is required\"}";
+    }
+
+    auto query_emb = GenerateEmbedding(query);
+    if (query_emb.empty()) {
+      return "{\"error\": \"Failed to generate "
+             "query embedding\"}";
+    }
+
+    auto results =
+        embedding_store_.Search(query_emb, top_k);
+
+    nlohmann::json j_results =
+        nlohmann::json::array();
+    for (const auto& r : results) {
+      j_results.push_back({
+          {"source", r.source},
+          {"text", r.chunk_text},
+          {"score", r.score}
+      });
+    }
+
+    return nlohmann::json({
+        {"status", "ok"},
+        {"query", query},
+        {"results", j_results}
+    }).dump();
+  }
+
+  return "{\"error\": \"Unknown RAG operation\"}";
+}
+
+std::vector<float> AgentCore::GenerateEmbedding(
+    const std::string& text) {
+  if (!m_backend || text.empty()) return {};
+
+  std::string backend_name =
+      m_backend->GetName();
+
+  // Determine embedding API endpoint + model
+  std::string url;
+  std::string model;
+  std::string api_key;
+
+  // Get backend config
+  nlohmann::json bc;
+  if (llm_config_.contains("backends") &&
+      llm_config_["backends"].contains(
+          backend_name)) {
+    bc = llm_config_["backends"][backend_name];
+  }
+  api_key = bc.value("api_key", "");
+  if (KeyStore::IsEncrypted(api_key)) {
+    api_key = KeyStore::Decrypt(api_key);
+  }
+
+  nlohmann::json req_body;
+  std::map<std::string, std::string> headers;
+
+  if (backend_name == "gemini") {
+    model = bc.value(
+        "embedding_model",
+        "text-embedding-004");
+    url = "https://generativelanguage.googleapis"
+          ".com/v1beta/models/" + model +
+          ":embedContent?key=" + api_key;
+    req_body = {
+        {"model", "models/" + model},
+        {"content", {{"parts",
+            {{{"text", text}}}
+        }}}
+    };
+  } else if (backend_name == "openai" ||
+             backend_name == "xai" ||
+             backend_name == "grok") {
+    std::string endpoint = bc.value(
+        "endpoint",
+        "https://api.openai.com/v1");
+    model = bc.value(
+        "embedding_model",
+        "text-embedding-3-small");
+    url = endpoint + "/embeddings";
+    req_body = {
+        {"model", model},
+        {"input", text}
+    };
+    headers = {
+        {"Authorization",
+         "Bearer " + api_key},
+        {"Content-Type", "application/json"}
+    };
+  } else if (backend_name == "ollama") {
+    std::string endpoint = bc.value(
+        "endpoint",
+        "http://localhost:11434");
+    model = bc.value(
+        "embedding_model", "nomic-embed-text");
+    url = endpoint + "/api/embeddings";
+    req_body = {
+        {"model", model},
+        {"prompt", text}
+    };
+    headers = {
+        {"Content-Type", "application/json"}
+    };
+  } else {
+    LOG(WARNING) << "No embedding support for: "
+                 << backend_name;
+    return {};
+  }
+
+  if (backend_name == "gemini") {
+    headers = {
+        {"Content-Type", "application/json"}
+    };
+  }
+
+  auto resp = HttpClient::Post(
+      url, headers, req_body.dump(), 2);
+
+  if (!resp.success) {
+    LOG(ERROR) << "Embedding API failed: "
+               << resp.error;
+    return {};
+  }
+
+  try {
+    auto j = nlohmann::json::parse(resp.body);
+    std::vector<float> emb;
+
+    if (backend_name == "gemini") {
+      // Response: {"embedding":{"values":[...]}}
+      if (j.contains("embedding") &&
+          j["embedding"].contains("values")) {
+        for (auto& v :
+             j["embedding"]["values"]) {
+          emb.push_back(v.get<float>());
+        }
+      }
+    } else if (backend_name == "openai" ||
+               backend_name == "xai" ||
+               backend_name == "grok") {
+      // Response: {"data":[{"embedding":[...]}]}
+      if (j.contains("data") &&
+          !j["data"].empty() &&
+          j["data"][0].contains("embedding")) {
+        for (auto& v :
+             j["data"][0]["embedding"]) {
+          emb.push_back(v.get<float>());
+        }
+      }
+    } else if (backend_name == "ollama") {
+      // Response: {"embedding":[...]}
+      if (j.contains("embedding")) {
+        for (auto& v : j["embedding"]) {
+          emb.push_back(v.get<float>());
+        }
+      }
+    }
+
+    if (emb.empty()) {
+      LOG(WARNING) << "Empty embedding from: "
+                   << backend_name;
+    }
+    return emb;
+  } catch (const std::exception& e) {
+    LOG(ERROR) << "Embedding parse error: "
+               << e.what();
+    return {};
+  }
 }
 
 } // namespace tizenclaw

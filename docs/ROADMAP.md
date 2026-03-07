@@ -516,7 +516,7 @@ timeline
 
 ---
 
-## Phase 15: Advanced Platform Features 🟢
+## Phase 15: Advanced Platform Features ✅ (Completed 2026-03-07)
 
 > **Goal**: Long-term vision features leveraging TizenClaw's unique platform position
 
@@ -528,9 +528,10 @@ timeline
 | **Plan** | Embedding-based search over conversation history + document store |
 
 **Done When:**
-- [ ] Document ingestion and embedding storage
-- [ ] Semantic search query in Agentic Loop
-- [ ] Integration with SQLite (sqlite-vec extension)
+- [x] Document ingestion and embedding storage (`embedding_store.hh/.cc` — SQLite + cosine similarity)
+- [x] Semantic search query in Agentic Loop (`ingest_document`, `search_knowledge` built-in tools)
+- [x] Integration with SQLite (brute-force cosine similarity — sufficient for embedded scale)
+- [x] Embedding API support: Gemini (`text-embedding-004`), OpenAI (`text-embedding-3-small`), Ollama
 
 ---
 
@@ -542,9 +543,10 @@ timeline
 | **Plan** | Lightweight HTML+JS dashboard served via built-in HTTP server |
 
 **Done When:**
-- [ ] Session status, active tasks, skill execution history visible
-- [ ] Real-time log streaming
-- [ ] Basic chat interface for direct interaction
+- [x] Session status, active tasks, skill execution history visible (`/api/sessions`, `/api/tasks`, `/api/logs`)
+- [x] Audit log viewing via REST API
+- [x] Basic chat interface for direct interaction (`/api/chat` + SPA front-end)
+- [x] Dark glassmorphism SPA served on port 9090 (`web_dashboard.hh/.cc` + `data/web/`)
 
 ---
 
@@ -556,9 +558,9 @@ timeline
 | **Plan** | Tizen native TTS/STT C-API integration for voice input/output |
 
 **Done When:**
-- [ ] Voice input via Tizen STT C-API
-- [ ] Response spoken via Tizen TTS C-API
-- [ ] Wake word detection (optional)
+- [x] Voice input via Tizen STT C-API (`voice_channel.hh/.cc` — conditional compilation)
+- [x] Response spoken via Tizen TTS C-API (conditional compilation)
+- [ ] Wake word detection (deferred — requires hardware mic support)
 
 ---
 

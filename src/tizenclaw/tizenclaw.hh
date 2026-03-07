@@ -16,6 +16,8 @@
 #include "webhook_channel.hh"
 #include "slack_channel.hh"
 #include "discord_channel.hh"
+#include "web_dashboard.hh"
+#include "voice_channel.hh"
 #include "../common/logging.hh"
 
 namespace tizenclaw {

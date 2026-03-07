@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0">
+  <title>TizenClaw Dashboard</title>
+  <meta name="description"
+    content="TizenClaw AI Agent System Dashboard">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="preconnect"
+    href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet">
+</head>
+<body>
+  <div class="app">
+    <nav class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <h1 class="logo">
+          <span class="logo-icon">🐾</span>
+          TizenClaw
+        </h1>
+        <span class="version">v1.0.0</span>
+      </div>
+      <ul class="nav-items">
+        <li class="nav-item active"
+          data-page="dashboard" id="nav-dashboard">
+          <span class="nav-icon">📊</span>
+          Dashboard
+        </li>
+        <li class="nav-item"
+          data-page="sessions" id="nav-sessions">
+          <span class="nav-icon">💬</span>
+          Sessions
+        </li>
+        <li class="nav-item"
+          data-page="tasks" id="nav-tasks">
+          <span class="nav-icon">📋</span>
+          Tasks
+        </li>
+        <li class="nav-item"
+          data-page="logs" id="nav-logs">
+          <span class="nav-icon">📜</span>
+          Logs
+        </li>
+        <li class="nav-item"
+          data-page="chat" id="nav-chat">
+          <span class="nav-icon">🤖</span>
+          Chat
+        </li>
+      </ul>
+    </nav>
+
+    <main class="content" id="content">
+      <!-- Dashboard Page -->
+      <section class="page active"
+        id="page-dashboard">
+        <h2 class="page-title">Dashboard</h2>
+        <div class="stats-grid" id="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Status</div>
+            <div class="stat-value"
+              id="stat-status">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Sessions</div>
+            <div class="stat-value"
+              id="stat-sessions">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Tasks</div>
+            <div class="stat-value"
+              id="stat-tasks">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Version</div>
+            <div class="stat-value"
+              id="stat-version">—</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sessions Page -->
+      <section class="page" id="page-sessions">
+        <h2 class="page-title">Sessions</h2>
+        <div class="card-list" id="session-list">
+          <p class="empty-state">Loading...</p>
+        </div>
+      </section>
+
+      <!-- Tasks Page -->
+      <section class="page" id="page-tasks">
+        <h2 class="page-title">
+          Scheduled Tasks
+        </h2>
+        <div class="card-list" id="task-list">
+          <p class="empty-state">Loading...</p>
+        </div>
+      </section>
+
+      <!-- Logs Page -->
+      <section class="page" id="page-logs">
+        <h2 class="page-title">Audit Logs</h2>
+        <div class="log-container" id="log-view">
+          <pre class="log-content"
+            id="log-content">Loading...</pre>
+        </div>
+      </section>
+
+      <!-- Chat Page -->
+      <section class="page" id="page-chat">
+        <h2 class="page-title">Chat</h2>
+        <div class="chat-container">
+          <div class="chat-session-select">
+            <label for="chat-session">
+              Session:
+            </label>
+            <input type="text" id="chat-session"
+              value="web_dashboard"
+              placeholder="session id">
+          </div>
+          <div class="chat-messages"
+            id="chat-messages">
+            <div class="chat-welcome">
+              Type a message to start chatting
+              with TizenClaw.
+            </div>
+          </div>
+          <div class="chat-input-area">
+            <textarea id="chat-input"
+              placeholder="Type your message..."
+              rows="2"></textarea>
+            <button id="chat-send"
+              class="btn-send">Send</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -15,6 +15,7 @@ BuildRequires:  pkgconfig(gtest)
 BuildRequires:  pkgconfig(gmock)
 BuildRequires:  pkgconfig(libsoup-2.4)
 BuildRequires:  pkgconfig(libwebsockets)
+BuildRequires:  pkgconfig(sqlite3)
 # C++ toolchain is generally available in Tizen
 
 %description
@@ -125,6 +126,7 @@ mkdir -p %{buildroot}/opt/usr/share/tizenclaw/config
 /opt/usr/share/tizenclaw/config/system_prompt.txt
 /opt/usr/share/tizenclaw/config/tool_policy.json
 /opt/usr/share/tizenclaw/skills/
+/opt/usr/share/tizenclaw/web/
 %dir /opt/usr/share/tizenclaw/config/
 %dir /opt/usr/share/tizenclaw/
 

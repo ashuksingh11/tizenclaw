@@ -77,6 +77,11 @@ void TizenClawDaemon::OnCreate() {
         std::make_unique<SlackChannel>(agent_));
     channel_registry_.Register(
         std::make_unique<DiscordChannel>(agent_));
+    channel_registry_.Register(
+        std::make_unique<WebDashboard>(
+            agent_, scheduler_));
+    channel_registry_.Register(
+        std::make_unique<VoiceChannel>(agent_));
     channel_registry_.StartAll();
 
     // Initialize Task Scheduler

@@ -22,9 +22,14 @@ pkg_check_modules(PKGS REQUIRED
     glib-2.0
     dlog
     libcurl
+    sqlite3
 )
 pkg_check_modules(LIBSOUP REQUIRED libsoup-2.4)
 pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
+
+# Optional Tizen STT/TTS (not always available)
+pkg_check_modules(TIZEN_STT capi-uix-stt)
+pkg_check_modules(TIZEN_TTS capi-uix-tts)
 
 
 # Include directories (plus nlohmann_json)
@@ -35,6 +40,15 @@ include_directories(
     ${LIBWEBSOCKETS_INCLUDE_DIRS}
     "src/common/nlohmann"
 )
+
+if(TIZEN_STT_FOUND)
+  include_directories(${TIZEN_STT_INCLUDE_DIRS})
+  add_definitions(-DTIZEN_STT_ENABLED)
+endif()
+if(TIZEN_TTS_FOUND)
+  include_directories(${TIZEN_TTS_INCLUDE_DIRS})
+  add_definitions(-DTIZEN_TTS_ENABLED)
+endif()
 
 add_definitions("-DAPP_DATA_DIR=\"${APP_DATA_DIR}\"")
 
@@ -63,6 +77,9 @@ set(SOURCES
     src/tizenclaw/webhook_channel.cc
     src/tizenclaw/slack_channel.cc
     src/tizenclaw/discord_channel.cc
+    src/tizenclaw/embedding_store.cc
+    src/tizenclaw/web_dashboard.cc
+    src/tizenclaw/voice_channel.cc
 )
 
 # Executable
@@ -72,6 +89,14 @@ target_link_libraries(${PACKAGE}
     ${LIBSOUP_LIBRARIES}
     ${LIBWEBSOCKETS_LIBRARIES}
 )
+if(TIZEN_STT_FOUND)
+  target_link_libraries(${PACKAGE}
+      ${TIZEN_STT_LIBRARIES})
+endif()
+if(TIZEN_TTS_FOUND)
+  target_link_libraries(${PACKAGE}
+      ${TIZEN_TTS_LIBRARIES})
+endif()
 
 # CLI test tool (no Tizen deps — pure POSIX sockets)
 add_executable(tizenclaw-cli src/tools/tizenclaw_cli.cc)
@@ -92,6 +117,7 @@ install(PROGRAMS
 install(FILES data/rootfs.tar.gz DESTINATION /opt/usr/share/tizenclaw/)
 install(FILES data/llm_config.json.sample data/telegram_config.json.sample data/webhook_config.json.sample data/slack_config.json.sample data/discord_config.json.sample data/system_prompt.txt data/tool_policy.json DESTINATION /opt/usr/share/tizenclaw/config/)
 install(DIRECTORY skills/ DESTINATION /opt/usr/share/tizenclaw/skills/)
+install(DIRECTORY data/web/ DESTINATION /opt/usr/share/tizenclaw/web/)
 install(PROGRAMS scripts/start_mcp_tunnel.sh DESTINATION /usr/bin/)
 # Unit Tests (run during %check)
 enable_testing()

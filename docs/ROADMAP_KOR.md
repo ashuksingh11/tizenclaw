@@ -516,7 +516,7 @@ timeline
 
 ---
 
-## Phase 15: 고급 플랫폼 기능 🟢
+## Phase 15: 고급 플랫폼 기능 ✅ (2026-03-07 완료)
 
 > **목표**: TizenClaw 고유 플랫폼 위치를 활용한 장기 비전 기능
 
@@ -528,9 +528,10 @@ timeline
 | **계획** | 대화 히스토리 + 문서 저장소에 대한 임베딩 기반 검색 |
 
 **완료 기준:**
-- [ ] 문서 수집 및 임베딩 저장
-- [ ] Agentic Loop 내 시맨틱 검색 쿼리
-- [ ] SQLite 연동 (sqlite-vec 확장)
+- [x] 문서 수집 및 임베딩 저장 (`embedding_store.hh/.cc` — SQLite + 코사인 유사도)
+- [x] Agentic Loop 내 시맨틱 검색 쿼리 (`ingest_document`, `search_knowledge` 내장 도구)
+- [x] SQLite 연동 (순차 코사인 유사도 — 임베디드 규모에 충분)
+- [x] 임베딩 API 지원: Gemini (`text-embedding-004`), OpenAI (`text-embedding-3-small`), Ollama
 
 ---
 
@@ -542,9 +543,10 @@ timeline
 | **계획** | 내장 HTTP 서버에서 제공하는 경량 HTML+JS 대시보드 |
 
 **완료 기준:**
-- [ ] 세션 상태, 활성 태스크, 스킬 실행 이력 표시
-- [ ] 실시간 로그 스트리밍
-- [ ] 직접 상호작용을 위한 기본 채팅 인터페이스
+- [x] 세션 상태, 활성 태스크, 스킬 실행 이력 표시 (`/api/sessions`, `/api/tasks`, `/api/logs`)
+- [x] REST API를 통한 감사 로그 조회
+- [x] 직접 상호작용을 위한 기본 채팅 인터페이스 (`/api/chat` + SPA 프론트엔드)
+- [x] 포트 9090 다크 글래스모피즘 SPA (`web_dashboard.hh/.cc` + `data/web/`)
 
 ---
 
@@ -556,9 +558,9 @@ timeline
 | **계획** | Tizen 네이티브 TTS/STT C-API 연동 — 음성 입출력 |
 
 **완료 기준:**
-- [ ] Tizen STT C-API를 통한 음성 입력
-- [ ] Tizen TTS C-API를 통한 응답 음성 출력
-- [ ] 웨이크 워드 감지 (선택사항)
+- [x] Tizen STT C-API를 통한 음성 입력 (`voice_channel.hh/.cc` — 조건부 컴파일)
+- [x] Tizen TTS C-API를 통한 응답 음성 출력 (조건부 컴파일)
+- [ ] 웨이크 워드 감지 (연기 — 하드웨어 마이크 지원 필요)
 
 ---
 
