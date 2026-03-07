@@ -115,8 +115,16 @@ void WebDashboard::HandleApi(
     ApiStatus(msg);
   } else if (path == "/api/sessions") {
     ApiSessions(msg);
+  } else if (path.substr(0, 14) ==
+      "/api/sessions/") {
+    std::string id = path.substr(14);
+    ApiSessionDetail(msg, id);
   } else if (path == "/api/tasks") {
     ApiTasks(msg);
+  } else if (path.substr(0, 11) ==
+      "/api/tasks/") {
+    std::string file = path.substr(11);
+    ApiTaskDetail(msg, file);
   } else if (path == "/api/logs") {
     ApiLogs(msg);
   } else if (path == "/api/chat") {
@@ -272,6 +280,55 @@ void WebDashboard::ApiSessions(
       static_cast<gsize>(body.size()));
 }
 
+void WebDashboard::ApiSessionDetail(
+    SoupMessage* msg,
+    const std::string& id) const {
+  // Prevent path traversal
+  if (id.empty() ||
+      id.find("..") != std::string::npos ||
+      id.find('/') != std::string::npos) {
+    soup_message_set_status(
+        msg, SOUP_STATUS_BAD_REQUEST);
+    soup_message_set_response(
+        msg, "application/json",
+        SOUP_MEMORY_COPY,
+        "{\"error\":\"Invalid id\"}",
+        21);
+    return;
+  }
+
+  fs::path file_path =
+      std::string(APP_DATA_DIR) +
+      "/sessions/" + id + ".md";
+  std::ifstream f(file_path);
+  if (!f.is_open()) {
+    soup_message_set_status(
+        msg, SOUP_STATUS_NOT_FOUND);
+    soup_message_set_response(
+        msg, "application/json",
+        SOUP_MEMORY_COPY,
+        "{\"error\":\"Session not found\"}",
+        29);
+    return;
+  }
+
+  std::string content(
+      (std::istreambuf_iterator<char>(f)),
+      std::istreambuf_iterator<char>());
+
+  nlohmann::json resp;
+  resp["id"] = id;
+  resp["content"] = std::move(content);
+  std::string body = resp.dump();
+  soup_message_set_status(
+      msg, SOUP_STATUS_OK);
+  soup_message_set_response(
+      msg, "application/json",
+      SOUP_MEMORY_COPY,
+      body.c_str(),
+      static_cast<gsize>(body.size()));
+}
+
 void WebDashboard::ApiTasks(
     SoupMessage* msg) const {
   // List task files from tasks directory
@@ -300,14 +357,70 @@ void WebDashboard::ApiTasks(
           std::istreambuf_iterator<char>());
     }
 
-    tasks.push_back({
-        {"file", name},
-        {"content_preview",
-         content.substr(0, 200)}
-    });
+    nlohmann::json task_j;
+    task_j["file"] = name;
+    task_j["content_preview"] =
+        content.substr(0, 200);
+    tasks.push_back(std::move(task_j));
   }
 
   std::string body = tasks.dump();
+  soup_message_set_status(
+      msg, SOUP_STATUS_OK);
+  soup_message_set_response(
+      msg, "application/json",
+      SOUP_MEMORY_COPY,
+      body.c_str(),
+      static_cast<gsize>(body.size()));
+}
+
+void WebDashboard::ApiTaskDetail(
+    SoupMessage* msg,
+    const std::string& file) const {
+  // Prevent path traversal
+  if (file.empty() ||
+      file.find("..") != std::string::npos ||
+      file.find('/') != std::string::npos) {
+    soup_message_set_status(
+        msg, SOUP_STATUS_BAD_REQUEST);
+    soup_message_set_response(
+        msg, "application/json",
+        SOUP_MEMORY_COPY,
+        "{\"error\":\"Invalid file\"}",
+        23);
+    return;
+  }
+
+  // Enforce .md extension
+  std::string fname = file;
+  if (fname.size() <= 3 ||
+      fname.substr(fname.size() - 3) != ".md") {
+    fname += ".md";
+  }
+
+  fs::path file_path =
+      std::string(APP_DATA_DIR) +
+      "/tasks/" + fname;
+  std::ifstream f(file_path);
+  if (!f.is_open()) {
+    soup_message_set_status(
+        msg, SOUP_STATUS_NOT_FOUND);
+    soup_message_set_response(
+        msg, "application/json",
+        SOUP_MEMORY_COPY,
+        "{\"error\":\"Task not found\"}",
+        26);
+    return;
+  }
+
+  std::string content(
+      (std::istreambuf_iterator<char>(f)),
+      std::istreambuf_iterator<char>());
+
+  nlohmann::json resp;
+  resp["file"] = fname;
+  resp["content"] = std::move(content);
+  std::string body = resp.dump();
   soup_message_set_status(
       msg, SOUP_STATUS_OK);
   soup_message_set_response(

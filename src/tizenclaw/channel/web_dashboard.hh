@@ -61,7 +61,13 @@ private:
 
   // API endpoint handlers
   void ApiSessions(SoupMessage* msg) const;
+  void ApiSessionDetail(
+      SoupMessage* msg,
+      const std::string& id) const;
   void ApiTasks(SoupMessage* msg) const;
+  void ApiTaskDetail(
+      SoupMessage* msg,
+      const std::string& file) const;
   void ApiLogs(SoupMessage* msg) const;
   void ApiChat(SoupMessage* msg) const;
   void ApiStatus(SoupMessage* msg) const;
