@@ -214,6 +214,12 @@ bool AgentCore::Initialize() {
         << "configured (non-fatal)";
   }
 
+  // Initialize pipeline executor
+  pipeline_executor_ =
+      std::make_unique<PipelineExecutor>(this);
+  pipeline_executor_->LoadPipelines();
+  LOG(INFO) << "Pipeline executor ready";
+
   return true;
 }
 
@@ -445,6 +451,14 @@ std::string AgentCore::ProcessPrompt(
             tc.name == "run_supervisor" ||
             tc.name == "list_agent_roles") {
           r.output = ExecuteSupervisorOp(
+              tc.name, tc.args,
+              session_id);
+        } else if (
+            tc.name == "create_pipeline" ||
+            tc.name == "list_pipelines" ||
+            tc.name == "run_pipeline" ||
+            tc.name == "delete_pipeline") {
+          r.output = ExecutePipelineOp(
               tc.name, tc.args,
               session_id);
         } else {
@@ -980,6 +994,117 @@ AgentCore::LoadSkillDeclarations() {
       {"required", nlohmann::json::array()}
   };
   tools.push_back(list_roles_tool);
+
+  // Built-in tool: create_pipeline
+  LlmToolDecl create_pipeline_tool;
+  create_pipeline_tool.name =
+      "create_pipeline";
+  create_pipeline_tool.description =
+      "Create a multi-step pipeline for "
+      "deterministic workflow execution. "
+      "Each step can be a tool call, LLM "
+      "prompt, or conditional branch. "
+      "Steps execute sequentially, and "
+      "output from each step is available "
+      "to subsequent steps via "
+      "{{variable}} interpolation.";
+  create_pipeline_tool.parameters = {
+      {"type", "object"},
+      {"properties", {
+          {"name", {
+              {"type", "string"},
+              {"description",
+               "Pipeline name"}
+          }},
+          {"description", {
+              {"type", "string"},
+              {"description",
+               "Pipeline description"}
+          }},
+          {"trigger", {
+              {"type", "string"},
+              {"description",
+               "Trigger type: 'manual' or "
+               "'cron:daily HH:MM' etc."}
+          }},
+          {"steps", {
+              {"type", "array"},
+              {"description",
+               "Array of step objects with: "
+               "id, type (tool/prompt/"
+               "condition), tool_name, args, "
+               "prompt, condition, then_step, "
+               "else_step, output_var, "
+               "skip_on_failure, max_retries"}
+          }}
+      }},
+      {"required", nlohmann::json::array(
+          {"name", "steps"})}
+  };
+  tools.push_back(create_pipeline_tool);
+
+  // Built-in tool: list_pipelines
+  LlmToolDecl list_pipelines_tool;
+  list_pipelines_tool.name = "list_pipelines";
+  list_pipelines_tool.description =
+      "List all configured pipelines with "
+      "their names, triggers, and step "
+      "counts.";
+  list_pipelines_tool.parameters = {
+      {"type", "object"},
+      {"properties", nlohmann::json::object()},
+      {"required", nlohmann::json::array()}
+  };
+  tools.push_back(list_pipelines_tool);
+
+  // Built-in tool: run_pipeline
+  LlmToolDecl run_pipeline_tool;
+  run_pipeline_tool.name = "run_pipeline";
+  run_pipeline_tool.description =
+      "Execute a pipeline by its ID. "
+      "Optionally provide input variables "
+      "that can be referenced in steps "
+      "via {{variable}} syntax.";
+  run_pipeline_tool.parameters = {
+      {"type", "object"},
+      {"properties", {
+          {"pipeline_id", {
+              {"type", "string"},
+              {"description",
+               "The pipeline ID to execute"}
+          }},
+          {"input_vars", {
+              {"type", "object"},
+              {"description",
+               "Input variables (key-value "
+               "pairs) available to all "
+               "pipeline steps"}
+          }}
+      }},
+      {"required", nlohmann::json::array(
+          {"pipeline_id"})}
+  };
+  tools.push_back(run_pipeline_tool);
+
+  // Built-in tool: delete_pipeline
+  LlmToolDecl delete_pipeline_tool;
+  delete_pipeline_tool.name =
+      "delete_pipeline";
+  delete_pipeline_tool.description =
+      "Delete a pipeline by its ID.";
+  delete_pipeline_tool.parameters = {
+      {"type", "object"},
+      {"properties", {
+          {"pipeline_id", {
+              {"type", "string"},
+              {"description",
+               "The pipeline ID to delete"}
+          }}
+      }},
+      {"required", nlohmann::json::array(
+          {"pipeline_id"})}
+  };
+  tools.push_back(delete_pipeline_tool);
 
   cached_tools_ = tools;
   cached_tools_loaded_.store(true);
@@ -1896,6 +2021,115 @@ AgentCore::GetToolsFiltered(
   }
 
   return filtered;
+}
+
+std::string AgentCore::ExecutePipelineOp(
+    const std::string& operation,
+    const nlohmann::json& args,
+    const std::string& session_id) {
+  (void)session_id;  // Reserved for future use
+  if (!pipeline_executor_) {
+    return "{\"error\": "
+           "\"PipelineExecutor not available\"}";
+  }
+
+  nlohmann::json result;
+
+  if (operation == "create_pipeline") {
+    std::string id =
+        pipeline_executor_->CreatePipeline(args);
+    if (id.empty()) {
+      result = {
+          {"error",
+           "Failed to create pipeline. "
+           "name and steps are required."}
+      };
+    } else {
+      result = {
+          {"status", "ok"},
+          {"pipeline_id", id},
+          {"name", args.value("name", "")}
+      };
+    }
+  } else if (operation == "list_pipelines") {
+    auto pipelines =
+        pipeline_executor_->ListPipelines();
+    result = {
+        {"status", "ok"},
+        {"pipelines", pipelines},
+        {"count",
+         static_cast<int>(pipelines.size())}
+    };
+  } else if (operation == "run_pipeline") {
+    std::string pid =
+        args.value("pipeline_id", "");
+    if (pid.empty()) {
+      result = {
+          {"error", "pipeline_id is required"}
+      };
+    } else {
+      nlohmann::json input_vars =
+          args.value("input_vars",
+                     nlohmann::json::object());
+      auto run_result =
+          pipeline_executor_->RunPipeline(
+              pid, input_vars);
+
+      nlohmann::json steps_json =
+          nlohmann::json::array();
+      for (auto& [step_id, step_result] :
+           run_result.step_results) {
+        steps_json.push_back({
+            {"step_id", step_id},
+            {"result",
+             step_result.substr(
+                 0,
+                 std::min((size_t)500,
+                          step_result.size()))}
+        });
+      }
+
+      result = {
+          {"status", run_result.status},
+          {"pipeline_id",
+           run_result.pipeline_id},
+          {"duration_ms",
+           run_result.duration_ms},
+          {"steps", steps_json}
+      };
+    }
+  } else if (operation == "delete_pipeline") {
+    std::string pid =
+        args.value("pipeline_id", "");
+    if (pid.empty()) {
+      result = {
+          {"error", "pipeline_id is required"}
+      };
+    } else {
+      bool ok =
+          pipeline_executor_->DeletePipeline(
+              pid);
+      if (ok) {
+        result = {
+            {"status", "ok"},
+            {"deleted", pid}
+        };
+      } else {
+        result = {
+            {"error",
+             "Pipeline not found: " + pid}
+        };
+      }
+    }
+  } else {
+    result = {
+        {"error",
+         "Unknown pipeline operation: "
+         + operation}
+    };
+  }
+
+  return result.dump();
 }
 
 } // namespace tizenclaw

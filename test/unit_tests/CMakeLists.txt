@@ -32,6 +32,7 @@ set(UNIT_TEST_SRCS
     webhook_channel_test.cc
     agent_core_session_test.cc
     agent_role_test.cc
+    pipeline_executor_test.cc
     slack_discord_channel_test.cc
     embedding_store_test.cc
     web_dashboard_test.cc
@@ -49,6 +50,7 @@ set(CORE_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/common/file_log_backend.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/core/agent_core.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/core/agent_role.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/core/pipeline_executor.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/core/tool_policy.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/core/skill_watcher.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/llm/llm_backend_factory.cc

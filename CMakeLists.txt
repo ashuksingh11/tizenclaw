@@ -65,6 +65,7 @@ set(SOURCES
     src/tizenclaw/core/tizenclaw.cc
     src/tizenclaw/core/agent_core.cc
     src/tizenclaw/core/agent_role.cc
+    src/tizenclaw/core/pipeline_executor.cc
     src/tizenclaw/core/tool_policy.cc
     src/tizenclaw/core/skill_watcher.cc
     src/tizenclaw/llm/llm_backend_factory.cc

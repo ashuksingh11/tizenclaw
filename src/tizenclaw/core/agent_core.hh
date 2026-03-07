@@ -14,6 +14,7 @@
 #include "../storage/session_store.hh"
 #include "tool_policy.hh"
 #include "agent_role.hh"
+#include "pipeline_executor.hh"
 #include "../storage/embedding_store.hh"
 #include "../scheduler/task_scheduler.hh"
 #include <mutex>
@@ -78,6 +79,14 @@ public:
     // (empty list = all tools)
     std::vector<LlmToolDecl> GetToolsFiltered(
         const std::vector<std::string>& allowed);
+
+    // Execute pipeline operations
+    // (create_pipeline, list_pipelines,
+    //  run_pipeline, delete_pipeline)
+    std::string ExecutePipelineOp(
+        const std::string& operation,
+        const nlohmann::json& args,
+        const std::string& session_id);
 
 private:
     // Execute a skill and return its JSON output
@@ -182,6 +191,10 @@ private:
 
     // Supervisor engine for multi-agent
     std::unique_ptr<SupervisorEngine> supervisor_;
+
+    // Pipeline executor for workflows
+    std::unique_ptr<PipelineExecutor>
+        pipeline_executor_;
 
     // Get session-specific system prompt
     // (falls back to global m_system_prompt)
