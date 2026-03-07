@@ -1030,12 +1030,63 @@ AgentCore::LoadSkillDeclarations() {
           {"steps", {
               {"type", "array"},
               {"description",
-               "Array of step objects with: "
-               "id, type (tool/prompt/"
-               "condition), tool_name, args, "
-               "prompt, condition, then_step, "
-               "else_step, output_var, "
-               "skip_on_failure, max_retries"}
+               "Array of step objects"},
+              {"items", {
+                  {"type", "object"},
+                  {"properties", {
+                      {"id", {
+                          {"type", "string"},
+                          {"description",
+                           "Step identifier"}}},
+                      {"type", {
+                          {"type", "string"},
+                          {"description",
+                           "Step type: tool, "
+                           "prompt, or condition"}}},
+                      {"tool_name", {
+                          {"type", "string"},
+                          {"description",
+                           "Tool to invoke"}}},
+                      {"args", {
+                          {"type", "object"},
+                          {"description",
+                           "Tool arguments"}}},
+                      {"prompt", {
+                          {"type", "string"},
+                          {"description",
+                           "LLM prompt text"}}},
+                      {"condition", {
+                          {"type", "string"},
+                          {"description",
+                           "Condition expression"
+                          }}},
+                      {"then_step", {
+                          {"type", "string"},
+                          {"description",
+                           "Step ID if true"}}},
+                      {"else_step", {
+                          {"type", "string"},
+                          {"description",
+                           "Step ID if false"}}},
+                      {"output_var", {
+                          {"type", "string"},
+                          {"description",
+                           "Variable name for "
+                           "step output"}}},
+                      {"skip_on_failure", {
+                          {"type", "boolean"},
+                          {"description",
+                           "Continue on error"
+                          }}},
+                      {"max_retries", {
+                          {"type", "integer"},
+                          {"description",
+                           "Max retry count"}}}
+                  }},
+                  {"required",
+                   nlohmann::json::array(
+                       {"id", "type"})}
+              }}
           }}
       }},
       {"required", nlohmann::json::array(
