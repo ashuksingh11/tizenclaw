@@ -123,6 +123,7 @@ mkdir -p %{buildroot}/opt/usr/share/tizenclaw/config
 /opt/usr/share/tizenclaw/config/webhook_config.json.sample
 /opt/usr/share/tizenclaw/config/slack_config.json.sample
 /opt/usr/share/tizenclaw/config/discord_config.json.sample
+/opt/usr/share/tizenclaw/config/agent_roles.json.sample
 /opt/usr/share/tizenclaw/config/system_prompt.txt
 /opt/usr/share/tizenclaw/config/tool_policy.json
 /opt/usr/share/tizenclaw/skills/

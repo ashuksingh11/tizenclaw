@@ -64,6 +64,7 @@ set(SOURCES
     src/common/file_log_backend.cc
     src/tizenclaw/core/tizenclaw.cc
     src/tizenclaw/core/agent_core.cc
+    src/tizenclaw/core/agent_role.cc
     src/tizenclaw/core/tool_policy.cc
     src/tizenclaw/core/skill_watcher.cc
     src/tizenclaw/llm/llm_backend_factory.cc
@@ -121,7 +122,7 @@ install(PROGRAMS
     DESTINATION /usr/libexec/tizenclaw/
 )
 install(FILES data/rootfs.tar.gz DESTINATION /opt/usr/share/tizenclaw/)
-install(FILES data/llm_config.json.sample data/telegram_config.json.sample data/webhook_config.json.sample data/slack_config.json.sample data/discord_config.json.sample data/system_prompt.txt data/tool_policy.json DESTINATION /opt/usr/share/tizenclaw/config/)
+install(FILES data/llm_config.json.sample data/telegram_config.json.sample data/webhook_config.json.sample data/slack_config.json.sample data/discord_config.json.sample data/agent_roles.json.sample data/system_prompt.txt data/tool_policy.json DESTINATION /opt/usr/share/tizenclaw/config/)
 install(DIRECTORY skills/ DESTINATION /opt/usr/share/tizenclaw/skills/)
 install(DIRECTORY data/web/ DESTINATION /opt/usr/share/tizenclaw/web/)
 install(PROGRAMS scripts/start_mcp_tunnel.sh DESTINATION /usr/bin/)

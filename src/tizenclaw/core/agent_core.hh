@@ -13,6 +13,7 @@
 #include "../llm/llm_backend.hh"
 #include "../storage/session_store.hh"
 #include "tool_policy.hh"
+#include "agent_role.hh"
 #include "../storage/embedding_store.hh"
 #include "../scheduler/task_scheduler.hh"
 #include <mutex>
@@ -65,6 +66,18 @@ public:
         const std::string& operation,
         const nlohmann::json& args,
         const std::string& caller_session);
+
+    // Execute supervisor operations
+    // (run_supervisor, list_agent_roles)
+    std::string ExecuteSupervisorOp(
+        const std::string& operation,
+        const nlohmann::json& args,
+        const std::string& session_id);
+
+    // Get tools filtered by allowed list
+    // (empty list = all tools)
+    std::vector<LlmToolDecl> GetToolsFiltered(
+        const std::vector<std::string>& allowed);
 
 private:
     // Execute a skill and return its JSON output
@@ -166,6 +179,9 @@ private:
 
     // Task scheduler (owned by daemon)
     TaskScheduler* scheduler_ = nullptr;
+
+    // Supervisor engine for multi-agent
+    std::unique_ptr<SupervisorEngine> supervisor_;
 
     // Get session-specific system prompt
     // (falls back to global m_system_prompt)

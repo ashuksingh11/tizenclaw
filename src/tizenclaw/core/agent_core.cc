@@ -197,6 +197,23 @@ bool AgentCore::Initialize() {
                  << "init failed (non-fatal)";
   }
 
+  // Initialize supervisor engine
+  supervisor_ =
+      std::make_unique<SupervisorEngine>(this);
+  std::string roles_path =
+      std::string(APP_DATA_DIR) +
+      "/config/agent_roles.json";
+  if (supervisor_->LoadRoles(roles_path)) {
+    LOG(INFO)
+        << "Supervisor engine ready with "
+        << supervisor_->GetRoleNames().size()
+        << " roles";
+  } else {
+    LOG(WARNING)
+        << "Supervisor engine: no roles "
+        << "configured (non-fatal)";
+  }
+
   return true;
 }
 
@@ -424,6 +441,12 @@ std::string AgentCore::ProcessPrompt(
             tc.name == "search_knowledge") {
           r.output = ExecuteRagOp(
               tc.name, tc.args);
+        } else if (
+            tc.name == "run_supervisor" ||
+            tc.name == "list_agent_roles") {
+          r.output = ExecuteSupervisorOp(
+              tc.name, tc.args,
+              session_id);
         } else {
           r.output = ExecuteSkill(
               tc.name, tc.args);
@@ -907,6 +930,56 @@ AgentCore::LoadSkillDeclarations() {
           {"query"})}
   };
   tools.push_back(search_tool);
+
+  // Built-in tool: run_supervisor
+  LlmToolDecl run_supervisor_tool;
+  run_supervisor_tool.name = "run_supervisor";
+  run_supervisor_tool.description =
+      "Run a supervisor agent that decomposes "
+      "a complex goal into sub-tasks and "
+      "delegates them to specialized role "
+      "agents. Each role agent has its own "
+      "system prompt and tool restrictions. "
+      "Results are aggregated into a single "
+      "response. Requires agent_roles.json "
+      "configuration.";
+  run_supervisor_tool.parameters = {
+      {"type", "object"},
+      {"properties", {
+          {"goal", {
+              {"type", "string"},
+              {"description",
+               "The high-level goal to "
+               "decompose and delegate"}
+          }},
+          {"strategy", {
+              {"type", "string"},
+              {"enum", nlohmann::json::array(
+                  {"sequential", "parallel"})},
+              {"description",
+               "Execution strategy: "
+               "'sequential' (default) or "
+               "'parallel'"}
+          }}
+      }},
+      {"required", nlohmann::json::array(
+          {"goal"})}
+  };
+  tools.push_back(run_supervisor_tool);
+
+  // Built-in tool: list_agent_roles
+  LlmToolDecl list_roles_tool;
+  list_roles_tool.name = "list_agent_roles";
+  list_roles_tool.description =
+      "List all configured agent roles with "
+      "their names, system prompts, and "
+      "allowed tools.";
+  list_roles_tool.parameters = {
+      {"type", "object"},
+      {"properties", nlohmann::json::object()},
+      {"required", nlohmann::json::array()}
+  };
+  tools.push_back(list_roles_tool);
 
   cached_tools_ = tools;
   cached_tools_loaded_.store(true);
@@ -1750,6 +1823,79 @@ std::vector<float> AgentCore::GenerateEmbedding(
                << e.what();
     return {};
   }
+}
+
+std::string AgentCore::ExecuteSupervisorOp(
+    const std::string& operation,
+    const nlohmann::json& args,
+    const std::string& session_id) {
+  if (!supervisor_) {
+    return "{\"error\": "
+           "\"SupervisorEngine not available\"}";
+  }
+
+  nlohmann::json result;
+
+  if (operation == "run_supervisor") {
+    std::string goal =
+        args.value("goal", "");
+    std::string strategy =
+        args.value("strategy", "sequential");
+
+    if (goal.empty()) {
+      result = {
+          {"error", "goal is required"}
+      };
+    } else {
+      std::string response =
+          supervisor_->RunSupervisor(
+              goal, strategy, session_id);
+      result = {
+          {"status", "ok"},
+          {"goal", goal},
+          {"strategy", strategy},
+          {"result", response}
+      };
+    }
+  } else if (operation == "list_agent_roles") {
+    auto roles = supervisor_->ListRoles();
+    result = {
+        {"status", "ok"},
+        {"roles", roles},
+        {"count", (int)roles.size()}
+    };
+  } else {
+    result = {
+        {"error",
+         "Unknown supervisor operation: "
+         + operation}
+    };
+  }
+
+  return result.dump();
+}
+
+std::vector<LlmToolDecl>
+AgentCore::GetToolsFiltered(
+    const std::vector<std::string>& allowed) {
+  auto all_tools = LoadSkillDeclarations();
+
+  // Empty allowed list = all tools
+  if (allowed.empty()) {
+    return all_tools;
+  }
+
+  std::vector<LlmToolDecl> filtered;
+  for (auto& tool : all_tools) {
+    for (auto& name : allowed) {
+      if (tool.name == name) {
+        filtered.push_back(tool);
+        break;
+      }
+    }
+  }
+
+  return filtered;
 }
 
 } // namespace tizenclaw
