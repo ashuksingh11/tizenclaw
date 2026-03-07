@@ -33,6 +33,7 @@ set(UNIT_TEST_SRCS
     agent_core_session_test.cc
     agent_role_test.cc
     pipeline_executor_test.cc
+    a2a_handler_test.cc
     slack_discord_channel_test.cc
     embedding_store_test.cc
     web_dashboard_test.cc
@@ -65,6 +66,7 @@ set(CORE_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel/slack_channel.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel/discord_channel.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel/web_dashboard.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel/a2a_handler.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel/voice_channel.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/storage/session_store.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/storage/embedding_store.cc

@@ -28,6 +28,13 @@ WebDashboard::WebDashboard(
   admin_pw_file_ =
       config_dir_ + "/admin_password.json";
   LoadAdminPassword();
+
+  // Initialize A2A handler
+  a2a_handler_ =
+      std::make_unique<A2AHandler>(agent);
+  std::string a2a_config =
+      config_dir_ + "/a2a_config.json";
+  a2a_handler_->LoadConfig(a2a_config);
 }
 
 WebDashboard::~WebDashboard() {
@@ -98,6 +105,13 @@ void WebDashboard::HandleRequest(
 
   std::string req_path(path);
 
+  // A2A: /.well-known/agent.json
+  if (req_path ==
+      "/.well-known/agent.json") {
+    self->ApiAgentCard(msg);
+    return;
+  }
+
   // Route API requests
   if (req_path.substr(0, 5) == "/api/") {
     self->HandleApi(msg, req_path);
@@ -147,6 +161,9 @@ void WebDashboard::HandleApi(
     } else {
       ApiConfigGet(msg, name);
     }
+  } else if (path == "/api/a2a") {
+    const_cast<WebDashboard*>(this)
+        ->ApiA2A(msg);
   } else {
     soup_message_set_status(
         msg, SOUP_STATUS_NOT_FOUND);
@@ -614,6 +631,123 @@ void WebDashboard::Stop() {
   }
 
   LOG(INFO) << "WebDashboard stopped.";
+}
+
+void WebDashboard::ApiAgentCard(
+    SoupMessage* msg) const {
+  if (!a2a_handler_) {
+    soup_message_set_status(
+        msg, SOUP_STATUS_INTERNAL_SERVER_ERROR);
+    return;
+  }
+
+  nlohmann::json card =
+      a2a_handler_->GetAgentCard();
+  std::string body = card.dump(2);
+  soup_message_set_status(
+      msg, SOUP_STATUS_OK);
+  soup_message_set_response(
+      msg, "application/json",
+      SOUP_MEMORY_COPY,
+      body.c_str(),
+      static_cast<gsize>(body.size()));
+}
+
+void WebDashboard::ApiA2A(
+    SoupMessage* msg) {
+  // Only accept POST for JSON-RPC
+  if (msg->method != SOUP_METHOD_POST) {
+    soup_message_set_status(
+        msg, SOUP_STATUS_METHOD_NOT_ALLOWED);
+    return;
+  }
+
+  if (!a2a_handler_) {
+    soup_message_set_status(
+        msg, SOUP_STATUS_INTERNAL_SERVER_ERROR);
+    return;
+  }
+
+  // Validate Bearer token
+  const char* auth =
+      soup_message_headers_get_one(
+          msg->request_headers,
+          "Authorization");
+  std::string token;
+  if (auth) {
+    std::string hdr(auth);
+    if (hdr.size() > 7 &&
+        hdr.substr(0, 7) == "Bearer ") {
+      token = hdr.substr(7);
+    }
+  }
+
+  if (!a2a_handler_->ValidateBearerToken(
+          token)) {
+    nlohmann::json err = {
+        {"jsonrpc", "2.0"},
+        {"id", nullptr},
+        {"error", {
+            {"code", -32000},
+            {"message", "Unauthorized"}
+        }}
+    };
+    std::string body = err.dump();
+    soup_message_set_status(
+        msg, SOUP_STATUS_UNAUTHORIZED);
+    soup_message_set_response(
+        msg, "application/json",
+        SOUP_MEMORY_COPY,
+        body.c_str(),
+        static_cast<gsize>(body.size()));
+    return;
+  }
+
+  // Parse JSON-RPC request body
+  SoupMessageBody* req_body =
+      msg->request_body;
+  std::string payload;
+  if (req_body && req_body->data &&
+      req_body->length > 0) {
+    payload.assign(
+        req_body->data, req_body->length);
+  }
+
+  nlohmann::json request;
+  try {
+    request = nlohmann::json::parse(payload);
+  } catch (...) {
+    nlohmann::json err = {
+        {"jsonrpc", "2.0"},
+        {"id", nullptr},
+        {"error", {
+            {"code", -32700},
+            {"message", "Parse error"}
+        }}
+    };
+    std::string body = err.dump();
+    soup_message_set_status(
+        msg, SOUP_STATUS_OK);
+    soup_message_set_response(
+        msg, "application/json",
+        SOUP_MEMORY_COPY,
+        body.c_str(),
+        static_cast<gsize>(body.size()));
+    return;
+  }
+
+  // Handle JSON-RPC
+  nlohmann::json response =
+      a2a_handler_->HandleJsonRpc(request);
+
+  std::string body = response.dump();
+  soup_message_set_status(
+      msg, SOUP_STATUS_OK);
+  soup_message_set_response(
+      msg, "application/json",
+      SOUP_MEMORY_COPY,
+      body.c_str(),
+      static_cast<gsize>(body.size()));
 }
 
 }  // namespace tizenclaw

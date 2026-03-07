@@ -10,6 +10,7 @@
 #include <libsoup/soup.h>
 
 #include "channel.hh"
+#include "a2a_handler.hh"
 
 namespace tizenclaw {
 
@@ -72,6 +73,10 @@ private:
   void ApiChat(SoupMessage* msg) const;
   void ApiStatus(SoupMessage* msg) const;
 
+  // A2A endpoints
+  void ApiAgentCard(SoupMessage* msg) const;
+  void ApiA2A(SoupMessage* msg);
+
   // Auth endpoints
   void ApiAuthLogin(SoupMessage* msg);
   void ApiAuthChangePassword(SoupMessage* msg);
@@ -119,6 +124,9 @@ private:
   // Allowed config names
   static const std::vector<std::string>
       kAllowedConfigs;
+
+  // A2A handler
+  std::unique_ptr<A2AHandler> a2a_handler_;
 };
 
 }  // namespace tizenclaw
