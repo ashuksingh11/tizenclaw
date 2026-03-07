@@ -46,29 +46,29 @@ set(MOCK_SRCS
 set(CORE_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/common/logging.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/common/file_log_backend.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/agent_core.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/container_engine.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/http_client.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/llm_backend_factory.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/gemini_backend.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/openai_backend.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/anthropic_backend.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/ollama_backend.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/telegram_client.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/session_store.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/mcp_server.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/tool_policy.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/key_store.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/audit_logger.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/task_scheduler.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel_registry.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/skill_watcher.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/webhook_channel.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/slack_channel.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/discord_channel.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/embedding_store.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/web_dashboard.cc
-    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/voice_channel.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/core/agent_core.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/core/tool_policy.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/core/skill_watcher.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/llm/llm_backend_factory.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/llm/gemini_backend.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/llm/openai_backend.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/llm/anthropic_backend.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/llm/ollama_backend.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel/channel_registry.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel/telegram_client.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel/mcp_server.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel/webhook_channel.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel/slack_channel.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel/discord_channel.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel/web_dashboard.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel/voice_channel.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/storage/session_store.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/storage/embedding_store.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/storage/audit_logger.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/infra/http_client.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/infra/key_store.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/infra/container_engine.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/scheduler/task_scheduler.cc
 )
 
 add_executable(tizenclaw-unittests
@@ -81,6 +81,12 @@ target_include_directories(tizenclaw-unittests PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/mock
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/core
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/llm
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/storage
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/infra
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/scheduler
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/common/nlohmann
     ${GTEST_DEPS_INCLUDE_DIRS}
     ${CORE_DEPS_INCLUDE_DIRS}

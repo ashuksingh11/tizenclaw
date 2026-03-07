@@ -5,7 +5,7 @@
 #include <vector>
 #include <json.hpp>
 
-#include "llm_backend.hh"
+#include "../llm/llm_backend.hh"
 
 namespace tizenclaw {
 

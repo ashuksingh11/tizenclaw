@@ -5,7 +5,7 @@
 #include <chrono>
 #include <unistd.h>
 
-#include "../common/logging.hh"
+#include "../../common/logging.hh"
 
 namespace tizenclaw {
 

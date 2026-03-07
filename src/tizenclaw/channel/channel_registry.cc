@@ -1,5 +1,5 @@
 #include "channel_registry.hh"
-#include "../common/logging.hh"
+#include "../../common/logging.hh"
 
 namespace tizenclaw {
 

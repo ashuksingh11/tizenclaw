@@ -1,8 +1,8 @@
 #include "telegram_client.hh"
-#include "agent_core.hh"
-#include "http_client.hh"
+#include "../core/agent_core.hh"
+#include "../infra/http_client.hh"
 
-#include "../common/logging.hh"
+#include "../../common/logging.hh"
 #include <fstream>
 #include <chrono>
 #include <iostream>

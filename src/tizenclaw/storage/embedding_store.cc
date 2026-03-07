@@ -1,5 +1,5 @@
 #include "embedding_store.hh"
-#include "../common/logging.hh"
+#include "../../common/logging.hh"
 
 #include <cmath>
 #include <cstring>

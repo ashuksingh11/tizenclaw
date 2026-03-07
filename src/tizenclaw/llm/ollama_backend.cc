@@ -1,7 +1,7 @@
 #include "ollama_backend.hh"
-#include "http_client.hh"
+#include "../infra/http_client.hh"
 
-#include "../common/logging.hh"
+#include "../../common/logging.hh"
 #include <chrono>
 #include <sstream>
 #include <iomanip>

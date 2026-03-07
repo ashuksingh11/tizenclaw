@@ -1,7 +1,7 @@
 #include "openai_backend.hh"
-#include "http_client.hh"
+#include "../infra/http_client.hh"
 
-#include "../common/logging.hh"
+#include "../../common/logging.hh"
 #include <sstream>
 
 namespace tizenclaw {

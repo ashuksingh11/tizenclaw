@@ -8,17 +8,17 @@
 #include <vector>
 #include <mutex>
 #include "agent_core.hh"
-#include "telegram_client.hh"
-#include "mcp_server.hh"
-#include "task_scheduler.hh"
-#include "channel_registry.hh"
+#include "../channel/telegram_client.hh"
+#include "../channel/mcp_server.hh"
+#include "../scheduler/task_scheduler.hh"
+#include "../channel/channel_registry.hh"
 #include "skill_watcher.hh"
-#include "webhook_channel.hh"
-#include "slack_channel.hh"
-#include "discord_channel.hh"
-#include "web_dashboard.hh"
-#include "voice_channel.hh"
-#include "../common/logging.hh"
+#include "../channel/webhook_channel.hh"
+#include "../channel/slack_channel.hh"
+#include "../channel/discord_channel.hh"
+#include "../channel/web_dashboard.hh"
+#include "../channel/voice_channel.hh"
+#include "../../common/logging.hh"
 
 namespace tizenclaw {
 

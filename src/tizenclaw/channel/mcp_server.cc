@@ -1,6 +1,6 @@
 #include "mcp_server.hh"
-#include "agent_core.hh"
-#include "../common/logging.hh"
+#include "../core/agent_core.hh"
+#include "../../common/logging.hh"
 
 #include <dirent.h>
 #include <fstream>

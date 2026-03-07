@@ -1,7 +1,7 @@
 #include "discord_channel.hh"
-#include "agent_core.hh"
-#include "http_client.hh"
-#include "../common/logging.hh"
+#include "../core/agent_core.hh"
+#include "../infra/http_client.hh"
+#include "../../common/logging.hh"
 
 #include <fstream>
 #include <libwebsockets.h>

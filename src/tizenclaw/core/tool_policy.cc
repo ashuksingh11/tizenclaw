@@ -11,7 +11,7 @@
 #include <functional>
 #include <sstream>
 
-#include "../common/logging.hh"
+#include "../../common/logging.hh"
 
 namespace tizenclaw {
 

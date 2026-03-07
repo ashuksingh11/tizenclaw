@@ -16,7 +16,7 @@
 
 #include <glib.h>
 #include <json.hpp>
-#include "../common/logging.hh"
+#include "../../common/logging.hh"
 
 namespace tizenclaw {
 

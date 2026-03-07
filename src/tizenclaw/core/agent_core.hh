@@ -9,12 +9,12 @@
 #include <future>
 #include <json.hpp>
 
-#include "container_engine.hh"
-#include "llm_backend.hh"
-#include "session_store.hh"
+#include "../infra/container_engine.hh"
+#include "../llm/llm_backend.hh"
+#include "../storage/session_store.hh"
 #include "tool_policy.hh"
-#include "embedding_store.hh"
-#include "task_scheduler.hh"
+#include "../storage/embedding_store.hh"
+#include "../scheduler/task_scheduler.hh"
 #include <mutex>
 
 namespace tizenclaw {

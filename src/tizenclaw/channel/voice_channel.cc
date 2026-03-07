@@ -1,6 +1,6 @@
 #include "voice_channel.hh"
-#include "agent_core.hh"
-#include "../common/logging.hh"
+#include "../core/agent_core.hh"
+#include "../../common/logging.hh"
 
 namespace tizenclaw {
 

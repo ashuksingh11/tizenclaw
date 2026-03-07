@@ -14,7 +14,7 @@
 #include <sstream>
 #include <sys/stat.h>
 
-#include "../common/logging.hh"
+#include "../../common/logging.hh"
 
 namespace tizenclaw {
 

@@ -35,6 +35,12 @@ pkg_check_modules(TIZEN_TTS capi-uix-tts)
 # Include directories (plus nlohmann_json)
 include_directories(
     src/tizenclaw
+    src/tizenclaw/core
+    src/tizenclaw/llm
+    src/tizenclaw/channel
+    src/tizenclaw/storage
+    src/tizenclaw/infra
+    src/tizenclaw/scheduler
     ${PKGS_INCLUDE_DIRS}
     ${LIBSOUP_INCLUDE_DIRS}
     ${LIBWEBSOCKETS_INCLUDE_DIRS}
@@ -56,30 +62,30 @@ add_definitions("-DAPP_DATA_DIR=\"${APP_DATA_DIR}\"")
 set(SOURCES
     src/common/logging.cc
     src/common/file_log_backend.cc
-    src/tizenclaw/tizenclaw.cc
-    src/tizenclaw/agent_core.cc
-    src/tizenclaw/container_engine.cc
-    src/tizenclaw/http_client.cc
-    src/tizenclaw/llm_backend_factory.cc
-    src/tizenclaw/gemini_backend.cc
-    src/tizenclaw/openai_backend.cc
-    src/tizenclaw/anthropic_backend.cc
-    src/tizenclaw/ollama_backend.cc
-    src/tizenclaw/telegram_client.cc
-    src/tizenclaw/session_store.cc
-    src/tizenclaw/mcp_server.cc
-    src/tizenclaw/tool_policy.cc
-    src/tizenclaw/key_store.cc
-    src/tizenclaw/audit_logger.cc
-    src/tizenclaw/task_scheduler.cc
-    src/tizenclaw/channel_registry.cc
-    src/tizenclaw/skill_watcher.cc
-    src/tizenclaw/webhook_channel.cc
-    src/tizenclaw/slack_channel.cc
-    src/tizenclaw/discord_channel.cc
-    src/tizenclaw/embedding_store.cc
-    src/tizenclaw/web_dashboard.cc
-    src/tizenclaw/voice_channel.cc
+    src/tizenclaw/core/tizenclaw.cc
+    src/tizenclaw/core/agent_core.cc
+    src/tizenclaw/core/tool_policy.cc
+    src/tizenclaw/core/skill_watcher.cc
+    src/tizenclaw/llm/llm_backend_factory.cc
+    src/tizenclaw/llm/gemini_backend.cc
+    src/tizenclaw/llm/openai_backend.cc
+    src/tizenclaw/llm/anthropic_backend.cc
+    src/tizenclaw/llm/ollama_backend.cc
+    src/tizenclaw/channel/channel_registry.cc
+    src/tizenclaw/channel/telegram_client.cc
+    src/tizenclaw/channel/mcp_server.cc
+    src/tizenclaw/channel/webhook_channel.cc
+    src/tizenclaw/channel/slack_channel.cc
+    src/tizenclaw/channel/discord_channel.cc
+    src/tizenclaw/channel/web_dashboard.cc
+    src/tizenclaw/channel/voice_channel.cc
+    src/tizenclaw/storage/session_store.cc
+    src/tizenclaw/storage/embedding_store.cc
+    src/tizenclaw/storage/audit_logger.cc
+    src/tizenclaw/infra/http_client.cc
+    src/tizenclaw/infra/key_store.cc
+    src/tizenclaw/infra/container_engine.cc
+    src/tizenclaw/scheduler/task_scheduler.cc
 )
 
 # Executable

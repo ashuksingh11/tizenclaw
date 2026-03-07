@@ -1,6 +1,6 @@
 #include "tizenclaw.hh"
-#include "key_store.hh"
-#include "audit_logger.hh"
+#include "../infra/key_store.hh"
+#include "../storage/audit_logger.hh"
 
 #include <iostream>
 #include <string>
@@ -508,8 +508,8 @@ constexpr uid_t TizenClawDaemon::kAllowedUids[];
 
 } // namespace tizenclaw
 
-#include "../common/file_log_backend.hh"
-#include "mcp_server.hh"
+#include "../../common/file_log_backend.hh"
+#include "../channel/mcp_server.hh"
 
 int main(int argc, char *argv[]) {
     using namespace tizenclaw;

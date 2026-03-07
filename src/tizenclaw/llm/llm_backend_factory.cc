@@ -4,7 +4,7 @@
 #include "anthropic_backend.hh"
 #include "ollama_backend.hh"
 
-#include "../common/logging.hh"
+#include "../../common/logging.hh"
 
 namespace tizenclaw {
 

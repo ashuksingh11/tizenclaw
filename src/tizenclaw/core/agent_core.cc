@@ -8,10 +8,10 @@
 #include <thread>
 
 #include "agent_core.hh"
-#include "http_client.hh"
-#include "audit_logger.hh"
-#include "key_store.hh"
-#include "../common/logging.hh"
+#include "../infra/http_client.hh"
+#include "../storage/audit_logger.hh"
+#include "../infra/key_store.hh"
+#include "../../common/logging.hh"
 
 namespace tizenclaw {
 

@@ -8,7 +8,7 @@
 #include <regex>
 
 #include "session_store.hh"
-#include "../common/logging.hh"
+#include "../../common/logging.hh"
 
 namespace tizenclaw {
 

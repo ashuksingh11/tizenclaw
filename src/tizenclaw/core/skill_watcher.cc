@@ -16,7 +16,7 @@
 #include <chrono>
 #include <cstring>
 
-#include "../common/logging.hh"
+#include "../../common/logging.hh"
 
 namespace tizenclaw {
 

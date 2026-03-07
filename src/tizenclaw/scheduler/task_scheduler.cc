@@ -1,8 +1,8 @@
 // Copyright 2026 TizenClaw Authors
 // Task Scheduler implementation
 #include "task_scheduler.hh"
-#include "agent_core.hh"
-#include "../common/logging.hh"
+#include "../core/agent_core.hh"
+#include "../../common/logging.hh"
 
 #include <algorithm>
 #include <chrono>

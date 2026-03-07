@@ -1,8 +1,8 @@
 #include "web_dashboard.hh"
-#include "agent_core.hh"
-#include "task_scheduler.hh"
-#include "audit_logger.hh"
-#include "../common/logging.hh"
+#include "../core/agent_core.hh"
+#include "../scheduler/task_scheduler.hh"
+#include "../storage/audit_logger.hh"
+#include "../../common/logging.hh"
 
 #include <fstream>
 #include <sstream>
