@@ -61,34 +61,36 @@ void TizenClawDaemon::Quit() {
 
 void TizenClawDaemon::OnCreate() {
     LOG(INFO) << "TizenClaw Daemon OnCreate";
-    agent_ = new AgentCore();
+    agent_ = std::make_unique<AgentCore>();
     if (!agent_->Initialize()) {
-        LOG(ERROR) << "Failed to initialize AgentCore";
+        LOG(ERROR)
+            << "Failed to initialize AgentCore";
     }
 
+    // Initialize Task Scheduler
+    scheduler_ = std::make_unique<TaskScheduler>();
+    agent_->SetScheduler(scheduler_.get());
+    scheduler_->Start(agent_.get());
+
     // Register channels
+    auto* a = agent_.get();
     channel_registry_.Register(
-        std::make_unique<McpServer>(agent_));
+        std::make_unique<McpServer>(a));
     channel_registry_.Register(
-        std::make_unique<TelegramClient>(agent_));
+        std::make_unique<TelegramClient>(a));
     channel_registry_.Register(
-        std::make_unique<WebhookChannel>(agent_));
+        std::make_unique<WebhookChannel>(a));
     channel_registry_.Register(
-        std::make_unique<SlackChannel>(agent_));
+        std::make_unique<SlackChannel>(a));
     channel_registry_.Register(
-        std::make_unique<DiscordChannel>(agent_));
+        std::make_unique<DiscordChannel>(a));
     channel_registry_.Register(
         std::make_unique<WebDashboard>(
-            agent_, scheduler_));
+            a, scheduler_.get()));
     channel_registry_.Register(
-        std::make_unique<VoiceChannel>(agent_));
+        std::make_unique<VoiceChannel>(a));
     channel_registry_.StartAll();
 
-    // Initialize Task Scheduler
-    scheduler_ = new TaskScheduler();
-    agent_->SetScheduler(scheduler_);
-    scheduler_->Start(agent_);
-    
     ipc_running_ = true;
     ipc_thread_ = std::thread(
         &TizenClawDaemon::IpcServerLoop, this);
@@ -134,19 +136,19 @@ void TizenClawDaemon::OnDestroy() {
         client_threads_.clear();
     }
 
+    // Stop Task Scheduler (before AgentCore)
+    if (scheduler_) {
+        scheduler_->Stop();
+    }
+
     if (agent_) {
         agent_->SetScheduler(nullptr);
         agent_->Shutdown();
-        delete agent_;
-        agent_ = nullptr;
     }
 
-    // Stop Task Scheduler
-    if (scheduler_) {
-        scheduler_->Stop();
-        delete scheduler_;
-        scheduler_ = nullptr;
-    }
+    // unique_ptr releases in reverse order
+    scheduler_.reset();
+    agent_.reset();
 }
 
 void TizenClawDaemon::IpcServerLoop() {
@@ -190,7 +192,9 @@ void TizenClawDaemon::IpcServerLoop() {
         return;
     }
 
-    LOG(INFO) << "IPC Server listening on \\0tizenclaw.sock (addr_len=" << addr_len << ")";
+    LOG(INFO) << "IPC Server listening on "
+               << "\\0tizenclaw.sock (addr_len="
+               << addr_len << ")";
 
     while (ipc_running_) {
         int client_sock =
@@ -216,7 +220,10 @@ void TizenClawDaemon::IpcServerLoop() {
         }
 
         if (!IsAllowedUid(cred.uid)) {
-            LOG(WARNING) << "Rejected IPC from uid=" << cred.uid << " pid=" << cred.pid;
+            LOG(WARNING)
+                << "Rejected IPC from uid="
+                << cred.uid
+                << " pid=" << cred.pid;
             AuditLogger::Instance().Log(
                 AuditLogger::MakeEvent(
                     AuditEventType::kIpcAuth,
@@ -232,7 +239,10 @@ void TizenClawDaemon::IpcServerLoop() {
             continue;
         }
 
-        LOG(INFO) << "Authorized IPC from pid=" << cred.pid << " uid=" << cred.uid;
+        LOG(INFO)
+            << "Authorized IPC from pid="
+            << cred.pid
+            << " uid=" << cred.uid;
         AuditLogger::Instance().Log(
             AuditLogger::MakeEvent(
                 AuditEventType::kIpcAuth,
@@ -244,8 +254,12 @@ void TizenClawDaemon::IpcServerLoop() {
                  {"allowed", true}}));
 
         // Check concurrent client limit
-        if (active_clients_.load() >= kMaxConcurrentClients) {
-            LOG(WARNING) << "Max concurrent clients reached (" << kMaxConcurrentClients << "), rejecting";
+        if (active_clients_.load() >=
+            kMaxConcurrentClients) {
+            LOG(WARNING)
+                << "Max concurrent clients "
+                << "reached (" << kMaxConcurrentClients
+                << "), rejecting";
             nlohmann::json busy = {
                 {"type", "response"},
                 {"status", "error"},
@@ -268,10 +282,10 @@ void TizenClawDaemon::IpcServerLoop() {
                                client_threads_.end(),
                                [](std::thread& t) {
                                    if (t.joinable()) {
-                                       // Can't check if done without extra state,
-                                       // so try_join is not available in C++17.
-                                       // We'll use detach-after-decrement approach instead.
-                                       return false;
+                                        // Can't check if done;
+                                        // no try_join in C++17.
+                                        // Use detach approach.
+                                        return false;
                                    }
                                    return true;
                                }),
@@ -291,7 +305,8 @@ void TizenClawDaemon::HandleIpcClient(int client_sock) {
     while (true) {
         // Read 4-byte length prefix
         uint32_t net_len = 0;
-        ssize_t hdr_read = ::recv(client_sock, &net_len, 4, MSG_WAITALL);
+        ssize_t hdr_read = ::recv(
+            client_sock, &net_len, 4, MSG_WAITALL);
         
         std::string raw_msg;
         
@@ -304,7 +319,9 @@ void TizenClawDaemon::HandleIpcClient(int client_sock) {
             }
             
             std::vector<char> buffer(len);
-            ssize_t body_read = ::recv(client_sock, buffer.data(), len, MSG_WAITALL);
+            ssize_t body_read = ::recv(
+                client_sock, buffer.data(),
+                len, MSG_WAITALL);
             if (body_read != len) {
                 LOG(ERROR) << "Incomplete IPC payload read";
                 break;
@@ -313,12 +330,17 @@ void TizenClawDaemon::HandleIpcClient(int client_sock) {
         } else if (hdr_read > 0) {
             // Fallback: Legacy EOF-based protocol
             // We read 1-3 bytes into net_len by accident, append it
-            raw_msg.append(reinterpret_cast<char*>(&net_len), hdr_read);
+            raw_msg.append(
+                reinterpret_cast<char*>(&net_len),
+                hdr_read);
             
             std::vector<char> buffer(4096);
             ssize_t bytes_read;
-            while ((bytes_read = ::read(client_sock, buffer.data(), buffer.size())) > 0) {
-                raw_msg.append(buffer.data(), bytes_read);
+            while ((bytes_read = ::read(
+                client_sock, buffer.data(),
+                buffer.size())) > 0) {
+                raw_msg.append(
+                    buffer.data(), bytes_read);
             }
         } else {
             // Client disconnected (0) or error (-1)
@@ -413,30 +435,48 @@ void TizenClawDaemon::HandleIpcClient(int client_sock) {
                     {"text", "Empty prompt"}
                 };
             } else {
-                std::function<void(const std::string&)> on_chunk = nullptr;
+                std::function<void(
+                    const std::string&)>
+                    on_chunk = nullptr;
                 if (stream_requested) {
-                    on_chunk = [client_sock, session_id](const std::string& chunk) {
-                        nlohmann::json chunk_json = {
-                            {"type", "stream_chunk"},
-                            {"session_id", session_id},
+                    on_chunk = [client_sock,
+                        session_id](
+                        const std::string& chunk)
+                    {
+                        nlohmann::json cj = {
+                            {"type",
+                             "stream_chunk"},
+                            {"session_id",
+                             session_id},
                             {"text", chunk}
                         };
-                        std::string chunk_str = chunk_json.dump();
-                        uint32_t chunk_len_net = htonl(chunk_str.size());
-                        
-                        if (::write(client_sock, &chunk_len_net, 4) == 4) {
-                            ssize_t total = 0;
-                            ssize_t len = static_cast<ssize_t>(chunk_str.size());
-                            while (total < len) {
-                                ssize_t written = ::write(client_sock, chunk_str.data() + total, len - total);
-                                if (written <= 0) break;
-                                total += written;
+                        std::string cs =
+                            cj.dump();
+                        uint32_t cl =
+                            htonl(cs.size());
+                        if (::write(client_sock,
+                                &cl, 4) == 4) {
+                            ssize_t t = 0;
+                            auto sz =
+                                static_cast<
+                                    ssize_t>(
+                                    cs.size());
+                            while (t < sz) {
+                                auto w = ::write(
+                                    client_sock,
+                                    cs.data() + t,
+                                    sz - t);
+                                if (w <= 0) break;
+                                t += w;
                             }
                         }
                     };
                 }
 
-                std::string result = agent_->ProcessPrompt(session_id, prompt, on_chunk);
+                std::string result =
+                    agent_->ProcessPrompt(
+                        session_id, prompt,
+                        on_chunk);
                 response_json = {
                     {"type", stream_requested ? "stream_end" : "response"},
                     {"session_id", session_id},
@@ -447,7 +487,9 @@ void TizenClawDaemon::HandleIpcClient(int client_sock) {
             } // end else (normal prompt)
         } catch (const nlohmann::json::exception& e) {
             LOG(WARNING) << "Non-JSON IPC msg, treating as plain text";
-            std::string result = agent_->ProcessPrompt("default", raw_msg);
+            std::string result =
+                agent_->ProcessPrompt(
+                    "default", raw_msg);
             response_json = {
                 {"type", "response"},
                 {"session_id", "default"},
@@ -460,7 +502,9 @@ void TizenClawDaemon::HandleIpcClient(int client_sock) {
                 {"type", "response"},
                 {"session_id", "default"},
                 {"status", "error"},
-                {"text", std::string("Internal error: ") + e.what()}
+                {"text",
+                 std::string("Internal error: ")
+                     + e.what()}
             };
         }
 
@@ -476,11 +520,18 @@ void TizenClawDaemon::HandleIpcClient(int client_sock) {
 
         // Write payload
         ssize_t total = 0;
-        ssize_t len = static_cast<ssize_t>(resp_str.size());
+        auto len = static_cast<ssize_t>(
+            resp_str.size());
         while (total < len) {
-            ssize_t written = ::write(client_sock, resp_str.data() + total, len - total);
+            ssize_t written = ::write(
+                client_sock,
+                resp_str.data() + total,
+                len - total);
             if (written <= 0) {
-                LOG(WARNING) << "Failed to write IPC response: " << strerror(errno);
+                LOG(WARNING)
+                    << "Failed to write IPC "
+                    << "response: "
+                    << strerror(errno);
                 break;
             }
             total += written;

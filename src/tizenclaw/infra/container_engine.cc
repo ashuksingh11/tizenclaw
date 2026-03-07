@@ -75,14 +75,14 @@ constexpr const char* kSkillsContainerId = "tizenclaw_skills_secure";
 }
 
 ContainerEngine::ContainerEngine()
-    : m_initialized(false),
-      m_runtime_bin("crun"),
-      m_app_data_dir(APP_DATA_DIR),
-      m_skills_dir(BuildPaths("skills")),
-      m_bundle_dir(BuildPaths("bundles/skills_secure")),
-      m_rootfs_tar(BuildPaths("rootfs.tar.gz")),
-      m_container_id(kSkillsContainerId),
-      m_crun_root(BuildPaths(".crun")) {
+    : initialized_(false),
+      runtime_bin_("crun"),
+      app_data_dir_(APP_DATA_DIR),
+      skills_dir_(BuildPaths("skills")),
+      bundle_dir_(BuildPaths("bundles/skills_secure")),
+      rootfs_tar_(BuildPaths("rootfs.tar.gz")),
+      container_id_(kSkillsContainerId),
+      crun_root_(BuildPaths(".crun")) {
 }
 
 ContainerEngine::~ContainerEngine() {
@@ -90,72 +90,84 @@ ContainerEngine::~ContainerEngine() {
 }
 
 bool ContainerEngine::Initialize() {
-  if (m_initialized) return true;
+  if (initialized_) return true;
 
   LOG(INFO) << "ContainerEngine Initializing...";
 
   const char* bundled_crun = "/usr/libexec/tizenclaw/crun";
   if (access(bundled_crun, X_OK) == 0) {
-    m_runtime_bin = bundled_crun;
-    LOG(INFO) << "Using bundled OCI runtime: " << m_runtime_bin;
+    runtime_bin_ = bundled_crun;
+    LOG(INFO) << "Using bundled OCI runtime: " << runtime_bin_;
   }
 
   // Use RunCommand instead of std::system because /bin/sh is broken in chroot
-  auto [out1, r1] = RunCommand(m_runtime_bin + " --version");
+  auto [out1, r1] = RunCommand(runtime_bin_ + " --version");
   if (r1 == 0) {
     // runtime already set from above detection
   } else {
     auto [out2, r2] = RunCommand("runc --version");
     if (r2 == 0) {
-      m_runtime_bin = "runc";
+      runtime_bin_ = "runc";
     } else {
-      LOG(WARNING) << "Neither crun nor runc found. UDS skill execution will still work.";
-      m_runtime_bin = "";
+      LOG(WARNING)
+          << "Neither crun nor runc "
+          << "found. UDS skill execution "
+          << "will still work.";
+      runtime_bin_ = "";
     }
   }
-  LOG(INFO) << "Using OCI runtime: " << m_runtime_bin;
+  LOG(INFO) << "Using OCI runtime: " << runtime_bin_;
 
   // Prepare crun state directory in a writable path.
   // Default /run/crun may not be writable inside
   // chroot/unshare environments.
   RunCommand("mkdir -p " +
-             EscapeShellArg(m_crun_root));
-  LOG(INFO) << "crun root dir: " << m_crun_root;
+             EscapeShellArg(crun_root_));
+  LOG(INFO) << "crun root dir: " << crun_root_;
 
   // Ensure data directory exists
   RunCommand("mkdir -p " +
              EscapeShellArg(
-                 m_app_data_dir + "/data"));
+                 app_data_dir_ + "/data"));
 
-  m_initialized = true;
+  initialized_ = true;
   return true;
 }
 
 std::string ContainerEngine::ExecuteSkill(
     const std::string& skill_name,
     const std::string& arg_str) {
-  if (!m_initialized) {
+  if (!initialized_) {
     LOG(ERROR) << "Cannot run skill. "
                << "Engine not initialized.";
     return "{}";
   }
 
   LOG(ERROR) << "[DEBUG] ExecuteSkill called: skill=" << skill_name
-             << " runtime=" << m_runtime_bin;
+             << " runtime=" << runtime_bin_;
 
   // 1st priority: UDS to skill_executor in secure
   // container
   std::string result =
       ExecuteSkillViaSocket(skill_name, arg_str);
   LOG(ERROR) << "[DEBUG] UDS result: len=" << result.length()
-             << " content=" << result.substr(0, std::min((size_t)200, result.size()));
+             << " content="
+             << result.substr(
+                 0, std::min(
+                     (size_t)200,
+                     result.size()));
   if (!result.empty() && result != "{}") {
-    // Check if the result is an error wrapper (e.g., glibc/musl incompatibility)
+    // Check if the result is an error wrapper
+    // (e.g., glibc/musl incompatibility)
     try {
       auto rj = nlohmann::json::parse(result);
       if (rj.contains("error")) {
-        LOG(ERROR) << "[DEBUG] UDS returned error result, skipping crun, going to host-direct: "
-                   << rj["error"].get<std::string>().substr(0, 100);
+        LOG(ERROR)
+            << "[DEBUG] UDS returned error "
+            << "result, skipping crun: "
+            << rj["error"]
+                .get<std::string>()
+                .substr(0, 100);
         // Skip crun exec — if UDS (same container) failed, crun exec will too.
         // Fall through directly to host-direct below.
       } else {
@@ -179,7 +191,7 @@ std::string ContainerEngine::ExecuteSkill(
   LOG(WARNING) << "crun exec failed, trying "
                << "host-direct fallback";
   std::string host_skill_path =
-      m_skills_dir + "/" + skill_name + "/" +
+      skills_dir_ + "/" + skill_name + "/" +
       skill_name + ".py";
   if (access(host_skill_path.c_str(), R_OK) != 0) {
     LOG(ERROR) << "Skill not found: "
@@ -237,7 +249,10 @@ std::string ContainerEngine::ExecuteSkillViaSocket(
     return "{}";
   }
 
-  LOG(ERROR) << "[DEBUG] UDS connected to skill_executor at " << kSkillSocketPath;
+  LOG(ERROR)
+      << "[DEBUG] UDS connected to "
+      << "skill_executor at "
+      << kSkillSocketPath;
 
   // Build request JSON
   nlohmann::json req;
@@ -304,7 +319,12 @@ std::string ContainerEngine::ExecuteSkillViaSocket(
             << " bytes)";
 
   // Parse response
-  LOG(ERROR) << "[DEBUG] UDS raw response: " << resp_str.substr(0, std::min((size_t)300, resp_str.size()));
+  LOG(ERROR)
+      << "[DEBUG] UDS raw response: "
+      << resp_str.substr(
+          0, std::min(
+              (size_t)300,
+              resp_str.size()));
   try {
     auto resp = nlohmann::json::parse(resp_str);
     std::string status =
@@ -313,7 +333,11 @@ std::string ContainerEngine::ExecuteSkillViaSocket(
         resp.value("output", "");
     LOG(ERROR) << "[DEBUG] UDS parsed: status=" << status
                << " output_len=" << output.length()
-               << " output_preview=" << output.substr(0, std::min((size_t)200, output.size()));
+               << " output_preview="
+               << output.substr(
+                   0, std::min(
+                       (size_t)200,
+                       output.size()));
     if (status == "ok") {
       return output;
     }
@@ -331,7 +355,7 @@ std::string ContainerEngine::ExecuteSkillViaSocket(
 
 std::string ContainerEngine::ExecuteCode(
     const std::string& code) {
-  if (!m_initialized) {
+  if (!initialized_) {
     LOG(ERROR) << "Cannot execute code. "
                << "Engine not initialized.";
     return "{}";
@@ -453,7 +477,7 @@ std::string ContainerEngine::ExecuteFileOp(
     const std::string& operation,
     const std::string& path,
     const std::string& content) {
-  if (!m_initialized) {
+  if (!initialized_) {
     LOG(ERROR) << "Cannot execute file op. "
                << "Engine not initialized.";
     return "{}";
@@ -572,7 +596,7 @@ std::string ContainerEngine::ExecuteFileOp(
 std::string ContainerEngine::ExecuteSkillViaCrun(
     const std::string& skill_name,
     const std::string& arg_str) {
-  if (m_runtime_bin.empty()) {
+  if (runtime_bin_.empty()) {
     return "{}";
   }
   if (!EnsureSkillsContainerRunning()) {
@@ -586,7 +610,7 @@ std::string ContainerEngine::ExecuteSkillViaCrun(
   std::string run_cmd =
       CrunCmd("exec --env " +
               EscapeShellArg(claw_env) + " " +
-              m_container_id +
+              container_id_ +
               " python3 " +
               EscapeShellArg(skill_path));
   LOG(INFO) << "crun exec skill: " << skill_name;
@@ -631,13 +655,13 @@ bool ContainerEngine::EnsureSkillsContainerRunning() {
 }
 
 bool ContainerEngine::PrepareSkillsBundle() {
-  std::string rootfs_dir = m_bundle_dir + "/rootfs";
-  std::string marker = m_bundle_dir + "/.extracted";
+  std::string rootfs_dir = bundle_dir_ + "/rootfs";
+  std::string marker = bundle_dir_ + "/.extracted";
 
   std::string prepare_cmd =
       "mkdir -p " + EscapeShellArg(rootfs_dir) + " && " + "if [ ! -f " +
       EscapeShellArg(marker) + " ]; then " + "tar -xzf " +
-      EscapeShellArg(m_rootfs_tar) + " -C " + EscapeShellArg(rootfs_dir) +
+      EscapeShellArg(rootfs_tar_) + " -C " + EscapeShellArg(rootfs_dir) +
       " && touch " + EscapeShellArg(marker) + "; fi";
 
   auto [output, ret] = RunCommand(prepare_cmd);
@@ -652,14 +676,14 @@ bool ContainerEngine::PrepareSkillsBundle() {
 
 bool ContainerEngine::IsContainerRunning() const {
   std::string check_cmd =
-      CrunCmd("state " + m_container_id);
+      CrunCmd("state " + container_id_);
   auto [output, rc] = RunCommand(check_cmd);
   return rc == 0;
 }
 
 bool ContainerEngine::StartSkillsContainer() {
   std::string delete_cmd =
-      CrunCmd("delete -f " + m_container_id);
+      CrunCmd("delete -f " + container_id_);
   auto [del_out, delete_ret] = RunCommand(delete_cmd);
   if (delete_ret != 0) {
     LOG(WARNING) << "Pre-delete secure container returned: " << delete_ret;
@@ -667,9 +691,9 @@ bool ContainerEngine::StartSkillsContainer() {
 
   // Workaround for Tizen emulator: disable cgroup manager if crun supports it
   std::string cgroup_arg = "";
-  if (m_runtime_bin.find("crun") != std::string::npos) {
+  if (runtime_bin_.find("crun") != std::string::npos) {
     auto [help_out, help_rc] = RunCommand(
-        m_runtime_bin + " run --help");
+        runtime_bin_ + " run --help");
     if (help_rc == 0 &&
         help_out.find("--cgroup-manager") !=
             std::string::npos) {
@@ -678,9 +702,9 @@ bool ContainerEngine::StartSkillsContainer() {
   }
 
   std::string run_cmd =
-      "cd " + EscapeShellArg(m_bundle_dir) +
+      "cd " + EscapeShellArg(bundle_dir_) +
       " && " + CrunCmd("run" + cgroup_arg +
-      " -d " + m_container_id);
+      " -d " + container_id_);
   auto [run_out, ret] = RunCommand(run_cmd);
   if (ret != 0) {
     LOG(ERROR) << "Failed to start secure skills container. Return: " << ret
@@ -691,12 +715,12 @@ bool ContainerEngine::StartSkillsContainer() {
 }
 
 void ContainerEngine::StopSkillsContainer() {
-  if (!m_initialized || m_runtime_bin.empty()) {
+  if (!initialized_ || runtime_bin_.empty()) {
     return;
   }
 
   std::string stop_cmd =
-      CrunCmd("delete -f " + m_container_id);
+      CrunCmd("delete -f " + container_id_);
   auto [output, stop_ret] = RunCommand(stop_cmd);
   if (stop_ret != 0) {
     LOG(WARNING) << "Delete secure container returned: " << stop_ret;
@@ -704,7 +728,7 @@ void ContainerEngine::StopSkillsContainer() {
 }
 
 bool ContainerEngine::WriteSkillsConfig() const {
-  std::string config_file = m_bundle_dir + "/config.json";
+  std::string config_file = bundle_dir_ + "/config.json";
   std::ofstream out_conf(config_file);
   if (!out_conf.is_open()) {
     LOG(ERROR) << "Failed to write secure config.json";
@@ -755,13 +779,13 @@ bool ContainerEngine::WriteSkillsConfig() const {
     {
       "destination": "/skills",
       "type": "bind",
-      "source": ")" + m_skills_dir + R"(",
+      "source": ")" + skills_dir_ + R"(",
       "options": ["rbind", "rw"]
     },
     {
       "destination": "/data",
       "type": "bind",
-      "source": ")" + m_app_data_dir + R"(/data",
+      "source": ")" + app_data_dir_ + R"(/data",
       "options": ["rbind", "rw"]
     },
     {
@@ -866,9 +890,9 @@ bool ContainerEngine::WriteSkillsConfig() const {
 std::string ContainerEngine::BuildPaths(
     const std::string& leaf) const {
   if (leaf.empty()) {
-    return m_app_data_dir;
+    return app_data_dir_;
   }
-  return m_app_data_dir + "/" + leaf;
+  return app_data_dir_ + "/" + leaf;
 }
 
 std::string ContainerEngine::EscapeShellArg(
@@ -887,8 +911,8 @@ std::string ContainerEngine::EscapeShellArg(
 
 std::string ContainerEngine::CrunCmd(
     const std::string& subcmd) const {
-  return m_runtime_bin + " --root " +
-         EscapeShellArg(m_crun_root) +
+  return runtime_bin_ + " --root " +
+         EscapeShellArg(crun_root_) +
          " " + subcmd;
 }
 

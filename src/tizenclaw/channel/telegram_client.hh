@@ -1,5 +1,5 @@
-#ifndef __TELEGRAM_CLIENT_H__
-#define __TELEGRAM_CLIENT_H__
+#ifndef TIZENCLAW_CHANNEL_TELEGRAM_CLIENT_H_
+#define TIZENCLAW_CHANNEL_TELEGRAM_CLIENT_H_
 
 #include <string>
 #include <set>
@@ -62,4 +62,4 @@ private:
 
 } // namespace tizenclaw
 
-#endif // __TELEGRAM_CLIENT_H__
+#endif // TIZENCLAW_CHANNEL_TELEGRAM_CLIENT_H_

@@ -1,5 +1,5 @@
-#ifndef __EMBEDDING_STORE_H__
-#define __EMBEDDING_STORE_H__
+#ifndef TIZENCLAW_STORAGE_EMBEDDING_STORE_H_
+#define TIZENCLAW_STORAGE_EMBEDDING_STORE_H_
 
 #include <string>
 #include <vector>
@@ -75,4 +75,4 @@ private:
 
 }  // namespace tizenclaw
 
-#endif  // __EMBEDDING_STORE_H__
+#endif  // TIZENCLAW_STORAGE_EMBEDDING_STORE_H_

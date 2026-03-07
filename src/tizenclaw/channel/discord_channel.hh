@@ -1,5 +1,5 @@
-#ifndef __DISCORD_CHANNEL_H__
-#define __DISCORD_CHANNEL_H__
+#ifndef TIZENCLAW_CHANNEL_DISCORD_CHANNEL_H_
+#define TIZENCLAW_CHANNEL_DISCORD_CHANNEL_H_
 
 #include <string>
 #include <vector>
@@ -69,4 +69,4 @@ private:
 
 } // namespace tizenclaw
 
-#endif // __DISCORD_CHANNEL_H__
+#endif // TIZENCLAW_CHANNEL_DISCORD_CHANNEL_H_

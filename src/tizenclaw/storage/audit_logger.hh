@@ -5,8 +5,8 @@
  * Licensed under the Apache License, Version 2.0
  */
 
-#ifndef __AUDIT_LOGGER_H__
-#define __AUDIT_LOGGER_H__
+#ifndef TIZENCLAW_STORAGE_AUDIT_LOGGER_H_
+#define TIZENCLAW_STORAGE_AUDIT_LOGGER_H_
 
 #include <map>
 #include <mutex>
@@ -94,4 +94,4 @@ private:
 
 }  // namespace tizenclaw
 
-#endif  // __AUDIT_LOGGER_H__
+#endif  // TIZENCLAW_STORAGE_AUDIT_LOGGER_H_

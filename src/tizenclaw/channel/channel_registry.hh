@@ -1,5 +1,5 @@
-#ifndef __CHANNEL_REGISTRY_H__
-#define __CHANNEL_REGISTRY_H__
+#ifndef TIZENCLAW_CHANNEL_CHANNEL_REGISTRY_H_
+#define TIZENCLAW_CHANNEL_CHANNEL_REGISTRY_H_
 
 #include <memory>
 #include <string>
@@ -44,4 +44,4 @@ private:
 
 } // namespace tizenclaw
 
-#endif // __CHANNEL_REGISTRY_H__
+#endif // TIZENCLAW_CHANNEL_CHANNEL_REGISTRY_H_

@@ -1,5 +1,5 @@
-#ifndef __WEB_DASHBOARD_H__
-#define __WEB_DASHBOARD_H__
+#ifndef TIZENCLAW_CHANNEL_WEB_DASHBOARD_H_
+#define TIZENCLAW_CHANNEL_WEB_DASHBOARD_H_
 
 #include <string>
 #include <thread>
@@ -117,4 +117,4 @@ private:
 
 }  // namespace tizenclaw
 
-#endif  // __WEB_DASHBOARD_H__
+#endif  // TIZENCLAW_CHANNEL_WEB_DASHBOARD_H_

@@ -109,7 +109,9 @@ void TelegramClient::SendMessage(
         payload.dump());
 
     if (!resp.success) {
-        LOG(WARNING) << "SendMessage Markdown parse failed, retrying as plain text";
+        LOG(WARNING)
+            << "SendMessage Markdown parse "
+            << "failed, retrying plain text";
         payload.erase("parse_mode");
         resp = HttpClient::Post(
             url,
@@ -214,7 +216,10 @@ void TelegramClient::PollingLoop() {
                 if (!allowed_chat_ids_.empty() &&
                     allowed_chat_ids_.find(chat_id) ==
                         allowed_chat_ids_.end()) {
-                    LOG(INFO) << "Blocked chat_id " << chat_id << " - not in allowlist";
+                    LOG(INFO)
+                        << "Blocked chat_id "
+                        << chat_id
+                        << " - not in allowlist";
                     continue;
                 }
 

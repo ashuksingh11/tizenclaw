@@ -1,5 +1,5 @@
-#ifndef __CHANNEL_H__
-#define __CHANNEL_H__
+#ifndef TIZENCLAW_CHANNEL_CHANNEL_H_
+#define TIZENCLAW_CHANNEL_CHANNEL_H_
 
 #include <string>
 
@@ -31,4 +31,4 @@ public:
 
 } // namespace tizenclaw
 
-#endif // __CHANNEL_H__
+#endif // TIZENCLAW_CHANNEL_CHANNEL_H_

@@ -1,5 +1,5 @@
-#ifndef __CONTAINER_ENGINE_H__
-#define __CONTAINER_ENGINE_H__
+#ifndef TIZENCLAW_INFRA_CONTAINER_ENGINE_H_
+#define TIZENCLAW_INFRA_CONTAINER_ENGINE_H_
 
 #include <string>
 #include <memory>
@@ -61,14 +61,14 @@ private:
     static std::string ExtractJsonResult(
         const std::string& raw);
 
-    bool m_initialized;
-    std::string m_runtime_bin;
-    std::string m_app_data_dir;
-    std::string m_skills_dir;
-    std::string m_bundle_dir;
-    std::string m_rootfs_tar;
-    std::string m_container_id;
-    std::string m_crun_root;
+    bool initialized_;
+    std::string runtime_bin_;
+    std::string app_data_dir_;
+    std::string skills_dir_;
+    std::string bundle_dir_;
+    std::string rootfs_tar_;
+    std::string container_id_;
+    std::string crun_root_;
 
     static constexpr const char* kSkillSocketPath =
         "/tmp/tizenclaw_skill.sock";
@@ -76,4 +76,4 @@ private:
 
 } // namespace tizenclaw
 
-#endif // __CONTAINER_ENGINE_H__
+#endif // TIZENCLAW_INFRA_CONTAINER_ENGINE_H_

@@ -5,8 +5,8 @@
  * Licensed under the Apache License, Version 2.0
  */
 
-#ifndef __SKILL_WATCHER_H__
-#define __SKILL_WATCHER_H__
+#ifndef TIZENCLAW_CORE_SKILL_WATCHER_H_
+#define TIZENCLAW_CORE_SKILL_WATCHER_H_
 
 #include <atomic>
 #include <functional>
@@ -64,4 +64,4 @@ class SkillWatcher {
 
 }  // namespace tizenclaw
 
-#endif  // __SKILL_WATCHER_H__
+#endif  // TIZENCLAW_CORE_SKILL_WATCHER_H_

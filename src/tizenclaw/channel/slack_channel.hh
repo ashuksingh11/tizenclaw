@@ -1,5 +1,5 @@
-#ifndef __SLACK_CHANNEL_H__
-#define __SLACK_CHANNEL_H__
+#ifndef TIZENCLAW_CHANNEL_SLACK_CHANNEL_H_
+#define TIZENCLAW_CHANNEL_SLACK_CHANNEL_H_
 
 #include <string>
 #include <vector>
@@ -72,4 +72,4 @@ private:
 
 } // namespace tizenclaw
 
-#endif // __SLACK_CHANNEL_H__
+#endif // TIZENCLAW_CHANNEL_SLACK_CHANNEL_H_

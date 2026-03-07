@@ -1,5 +1,5 @@
-#ifndef __MCP_SERVER_H__
-#define __MCP_SERVER_H__
+#ifndef TIZENCLAW_CHANNEL_MCP_SERVER_H_
+#define TIZENCLAW_CHANNEL_MCP_SERVER_H_
 
 #include <string>
 #include <vector>
@@ -67,4 +67,4 @@ private:
 
 } // namespace tizenclaw
 
-#endif // __MCP_SERVER_H__
+#endif // TIZENCLAW_CHANNEL_MCP_SERVER_H_

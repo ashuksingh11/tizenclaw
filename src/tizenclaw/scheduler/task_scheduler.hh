@@ -1,8 +1,8 @@
 // Copyright 2026 TizenClaw Authors
 // Task Scheduler — in-process cron/interval/one-shot
 // task automation with LLM integration
-#ifndef __TASK_SCHEDULER_H__
-#define __TASK_SCHEDULER_H__
+#ifndef TIZENCLAW_SCHEDULER_TASK_SCHEDULER_H_
+#define TIZENCLAW_SCHEDULER_TASK_SCHEDULER_H_
 
 #include <atomic>
 #include <chrono>
@@ -183,4 +183,4 @@ class TaskScheduler {
 
 }  // namespace tizenclaw
 
-#endif  // __TASK_SCHEDULER_H__
+#endif  // TIZENCLAW_SCHEDULER_TASK_SCHEDULER_H_

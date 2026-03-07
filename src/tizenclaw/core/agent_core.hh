@@ -1,5 +1,5 @@
-#ifndef __AGENT_CORE_H__
-#define __AGENT_CORE_H__
+#ifndef TIZENCLAW_CORE_AGENT_CORE_H_
+#define TIZENCLAW_CORE_AGENT_CORE_H_
 
 #include <atomic>
 #include <map>
@@ -127,17 +127,17 @@ private:
     void TrimHistory(
         const std::string& session_id);
 
-    std::unique_ptr<ContainerEngine> m_container;
-    std::unique_ptr<LlmBackend> m_backend;
-    bool m_initialized;
+    std::unique_ptr<ContainerEngine> container_;
+    std::unique_ptr<LlmBackend> backend_;
+    bool initialized_ = false;
 
     // System prompt loaded from external file
-    std::string m_system_prompt;
+    std::string system_prompt_;
 
     // Session-based conversation history
     std::map<std::string,
-             std::vector<LlmMessage>> m_sessions;
-    std::mutex session_mutex_; // Protects m_sessions
+             std::vector<LlmMessage>> sessions_;
+    std::mutex session_mutex_;  // Protects sessions_
 
     // Per-session system prompt overrides
     // session_id → custom system_prompt
@@ -176,4 +176,4 @@ private:
 
 } // namespace tizenclaw
 
-#endif // __AGENT_CORE_H__
+#endif  // TIZENCLAW_CORE_AGENT_CORE_H_

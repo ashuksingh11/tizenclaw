@@ -1,5 +1,5 @@
-#ifndef __SESSION_STORE_H__
-#define __SESSION_STORE_H__
+#ifndef TIZENCLAW_STORAGE_SESSION_STORE_H_
+#define TIZENCLAW_STORAGE_SESSION_STORE_H_
 
 #include <string>
 #include <vector>
@@ -150,4 +150,4 @@ private:
 
 } // namespace tizenclaw
 
-#endif  // __SESSION_STORE_H__
+#endif  // TIZENCLAW_STORAGE_SESSION_STORE_H_

@@ -1,5 +1,5 @@
-#ifndef __LLM_BACKEND_H__
-#define __LLM_BACKEND_H__
+#ifndef TIZENCLAW_LLM_LLM_BACKEND_H_
+#define TIZENCLAW_LLM_LLM_BACKEND_H_
 
 #include <memory>
 #include <string>
@@ -97,4 +97,4 @@ public:
 
 } // namespace tizenclaw
 
-#endif  // __LLM_BACKEND_H__
+#endif  // TIZENCLAW_LLM_LLM_BACKEND_H_

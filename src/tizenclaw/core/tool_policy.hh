@@ -5,8 +5,8 @@
  * Licensed under the Apache License, Version 2.0
  */
 
-#ifndef __TOOL_POLICY_H__
-#define __TOOL_POLICY_H__
+#ifndef TIZENCLAW_CORE_TOOL_POLICY_H_
+#define TIZENCLAW_CORE_TOOL_POLICY_H_
 
 #include <map>
 #include <mutex>
@@ -108,4 +108,4 @@ private:
 
 }  // namespace tizenclaw
 
-#endif  // __TOOL_POLICY_H__
+#endif  // TIZENCLAW_CORE_TOOL_POLICY_H_

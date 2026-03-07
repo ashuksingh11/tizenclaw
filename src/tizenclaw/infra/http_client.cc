@@ -121,14 +121,27 @@ HttpResponse HttpClient::Post(
 
     if (res != CURLE_OK) {
       result.error = curl_easy_strerror(res);
-      LOG(ERROR) << "curl failed: " << result.error << " (" << (attempt + 1) << "/" << max_retries << ")";
+      LOG(ERROR)
+          << "curl failed: "
+          << result.error
+          << " (" << (attempt + 1)
+          << "/" << max_retries << ")";
       continue;
     }
 
     if (result.status_code == 429 ||
         result.status_code >= 500) {
-      result.error = "HTTP " + std::to_string(result.status_code) + " (Retry limit)";
-      LOG(WARNING) << "HTTP " << result.status_code << ", retry (" << (attempt + 1) << "/" << max_retries << ")";
+      result.error =
+          "HTTP " +
+          std::to_string(
+              result.status_code) +
+          " (Retry limit)";
+      LOG(WARNING)
+          << "HTTP "
+          << result.status_code
+          << ", retry ("
+          << (attempt + 1)
+          << "/" << max_retries << ")";
       continue;
     }
 

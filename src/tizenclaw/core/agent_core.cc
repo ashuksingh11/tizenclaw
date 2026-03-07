@@ -17,8 +17,8 @@ namespace tizenclaw {
 
 
 AgentCore::AgentCore()
-    : m_container(new ContainerEngine()),
-      m_initialized(false) {
+    : container_(new ContainerEngine()),
+      initialized_(false) {
 }
 
 AgentCore::~AgentCore() {
@@ -26,18 +26,21 @@ AgentCore::~AgentCore() {
 }
 
 bool AgentCore::Initialize() {
-  if (m_initialized) return true;
+  if (initialized_) return true;
 
   LOG(INFO) << "AgentCore Initializing...";
 
-  if (!m_container->Initialize()) {
+  if (!container_->Initialize()) {
     LOG(ERROR) << "Failed to initialize ContainerEngine";
     return false;
   }
 
   // Load LLM config
   const char* env_path = std::getenv("TIZENCLAW_CONFIG_PATH");
-  std::string config_path = env_path ? env_path : "/opt/usr/share/tizenclaw/config/llm_config.json";
+  std::string config_path = env_path
+      ? env_path
+      : "/opt/usr/share/tizenclaw/"
+        "config/llm_config.json";
   nlohmann::json llm_config;
 
   std::ifstream cf(config_path);
@@ -76,9 +79,9 @@ bool AgentCore::Initialize() {
   std::string backend_name =
       llm_config.value("active_backend", "gemini");
 
-  m_backend =
+  backend_ =
       LlmBackendFactory::Create(backend_name);
-  if (!m_backend) {
+  if (!backend_) {
     LOG(ERROR) << "Failed to create LLM backend: " << backend_name;
     return false;
   }
@@ -122,19 +125,19 @@ bool AgentCore::Initialize() {
     }
   }
 
-  if (!m_backend->Initialize(backend_config)) {
+  if (!backend_->Initialize(backend_config)) {
     LOG(ERROR) << "Failed to init backend: " << backend_name;
-    m_backend.reset();
+    backend_.reset();
     return false;
   }
 
   curl_global_init(CURL_GLOBAL_DEFAULT);
 
   // Load system prompt
-  m_system_prompt = LoadSystemPrompt(llm_config);
-  if (!m_system_prompt.empty()) {
+  system_prompt_ = LoadSystemPrompt(llm_config);
+  if (!system_prompt_.empty()) {
     LOG(INFO) << "System prompt loaded ("
-              << m_system_prompt.size()
+              << system_prompt_.size()
               << " chars)";
   } else {
     LOG(WARNING) << "No system prompt configured";
@@ -172,12 +175,12 @@ bool AgentCore::Initialize() {
           AuditEventType::kConfigChange,
           "",
           {{"backend",
-            m_backend->GetName()}}));
+            backend_->GetName()}}));
 
   LOG(INFO) << "AgentCore initialized with "
             << "backend: "
-            << m_backend->GetName();
-  m_initialized = true;
+            << backend_->GetName();
+  initialized_ = true;
 
   // Initialize embedding store for RAG
   std::string rag_db =
@@ -198,34 +201,34 @@ bool AgentCore::Initialize() {
 }
 
 void AgentCore::Shutdown() {
-  if (!m_initialized) return;
+  if (!initialized_) return;
 
   LOG(INFO) << "AgentCore Shutting down...";
 
   // Save all sessions before shutting down
   {
     std::lock_guard<std::mutex> lock(session_mutex_);
-    for (auto& [sid, history] : m_sessions) {
+    for (auto& [sid, history] : sessions_) {
       session_store_.SaveSession(sid, history);
     }
-    m_sessions.clear();
+    sessions_.clear();
   }
-  if (m_backend) {
-    m_backend->Shutdown();
-    m_backend.reset();
+  if (backend_) {
+    backend_->Shutdown();
+    backend_.reset();
   }
   embedding_store_.Close();
-  m_container.reset();
+  container_.reset();
   curl_global_cleanup();
 
-  m_initialized = false;
+  initialized_ = false;
 }
 
 std::string AgentCore::ProcessPrompt(
     const std::string& session_id,
     const std::string& prompt,
     std::function<void(const std::string&)> on_chunk) {
-  if (!m_initialized || !m_backend) {
+  if (!initialized_ || !backend_) {
     LOG(ERROR) << "AgentCore not initialized.";
     return "Error: AgentCore is not initialized.";
   }
@@ -238,21 +241,21 @@ std::string AgentCore::ProcessPrompt(
   {
     std::lock_guard<std::mutex> lock(session_mutex_);
     // Load from disk if not in memory
-    if (m_sessions.find(session_id) == m_sessions.end()) {
+    if (sessions_.find(session_id) == sessions_.end()) {
       auto loaded = session_store_.LoadSession(session_id);
       if (!loaded.empty()) {
-        m_sessions[session_id] = std::move(loaded);
+        sessions_[session_id] = std::move(loaded);
       }
     }
 
     LlmMessage user_msg;
     user_msg.role = "user";
     user_msg.text = prompt;
-    m_sessions[session_id].push_back(user_msg);
+    sessions_[session_id].push_back(user_msg);
     TrimHistory(session_id);
 
     // Copy history to local variable to avoid holding lock during LLM API call
-    local_history = m_sessions[session_id];
+    local_history = sessions_[session_id];
   }
 
   int iterations = 0;
@@ -269,7 +272,7 @@ std::string AgentCore::ProcessPrompt(
         GetSessionPrompt(session_id, tools);
 
     // Query LLM backend without holding lock
-    LlmResponse resp = m_backend->Chat(
+    LlmResponse resp = backend_->Chat(
         local_history, tools, on_chunk,
         full_prompt);
 
@@ -287,9 +290,9 @@ std::string AgentCore::ProcessPrompt(
         {
           std::lock_guard<std::mutex> lock(
               session_mutex_);
-          if (!m_sessions[session_id]
+          if (!sessions_[session_id]
                    .empty()) {
-            m_sessions[session_id]
+            sessions_[session_id]
                 .pop_back();
           }
         }
@@ -302,7 +305,7 @@ std::string AgentCore::ProcessPrompt(
     if (resp.total_tokens > 0) {
       session_store_.LogTokenUsage(
           session_id,
-          m_backend->GetName(),
+          backend_->GetName(),
           resp.prompt_tokens,
           resp.completion_tokens);
       LOG(INFO) << "Tokens: prompt="
@@ -321,11 +324,11 @@ std::string AgentCore::ProcessPrompt(
       
       {
         std::lock_guard<std::mutex> lock(session_mutex_);
-        m_sessions[session_id].push_back(model_msg);
+        sessions_[session_id].push_back(model_msg);
         TrimHistory(session_id);
         
         session_store_.SaveSession(
-            session_id, m_sessions[session_id]);
+            session_id, sessions_[session_id]);
       }
 
       LOG(INFO) << "Final response: " << resp.text;
@@ -344,10 +347,15 @@ std::string AgentCore::ProcessPrompt(
     local_history.push_back(assistant_msg);
     {
       std::lock_guard<std::mutex> lock(session_mutex_);
-      m_sessions[session_id].push_back(assistant_msg);
+      sessions_[session_id].push_back(assistant_msg);
     }
 
-    LOG(INFO) << "Iteration " << (iterations + 1) << ": Executing " << resp.tool_calls.size() << " tools in parallel";
+    LOG(INFO)
+        << "Iteration "
+        << (iterations + 1)
+        << ": Executing "
+        << resp.tool_calls.size()
+        << " tools in parallel";
 
     // Execute multiple tools in parallel using std::async
     struct ToolExecResult {
@@ -466,8 +474,8 @@ std::string AgentCore::ProcessPrompt(
 
     {
       std::lock_guard<std::mutex> lock(session_mutex_);
-      m_sessions[session_id].insert(
-          m_sessions[session_id].end(),
+      sessions_[session_id].insert(
+          sessions_[session_id].end(),
           tool_msgs.begin(),
           tool_msgs.end());
       TrimHistory(session_id);
@@ -500,11 +508,11 @@ std::string AgentCore::ProcessPrompt(
       {
         std::lock_guard<std::mutex> lock(
             session_mutex_);
-        m_sessions[session_id].push_back(
+        sessions_[session_id].push_back(
             stop_msg);
         session_store_.SaveSession(
             session_id,
-            m_sessions[session_id]);
+            sessions_[session_id]);
       }
       return idle_msg;
     }
@@ -520,7 +528,7 @@ std::string AgentCore::ProcessPrompt(
     std::lock_guard<std::mutex> lock(
         session_mutex_);
     session_store_.SaveSession(
-        session_id, m_sessions[session_id]);
+        session_id, sessions_[session_id]);
   }
 
   return last_text.empty()
@@ -536,7 +544,7 @@ std::string AgentCore::ExecuteSkill(
 
   std::string arg_str = args.dump();
   std::string response =
-      m_container->ExecuteSkill(skill_name,
+      container_->ExecuteSkill(skill_name,
                                 arg_str);
 
   if (response.empty()) {
@@ -554,7 +562,7 @@ std::string AgentCore::ExecuteCode(
             << code.size() << " chars";
 
   std::string response =
-      m_container->ExecuteCode(code);
+      container_->ExecuteCode(code);
 
   if (response.empty()) {
     LOG(ERROR) << "Code execution failed";
@@ -573,7 +581,7 @@ std::string AgentCore::ExecuteFileOp(
             << " path=" << path;
 
   std::string response =
-      m_container->ExecuteFileOp(
+      container_->ExecuteFileOp(
           operation, path, content);
 
   if (response.empty()) {
@@ -916,7 +924,7 @@ void AgentCore::ReloadSkills() {
 
   // Force reload and rebuild system prompt
   auto tools = LoadSkillDeclarations();
-  m_system_prompt =
+  system_prompt_ =
       BuildSystemPrompt(tools);
   LOG(INFO) << "Skill reload complete: "
             << tools.size() << " tools";
@@ -984,7 +992,7 @@ std::string AgentCore::LoadSystemPrompt(
 
 std::string AgentCore::BuildSystemPrompt(
     const std::vector<LlmToolDecl>& tools) {
-  std::string prompt = m_system_prompt;
+  std::string prompt = system_prompt_;
 
   // Build tool list string
   std::string tool_list;
@@ -1011,11 +1019,11 @@ std::string AgentCore::BuildSystemPrompt(
 void AgentCore::CompactHistory(
     const std::string& session_id) {
   // MUST be called with session_mutex_ held
-  auto& history = m_sessions[session_id];
+  auto& history = sessions_[session_id];
   if (history.size() <= kCompactionThreshold) {
     return;  // Below threshold, no compaction
   }
-  if (!m_backend) return;
+  if (!backend_) return;
 
   // Gather oldest N messages to summarize
   size_t count = std::min(
@@ -1066,7 +1074,7 @@ void AgentCore::CompactHistory(
 
   LlmResponse resp;
   try {
-    resp = m_backend->Chat(
+    resp = backend_->Chat(
         compact_msgs,
         {},       // no tools for compaction
         nullptr,  // no streaming
@@ -1080,11 +1088,11 @@ void AgentCore::CompactHistory(
   session_mutex_.lock();
 
   // Verify session still exists after re-lock
-  if (m_sessions.find(session_id) ==
-      m_sessions.end()) {
+  if (sessions_.find(session_id) ==
+      sessions_.end()) {
     return;
   }
-  auto& hist = m_sessions[session_id];
+  auto& hist = sessions_[session_id];
 
   if (!resp.success || resp.text.empty()) {
     LOG(WARNING) << "Compaction failed, "
@@ -1116,7 +1124,7 @@ void AgentCore::CompactHistory(
   if (resp.total_tokens > 0) {
     session_store_.LogTokenUsage(
         session_id,
-        m_backend->GetName() + "_compaction",
+        backend_->GetName() + "_compaction",
         resp.prompt_tokens,
         resp.completion_tokens);
   }
@@ -1125,7 +1133,7 @@ void AgentCore::CompactHistory(
 void AgentCore::TrimHistory(
     const std::string& session_id) {
   // MUST be called with session_mutex_ held
-  auto& history = m_sessions[session_id];
+  auto& history = sessions_[session_id];
 
   // First, try LLM-based compaction
   if (history.size() > kCompactionThreshold) {
@@ -1141,7 +1149,7 @@ void AgentCore::TrimHistory(
 void AgentCore::ClearSession(
     const std::string& session_id) {
   std::lock_guard<std::mutex> lock(session_mutex_);
-  m_sessions.erase(session_id);
+  sessions_.erase(session_id);
   session_store_.DeleteSession(session_id);
   tool_policy_.ResetSession(session_id);
 }
@@ -1329,7 +1337,7 @@ LlmResponse AgentCore::TryFallbackBackends(
           << fb_name;
 
       // Switch primary backend
-      m_backend = std::move(fb_backend);
+      backend_ = std::move(fb_backend);
 
       AuditLogger::Instance().Log(
           AuditLogger::MakeEvent(
@@ -1416,8 +1424,8 @@ std::string AgentCore::ExecuteSessionOp(
                     ? "..."
                     : "")},
             {"history_size",
-             m_sessions.count(sid)
-                 ? (int)m_sessions[sid].size()
+             sessions_.count(sid)
+                 ? (int)sessions_[sid].size()
                  : 0}
         };
         sessions.push_back(s);
@@ -1425,7 +1433,7 @@ std::string AgentCore::ExecuteSessionOp(
 
       // Also list sessions without custom
       // prompts (default sessions)
-      for (auto& [sid, hist] : m_sessions) {
+      for (auto& [sid, hist] : sessions_) {
         if (session_prompts_.count(sid) == 0) {
           nlohmann::json s = {
               {"session_id", sid},
@@ -1606,10 +1614,10 @@ std::string AgentCore::ExecuteRagOp(
 
 std::vector<float> AgentCore::GenerateEmbedding(
     const std::string& text) {
-  if (!m_backend || text.empty()) return {};
+  if (!backend_ || text.empty()) return {};
 
   std::string backend_name =
-      m_backend->GetName();
+      backend_->GetName();
 
   // Determine embedding API endpoint + model
   std::string url;

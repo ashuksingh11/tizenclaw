@@ -1,5 +1,5 @@
-#ifndef __OLLAMA_BACKEND_H__
-#define __OLLAMA_BACKEND_H__
+#ifndef TIZENCLAW_LLM_OLLAMA_BACKEND_H_
+#define TIZENCLAW_LLM_OLLAMA_BACKEND_H_
 
 #include "llm_backend.hh"
 
@@ -34,4 +34,4 @@ private:
 
 } // namespace tizenclaw
 
-#endif  // __OLLAMA_BACKEND_H__
+#endif  // TIZENCLAW_LLM_OLLAMA_BACKEND_H_

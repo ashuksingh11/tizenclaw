@@ -1,5 +1,5 @@
-#ifndef __VOICE_CHANNEL_H__
-#define __VOICE_CHANNEL_H__
+#ifndef TIZENCLAW_CHANNEL_VOICE_CHANNEL_H_
+#define TIZENCLAW_CHANNEL_VOICE_CHANNEL_H_
 
 #include <string>
 #include <atomic>
@@ -87,4 +87,4 @@ private:
 
 }  // namespace tizenclaw
 
-#endif  // __VOICE_CHANNEL_H__
+#endif  // TIZENCLAW_CHANNEL_VOICE_CHANNEL_H_

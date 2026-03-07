@@ -1,5 +1,5 @@
-#ifndef __TIZENCLAW_H__
-#define __TIZENCLAW_H__
+#ifndef TIZENCLAW_CORE_TIZENCLAW_H_
+#define TIZENCLAW_CORE_TIZENCLAW_H_
 
 #include <tizen_core.h>
 #include <json.hpp>
@@ -41,12 +41,12 @@ private:
     int argc_;
     char** argv_;
     tizen_core_task_h task_ = nullptr;
-    AgentCore* agent_ = nullptr;
+    std::unique_ptr<AgentCore> agent_;
     
     std::thread ipc_thread_;
     int ipc_socket_;
     bool ipc_running_;
-    TaskScheduler* scheduler_ = nullptr;
+    std::unique_ptr<TaskScheduler> scheduler_;
     ChannelRegistry channel_registry_;
     SkillWatcher skill_watcher_;
 
@@ -65,4 +65,4 @@ private:
 
 } // namespace tizenclaw
 
-#endif // __TIZENCLAW_H__
+#endif // TIZENCLAW_CORE_TIZENCLAW_H_

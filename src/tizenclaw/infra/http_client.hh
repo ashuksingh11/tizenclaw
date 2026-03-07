@@ -1,5 +1,5 @@
-#ifndef __HTTP_CLIENT_H__
-#define __HTTP_CLIENT_H__
+#ifndef TIZENCLAW_INFRA_HTTP_CLIENT_H_
+#define TIZENCLAW_INFRA_HTTP_CLIENT_H_
 
 #include <string>
 #include <map>
@@ -40,4 +40,4 @@ public:
 
 } // namespace tizenclaw
 
-#endif  // __HTTP_CLIENT_H__
+#endif  // TIZENCLAW_INFRA_HTTP_CLIENT_H_

@@ -5,8 +5,8 @@
  * Licensed under the Apache License, Version 2.0
  */
 
-#ifndef __KEY_STORE_H__
-#define __KEY_STORE_H__
+#ifndef TIZENCLAW_INFRA_KEY_STORE_H_
+#define TIZENCLAW_INFRA_KEY_STORE_H_
 
 #include <string>
 
@@ -55,4 +55,4 @@ private:
 
 }  // namespace tizenclaw
 
-#endif  // __KEY_STORE_H__
+#endif  // TIZENCLAW_INFRA_KEY_STORE_H_
