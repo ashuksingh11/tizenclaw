@@ -44,6 +44,10 @@
           <span class="nav-icon">🤖</span>
           Chat
         </li>
+        <li class="nav-item" data-page="ota" id="nav-ota">
+          <span class="nav-icon">🔄</span>
+          OTA Updates
+        </li>
         <li class="nav-divider"></li>
         <li class="nav-item" data-page="admin" id="nav-admin">
           <span class="nav-icon">⚙️</span>
@@ -62,6 +66,10 @@
             <div class="stat-value" id="stat-status">—</div>
           </div>
           <div class="stat-card">
+            <div class="stat-label">Uptime</div>
+            <div class="stat-value" id="stat-uptime">—</div>
+          </div>
+          <div class="stat-card">
             <div class="stat-label">Sessions</div>
             <div class="stat-value" id="stat-sessions">—</div>
           </div>
@@ -69,9 +77,40 @@
             <div class="stat-label">Tasks</div>
             <div class="stat-value" id="stat-tasks">—</div>
           </div>
+        </div>
+        <h3 class="section-title">System Health</h3>
+        <div class="stats-grid" id="health-grid">
           <div class="stat-card">
-            <div class="stat-label">Version</div>
-            <div class="stat-value" id="stat-version">—</div>
+            <div class="stat-label">Memory (RSS)</div>
+            <div class="stat-value" id="stat-memory">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">CPU Load (1m)</div>
+            <div class="stat-value" id="stat-cpu">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Requests</div>
+            <div class="stat-value" id="stat-requests">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Errors</div>
+            <div class="stat-value stat-error" id="stat-errors">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">LLM Calls</div>
+            <div class="stat-value" id="stat-llm">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Tool Calls</div>
+            <div class="stat-value" id="stat-tools">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Threads</div>
+            <div class="stat-value" id="stat-threads">—</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">PID</div>
+            <div class="stat-value" id="stat-pid">—</div>
           </div>
         </div>
       </section>
@@ -192,6 +231,25 @@
               Loading configurations...
             </p>
           </div>
+        </div>
+      </section>
+
+      <!-- OTA Updates Page -->
+      <section class="page" id="page-ota">
+        <h2 class="page-title">OTA Updates</h2>
+        <div class="ota-toolbar">
+          <button id="ota-check-btn"
+            class="btn-send">
+            Check for Updates
+          </button>
+          <span class="ota-status"
+            id="ota-status"></span>
+        </div>
+        <div class="card-list" id="ota-list">
+          <p class="empty-state">
+            Click "Check for Updates" to scan
+            for available skill updates.
+          </p>
         </div>
       </section>
     </main>

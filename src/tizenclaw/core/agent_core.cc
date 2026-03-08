@@ -299,6 +299,10 @@ std::string AgentCore::ProcessPrompt(
         local_history, tools, on_chunk,
         full_prompt);
 
+    // Track LLM call in health metrics
+    if (health_monitor_)
+      health_monitor_->IncrementLlmCallCount();
+
     if (!resp.success) {
       LOG(ERROR) << "LLM error: "
                  << resp.error_message;
@@ -309,6 +313,9 @@ std::string AgentCore::ProcessPrompt(
           full_prompt);
 
       if (!resp.success) {
+        // All backends failed — track error
+        if (health_monitor_)
+          health_monitor_->IncrementErrorCount();
         // Rollback: remove the user message
         {
           std::lock_guard<std::mutex> lock(
@@ -485,6 +492,9 @@ std::string AgentCore::ProcessPrompt(
                  {"duration",
                   std::to_string(elapsed)
                       + "ms"}}));
+        // Track tool call in health metrics
+        if (health_monitor_)
+          health_monitor_->IncrementToolCallCount();
         return r;
       }));
     }

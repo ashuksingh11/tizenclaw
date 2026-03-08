@@ -701,8 +701,8 @@ timeline
 | **Plan** | Prometheus-style metrics endpoint for CPU, memory, uptime, request counts |
 
 **Done When:**
-- [ ] `/api/metrics` endpoint with key system metrics
-- [ ] Dashboard health panel with live stats
+- [x] `/api/metrics` endpoint with key system metrics
+- [x] Dashboard health panel with live stats
 
 ---
 
@@ -713,9 +713,9 @@ timeline
 | **Plan** | Over-the-air daemon and skill updates via HTTP pull |
 
 **Done When:**
-- [ ] Version checking against remote manifest
-- [ ] Skill auto-update from configured repository
-- [ ] Rollback mechanism on update failure
+- [x] Version checking against remote manifest
+- [x] Skill auto-update from configured repository
+- [x] Rollback mechanism on update failure
 
 ---
 

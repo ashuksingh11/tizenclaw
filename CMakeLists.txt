@@ -88,6 +88,8 @@ set(SOURCES
     src/tizenclaw/infra/http_client.cc
     src/tizenclaw/infra/key_store.cc
     src/tizenclaw/infra/container_engine.cc
+    src/tizenclaw/infra/health_monitor.cc
+    src/tizenclaw/infra/ota_updater.cc
     src/tizenclaw/scheduler/task_scheduler.cc
 )
 
@@ -124,7 +126,7 @@ install(PROGRAMS
     DESTINATION /usr/libexec/tizenclaw/
 )
 install(FILES data/rootfs.tar.gz DESTINATION /opt/usr/share/tizenclaw/)
-install(FILES data/llm_config.json.sample data/telegram_config.json.sample data/webhook_config.json.sample data/slack_config.json.sample data/discord_config.json.sample data/agent_roles.json.sample data/a2a_config.json.sample data/system_prompt.txt data/tool_policy.json DESTINATION /opt/usr/share/tizenclaw/config/)
+install(FILES data/llm_config.json.sample data/telegram_config.json.sample data/webhook_config.json.sample data/slack_config.json.sample data/discord_config.json.sample data/agent_roles.json.sample data/a2a_config.json.sample data/ota_config.json.sample data/system_prompt.txt data/tool_policy.json DESTINATION /opt/usr/share/tizenclaw/config/)
 install(DIRECTORY skills/ DESTINATION /opt/usr/share/tizenclaw/skills/)
 install(DIRECTORY data/web/ DESTINATION /opt/usr/share/tizenclaw/web/)
 install(PROGRAMS scripts/start_mcp_tunnel.sh DESTINATION /usr/bin/)

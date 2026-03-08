@@ -38,6 +38,8 @@ set(UNIT_TEST_SRCS
     embedding_store_test.cc
     web_dashboard_test.cc
     voice_channel_test.cc
+    health_monitor_test.cc
+    ota_updater_test.cc
 )
 
 # Mock Sources
@@ -74,6 +76,8 @@ set(CORE_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/infra/http_client.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/infra/key_store.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/infra/container_engine.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/infra/health_monitor.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/infra/ota_updater.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/scheduler/task_scheduler.cc
 )
 

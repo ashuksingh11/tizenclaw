@@ -11,6 +11,8 @@
 
 #include "channel.hh"
 #include "a2a_handler.hh"
+#include "../infra/health_monitor.hh"
+#include "../infra/ota_updater.hh"
 
 namespace tizenclaw {
 
@@ -77,6 +79,14 @@ private:
   void ApiAgentCard(SoupMessage* msg) const;
   void ApiA2A(SoupMessage* msg);
 
+  // Health metrics endpoint
+  void ApiMetrics(SoupMessage* msg) const;
+
+  // OTA update endpoints
+  void ApiOtaCheck(SoupMessage* msg) const;
+  void ApiOtaUpdate(SoupMessage* msg);
+  void ApiOtaRollback(SoupMessage* msg);
+
   // Auth endpoints
   void ApiAuthLogin(SoupMessage* msg);
   void ApiAuthChangePassword(SoupMessage* msg);
@@ -127,6 +137,14 @@ private:
 
   // A2A handler
   std::unique_ptr<A2AHandler> a2a_handler_;
+
+  // Health monitor
+  std::unique_ptr<HealthMonitor>
+      health_monitor_;
+
+  // OTA updater
+  std::unique_ptr<OtaUpdater>
+      ota_updater_;
 };
 
 }  // namespace tizenclaw

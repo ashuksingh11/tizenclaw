@@ -10,6 +10,7 @@
 #include <json.hpp>
 
 #include "../infra/container_engine.hh"
+#include "../infra/health_monitor.hh"
 #include "../llm/llm_backend.hh"
 #include "../storage/session_store.hh"
 #include "tool_policy.hh"
@@ -49,6 +50,13 @@ public:
     // Set TaskScheduler reference (called by daemon)
     void SetScheduler(TaskScheduler* scheduler) {
       scheduler_ = scheduler;
+    }
+
+    // Set HealthMonitor reference
+    // (called by WebDashboard)
+    void SetHealthMonitor(
+        HealthMonitor* monitor) {
+      health_monitor_ = monitor;
     }
 
     // Access session store (for IPC usage queries)
@@ -188,6 +196,9 @@ private:
 
     // Task scheduler (owned by daemon)
     TaskScheduler* scheduler_ = nullptr;
+
+    // Health monitor (owned by WebDashboard)
+    HealthMonitor* health_monitor_ = nullptr;
 
     // Supervisor engine for multi-agent
     std::unique_ptr<SupervisorEngine> supervisor_;

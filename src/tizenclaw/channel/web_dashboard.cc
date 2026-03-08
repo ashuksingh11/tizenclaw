@@ -35,6 +35,26 @@ WebDashboard::WebDashboard(
   std::string a2a_config =
       config_dir_ + "/a2a_config.json";
   a2a_handler_->LoadConfig(a2a_config);
+
+  // Initialize health monitor
+  health_monitor_ =
+      std::make_unique<HealthMonitor>();
+  if (agent_)
+    agent_->SetHealthMonitor(
+        health_monitor_.get());
+
+  // Initialize OTA updater
+  std::string skills_dir =
+      std::string(APP_DATA_DIR) + "/skills";
+  ota_updater_ =
+      std::make_unique<OtaUpdater>(
+          skills_dir,
+          [this]() {
+            if (agent_) agent_->ReloadSkills();
+          });
+  std::string ota_config =
+      config_dir_ + "/ota_config.json";
+  ota_updater_->LoadConfig(ota_config);
 }
 
 WebDashboard::~WebDashboard() {
@@ -125,8 +145,13 @@ void WebDashboard::HandleRequest(
 void WebDashboard::HandleApi(
     SoupMessage* msg,
     const std::string& path) const {
+  if (health_monitor_)
+    health_monitor_->IncrementRequestCount();
+
   if (path == "/api/status") {
     ApiStatus(msg);
+  } else if (path == "/api/metrics") {
+    ApiMetrics(msg);
   } else if (path == "/api/sessions") {
     ApiSessions(msg);
   } else if (path.substr(0, 14) ==
@@ -164,6 +189,14 @@ void WebDashboard::HandleApi(
   } else if (path == "/api/a2a") {
     const_cast<WebDashboard*>(this)
         ->ApiA2A(msg);
+  } else if (path == "/api/ota/check") {
+    ApiOtaCheck(msg);
+  } else if (path == "/api/ota/update") {
+    const_cast<WebDashboard*>(this)
+        ->ApiOtaUpdate(msg);
+  } else if (path == "/api/ota/rollback") {
+    const_cast<WebDashboard*>(this)
+        ->ApiOtaRollback(msg);
   } else {
     soup_message_set_status(
         msg, SOUP_STATUS_NOT_FOUND);
@@ -246,6 +279,145 @@ void WebDashboard::ApiStatus(
        agent_ ? "active" : "inactive"}
   };
   std::string body = status.dump();
+  soup_message_set_status(
+      msg, SOUP_STATUS_OK);
+  soup_message_set_response(
+      msg, "application/json",
+      SOUP_MEMORY_COPY,
+      body.c_str(),
+      static_cast<gsize>(body.size()));
+}
+
+void WebDashboard::ApiMetrics(
+    SoupMessage* msg) const {
+  if (!health_monitor_) {
+    soup_message_set_status(
+        msg,
+        SOUP_STATUS_INTERNAL_SERVER_ERROR);
+    return;
+  }
+
+  nlohmann::json metrics =
+      nlohmann::json::parse(
+          health_monitor_->GetMetricsJson());
+  metrics["version"] = "1.0.0";
+  metrics["status"] = "running";
+
+  std::string body = metrics.dump();
+  soup_message_set_status(
+      msg, SOUP_STATUS_OK);
+  soup_message_set_response(
+      msg, "application/json",
+      SOUP_MEMORY_COPY,
+      body.c_str(),
+      static_cast<gsize>(body.size()));
+}
+
+void WebDashboard::ApiOtaCheck(
+    SoupMessage* msg) const {
+  if (!ota_updater_) {
+    soup_message_set_status(
+        msg,
+        SOUP_STATUS_INTERNAL_SERVER_ERROR);
+    return;
+  }
+
+  std::string body =
+      ota_updater_->CheckForUpdates();
+  soup_message_set_status(
+      msg, SOUP_STATUS_OK);
+  soup_message_set_response(
+      msg, "application/json",
+      SOUP_MEMORY_COPY,
+      body.c_str(),
+      static_cast<gsize>(body.size()));
+}
+
+void WebDashboard::ApiOtaUpdate(
+    SoupMessage* msg) {
+  if (!ota_updater_) {
+    soup_message_set_status(
+        msg,
+        SOUP_STATUS_INTERNAL_SERVER_ERROR);
+    return;
+  }
+
+  // Parse skill name from POST body
+  SoupMessageBody* req_body =
+      msg->request_body;
+  std::string req_str(
+      req_body->data,
+      req_body->length);
+  std::string skill_name;
+  try {
+    auto j =
+        nlohmann::json::parse(req_str);
+    skill_name =
+        j.value("skill", "");
+  } catch (...) {}
+
+  if (skill_name.empty()) {
+    std::string err =
+        "{\"error\":\"skill name required\"}";
+    soup_message_set_status(
+        msg, SOUP_STATUS_BAD_REQUEST);
+    soup_message_set_response(
+        msg, "application/json",
+        SOUP_MEMORY_COPY,
+        err.c_str(),
+        static_cast<gsize>(err.size()));
+    return;
+  }
+
+  std::string body =
+      ota_updater_->UpdateSkill(skill_name);
+  soup_message_set_status(
+      msg, SOUP_STATUS_OK);
+  soup_message_set_response(
+      msg, "application/json",
+      SOUP_MEMORY_COPY,
+      body.c_str(),
+      static_cast<gsize>(body.size()));
+}
+
+void WebDashboard::ApiOtaRollback(
+    SoupMessage* msg) {
+  if (!ota_updater_) {
+    soup_message_set_status(
+        msg,
+        SOUP_STATUS_INTERNAL_SERVER_ERROR);
+    return;
+  }
+
+  SoupMessageBody* req_body =
+      msg->request_body;
+  std::string req_str(
+      req_body->data,
+      req_body->length);
+  std::string skill_name;
+  try {
+    auto j =
+        nlohmann::json::parse(req_str);
+    skill_name =
+        j.value("skill", "");
+  } catch (...) {}
+
+  if (skill_name.empty()) {
+    std::string err =
+        "{\"error\":\"skill name required\"}";
+    soup_message_set_status(
+        msg, SOUP_STATUS_BAD_REQUEST);
+    soup_message_set_response(
+        msg, "application/json",
+        SOUP_MEMORY_COPY,
+        err.c_str(),
+        static_cast<gsize>(err.size()));
+    return;
+  }
+
+  std::string body =
+      ota_updater_->RollbackSkill(
+          skill_name);
   soup_message_set_status(
       msg, SOUP_STATUS_OK);
   soup_message_set_response(

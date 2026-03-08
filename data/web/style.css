@@ -150,6 +150,13 @@ body {
 }
 
 /* --- Stats Grid --- */
+.section-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+}
+
 .stats-grid {
     display: grid;
     grid-template-columns:
@@ -690,4 +697,68 @@ body {
 
 .config-msg.error {
     color: var(--danger);
+}
+
+/* --- OTA Updates --- */
+.ota-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+
+.ota-status {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.ota-status.success {
+    color: var(--success);
+}
+
+.ota-status.warning {
+    color: var(--warning);
+}
+
+.ota-status.error {
+    color: var(--danger);
+}
+
+.ota-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
+    margin-left: 8px;
+}
+
+.ota-badge.update {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--warning);
+}
+
+.ota-badge.current {
+    background: rgba(16, 185, 129, 0.15);
+    color: var(--success);
+}
+
+.ota-card {
+    padding: 16px 20px;
+}
+
+.ota-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.stat-error {
+    color: var(--danger) !important;
+    background: none !important;
+    -webkit-text-fill-color: var(--danger);
 }

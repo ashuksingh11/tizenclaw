@@ -37,6 +37,7 @@
         else if (page === 'sessions') loadSessions();
         else if (page === 'tasks') loadTasks();
         else if (page === 'logs') loadLogs();
+        else if (page === 'ota') loadOta();
         else if (page === 'admin') loadAdmin();
     }
 
@@ -73,25 +74,74 @@
     }
 
     // --- Dashboard ---
+    let metricsInterval = null;
+
     async function loadDashboard() {
-        const status = await apiFetch('status');
-        if (status) {
-            document.getElementById('stat-status')
-                .textContent = status.status || '—';
-            document.getElementById('stat-version')
-                .textContent = status.version || '—';
+        // Clear previous interval
+        if (metricsInterval)
+            clearInterval(metricsInterval);
+
+        await refreshMetrics();
+
+        // Auto-refresh every 5 seconds
+        metricsInterval = setInterval(
+            refreshMetrics, 5000);
+    }
+
+    async function refreshMetrics() {
+        const m = await apiFetch('metrics');
+        if (m) {
+            const s = id =>
+                document.getElementById(id);
+            s('stat-status').textContent =
+                m.status || '—';
+            s('stat-uptime').textContent =
+                (m.uptime && m.uptime.formatted)
+                    || '—';
+            s('stat-memory').textContent =
+                (m.memory && m.memory.vm_rss_kb)
+                    ? (m.memory.vm_rss_kb /
+                        1024).toFixed(1) + ' MB'
+                    : '—';
+            s('stat-cpu').textContent =
+                (m.cpu && m.cpu.load_1m != null)
+                    ? m.cpu.load_1m.toFixed(2)
+                    : '—';
+            s('stat-requests').textContent =
+                (m.counters &&
+                    m.counters.requests != null)
+                    ? m.counters.requests : '—';
+            s('stat-errors').textContent =
+                (m.counters &&
+                    m.counters.errors != null)
+                    ? m.counters.errors : '—';
+            s('stat-llm').textContent =
+                (m.counters &&
+                    m.counters.llm_calls != null)
+                    ? m.counters.llm_calls : '—';
+            s('stat-tools').textContent =
+                (m.counters &&
+                    m.counters.tool_calls != null)
+                    ? m.counters.tool_calls : '—';
+            s('stat-threads').textContent =
+                m.threads || '—';
+            s('stat-pid').textContent =
+                m.pid || '—';
         }
 
-        const sessions = await apiFetch('sessions');
+        const sessions =
+            await apiFetch('sessions');
         if (sessions) {
-            document.getElementById('stat-sessions')
-                .textContent = sessions.length;
+            document.getElementById(
+                'stat-sessions').textContent =
+                sessions.length;
         }
 
         const tasks = await apiFetch('tasks');
         if (tasks) {
-            document.getElementById('stat-tasks')
-                .textContent = tasks.length;
+            document.getElementById(
+                'stat-tasks').textContent =
+                tasks.length;
         }
     }
 
@@ -596,6 +646,186 @@
             msg.textContent =
                 (resp && resp.error) || 'Save failed';
             msg.className = 'config-msg error';
+        }
+    }
+
+    // ==========================
+    // OTA Updates
+    // ==========================
+
+    function loadOta() {
+        const list =
+            document.getElementById('ota-list');
+        const status =
+            document.getElementById('ota-status');
+        list.innerHTML =
+            '<p class="empty-state">' +
+            'Click "Check for Updates" to scan ' +
+            'for available skill updates.</p>';
+        status.textContent = '';
+    }
+
+    document.getElementById('ota-check-btn')
+        .addEventListener('click', async () => {
+            const list =
+                document.getElementById('ota-list');
+            const status =
+                document.getElementById('ota-status');
+            status.textContent = 'Checking...';
+            status.className = 'ota-status';
+            list.innerHTML =
+                '<p class="empty-state">' +
+                'Scanning...</p>';
+
+            const data =
+                await apiFetch('ota/check');
+
+            if (!data || data.error) {
+                status.textContent =
+                    data ? data.error : 'Failed';
+                status.className =
+                    'ota-status error';
+                list.innerHTML =
+                    '<p class="empty-state">' +
+                    escHtml(
+                        data ? data.error
+                            : 'Check failed'
+                    ) + '</p>';
+                return;
+            }
+
+            const count = data.available_count || 0;
+            status.textContent = count > 0
+                ? count + ' update(s) available'
+                : 'All skills up to date';
+            status.className = count > 0
+                ? 'ota-status warning'
+                : 'ota-status success';
+
+            if (!data.updates ||
+                data.updates.length === 0) {
+                list.innerHTML =
+                    '<p class="empty-state">' +
+                    'No skills in manifest</p>';
+                return;
+            }
+
+            list.innerHTML = data.updates.map(
+                u => {
+                    const badge = u.update_available
+                        ? '<span class="ota-badge ' +
+                          'update">Update</span>'
+                        : '<span class="ota-badge ' +
+                          'current">Current</span>';
+                    const actions =
+                        u.update_available
+                            ? '<button class="' +
+                              'btn-outline ota-update"' +
+                              ' data-skill="' +
+                              escHtml(u.name) +
+                              '">Update</button>'
+                            : '';
+                    return '<div class="card-item ' +
+                        'ota-card">' +
+                        '<div class="' +
+                        'card-item-title">' +
+                        escHtml(u.name) +
+                        ' ' + badge + '</div>' +
+                        '<div class="' +
+                        'card-item-meta">' +
+                        'Local: ' +
+                        escHtml(u.local_version) +
+                        ' → Remote: ' +
+                        escHtml(u.remote_version) +
+                        '</div>' +
+                        '<div class="ota-actions">' +
+                        actions +
+                        '<button class="' +
+                        'btn-outline ota-rollback"' +
+                        ' data-skill="' +
+                        escHtml(u.name) +
+                        '">Rollback</button>' +
+                        '</div></div>';
+                }
+            ).join('');
+
+            // Bind update buttons
+            list.querySelectorAll('.ota-update')
+                .forEach(btn => {
+                    btn.addEventListener(
+                        'click', () => {
+                            otaUpdateSkill(
+                                btn.dataset.skill);
+                        });
+                });
+
+            // Bind rollback buttons
+            list.querySelectorAll('.ota-rollback')
+                .forEach(btn => {
+                    btn.addEventListener(
+                        'click', () => {
+                            otaRollbackSkill(
+                                btn.dataset.skill);
+                        });
+                });
+        });
+
+    async function otaUpdateSkill(name) {
+        const status =
+            document.getElementById('ota-status');
+        status.textContent =
+            'Updating ' + name + '...';
+        status.className = 'ota-status';
+
+        const resp = await apiPost(
+            'ota/update', { skill: name });
+
+        if (resp && resp.status === 'updated') {
+            status.textContent = name +
+                ' updated to v' +
+                resp.new_version;
+            status.className =
+                'ota-status success';
+        } else if (
+            resp && resp.status === 'up_to_date') {
+            status.textContent = name +
+                ' is already up to date';
+            status.className =
+                'ota-status success';
+        } else {
+            status.textContent =
+                'Update failed: ' +
+                (resp ? resp.error : 'unknown');
+            status.className = 'ota-status error';
+        }
+    }
+
+    async function otaRollbackSkill(name) {
+        if (!confirm(
+            'Rollback ' + name +
+            ' to previous version?')) return;
+
+        const status =
+            document.getElementById('ota-status');
+        status.textContent =
+            'Rolling back ' + name + '...';
+        status.className = 'ota-status';
+
+        const resp = await apiPost(
+            'ota/rollback', { skill: name });
+
+        if (resp &&
+            resp.status === 'rolled_back') {
+            status.textContent = name +
+                ' rolled back to v' +
+                resp.restored_version;
+            status.className =
+                'ota-status success';
+        } else {
+            status.textContent =
+                'Rollback failed: ' +
+                (resp ? resp.error : 'unknown');
+            status.className = 'ota-status error';
         }
     }
 
