@@ -139,7 +139,7 @@ graph TB
 
     subgraph Secure["Secure Container (crun)"]
         Skills["Python Skills<br/>(sandboxed)"]
-        SkillList["launch_app · list_apps · terminate_app<br/>get_device_info · get_battery_info · get_wifi_info<br/>get_bluetooth_info · get_display_info · get_system_info<br/>get_runtime_info · get_storage_info · get_network_info<br/>get_sensor_data · get_system_settings · get_package_info<br/>get_thermal_info · get_data_usage · get_sound_devices<br/>get_media_content · get_mime_type · scan_wifi_networks<br/>control_display · control_haptic · control_led<br/>control_volume · control_power · play_tone<br/>play_feedback · send_notification · schedule_alarm<br/>web_search"]
+        SkillList["35+ Skills via Tizen C-API<br/>App · Device · Network · Media<br/>Display · Sensor · System Control<br/>Async support via tizen-core"]
         Skills --- SkillList
     end
 
@@ -160,59 +160,25 @@ graph TB
 
 ## Skills
 
-### Container Skills (Python)
+TizenClaw ships with **35 container skills** (Python, OCI sandbox) and **10+ built-in tools** (native C++). Async skills use the **tizen-core** event loop for callback-based APIs.
 
-| Skill | Description |
-|---|---|
-| `launch_app` | Launch a Tizen application by app ID |
-| `terminate_app` | Terminate a running application |
-| `list_apps` | List installed applications |
-| `get_device_info` | Query device information (model, OS version, etc.) |
-| `get_battery_info` | Read battery level and charging status |
-| `get_wifi_info` | Get Wi-Fi connection details |
-| `get_bluetooth_info` | Query Bluetooth adapter state |
-| `get_display_info` | Get display brightness, state, and max brightness |
-| `control_display` | Set display brightness level |
-| `get_system_info` | Query hardware info (model, CPU, screen size, supported features) |
-| `get_runtime_info` | Get CPU usage and memory usage statistics |
-| `get_storage_info` | Get internal/external storage space information |
-| `get_system_settings` | Read system settings (locale, timezone, font, wallpaper) |
-| `get_network_info` | Get network connection type, IP address, and status |
-| `get_sensor_data` | Read sensor data (accelerometer, gyroscope, light, proximity, etc.) |
-| `get_package_info` | Query installed package details (version, type, size) |
-| `control_haptic` | Vibrate the device for a specified duration |
-| `control_led` | Control camera flash LED (flashlight on/off) |
-| `control_volume` | Get or set system volume levels by sound type |
-| `control_power` | Request/release CPU or display power lock |
-| `play_tone` | Play DTMF or beep tones |
-| `play_feedback` | Play sound/vibration feedback patterns |
-| `send_notification` | Post a notification to the device notification bar |
-| `schedule_alarm` | Schedule an alarm to launch a specific app at a given time |
-| `get_thermal_info` | Read device temperature (AP, CP, battery) |
-| `get_data_usage` | Get WiFi/cellular data usage statistics |
-| `get_sound_devices` | List connected audio devices (speakers, mics, Bluetooth) |
-| `get_media_content` | Search media files stored on device (images, videos, audio) |
-| `get_mime_type` | Look up MIME type from extension or vice versa |
-| `scan_wifi_networks` | Scan nearby WiFi networks (async via tizen-core) |
-| `web_search` | Search the web using Naver or Google |
+| Category | Skills | Examples |
+|----------|:------:|---------|
+| **App Management** | 5 | `launch_app`, `send_app_control`, `list_apps`, `terminate_app`, `get_package_info` |
+| **Device Info & Sensors** | 7 | `get_device_info`, `get_sensor_data`, `get_thermal_info`, `get_runtime_info` |
+| **Network & Connectivity** | 6 | `get_wifi_info`, `scan_wifi_networks` ⚡, `scan_bluetooth_devices` ⚡, `get_data_usage` |
+| **Display & Hardware** | 6 | `control_display`, `control_volume`, `control_haptic`, `control_led` |
+| **Media & Content** | 5 | `get_metadata`, `get_media_content`, `get_mime_type`, `get_sound_devices` |
+| **System Actions** | 6 | `download_file` ⚡, `send_notification`, `schedule_alarm`, `play_tone`, `web_search` |
+| **Built-in Tools** | 10+ | `execute_code`, `file_manager`, `create_task`, `search_knowledge` |
+
+> ⚡ = Async skill using tizen-core event loop
+
+📖 **Full reference**: [Skills Reference (EN)](docs/SKILLS.md) · [스킬 레퍼런스 (KOR)](docs/SKILLS_KOR.md)
 
 ### Tizen Action Framework (Native Device Actions)
 
 Actions registered via the Tizen Action Framework are automatically discovered and exposed as **per-action LLM tools** (e.g., `action_<name>`). Schema files are cached as Markdown and kept in sync via `action_event_cb` events. Available actions vary by device.
-
-### Built-in Tools (AgentCore)
-
-| Tool | Description |
-|---|---|
-| `execute_code` | Execute Python code inside the container |
-| `file_manager` | Read/write/delete files and list directories |
-| `create_task` | Create a scheduled task (cron/interval/once/weekly) |
-| `list_tasks` / `cancel_task` | Manage scheduled tasks |
-| `create_session` | Create a new agent session with custom system prompt |
-| `list_sessions` / `send_to_session` | Multi-agent coordination |
-| `ingest_document` | Add documents to the knowledge base (RAG) |
-| `search_knowledge` | Semantic search over ingested documents |
-| `execute_action` | Execute a Tizen Action by name (fallback for dynamic use) |
 
 ---
 

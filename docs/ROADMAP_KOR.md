@@ -52,7 +52,7 @@
 |------|------|
 | **네이티브 C++ 성능** | TypeScript 대비 낮은 메모리/CPU — Tizen 임베디드 환경에 최적 |
 | **OCI 컨테이너 격리** | crun 기반 `seccomp` + `namespace` — 앱 수준 샌드박싱보다 정밀한 시스콜 제어 |
-| **Tizen C-API 직접 접근** | ctypes 래퍼로 디바이스 하드웨어 (배터리, Wi-Fi, BT, 디스플레이, 볼륨, 센서, 알림, 알람, 온도, 데이터 사용량, 오디오 디바이스, 미디어 콘텐츠, MIME, WiFi 스캔) 직접 제어 |
+| **Tizen C-API 직접 접근** | ctypes 래퍼로 35개 이상 디바이스 API (배터리, Wi-Fi, BT, 디스플레이, 볼륨, 센서, 알림, 알람, 온도, 데이터 사용량, 오디오, 미디어, MIME, WiFi/BT 스캔, 앱 컨트롤, 메타데이터, 다운로드) 직접 제어 |
 | **멀티 LLM 지원** | 5개 백엔드 (Gemini, OpenAI, Claude, xAI, Ollama) 런타임 전환 가능 |
 | **경량 배포** | systemd + RPM — Node.js/Docker 없이 단독 디바이스 실행 |
 | **네이티브 MCP 서버** | C++ MCP 서버가 데몬에 내장 — Claude Desktop에서 sdb를 통해 Tizen 디바이스 제어 |
@@ -298,7 +298,7 @@ timeline
 
 **완료 기준:**
 - [x] 부작용 스킬 (`launch_app`, `terminate_app`, `schedule_alarm`, `control_display`, `control_haptic`, `control_led`, `control_power`, `control_volume`, `send_notification`) `risk_level: "high"` 또는 `"medium"` 지정
-- [x] 읽기 전용 스킬 (`get_battery_info`, `get_wifi_info`, `get_bluetooth_info`, `list_apps`, `get_device_info`, `get_display_info`, `get_system_info`, `get_runtime_info`, `get_storage_info`, `get_system_settings`, `get_network_info`, `get_sensor_data`, `get_package_info`, `get_thermal_info`, `get_data_usage`, `get_sound_devices`, `get_media_content`, `get_mime_type`, `scan_wifi_networks`) `risk_level: "low"` 지정
+- [x] 읽기 전용 스킬 (`get_battery_info`, `get_wifi_info`, `get_bluetooth_info`, `list_apps`, `get_device_info`, `get_display_info`, `get_system_info`, `get_runtime_info`, `get_storage_info`, `get_system_settings`, `get_network_info`, `get_sensor_data`, `get_package_info`, `get_thermal_info`, `get_data_usage`, `get_sound_devices`, `get_media_content`, `get_mime_type`, `scan_wifi_networks`, `scan_bluetooth_devices`, `get_metadata`) `risk_level: "low"` 지정
 - [x] 동일 스킬 + 동일 인자 3회 반복 → 차단 (루프 방지)
 - [x] 정책 위반 사유를 LLM에 도구 결과로 피드백
 - [x] `tool_policy.json`으로 정책 설정 가능 (`max_repeat_count`, `blocked_skills`, `risk_overrides`)

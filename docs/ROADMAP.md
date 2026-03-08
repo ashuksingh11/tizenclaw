@@ -52,7 +52,7 @@
 |----------|-------------|
 | **Native C++ Performance** | Lower memory/CPU vs TypeScript — optimal for Tizen embedded |
 | **OCI Container Isolation** | crun-based `seccomp` + `namespace` — finer syscall control than app-level sandboxing |
-| **Direct Tizen C-API** | ctypes wrappers for device hardware (battery, Wi-Fi, BT, display, volume, sensors, notifications, alarm, thermal, data usage, sound devices, media content, MIME type, WiFi scan) |
+| **Direct Tizen C-API** | ctypes wrappers for 35+ device APIs (battery, Wi-Fi, BT, display, volume, sensors, notifications, alarm, thermal, data usage, sound devices, media content, MIME type, WiFi/BT scan, app control, metadata, download) |
 | **Multi-LLM Support** | 5 backends (Gemini, OpenAI, Claude, xAI, Ollama) switchable at runtime |
 | **Lightweight Deployment** | systemd + RPM — standalone device execution without Node.js/Docker |
 | **Native MCP Server** | C++ MCP server integrated into daemon — Claude Desktop controls Tizen devices via sdb |
@@ -295,7 +295,7 @@ timeline
 
 **Done When:**
 - [x] Side-effect skills (`launch_app`, `terminate_app`, `schedule_alarm`, `control_display`, `control_haptic`, `control_led`, `control_power`, `control_volume`, `send_notification`) marked `risk_level: "high"` or `"medium"`
-- [x] Read-only skills (`get_battery_info`, `get_wifi_info`, `get_bluetooth_info`, `list_apps`, `get_device_info`, `get_display_info`, `get_system_info`, `get_runtime_info`, `get_storage_info`, `get_system_settings`, `get_network_info`, `get_sensor_data`, `get_package_info`, `get_thermal_info`, `get_data_usage`, `get_sound_devices`, `get_media_content`, `get_mime_type`, `scan_wifi_networks`) marked `risk_level: "low"`
+- [x] Read-only skills (`get_battery_info`, `get_wifi_info`, `get_bluetooth_info`, `list_apps`, `get_device_info`, `get_display_info`, `get_system_info`, `get_runtime_info`, `get_storage_info`, `get_system_settings`, `get_network_info`, `get_sensor_data`, `get_package_info`, `get_thermal_info`, `get_data_usage`, `get_sound_devices`, `get_media_content`, `get_mime_type`, `scan_wifi_networks`, `scan_bluetooth_devices`, `get_metadata`) marked `risk_level: "low"`
 - [x] Same skill + same args repeated 3x → blocked (loop prevention)
 - [x] Policy violation reason fed back to LLM as tool result
 - [x] Configurable policy via `tool_policy.json` (`max_repeat_count`, `blocked_skills`, `risk_overrides`)

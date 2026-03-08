@@ -1,0 +1,36 @@
+{
+    "name": "send_app_control",
+    "risk_level": "high",
+    "description": "Launch an application using implicit intent (operation, URI, MIME type). Can also query which apps handle a given intent. Uses Tizen app_control for intent-based app launching.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "operation": {
+                "type": "string",
+                "description": "The operation to perform. Common values: 'http://tizen.org/appcontrol/operation/view' (view content), 'http://tizen.org/appcontrol/operation/call' (make call), 'http://tizen.org/appcontrol/operation/share' (share), 'http://tizen.org/appcontrol/operation/default' (default)"
+            },
+            "uri": {
+                "type": "string",
+                "description": "URI for the content (e.g. 'https://example.com', 'tel:01012345678', 'file:///path/to/file')"
+            },
+            "mime": {
+                "type": "string",
+                "description": "MIME type of the content (e.g. 'image/jpeg', 'text/html', 'video/mp4')"
+            },
+            "app_id": {
+                "type": "string",
+                "description": "Optional: explicit app ID to launch. If omitted, implicit matching is used."
+            },
+            "action": {
+                "type": "string",
+                "description": "'launch' to execute the intent, 'query' to list matching apps (default: 'launch')",
+                "enum": ["launch", "query"]
+            },
+            "extra_data": {
+                "type": "object",
+                "description": "Optional key-value pairs to pass as extra data"
+            }
+        },
+        "required": ["operation"]
+    }
+}

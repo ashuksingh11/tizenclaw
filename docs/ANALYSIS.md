@@ -42,7 +42,7 @@ graph LR
 
     subgraph Skills["OCI Container (Alpine RootFS)"]
         SkillExec["SkillExecutor (IPC)"]
-        SkillList["list_apps · launch_app · terminate_app<br/>get_device_info · get_battery_info · get_wifi_info<br/>get_bluetooth_info · get_display_info · get_system_info<br/>get_runtime_info · get_storage_info · get_network_info<br/>get_sensor_data · get_system_settings · get_package_info<br/>get_thermal_info · get_data_usage · get_sound_devices<br/>get_media_content · get_mime_type · scan_wifi_networks<br/>control_display · control_haptic · control_led<br/>control_volume · control_power · play_tone<br/>play_feedback · send_notification · schedule_alarm<br/>web_search"]
+        SkillList["35+ Skills via Tizen C-API<br/>App · Device · Network · Media<br/>Display · Sensor · System Control<br/>Async support via tizen-core"]
     end
 
     Telegram & Slack & Discord & Voice --> IPC
@@ -101,7 +101,7 @@ tizenclaw/
 │   │   ├── skill_watcher.cc/hh      # inotify skill hot-reload
 │   │   └── embedding_store.cc/hh    # SQLite RAG vector store
 │   └── common/                      # Common utilities (logging, etc.)
-├── skills/                          # Python skills (33 directories)
+├── skills/                          # Python skills (37 directories)
 │   ├── common/tizen_capi_utils.py   # ctypes-based Tizen C-API wrapper
 │   ├── skill_executor.py            # Container-side IPC skill executor
 │   ├── list_apps/                   # List installed apps
@@ -254,6 +254,10 @@ tizenclaw/
 | `get_media_content` | `media_type`, `max_count` | `media-content` | ✅ |
 | `get_mime_type` | `file_extension`, `file_path`, `mime_type` | `mime-type` | ✅ |
 | `scan_wifi_networks` | None | `wifi-manager` + `tizen-core` (async) | ✅ |
+| `send_app_control` | `operation`, `uri`, `mime`, `app_id`, `action`, `extra_data` | `app_control` + `app_info` | ✅ |
+| `get_metadata` | `file_path` | `metadata-extractor` | ✅ |
+| `download_file` | `url`, `destination`, `file_name` | `url-download` + `tizen-core` (async) | ✅ |
+| `scan_bluetooth_devices` | `action` | `bluetooth` + `tizen-core` (async) | ✅ |
 | `web_search` | `query` (string, required) | None (Wikipedia API) | ✅ |
 
 Built-in tools (implemented in AgentCore directly):
@@ -317,7 +321,7 @@ Built-in tools (implemented in AgentCore directly):
 |------|:---:|:---:|:---:|:---:|
 | Language | C++ / Python | TypeScript | TypeScript | Rust |
 | Source files | ~89 | ~700+ | ~50 | ~100+ |
-| Skills | 31 + 10 built-in | 52 | 5+ (skills-engine) | TOML-based |
+| Skills | 35 + 10 built-in | 52 | 5+ (skills-engine) | TOML-based |
 | LLM Backends | 5 | 15+ | Claude SDK | 5+ (trait-driven) |
 | Channels | 7 | 22+ | 5 | 17 |
 | Test coverage | 205+ cases | Hundreds | Dozens | Comprehensive |
