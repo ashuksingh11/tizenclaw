@@ -1,13 +1,13 @@
 # TizenClaw 설계 문서
 
-> **최종 업데이트**: 2026-03-07
-> **버전**: 2.0
+> **최종 업데이트**: 2026-03-09
+> **버전**: 2.1
 
 ---
 
 ## 1. 개요
 
-**TizenClaw**는 Tizen Embedded Linux 환경에 최적화된 네이티브 C++ AI 에이전트 **데몬**입니다. **systemd 서비스**로 백그라운드에서 실행되며, 다중 통신 채널(Telegram, Slack, Discord, MCP, Webhook, Voice, Web Dashboard)을 통해 사용자 프롬프트를 수신하고, 설정 가능한 LLM 백엔드를 통해 해석하여, OCI 컨테이너 내에서 샌드박스된 Python 스킬로 디바이스 작업을 수행합니다.
+**TizenClaw**는 Tizen Embedded Linux 환경에 최적화된 네이티브 C++ AI 에이전트 **데몬**입니다. **systemd 서비스**로 백그라운드에서 실행되며, 다중 통신 채널(Telegram, Slack, Discord, MCP, Webhook, Voice, Web Dashboard)을 통해 사용자 프롬프트를 수신하고, 설정 가능한 LLM 백엔드를 통해 해석하여, OCI 컨테이너 내에서 샌드박스된 Python 스킬 및 **Tizen Action Framework**를 통해 디바이스 작업을 수행합니다.
 
 Tizen의 보안 정책(SMACK, DAC, kUEP) 하에서도 안전하고 확장 가능한 Agent-Skill 상호작용 환경을 구축하며, 멀티 에이전트 협조, 스트리밍 응답, 암호화된 자격증명 저장, 구조화된 감사 로깅 등 엔터프라이즈급 기능을 제공합니다.
 
@@ -16,7 +16,7 @@ Tizen의 보안 정책(SMACK, DAC, kUEP) 하에서도 안전하고 확장 가능
 - **OS**: Tizen Embedded Linux (Tizen 10.0)
 - **런타임**: systemd 데몬 (`tizenclaw.service`)
 - **보안**: SMACK + DAC 적용, kUEP (Kernel Unprivileged Execution Protection) 활성화
-- **언어**: C++17, Python 3.x (스킬)
+- **언어**: C++20, Python 3.x (스킬)
 
 ---
 
@@ -44,6 +44,7 @@ graph TB
             TaskSched["TaskScheduler<br/>(Cron / Interval)"]
             ToolPolicy["ToolPolicy<br/>(위험도 + 루프 감지)"]
             EmbStore["EmbeddingStore<br/>(SQLite RAG)"]
+            ActionBr["ActionBridge<br/>(Action Framework)"]
         end
 
         subgraph LLM["LLM 백엔드 계층"]
@@ -70,6 +71,7 @@ graph TB
         IPC --> AgentCore
         AgentCore --> Factory
         AgentCore --> Container
+        AgentCore --> ActionBr
         AgentCore --> SessionStore
         AgentCore --> TaskSched
         AgentCore --> ToolPolicy
@@ -86,11 +88,18 @@ graph TB
         SkillExec --> Skills
     end
 
+    subgraph ActionFW["Tizen Action Framework"]
+        ActionSvc["Action Service<br/>(온디맨드)"]
+        ActionList["homeVolume · homeNotification<br/>homeApps · homeVideo · ..."]
+        ActionSvc --- ActionList
+    end
+
     Telegram & Slack & Discord & Voice --> ChannelReg
     MCP --> IPC
     Webhook --> WebDash
     WebUI --> WebDash
     Container -->|"crun exec"| Sandbox
+    ActionBr -->|"action C API"| ActionFW
 ```
 
 ---
@@ -116,7 +125,7 @@ graph TB
 - **컨텍스트 압축**: 15턴 초과 시 가장 오래된 10턴을 LLM으로 요약하여 1턴으로 압축
 - **멀티 세션**: 세션별 시스템 프롬프트와 히스토리 격리를 통한 동시 에이전트 세션
 - **모델 폴백**: `fallback_backends` 순차 재시도 + rate-limit 백오프
-- **내장 도구**: `execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`
+- **내장 도구**: `execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (Per-action 도구)
 
 ### 3.3 LLM 백엔드 계층
 
@@ -195,10 +204,33 @@ class Channel {
 │   └── monthly/YYYY-MM.md           ← 월별 누적
 ├── audit/YYYY-MM-DD.md              ← 감사 추적
 ├── tasks/task-{id}.md               ← 예약 태스크
+├── tools/actions/{name}.md          ← Action 스키마 캐시 (자동 동기화)
+├── tools/embedded/{name}.md         ← 내장 도구 스키마 (RPM으로 설치)
 └── knowledge/embeddings.db          ← SQLite 벡터 저장소 (RAG)
 ```
 
-### 3.8 태스크 스케줄러 (`task_scheduler.cc`)
+### 3.8 Tizen Action Framework 브릿지 (`action_bridge.cc`)
+
+Tizen Action Framework와의 네이티브 통합:
+
+- **아키텍처**: `ActionBridge`가 전용 `tizen_core_task` 워커 스레드에서 Action C API 실행, `tizen_core_channel`로 스레드 간 통신
+- **스키마 관리**: `/opt/usr/share/tizenclaw/tools/actions/`에 액션별 Markdown 파일 (파라미터 테이블, 권한, JSON 스키마 포함)
+- **초기화 동기화**: `SyncActionSchemas()`가 `action_client_foreach_action`으로 모든 액션 가져와 MD 파일 작성/덮어쓰기, 더 이상 존재하지 않는 파일 정리
+- **이벤트 기반 업데이트**: `action_client_add_event_handler`로 INSTALL/UNINSTALL/UPDATE 이벤트 구독 → MD 파일 자동 갱신 → 도구 캐시 무효화
+- **Per-Action 도구**: 등록된 각 액션이 타입이 지정된 LLM 도구로 변환 (예: `action_homeVolume`에 `command: string`, `level: integer`)
+- **실행**: 모든 액션 실행은 JSON-RPC 2.0 모델 형식의 `action_client_execute`를 통해 수행
+
+```
+/opt/usr/share/tizenclaw/tools/actions/
+├── homeVolume.md         ← 볼륨 제어 액션 스키마
+├── homeNotification.md   ← 알림 액션 스키마
+├── homeApps.md           ← 앱 실행/종료 스키마
+├── homeVideo.md          ← 비디오 재생 스키마
+├── homeSetting.md        ← 설정 제어 스키마
+└── homeLanguage.md       ← 언어 설정 스키마
+```
+
+### 3.9 태스크 스케줄러 (`task_scheduler.cc`)
 
 LLM 연동 인프로세스 자동화:
 
@@ -207,7 +239,7 @@ LLM 연동 인프로세스 자동화:
 - **영구 저장**: YAML frontmatter Markdown
 - **재시도**: 실패 태스크 지수 백오프 재시도 (최대 3회)
 
-### 3.9 RAG / 시맨틱 검색 (`embedding_store.cc`)
+### 3.10 RAG / 시맨틱 검색 (`embedding_store.cc`)
 
 대화 히스토리 너머의 지식 검색:
 
@@ -215,7 +247,7 @@ LLM 연동 인프로세스 자동화:
 - **임베딩 API**: Gemini (`text-embedding-004`), OpenAI (`text-embedding-3-small`), Ollama
 - **내장 도구**: `ingest_document` (청킹 + 임베딩), `search_knowledge` (코사인 유사도 쿼리)
 
-### 3.10 웹 대시보드 (`web_dashboard.cc`)
+### 3.11 웹 대시보드 (`web_dashboard.cc`)
 
 내장 관리 대시보드:
 
@@ -224,6 +256,15 @@ LLM 연동 인프로세스 자동화:
 - **REST API**: `/api/sessions`, `/api/tasks`, `/api/logs`, `/api/chat`, `/api/config`
 - **관리자 인증**: SHA-256 비밀번호 해싱을 사용한 세션 토큰 메커니즘
 - **설정 편집기**: 백업-온-라이트 기능의 7개 설정 파일 인브라우저 편집
+
+### 3.12 도구 스키마 디스커버리
+
+Markdown 스키마 파일을 통한 LLM 도구 발견:
+
+- **내장 도구**: `/opt/usr/share/tizenclaw/tools/embedded/` 아래 13개 MD 파일이 내장 도구를 기술 (execute_code, file_manager, 파이프라인, 태스크, RAG 등)
+- **Action 도구**: `/opt/usr/share/tizenclaw/tools/actions/` 아래 MD 파일이 Tizen Action Framework 액션을 기술 (자동 동기화)
+- **시스템 프롬프트 통합**: 프롬프트 빌드 시 양쪽 디렉터리를 스캔하여 전체 MD 내용을 `{{AVAILABLE_TOOLS}}` 섹션에 추가
+- **스키마-실행 분리**: MD 파일은 LLM 컨텍스트만 제공; 실행 로직은 `AgentCore` 디스패치 (내장) 또는 `ActionBridge` (액션)가 독립적으로 처리
 
 ---
 

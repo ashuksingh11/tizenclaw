@@ -1,6 +1,6 @@
 # TizenClaw 개발 로드맵 v4.0
 
-> **작성일**: 2026-03-08
+> **작성일**: 2026-03-09
 > **기반 문서**: [프로젝트 분석](ANALYSIS.md) | [설계 문서](DESIGN.md)
 
 ---
@@ -42,6 +42,7 @@
 | **UX** | 음성 인터페이스 | ✅ 웨이크 워드 + TTS | ❌ | ❌ | ✅ Tizen STT/TTS C-API | ✅ |
 | **UX** | 웹 UI | ✅ 제어 UI + 웹챗 | ❌ | ❌ | ✅ 관리 대시보드 + 채팅 | ✅ |
 | **운영** | 설정 관리 | ✅ UI 기반 설정 | ❌ | ✅ TOML + 핫리로드 | ✅ 웹 설정 편집기 + 백업 | ✅ |
+| **디바이스** | 네이티브 디바이스 액션 | ❌ | ❌ | ❌ | ✅ Tizen Action Framework (Per-action LLM 도구) | ✅ |
 
 ---
 
@@ -55,6 +56,8 @@
 | **멀티 LLM 지원** | 5개 백엔드 (Gemini, OpenAI, Claude, xAI, Ollama) 런타임 전환 가능 |
 | **경량 배포** | systemd + RPM — Node.js/Docker 없이 단독 디바이스 실행 |
 | **네이티브 MCP 서버** | C++ MCP 서버가 데몬에 내장 — Claude Desktop에서 sdb를 통해 Tizen 디바이스 제어 |
+| **Tizen Action Framework** | Per-action LLM 도구 + MD 스키마 캐싱 + 이벤트 기반 업데이트 |
+| **도구 스키마 디스커버리** | 내장 + 액션 도구 스키마를 MD 파일로 저장, LLM 시스템 프롬프트에 자동 로드 |
 
 ---
 
@@ -121,6 +124,8 @@ timeline
                        : 헬스 메트릭스 & 모니터링
                        : OTA 업데이트 메커니즘
                        : 브라우저 제어 (CDP)
+                       : Tizen Action Framework
+                       : 도구 스키마 디스커버리
 ```
 
 ---
@@ -735,6 +740,49 @@ timeline
 - [ ] 시각적 피드백을 위한 스크린샷 캡처
 
 ---
+
+### 18.4 Tizen Action Framework 통합 ✅
+| 항목 | 내용 |
+|------|------|
+| **갭** | 디바이스 액션(볼륨, 알림, 설정) 수행에 커스텀 스킬 구현 필요 |
+| **계획** | Tizen Action C API 네이티브 통합, Per-action LLM 도구, MD 스키마 캐싱 |
+
+**구현 내용:**
+- `ActionBridge` 클래스: 전용 `tizen_core_task` 워커 스레드에서 Action C API 실행
+- 스키마 동기화: `SyncActionSchemas()`가 `action_client_foreach_action`으로 초기화 시 모든 액션 가져옴
+- MD 파일 관리: `/opt/usr/share/tizenclaw/tools/actions/`에 액션별 `.md` 파일
+- 이벤트 기반 업데이트: `action_client_add_event_handler`로 INSTALL/UNINSTALL/UPDATE 이벤트 처리
+- Per-Action LLM 도구: 각 액션이 타입이 지정된 도구로 변환 (예: `action_homeVolume`)
+- 실행: `action_client_execute`로 JSON-RPC 2.0 모델 형식 실행
+
+**완료 기준:**
+- [x] ActionBridge 워커 스레드 + tizen_core_channel 통신
+- [x] 초기화 시 MD 파일 동기화 (오래된 파일 정리 포함)
+- [x] 액션 설치/삭제/업데이트 라이브 이벤트 핸들러
+- [x] inputSchema에서 파라미터를 가져온 Per-action 타입 LLM 도구
+- [x] 폴백 `execute_action` 범용 도구
+- [x] 검증: "볼륨을 올려줘" → `action_homeVolume(command="up")` → 성공
+
+---
+
+### 18.5 내장 도구 스키마 디스커버리 ✅
+| 항목 | 내용 |
+|------|------|
+| **갭** | LLM이 도구 이름과 짧은 설명만 보임 — 상세 파라미터 스키마 없음 |
+| **계획** | 내장 도구 스키마를 MD 파일로 저장, 시스템 프롬프트에 로드하여 정밀한 도구 호출 |
+
+**구현 내용:**
+- `tools/embedded/` 아래 13개 MD 파일 (상세 파라미터 테이블 및 JSON 스키마 포함)
+- 카테고리: code_execution, file_system, task_scheduler, multi_agent, rag, pipeline
+- RPM으로 `/opt/usr/share/tizenclaw/tools/embedded/`에 설치
+- 시스템 프롬프트 빌더가 `tools/embedded/`와 `tools/actions/` 디렉터리 모두 스캔
+- 스키마-실행 분리: MD 파일은 LLM 컨텍스트만 제공, 실행 로직은 변경 없음
+
+**완료 기준:**
+- [x] 13개 내장 도구 MD 파일 생성 (파라미터 스키마 포함)
+- [x] CMakeLists.txt 및 RPM spec 설치 파이프라인 업데이트
+- [x] 시스템 프롬프트가 양쪽 도구 디렉터리에서 MD 내용 로드
+- [x] 검증: LLM이 모든 내장 + 액션 도구를 정확히 인지
 
 ## Phase 19: 엣지 최적화 & 터널링 (제안)
 

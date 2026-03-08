@@ -1,6 +1,6 @@
 # TizenClaw 프로젝트 분석
 
-> **최종 업데이트**: 2026-03-08
+> **최종 업데이트**: 2026-03-09
 
 ---
 
@@ -8,7 +8,7 @@
 
 **TizenClaw**는 Tizen Embedded Linux 환경에서 동작하는 **Native C++ AI Agent 시스템 데몬**입니다.
 
-사용자의 자연어 프롬프트를 다중 LLM 백엔드(Gemini, OpenAI, Claude, xAI, Ollama)를 통해 해석하고, OCI 컨테이너(crun) 안에서 Python 스킬을 실행하여 디바이스를 제어합니다. Function Calling 기반의 반복 루프(Agentic Loop)를 통해 복합 작업을 자율적으로 수행합니다. 7개 통신 채널, 암호화된 자격증명 저장, 구조화된 감사 로깅, 예약 작업 자동화, 시맨틱 검색(RAG), 웹 기반 관리 대시보드, 멀티 에이전트 오케스트레이션(슈퍼바이저 패턴, 스킬 파이프라인, A2A 프로토콜), 헬스 모니터링, OTA 업데이트를 지원합니다.
+사용자의 자연어 프롬프트를 다중 LLM 백엔드(Gemini, OpenAI, Claude, xAI, Ollama)를 통해 해석하고, OCI 컨테이너(crun) 안에서 Python 스킬을 실행하고 **Tizen Action Framework**를 통해 디바이스 액션을 수행하여 디바이스를 제어합니다. Function Calling 기반의 반복 루프(Agentic Loop)를 통해 복합 작업을 자율적으로 수행합니다. 7개 통신 채널, 암호화된 자격증명 저장, 구조화된 감사 로깅, 예약 작업 자동화, 시맨틱 검색(RAG), 웹 기반 관리 대시보드, 멀티 에이전트 오케스트레이션(슈퍼바이저 패턴, 스킬 파이프라인, A2A 프로토콜), 헬스 모니터링, OTA 업데이트를 지원합니다.
 
 ```mermaid
 graph LR
@@ -56,6 +56,14 @@ graph LR
     Agent --> Scheduler
     Agent --> RAG
     Container -->|"crun exec"| Skills
+
+    subgraph ActionFW["Tizen Action Framework"]
+        ActionSvc["Action Service"]
+        ActionList["homeVolume · homeNotification · ..."]
+        ActionSvc --- ActionList
+    end
+
+    Agent -->|"action C API"| ActionFW
 ```
 
 ---
@@ -116,6 +124,12 @@ tizenclaw/
 │   ├── pre-commit                   # Git pre-commit 훅
 │   ├── setup-hooks.sh               # 훅 설치기
 │   └── Dockerfile                   # RootFS 빌드 참고용
+├── tools/embedded/                  # 내장 도구 MD 스키마 (13개 파일)
+│   ├── execute_code.md              # Python 코드 실행
+│   ├── file_manager.md              # 파일 시스템 작업
+│   ├── create_task.md               # 태스크 스케줄러
+│   ├── create_pipeline.md           # 파이프라인 생성
+│   └── ...                          # + 9개 추가 도구 스키마
 ├── data/
 │   ├── llm_config.json.sample       # LLM 설정 샘플
 │   ├── telegram_config.json.sample  # Telegram Bot 설정 샘플
@@ -151,6 +165,7 @@ tizenclaw/
 | **HttpClient** | `http_client.cc/hh` | libcurl POST, 지수 백오프, SSL CA 자동 탐색 | ✅ |
 | **SessionStore** | `session_store.cc/hh` | Markdown 영구 저장 (YAML frontmatter), 일별 로그, 토큰 사용량 추적 | ✅ |
 | **TaskScheduler** | `task_scheduler.cc/hh` | Cron/interval/once/weekly 태스크, LLM 연동 실행, 백오프 재시도 | ✅ |
+| **ActionBridge** | `action_bridge.cc/hh` | Tizen Action Framework 브릿지, MD 스키마 관리, 이벤트 기반 업데이트 | ✅ |
 | **EmbeddingStore** | `embedding_store.cc/hh` | SQLite 벡터 스토어, 코사인 유사도, 다중 프로바이더 임베딩 | ✅ |
 | **WebDashboard** | `web_dashboard.cc/hh` | libsoup SPA, REST API, 관리자 인증, 설정 편집기 | ✅ |
 
@@ -200,7 +215,7 @@ tizenclaw/
 | `web_search` | `query` (string, required) | 없음 (Wikipedia API) | ✅ |
 
 AgentCore에 직접 구현된 내장 도구:
-`execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`
+`execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (Tizen Action Framework Per-action 도구)
 
 ### 3.5 보안
 
@@ -245,7 +260,7 @@ AgentCore에 직접 구현된 내장 도구:
 | 15 | 고급 기능 | RAG (SQLite 임베딩), 웹 대시보드, 음성 (TTS/STT) | ✅ |
 | 16 | 운영 우수성 | 관리자 인증, 설정 편집기, 브랜딩 | ✅ |
 | 17 | 멀티 에이전트 오케스트레이션 | 슈퍼바이저 에이전트, 스킬 파이프라인, A2A 프로토콜 | ✅ |
-| 18 | 프로덕션 준비 | 헬스 메트릭스, OTA 업데이트 (18.3 CDP 보류) | 🟡 |
+| 18 | 프로덕션 준비 | 헬스 메트릭스, OTA 업데이트, Action Framework, 도구 스키마 (18.3 CDP 보류) | 🟡 |
 
 ---
 
@@ -297,6 +312,8 @@ Phase 6-18을 통해 원래 분석에서 식별된 대부분의 Gap이 해소되
 | **음성 제어** | 네이티브 Tizen STT/TTS 연동 (조건부 컴파일) |
 | **멀티 에이전트 오케스트레이션** | 슈퍼바이저 패턴, 스킬 파이프라인, A2A 크로스 디바이스 프로토콜 |
 | **헬스 모니터링** | Prometheus 스타일 `/api/metrics` + 라이브 대시보드 패널 |
+| **Tizen Action Framework** | Per-action LLM 도구 + MD 스키마 캐싱 + `action_event_cb` 이벤트 기반 업데이트 |
+| **도구 스키마 디스커버리** | 내장 + 액션 도구 스키마를 MD 파일로 저장, LLM 시스템 프롬프트에 자동 로드 |
 | **OTA 업데이트** | 버전 확인 및 롤백이 포함된 무선 스킬 업데이트 |
 
 ---
