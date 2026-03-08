@@ -79,35 +79,6 @@ public:
                         const std::string& logstr) = 0;
 };
 
-class DLogBackend : public ILogBackend {
-public:
-  void WriteLog(LogLevel level, const std::string& tag,
-                const std::string& logstr) override {
-    dlog_print(LogLevelToPriority(level), tag.c_str(), "%s",
-               Escape(logstr).c_str());
-
-    if (level == LogLevel::LOG_ERROR)
-      std::cerr << logstr << std::endl;
-  }
-
-private:
-  // Since LogCatcher passes input to dlog_print(), the input which contains
-  // format string(such as %d, %n) can cause unexpected result.
-  // This is simple function to escape '%'.
-  // NOTE: Is there any gorgeous way instead of this?
-  std::string Escape(const std::string& str) const {
-    std::string escaped = std::string(str);
-    size_t start_pos = 0;
-    std::string from = "%";
-    std::string to = "%%";
-    while ((start_pos = escaped.find(from, start_pos)) != std::string::npos) {
-      escaped.replace(start_pos, from.length(), to);
-      start_pos += to.length();
-    }
-    return escaped;
-  }
-};
-
 class LogCore {
 public:
   // Do not call this function at destructor of global object
@@ -128,10 +99,7 @@ public:
   }
 
 private:
-  LogCore() {
-    // add default dlog backend
-    AddLogBackend(std::make_shared<DLogBackend>());
-  }
+  LogCore() = default;
   ~LogCore() = default;
   LogCore(const LogCore&) = delete;
   LogCore& operator=(const LogCore&) = delete;
@@ -145,10 +113,34 @@ public:
   LogCatcher(LogLevel level, const char* tag) : level_(level), tag_(tag) {}
 
   void operator&(const StringStream<char>& str) const {
+    // Direct dlog_print — proven to work in tizen-action
+    dlog_print(LogLevelToPriority(level_), tag_.c_str(), "%s",
+        Escape(str.str()).c_str());
+
+    if (level_ == LogLevel::LOG_ERROR)
+      std::cerr << str.str() << std::endl;
+
+    // Dispatch to additional backends (e.g., FileLogBackend)
     LogCore::GetCore().Log(level_, tag_, str.str());
   }
 
 private:
+  // Since LogCatcher passes input to dlog_print(), the input which contains
+  // format string(such as %d, %n) can cause unexpected result.
+  // This is simple function to escape '%'.
+  // NOTE: Is there any gorgeous way instead of this?
+  static std::string Escape(const std::string& str) {
+    std::string escaped = std::string(str);
+    size_t start_pos = 0;
+    std::string from = "%";
+    std::string to = "%%";
+    while ((start_pos = escaped.find(from, start_pos)) != std::string::npos) {
+      escaped.replace(start_pos, from.length(), to);
+      start_pos += to.length();
+    }
+    return escaped;
+  }
+
   LogLevel level_;
   std::string tag_;
 };

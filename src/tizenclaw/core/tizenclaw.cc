@@ -6,6 +6,7 @@
 #include <string>
 #include <csignal>
 #include <exception>
+#include <filesystem>
 #include <ranges>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -574,10 +575,18 @@ constexpr uid_t TizenClawDaemon::kAllowedUids[];
 int main(int argc, char *argv[]) {
     using namespace tizenclaw;
 
-    // Add file-based logging (reliable inside chroot where dlog is unavailable)
-    tizenclaw::utils::LogCore::GetCore().AddLogBackend(
-        std::make_shared<tizenclaw::utils::FileLogBackend>(
-            "/tmp/tizenclaw.log", 1024 * 1024, 3));
+    // Add file-based logging for debugging
+    // Path is inside the container rootfs (always writable).
+    try {
+        const std::string log_dir = "/opt/usr/share/tizenclaw/logs";
+        if (!std::filesystem::exists(log_dir))
+            std::filesystem::create_directories(log_dir);
+        tizenclaw::utils::LogCore::GetCore().AddLogBackend(
+            std::make_shared<tizenclaw::utils::FileLogBackend>(
+                log_dir + "/tizenclaw.log", 1024 * 1024, 3));
+    } catch (const std::exception& e) {
+        LOG(ERROR) << "Failed to initialize file log: " << e.what();
+    }
 
     // --mcp-stdio mode: run MCP Server on stdio
     // without daemon event loop
