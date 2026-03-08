@@ -750,9 +750,9 @@ timeline
 **구현 내용:**
 - `ActionBridge` 클래스: 전용 `tizen_core_task` 워커 스레드에서 Action C API 실행
 - 스키마 동기화: `SyncActionSchemas()`가 `action_client_foreach_action`으로 초기화 시 모든 액션 가져옴
-- MD 파일 관리: `/opt/usr/share/tizenclaw/tools/actions/`에 액션별 `.md` 파일
+- MD 파일 관리: 액션별 `.md` 파일로 스키마 캐싱
 - 이벤트 기반 업데이트: `action_client_add_event_handler`로 INSTALL/UNINSTALL/UPDATE 이벤트 처리
-- Per-Action LLM 도구: 각 액션이 타입이 지정된 도구로 변환 (예: `action_homeVolume`)
+- Per-Action LLM 도구: 각 액션이 타입이 지정된 도구로 변환 (예: `action_<name>`)
 - 실행: `action_client_execute`로 JSON-RPC 2.0 모델 형식 실행
 
 **완료 기준:**
@@ -761,7 +761,7 @@ timeline
 - [x] 액션 설치/삭제/업데이트 라이브 이벤트 핸들러
 - [x] inputSchema에서 파라미터를 가져온 Per-action 타입 LLM 도구
 - [x] 폴백 `execute_action` 범용 도구
-- [x] 검증: "볼륨을 올려줘" → `action_homeVolume(command="up")` → 성공
+- [x] 검증: 자연어로 디바이스 액션 실행 확인
 
 ---
 

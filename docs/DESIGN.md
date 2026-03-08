@@ -90,7 +90,7 @@ graph TB
 
     subgraph ActionFW["Tizen Action Framework"]
         ActionSvc["Action Service<br/>(on-demand)"]
-        ActionList["homeVolume · homeNotification<br/>homeApps · homeVideo · ..."]
+        ActionList["Device-specific actions<br/>(auto-discovered)"]
         ActionSvc --- ActionList
     end
 
@@ -204,7 +204,7 @@ All storage uses **Markdown with YAML frontmatter** (no external DB dependency e
 │   └── monthly/YYYY-MM.md           ← Monthly aggregate
 ├── audit/YYYY-MM-DD.md              ← Audit trail
 ├── tasks/task-{id}.md               ← Scheduled tasks
-├── tools/actions/{name}.md          ← Action schema cache (auto-synced)
+├── tools/actions/{name}.md          ← Action schema cache (auto-synced, device-specific)
 ├── tools/embedded/{name}.md         ← Embedded tool schemas (installed via RPM)
 └── knowledge/embeddings.db          ← SQLite vector store (RAG)
 ```
@@ -214,21 +214,15 @@ All storage uses **Markdown with YAML frontmatter** (no external DB dependency e
 Native integration with the Tizen Action Framework for device-level actions:
 
 - **Architecture**: `ActionBridge` runs Action C API on a dedicated `tizen_core_task` worker thread with `tizen_core_channel` for inter-thread communication
-- **Schema Management**: Per-action Markdown files under `/opt/usr/share/tizenclaw/tools/actions/` containing parameter tables, privileges, and raw JSON schema
+- **Schema Management**: Per-action Markdown files containing parameter tables, privileges, and raw JSON schema
 - **Initialization Sync**: `SyncActionSchemas()` fetches all actions via `action_client_foreach_action`, writes/overwrites MD files, and removes stale entries
 - **Event-Driven Updates**: `action_client_add_event_handler` subscribes to INSTALL/UNINSTALL/UPDATE events → auto-update MD files → invalidate tool cache
-- **Per-Action Tools**: Each registered action becomes a typed LLM tool (e.g., `action_homeVolume` with `command: string`, `level: integer`) loaded from MD cache at startup
+- **Per-Action Tools**: Each registered action becomes a typed LLM tool (e.g., `action_<name>`) loaded from MD cache at startup. Available actions vary by device.
 - **Execution**: All action execution goes through `action_client_execute` with JSON-RPC 2.0 model format
 
 ```
-/opt/usr/share/tizenclaw/tools/actions/
-├── homeVolume.md         ← Volume control action schema
-├── homeNotification.md   ← Notification action schema
-├── homeApps.md           ← App launch/terminate schema
-├── homeVideo.md          ← Video playback schema
-├── homeSetting.md        ← Settings control schema
-└── homeLanguage.md       ← Language settings schema
-```
+
+Action schemas are auto-generated at runtime and vary by device. The directory is populated by `SyncActionSchemas()` at initialization.
 
 ### 3.9 Task Scheduler (`task_scheduler.cc`)
 
@@ -262,7 +256,7 @@ Built-in administrative dashboard:
 LLM tool discovery through Markdown schema files:
 
 - **Embedded Tools**: 13 MD files under `/opt/usr/share/tizenclaw/tools/embedded/` describe built-in tools (execute_code, file_manager, pipelines, tasks, RAG, etc.)
-- **Action Tools**: MD files under `/opt/usr/share/tizenclaw/tools/actions/` describe Tizen Action Framework actions (auto-synced)
+- **Action Tools**: MD files describe Tizen Action Framework actions (auto-synced, device-specific)
 - **System Prompt Integration**: Both directories are scanned at prompt build time, and full MD content is appended to the `{{AVAILABLE_TOOLS}}` section
 - **Schema-Execution Separation**: MD files provide LLM context only; execution logic is handled independently by `AgentCore` dispatch (embedded) or `ActionBridge` (actions)
 

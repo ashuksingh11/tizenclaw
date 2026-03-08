@@ -79,7 +79,7 @@ open http://<device-ip>:9090
 - **Multi-LLM Backend** — Supports Gemini, OpenAI, Anthropic, xAI (Grok), and Ollama via a unified `LlmBackend` interface with automatic model fallback.
 - **7 Communication Channels** — Telegram, Slack, Discord, MCP (Claude Desktop), Webhook, Voice (TTS/STT), and Web Dashboard — all managed through a `Channel` abstraction.
 - **Function Calling / Tool Use** — The LLM autonomously invokes device skills through an iterative Agentic Loop with streaming responses.
-- **Tizen Action Framework** — Native device actions (volume, notifications, apps, settings) via `ActionBridge` with per-action typed LLM tools, MD schema caching under `/opt/usr/share/tizenclaw/tools/actions/`, and live updates via `action_event_cb`.
+- **Tizen Action Framework** — Native device actions via `ActionBridge` with per-action typed LLM tools, MD schema caching, and live updates via `action_event_cb`.
 - **OCI Container Isolation** — Skills run inside a `crun` container with namespace isolation, limiting access to host resources.
 - **Semantic Search (RAG)** — SQLite-backed embedding store with multi-provider embeddings (Gemini, OpenAI, Ollama) for knowledge retrieval.
 - **Task Scheduler** — Cron/interval/one-shot/weekly scheduled tasks with LLM integration and retry logic.
@@ -145,7 +145,7 @@ graph TB
 
     subgraph ActionFW["Tizen Action Framework"]
         ActionService["Action Service<br/>(on-demand)"]
-        ActionApps["homeVolume · homeNotification<br/>homeApps · homeVideo · ..."]
+        ActionApps["Device-specific actions<br/>(auto-discovered)"]
         ActionService --- ActionApps
     end
 
@@ -176,16 +176,7 @@ graph TB
 
 ### Tizen Action Framework (Native Device Actions)
 
-Actions registered via the Tizen Action Framework are automatically discovered and exposed as **per-action LLM tools** (e.g., `action_homeVolume`). Schema files are cached as Markdown under `/opt/usr/share/tizenclaw/tools/actions/` and kept in sync via `action_event_cb` events.
-
-| Action | Description |
-|---|---|
-| `homeVolume` | Adjust system volume (up/down/mute/unmute) |
-| `homeNotification` | Show/dismiss device notifications |
-| `homeApps` | Launch/terminate applications |
-| `homeVideo` | Video playback control |
-| `homeSetting` | System settings control |
-| `homeLanguage` | Language settings |
+Actions registered via the Tizen Action Framework are automatically discovered and exposed as **per-action LLM tools** (e.g., `action_<name>`). Schema files are cached as Markdown and kept in sync via `action_event_cb` events. Available actions vary by device.
 
 ### Built-in Tools (AgentCore)
 

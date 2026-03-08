@@ -747,9 +747,9 @@ timeline
 **Implementation:**
 - `ActionBridge` class: runs Action C API on dedicated `tizen_core_task` worker thread
 - Schema sync: `SyncActionSchemas()` via `action_client_foreach_action` at initialization
-- MD file management: per-action `.md` files under `/opt/usr/share/tizenclaw/tools/actions/`
+- MD file management: per-action `.md` files for schema caching
 - Event-driven updates: `action_client_add_event_handler` for INSTALL/UNINSTALL/UPDATE events
-- Per-action LLM tools: each action becomes typed tool (e.g., `action_homeVolume`) loaded from MD cache
+- Per-action LLM tools: each action becomes typed tool (e.g., `action_<name>`) loaded from MD cache
 - Execution: `action_client_execute` with JSON-RPC 2.0 model format
 
 **Done When:**
@@ -758,7 +758,7 @@ timeline
 - [x] Event handler for live action install/uninstall/update
 - [x] Per-action typed LLM tools with parameters from inputSchema
 - [x] Fallback `execute_action` generic tool
-- [x] Verified: "볼륨을 올려줘" → `action_homeVolume(command="up")` → success
+- [x] Verified with natural language action execution
 
 ---
 

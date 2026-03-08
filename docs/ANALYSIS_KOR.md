@@ -59,7 +59,7 @@ graph LR
 
     subgraph ActionFW["Tizen Action Framework"]
         ActionSvc["Action Service"]
-        ActionList["homeVolume · homeNotification · ..."]
+        ActionList["디바이스별 액션"]
         ActionSvc --- ActionList
     end
 

@@ -90,7 +90,7 @@ graph TB
 
     subgraph ActionFW["Tizen Action Framework"]
         ActionSvc["Action Service<br/>(온디맨드)"]
-        ActionList["homeVolume · homeNotification<br/>homeApps · homeVideo · ..."]
+        ActionList["디바이스별 액션<br/>(자동 발견)"]
         ActionSvc --- ActionList
     end
 
@@ -204,7 +204,7 @@ class Channel {
 │   └── monthly/YYYY-MM.md           ← 월별 누적
 ├── audit/YYYY-MM-DD.md              ← 감사 추적
 ├── tasks/task-{id}.md               ← 예약 태스크
-├── tools/actions/{name}.md          ← Action 스키마 캐시 (자동 동기화)
+├── tools/actions/{name}.md          ← Action 스키마 캐시 (디바이스별, 자동 동기화)
 ├── tools/embedded/{name}.md         ← 내장 도구 스키마 (RPM으로 설치)
 └── knowledge/embeddings.db          ← SQLite 벡터 저장소 (RAG)
 ```
@@ -214,21 +214,13 @@ class Channel {
 Tizen Action Framework와의 네이티브 통합:
 
 - **아키텍처**: `ActionBridge`가 전용 `tizen_core_task` 워커 스레드에서 Action C API 실행, `tizen_core_channel`로 스레드 간 통신
-- **스키마 관리**: `/opt/usr/share/tizenclaw/tools/actions/`에 액션별 Markdown 파일 (파라미터 테이블, 권한, JSON 스키마 포함)
+- **스키마 관리**: 액션별 Markdown 파일 (파라미터 테이블, 권한, JSON 스키마 포함)
 - **초기화 동기화**: `SyncActionSchemas()`가 `action_client_foreach_action`으로 모든 액션 가져와 MD 파일 작성/덮어쓰기, 더 이상 존재하지 않는 파일 정리
 - **이벤트 기반 업데이트**: `action_client_add_event_handler`로 INSTALL/UNINSTALL/UPDATE 이벤트 구독 → MD 파일 자동 갱신 → 도구 캐시 무효화
-- **Per-Action 도구**: 등록된 각 액션이 타입이 지정된 LLM 도구로 변환 (예: `action_homeVolume`에 `command: string`, `level: integer`)
+- **Per-Action 도구**: 등록된 각 액션이 타입이 지정된 LLM 도구로 변환 (예: `action_<name>`). 사용 가능한 액션은 디바이스마다 다름.
 - **실행**: 모든 액션 실행은 JSON-RPC 2.0 모델 형식의 `action_client_execute`를 통해 수행
 
-```
-/opt/usr/share/tizenclaw/tools/actions/
-├── homeVolume.md         ← 볼륨 제어 액션 스키마
-├── homeNotification.md   ← 알림 액션 스키마
-├── homeApps.md           ← 앱 실행/종료 스키마
-├── homeVideo.md          ← 비디오 재생 스키마
-├── homeSetting.md        ← 설정 제어 스키마
-└── homeLanguage.md       ← 언어 설정 스키마
-```
+Action 스키마는 런타임에 자동 생성되며 디바이스마다 다릅니다. `SyncActionSchemas()`가 초기화 시 디렉터리를 채웁니다.
 
 ### 3.9 태스크 스케줄러 (`task_scheduler.cc`)
 
@@ -262,7 +254,7 @@ LLM 연동 인프로세스 자동화:
 Markdown 스키마 파일을 통한 LLM 도구 발견:
 
 - **내장 도구**: `/opt/usr/share/tizenclaw/tools/embedded/` 아래 13개 MD 파일이 내장 도구를 기술 (execute_code, file_manager, 파이프라인, 태스크, RAG 등)
-- **Action 도구**: `/opt/usr/share/tizenclaw/tools/actions/` 아래 MD 파일이 Tizen Action Framework 액션을 기술 (자동 동기화)
+- **Action 도구**: Action Framework MD 파일이 Tizen Action Framework 액션을 기술 (디바이스별, 자동 동기화)
 - **시스템 프롬프트 통합**: 프롬프트 빌드 시 양쪽 디렉터리를 스캔하여 전체 MD 내용을 `{{AVAILABLE_TOOLS}}` 섹션에 추가
 - **스키마-실행 분리**: MD 파일은 LLM 컨텍스트만 제공; 실행 로직은 `AgentCore` 디스패치 (내장) 또는 `ActionBridge` (액션)가 독립적으로 처리
 
