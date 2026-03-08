@@ -174,7 +174,7 @@ TizenClaw ships with **35 container skills** (Python, OCI sandbox) and **10+ bui
 
 > ⚡ = Async skill using tizen-core event loop
 
-📖 **Full reference**: [Skills Reference (EN)](docs/SKILLS.md) · [스킬 레퍼런스 (KOR)](docs/SKILLS_KOR.md)
+📖 **Full reference**: [Skills Reference](docs/SKILLS.md)
 
 ### Tizen Action Framework (Native Device Actions)
 
