@@ -23,6 +23,7 @@ pkg_check_modules(PKGS REQUIRED
     dlog
     libcurl
     sqlite3
+    capi-appfw-tizen-action
 )
 pkg_check_modules(LIBSOUP REQUIRED libsoup-2.4)
 pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
@@ -30,6 +31,7 @@ pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
 # Optional Tizen STT/TTS (not always available)
 pkg_check_modules(TIZEN_STT capi-uix-stt)
 pkg_check_modules(TIZEN_TTS capi-uix-tts)
+
 
 
 # Include directories (plus nlohmann_json)
@@ -55,6 +57,7 @@ if(TIZEN_TTS_FOUND)
   include_directories(${TIZEN_TTS_INCLUDE_DIRS})
   add_definitions(-DTIZEN_TTS_ENABLED)
 endif()
+add_definitions(-DTIZEN_ACTION_ENABLED)
 
 add_definitions("-DAPP_DATA_DIR=\"${APP_DATA_DIR}\"")
 
@@ -91,7 +94,9 @@ set(SOURCES
     src/tizenclaw/infra/health_monitor.cc
     src/tizenclaw/infra/ota_updater.cc
     src/tizenclaw/scheduler/task_scheduler.cc
+    src/tizenclaw/core/action_bridge.cc
 )
+
 
 # Executable
 add_executable(${PACKAGE} ${SOURCES})
@@ -108,6 +113,7 @@ if(TIZEN_TTS_FOUND)
   target_link_libraries(${PACKAGE}
       ${TIZEN_TTS_LIBRARIES})
 endif()
+
 
 # CLI test tool (no Tizen deps — pure POSIX sockets)
 add_executable(tizenclaw-cli src/tools/tizenclaw_cli.cc)

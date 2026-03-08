@@ -221,6 +221,30 @@ bool AgentCore::Initialize() {
   pipeline_executor_->LoadPipelines();
   LOG(INFO) << "Pipeline executor ready";
 
+#ifdef TIZEN_ACTION_ENABLED
+  // Initialize Tizen Action Framework bridge
+  action_bridge_ =
+      std::make_unique<ActionBridge>();
+  if (action_bridge_->Start()) {
+    // Sync action schemas to MD files
+    action_bridge_->SyncActionSchemas();
+    // React to action install/uninstall/update
+    action_bridge_->SetChangeCallback([this]() {
+      LOG(INFO)
+          << "Action schemas changed, "
+          << "reloading tools";
+      cached_tools_loaded_.store(false);
+    });
+    LOG(INFO)
+        << "Tizen Action bridge ready";
+  } else {
+    LOG(WARNING)
+        << "Tizen Action bridge init failed "
+        << "(non-fatal)";
+    action_bridge_.reset();
+  }
+#endif
+
   return true;
 }
 
@@ -241,6 +265,12 @@ void AgentCore::Shutdown() {
     backend_->Shutdown();
     backend_.reset();
   }
+#ifdef TIZEN_ACTION_ENABLED
+  if (action_bridge_) {
+    action_bridge_->Stop();
+    action_bridge_.reset();
+  }
+#endif
   embedding_store_.Close();
   container_.reset();
   curl_global_cleanup();
@@ -473,6 +503,11 @@ std::string AgentCore::ProcessPrompt(
           r.output = ExecutePipelineOp(
               tc.name, tc.args,
               session_id);
+        } else if (
+            tc.name == "execute_action" ||
+            tc.name.starts_with("action_")) {
+          r.output = ExecuteActionOp(
+              tc.name, tc.args);
         } else {
           r.output = ExecuteSkill(
               tc.name, tc.args);
@@ -1177,6 +1212,80 @@ AgentCore::LoadSkillDeclarations() {
           {"pipeline_id"})}
   };
   tools.push_back(delete_pipeline_tool);
+
+#ifdef TIZEN_ACTION_ENABLED
+  if (action_bridge_) {
+    // Load per-action tools from cached MD files
+    auto cached = action_bridge_->LoadCachedActions();
+    for (const auto& schema : cached) {
+      std::string aname =
+          schema.value("name", "");
+      if (aname.empty()) continue;
+
+      std::string adesc =
+          schema.value("description", "");
+
+      LlmToolDecl tool;
+      tool.name = "action_" + aname;
+      tool.description = adesc +
+          " (Tizen Action: " + aname +
+          "). Execute this action on the "
+          "device via the Tizen Action "
+          "Framework.";
+
+      // Build parameters from inputSchema
+      nlohmann::json props =
+          nlohmann::json::object();
+      nlohmann::json required_arr =
+          nlohmann::json::array();
+
+      if (schema.contains("inputSchema") &&
+          schema["inputSchema"].contains(
+              "properties")) {
+        props =
+            schema["inputSchema"]["properties"];
+        if (schema["inputSchema"].contains(
+                "required")) {
+          required_arr =
+              schema["inputSchema"]["required"];
+        }
+      }
+
+      tool.parameters = {
+          {"type", "object"},
+          {"properties", props},
+          {"required", required_arr}};
+      tools.push_back(tool);
+    }
+
+    // Fallback: generic execute_action tool
+    LlmToolDecl exec_action_tool;
+    exec_action_tool.name = "execute_action";
+    exec_action_tool.description =
+        "Execute a Tizen Action Framework "
+        "action by name with given arguments. "
+        "Prefer using action_<name> tools "
+        "when available.";
+    exec_action_tool.parameters = {
+        {"type", "object"},
+        {"properties", {
+            {"name", {
+                {"type", "string"},
+                {"description",
+                 "The action name to execute"}
+            }},
+            {"arguments", {
+                {"type", "object"},
+                {"description",
+                 "Arguments for the action"}
+            }}
+        }},
+        {"required",
+         nlohmann::json::array(
+             {"name"})}};
+    tools.push_back(exec_action_tool);
+  }
+#endif
 
   cached_tools_ = tools;
   cached_tools_loaded_.store(true);
@@ -2221,6 +2330,53 @@ std::string AgentCore::ExecutePipelineOp(
   }
 
   return result.dump();
+}
+
+std::string AgentCore::ExecuteActionOp(
+    const std::string& operation,
+    const nlohmann::json& args) {
+#ifdef TIZEN_ACTION_ENABLED
+  if (!action_bridge_) {
+    return "{\"error\":"
+           "\"Action bridge not available\"}";
+  }
+
+  if (operation == "execute_action") {
+    std::string name =
+        args.value("name", "");
+    nlohmann::json arguments =
+        args.value("arguments",
+                   nlohmann::json::object());
+    if (name.empty()) {
+      return "{\"error\":"
+             "\"Action name is required\"}";
+    }
+    LOG(INFO)
+        << "Executing Tizen action: " << name;
+    return action_bridge_->ExecuteAction(
+        name, arguments);
+  }
+
+  // Per-action tool: action_<name>
+  if (operation.starts_with("action_")) {
+    std::string name =
+        operation.substr(7);  // skip "action_"
+    LOG(INFO)
+        << "Executing Tizen action (tool): "
+        << name;
+    return action_bridge_->ExecuteAction(
+        name, args);
+  }
+
+  return "{\"error\":\"Unknown action op: "
+         + operation + "\"}";
+#else
+  (void)operation;
+  (void)args;
+  return "{\"error\":"
+         "\"Tizen Action not supported "
+         "in this build\"}";
+#endif
 }
 
 } // namespace tizenclaw

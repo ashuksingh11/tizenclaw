@@ -1,13 +1,13 @@
 # TizenClaw System Design Document
 
-> **Last Updated**: 2026-03-07
-> **Version**: 2.0
+> **Last Updated**: 2026-03-09
+> **Version**: 2.1
 
 ---
 
 ## 1. Overview
 
-**TizenClaw** is a native C++ AI agent **daemon** optimized for the Tizen Embedded Linux platform. It runs as a **systemd service** in the background, receives user prompts through multiple communication channels (Telegram, Slack, Discord, MCP, Webhook, Voice, Web Dashboard), interprets them via configurable LLM backends, and executes device-level actions using sandboxed Python skills inside OCI containers.
+**TizenClaw** is a native C++ AI agent **daemon** optimized for the Tizen Embedded Linux platform. It runs as a **systemd service** in the background, receives user prompts through multiple communication channels (Telegram, Slack, Discord, MCP, Webhook, Voice, Web Dashboard), interprets them via configurable LLM backends, and executes device-level actions using sandboxed Python skills inside OCI containers and the **Tizen Action Framework**.
 
 The system establishes a safe and extensible Agent-Skill interaction environment under Tizen's strict security policies (SMACK, DAC, kUEP) while providing enterprise-grade features including multi-agent coordination, streaming responses, encrypted credential storage, and structured audit logging.
 
@@ -44,6 +44,7 @@ graph TB
             TaskSched["TaskScheduler<br/>(Cron / Interval)"]
             ToolPolicy["ToolPolicy<br/>(Risk + Loop Detection)"]
             EmbStore["EmbeddingStore<br/>(SQLite RAG)"]
+            ActionBr["ActionBridge<br/>(Action Framework)"]
         end
 
         subgraph LLM["LLM Backend Layer"]
@@ -70,6 +71,7 @@ graph TB
         IPC --> AgentCore
         AgentCore --> Factory
         AgentCore --> Container
+        AgentCore --> ActionBr
         AgentCore --> SessionStore
         AgentCore --> TaskSched
         AgentCore --> ToolPolicy
@@ -86,11 +88,18 @@ graph TB
         SkillExec --> Skills
     end
 
+    subgraph ActionFW["Tizen Action Framework"]
+        ActionSvc["Action Service<br/>(on-demand)"]
+        ActionList["homeVolume · homeNotification<br/>homeApps · homeVideo · ..."]
+        ActionSvc --- ActionList
+    end
+
     Telegram & Slack & Discord & Voice --> ChannelReg
     MCP --> IPC
     Webhook --> WebDash
     WebUI --> WebDash
     Container -->|"crun exec"| Sandbox
+    ActionBr -->|"action C API"| ActionFW
 ```
 
 ---
@@ -116,7 +125,7 @@ The central orchestration engine implementing the **Agentic Loop**:
 - **Context Compaction**: When exceeding 15 turns, oldest 10 turns are summarized via LLM into 1 compressed turn
 - **Multi-Session**: Concurrent agent sessions with per-session system prompts and history isolation
 - **Model Fallback**: Sequential retry across `fallback_backends` with rate-limit backoff
-- **Built-in Tools**: `execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`
+- **Built-in Tools**: `execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (per-action tools)
 
 ### 3.3 LLM Backend Layer
 
@@ -195,10 +204,32 @@ All storage uses **Markdown with YAML frontmatter** (no external DB dependency e
 │   └── monthly/YYYY-MM.md           ← Monthly aggregate
 ├── audit/YYYY-MM-DD.md              ← Audit trail
 ├── tasks/task-{id}.md               ← Scheduled tasks
+├── tools/actions/{name}.md          ← Action schema cache (auto-synced)
 └── knowledge/embeddings.db          ← SQLite vector store (RAG)
 ```
 
-### 3.8 Task Scheduler (`task_scheduler.cc`)
+### 3.8 Tizen Action Framework Bridge (`action_bridge.cc`)
+
+Native integration with the Tizen Action Framework for device-level actions:
+
+- **Architecture**: `ActionBridge` runs Action C API on a dedicated `tizen_core_task` worker thread with `tizen_core_channel` for inter-thread communication
+- **Schema Management**: Per-action Markdown files under `/opt/usr/share/tizenclaw/tools/actions/` containing parameter tables, privileges, and raw JSON schema
+- **Initialization Sync**: `SyncActionSchemas()` fetches all actions via `action_client_foreach_action`, writes/overwrites MD files, and removes stale entries
+- **Event-Driven Updates**: `action_client_add_event_handler` subscribes to INSTALL/UNINSTALL/UPDATE events → auto-update MD files → invalidate tool cache
+- **Per-Action Tools**: Each registered action becomes a typed LLM tool (e.g., `action_homeVolume` with `command: string`, `level: integer`) loaded from MD cache at startup
+- **Execution**: All action execution goes through `action_client_execute` with JSON-RPC 2.0 model format
+
+```
+/opt/usr/share/tizenclaw/tools/actions/
+├── homeVolume.md         ← Volume control action schema
+├── homeNotification.md   ← Notification action schema
+├── homeApps.md           ← App launch/terminate schema
+├── homeVideo.md          ← Video playback schema
+├── homeSetting.md        ← Settings control schema
+└── homeLanguage.md       ← Language settings schema
+```
+
+### 3.9 Task Scheduler (`task_scheduler.cc`)
 
 In-process automation with LLM integration:
 
@@ -207,7 +238,7 @@ In-process automation with LLM integration:
 - **Persistence**: Markdown with YAML frontmatter
 - **Retry**: Failed tasks retry with exponential backoff (max 3 retries)
 
-### 3.9 RAG / Semantic Search (`embedding_store.cc`)
+### 3.10 RAG / Semantic Search (`embedding_store.cc`)
 
 Knowledge retrieval beyond conversation history:
 
@@ -215,7 +246,7 @@ Knowledge retrieval beyond conversation history:
 - **Embedding APIs**: Gemini (`text-embedding-004`), OpenAI (`text-embedding-3-small`), Ollama
 - **Built-in Tools**: `ingest_document` (chunking + embedding), `search_knowledge` (cosine similarity query)
 
-### 3.10 Web Dashboard (`web_dashboard.cc`)
+### 3.11 Web Dashboard (`web_dashboard.cc`)
 
 Built-in administrative dashboard:
 

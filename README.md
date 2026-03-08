@@ -21,7 +21,7 @@
 
 ## Overview
 
-TizenClaw is a native C++ system daemon that brings LLM-based AI agent capabilities to [Tizen](https://www.tizen.org/) devices. It receives natural language commands via multiple communication channels, interprets them through configurable LLM backends, and executes device-level actions using sandboxed Python skills running inside OCI containers.
+TizenClaw is a native C++ system daemon that brings LLM-based AI agent capabilities to [Tizen](https://www.tizen.org/) devices. It receives natural language commands via multiple communication channels, interprets them through configurable LLM backends, and executes device-level actions using sandboxed Python skills inside OCI containers and the **Tizen Action Framework**.
 
 ---
 
@@ -44,6 +44,7 @@ TizenClaw is part of the **Claw** family of AI agent runtimes, each targeting di
 - 🚀 **Native C++ Performance** — Lower memory/CPU vs TypeScript/Node.js runtimes, optimal for embedded devices
 - 🔒 **OCI Container Isolation** — crun-based seccomp + namespace, finer syscall control than app-level sandboxing
 - 📱 **Direct Tizen C-API** — ctypes wrappers for device hardware (battery, Wi-Fi, BT, alarm, app management)
+- 🎯 **Tizen Action Framework** — Native integration with per-action LLM tools, MD schema caching, event-driven updates
 - 🤖 **5 LLM Backends** — Gemini, OpenAI, Anthropic, xAI (Grok), Ollama with automatic fallback
 - 📦 **Lightweight Deployment** — systemd + RPM, standalone device execution without Node.js/Docker
 - 🔧 **Native MCP Server** — C++ MCP server integrated into daemon, Claude Desktop controls Tizen via sdb
@@ -78,6 +79,7 @@ open http://<device-ip>:9090
 - **Multi-LLM Backend** — Supports Gemini, OpenAI, Anthropic, xAI (Grok), and Ollama via a unified `LlmBackend` interface with automatic model fallback.
 - **7 Communication Channels** — Telegram, Slack, Discord, MCP (Claude Desktop), Webhook, Voice (TTS/STT), and Web Dashboard — all managed through a `Channel` abstraction.
 - **Function Calling / Tool Use** — The LLM autonomously invokes device skills through an iterative Agentic Loop with streaming responses.
+- **Tizen Action Framework** — Native device actions (volume, notifications, apps, settings) via `ActionBridge` with per-action typed LLM tools, MD schema caching under `/opt/usr/share/tizenclaw/tools/actions/`, and live updates via `action_event_cb`.
 - **OCI Container Isolation** — Skills run inside a `crun` container with namespace isolation, limiting access to host resources.
 - **Semantic Search (RAG)** — SQLite-backed embedding store with multi-provider embeddings (Gemini, OpenAI, Ollama) for knowledge retrieval.
 - **Task Scheduler** — Cron/interval/one-shot/weekly scheduled tasks with LLM integration and retry logic.
@@ -111,6 +113,7 @@ graph TB
         IPC["IPC Server<br/>(Unix Socket)"]
         AgentCore["AgentCore<br/>(Agentic Loop)"]
         ContainerEngine["ContainerEngine"]
+        ActionBridge["ActionBridge<br/>(Tizen Action Framework)"]
         SessionStore["SessionStore"]
         TaskScheduler["TaskScheduler"]
         EmbeddingStore["EmbeddingStore (RAG)"]
@@ -127,6 +130,7 @@ graph TB
         IPC --> AgentCore
         AgentCore --> LLM
         AgentCore --> ContainerEngine
+        AgentCore --> ActionBridge
         AgentCore --> SessionStore
         AgentCore --> TaskScheduler
         AgentCore --> EmbeddingStore
@@ -138,10 +142,17 @@ graph TB
         Skills --- SkillList
     end
 
+    subgraph ActionFW["Tizen Action Framework"]
+        ActionService["Action Service<br/>(on-demand)"]
+        ActionApps["homeVolume · homeNotification<br/>homeApps · homeVideo · ..."]
+        ActionService --- ActionApps
+    end
+
     Telegram & Slack & Discord & Voice --> ChannelReg
     MCP --> IPC
     Webhook & WebUI --> WebDashboard
     ContainerEngine -- "crun exec" --> Skills
+    ActionBridge -- "action C API" --> ActionService
 ```
 
 ---
@@ -162,6 +173,19 @@ graph TB
 | `schedule_alarm` | Schedule an alarm to launch a specific app at a given time |
 | `web_search` | Search the web using Naver or Google |
 
+### Tizen Action Framework (Native Device Actions)
+
+Actions registered via the Tizen Action Framework are automatically discovered and exposed as **per-action LLM tools** (e.g., `action_homeVolume`). Schema files are cached as Markdown under `/opt/usr/share/tizenclaw/tools/actions/` and kept in sync via `action_event_cb` events.
+
+| Action | Description |
+|---|---|
+| `homeVolume` | Adjust system volume (up/down/mute/unmute) |
+| `homeNotification` | Show/dismiss device notifications |
+| `homeApps` | Launch/terminate applications |
+| `homeVideo` | Video playback control |
+| `homeSetting` | System settings control |
+| `homeLanguage` | Language settings |
+
 ### Built-in Tools (AgentCore)
 
 | Tool | Description |
@@ -174,6 +198,7 @@ graph TB
 | `list_sessions` / `send_to_session` | Multi-agent coordination |
 | `ingest_document` | Add documents to the knowledge base (RAG) |
 | `search_knowledge` | Semantic search over ingested documents |
+| `execute_action` | Execute a Tizen Action by name (fallback for dynamic use) |
 
 ---
 
@@ -182,7 +207,7 @@ graph TB
 - **Tizen SDK / GBS** (Git Build System) for cross-compilation
 - **Tizen 10.0** or later target device / emulator
 - **crun** OCI runtime (built from source during RPM packaging)
-- Required Tizen packages: `tizen-core`, `glib-2.0`, `dlog`, `libcurl`, `libsoup-3.0`, `libwebsockets`, `sqlite3`
+- Required Tizen packages: `tizen-core`, `glib-2.0`, `dlog`, `libcurl`, `libsoup-3.0`, `libwebsockets`, `sqlite3`, `capi-appfw-tizen-action`
 
 ---
 
@@ -285,6 +310,7 @@ tizenclaw/
 │       ├── core/                  # Main daemon, agent loop, tool policy
 │       │   ├── tizenclaw.cc       #   Daemon entry, IPC server
 │       │   ├── agent_core.cc      #   Agentic Loop, streaming
+│       │   ├── action_bridge.cc   #   Tizen Action Framework bridge
 │       │   ├── tool_policy.cc     #   Risk-level tool policy
 │       │   └── skill_watcher.cc   #   inotify skill hot-reload
 │       ├── llm/                   # LLM backend providers

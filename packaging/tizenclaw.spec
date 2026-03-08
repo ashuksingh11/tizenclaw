@@ -16,6 +16,7 @@ BuildRequires:  pkgconfig(gmock)
 BuildRequires:  pkgconfig(libsoup-2.4)
 BuildRequires:  pkgconfig(libwebsockets)
 BuildRequires:  pkgconfig(sqlite3)
+BuildRequires:  pkgconfig(capi-appfw-tizen-action)
 # C++ toolchain is generally available in Tizen
 
 %description

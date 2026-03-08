@@ -1,6 +1,6 @@
 # TizenClaw Development Roadmap v4.0
 
-> **Date**: 2026-03-08
+> **Date**: 2026-03-09
 > **Reference**: [Project Analysis](ANALYSIS.md) | [System Design](DESIGN.md)
 
 ---
@@ -42,6 +42,7 @@
 | **UX** | Voice interface | ✅ Wake word + TTS | ❌ | ❌ | ✅ Tizen STT/TTS C-API | ✅ |
 | **UX** | Web UI | ✅ Control UI + WebChat | ❌ | ❌ | ✅ Admin Dashboard + Chat | ✅ |
 | **Ops** | Config management | ✅ UI-based config | ❌ | ✅ TOML + hot-reload | ✅ Web config editor + backup | ✅ |
+| **Device** | Native device actions | ❌ | ❌ | ❌ | ✅ Tizen Action Framework (per-action LLM tools) | ✅ |
 
 ---
 
@@ -121,6 +122,7 @@ timeline
                        : Health metrics & monitoring
                        : OTA update mechanism
                        : Browser control (CDP)
+                       : Tizen Action Framework
 ```
 
 ---
@@ -735,6 +737,28 @@ timeline
 - [ ] Screenshot capture for visual feedback
 
 ---
+
+### 18.4 Tizen Action Framework Integration ✅
+| Item | Details |
+|------|---------|
+| **Gap** | Device actions (volume, notification, settings) require custom skill implementation |
+| **Plan** | Native integration with Tizen Action C API, per-action LLM tools, MD schema caching |
+
+**Implementation:**
+- `ActionBridge` class: runs Action C API on dedicated `tizen_core_task` worker thread
+- Schema sync: `SyncActionSchemas()` via `action_client_foreach_action` at initialization
+- MD file management: per-action `.md` files under `/opt/usr/share/tizenclaw/tools/actions/`
+- Event-driven updates: `action_client_add_event_handler` for INSTALL/UNINSTALL/UPDATE events
+- Per-action LLM tools: each action becomes typed tool (e.g., `action_homeVolume`) loaded from MD cache
+- Execution: `action_client_execute` with JSON-RPC 2.0 model format
+
+**Done When:**
+- [x] ActionBridge worker thread with tizen_core_channel communication
+- [x] Schema sync to MD files at initialization (with stale file cleanup)
+- [x] Event handler for live action install/uninstall/update
+- [x] Per-action typed LLM tools with parameters from inputSchema
+- [x] Fallback `execute_action` generic tool
+- [x] Verified: "볼륨을 올려줘" → `action_homeVolume(command="up")` → success
 
 ## Phase 19: Edge Optimization & Tunneling (Proposed)
 

@@ -16,6 +16,9 @@
 #include "../storage/session_store.hh"
 #include "tool_policy.hh"
 #include "agent_role.hh"
+#ifdef TIZEN_ACTION_ENABLED
+#include "action_bridge.hh"
+#endif
 #include "pipeline_executor.hh"
 #include "../storage/embedding_store.hh"
 #include "../scheduler/task_scheduler.hh"
@@ -97,6 +100,12 @@ public:
         const std::string& operation,
         const nlohmann::json& args,
         const std::string& session_id);
+
+    // Execute Tizen Action Framework operations
+    // (list_actions, execute_action)
+    [[nodiscard]] std::string ExecuteActionOp(
+        const std::string& operation,
+        const nlohmann::json& args);
 
 private:
     // Execute a skill and return its JSON output
@@ -208,6 +217,11 @@ private:
     // Pipeline executor for workflows
     std::unique_ptr<PipelineExecutor>
         pipeline_executor_;
+
+#ifdef TIZEN_ACTION_ENABLED
+    // Tizen Action Framework bridge
+    std::unique_ptr<ActionBridge> action_bridge_;
+#endif
 
     // Get session-specific system prompt
     // (falls back to global m_system_prompt)

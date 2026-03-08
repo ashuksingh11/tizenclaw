@@ -9,7 +9,9 @@ endif()
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GTEST_DEPS REQUIRED gtest gmock)
-pkg_check_modules(CORE_DEPS REQUIRED tizen-core glib-2.0 dlog libcurl sqlite3)
+pkg_check_modules(CORE_DEPS REQUIRED
+    tizen-core glib-2.0 dlog libcurl sqlite3
+    capi-appfw-tizen-action)
 pkg_check_modules(LIBSOUP REQUIRED libsoup-2.4)
 pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
 
@@ -40,6 +42,7 @@ set(UNIT_TEST_SRCS
     voice_channel_test.cc
     health_monitor_test.cc
     ota_updater_test.cc
+    action_bridge_test.cc
 )
 
 # Mock Sources
@@ -79,6 +82,7 @@ set(CORE_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/infra/health_monitor.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/infra/ota_updater.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/scheduler/task_scheduler.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/core/action_bridge.cc
 )
 
 add_executable(tizenclaw-unittests
@@ -111,6 +115,10 @@ target_link_libraries(tizenclaw-unittests PUBLIC
     ${LIBWEBSOCKETS_LIBRARIES}
     pthread
 )
+
+target_compile_definitions(
+    tizenclaw-unittests PUBLIC
+    TIZEN_ACTION_ENABLED)
 
 # CTest integration
 enable_testing()

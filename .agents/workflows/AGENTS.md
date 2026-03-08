@@ -93,7 +93,7 @@ does not provide the `pkgconfig(lxc)` dependency.
 #### `gbs build` 빌드 완료 감지
 ```bash
 # 1. 빌드 실행 (WaitMsBeforeAsync=3000)
-gbs build -A x86_64 --include-all --noinit 2>&1
+gbs build -A x86_64 --include-all 2>&1
 
 # 2. RPM 수정시간 폴링으로 완료 감지 (command_status WaitDurationSeconds=60, 최대 5회)
 stat -c '%Y' ~/GBS-ROOT/local/repos/tizen/x86_64/RPMS/tizenclaw-*.x86_64.rpm 2>/dev/null

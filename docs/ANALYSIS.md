@@ -1,6 +1,6 @@
 # TizenClaw Project Analysis
 
-> **Last Updated**: 2026-03-08
+> **Last Updated**: 2026-03-09
 
 ---
 
@@ -8,7 +8,7 @@
 
 **TizenClaw** is a **Native C++ AI Agent system daemon** running on the Tizen Embedded Linux platform.
 
-It interprets natural language prompts through multiple LLM backends (Gemini, OpenAI, Claude, xAI, Ollama), executes Python skills inside OCI containers (crun), and controls the device. It autonomously performs complex tasks through a Function Calling-based iterative loop (Agentic Loop). The system supports 7 communication channels, encrypted credential storage, structured audit logging, scheduled task automation, semantic search (RAG), a web-based admin dashboard, multi-agent orchestration (supervisor pattern, skill pipelines, A2A protocol), health monitoring, and OTA updates.
+It interprets natural language prompts through multiple LLM backends (Gemini, OpenAI, Claude, xAI, Ollama), executes Python skills inside OCI containers (crun) and device actions via the **Tizen Action Framework**, and controls the device. It autonomously performs complex tasks through a Function Calling-based iterative loop (Agentic Loop). The system supports 7 communication channels, encrypted credential storage, structured audit logging, scheduled task automation, semantic search (RAG), a web-based admin dashboard, multi-agent orchestration (supervisor pattern, skill pipelines, A2A protocol), health monitoring, and OTA updates.
 
 ```mermaid
 graph LR
@@ -56,6 +56,14 @@ graph LR
     Agent --> Scheduler
     Agent --> RAG
     Container -->|"crun exec"| Skills
+
+    subgraph ActionFW["Tizen Action Framework"]
+        ActionSvc["Action Service"]
+        ActionList["homeVolume · homeNotification · ..."]
+        ActionSvc --- ActionList
+    end
+
+    Agent -->|"action C API"| ActionFW
 ```
 
 ---
@@ -151,6 +159,7 @@ tizenclaw/
 | **HttpClient** | `http_client.cc/hh` | libcurl POST, exponential backoff, SSL CA auto-discovery | ✅ |
 | **SessionStore** | `session_store.cc/hh` | Markdown persistence (YAML frontmatter), daily logs, token usage tracking | ✅ |
 | **TaskScheduler** | `task_scheduler.cc/hh` | Cron/interval/once/weekly tasks, LLM-integrated execution, retry with backoff | ✅ |
+| **ActionBridge** | `action_bridge.cc/hh` | Tizen Action Framework bridge, MD schema management, event-driven updates | ✅ |
 | **EmbeddingStore** | `embedding_store.cc/hh` | SQLite vector store, cosine similarity, multi-provider embeddings | ✅ |
 | **WebDashboard** | `web_dashboard.cc/hh` | libsoup SPA, REST API, admin auth, config editor | ✅ |
 
@@ -200,7 +209,7 @@ tizenclaw/
 | `web_search` | `query` (string, required) | None (Wikipedia API) | ✅ |
 
 Built-in tools (implemented in AgentCore directly):
-`execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`
+`execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (per-action tools from Tizen Action Framework)
 
 ### 3.5 Security
 
@@ -297,6 +306,7 @@ Most gaps identified in the original analysis have been resolved through Phases 
 | **Voice Control** | Native Tizen STT/TTS integration (conditional compilation) |
 | **Multi-Agent Orchestration** | Supervisor pattern, skill pipelines, A2A cross-device protocol |
 | **Health Monitoring** | Prometheus-style `/api/metrics` + live dashboard panel |
+| **Tizen Action Framework** | Per-action LLM tools with MD schema caching, event-driven updates via `action_event_cb` |
 | **OTA Updates** | Over-the-air skill updates with version checking and rollback |
 
 ---

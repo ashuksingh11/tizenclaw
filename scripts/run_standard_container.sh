@@ -54,7 +54,7 @@ run_without_container() {
              \"${BUNDLE_DIR}/rootfs/etc/dbus-1\" \"${BUNDLE_DIR}/rootfs/etc/dlog.conf.d\" \
              \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw\" \"${BUNDLE_DIR}/rootfs/run\" \"${BUNDLE_DIR}/rootfs/tmp\"
     
-    mount --make-rprivate / || true
+    mount --make-rslave / || true
     
     mount -t proc proc \"${BUNDLE_DIR}/rootfs/proc\" || true
     mount --rbind /sys \"${BUNDLE_DIR}/rootfs/sys\" || true
@@ -68,6 +68,10 @@ run_without_container() {
     touch \"${BUNDLE_DIR}/rootfs/etc/dlog.conf\" 2>/dev/null || true
     mount --bind /etc/dlog.conf \"${BUNDLE_DIR}/rootfs/etc/dlog.conf\" || true
     mount --rbind /etc/dlog.conf.d \"${BUNDLE_DIR}/rootfs/etc/dlog.conf.d\" || true
+    touch \"${BUNDLE_DIR}/rootfs/etc/passwd\" 2>/dev/null || true
+    mount --bind /etc/passwd \"${BUNDLE_DIR}/rootfs/etc/passwd\" || true
+    touch \"${BUNDLE_DIR}/rootfs/etc/group\" 2>/dev/null || true
+    mount --bind /etc/group \"${BUNDLE_DIR}/rootfs/etc/group\" || true
     mount --rbind /opt/usr/share/tizenclaw \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw\" || true
     mount --rbind /run \"${BUNDLE_DIR}/rootfs/run\" || true
     mount --rbind /tmp \"${BUNDLE_DIR}/rootfs/tmp\" || true
@@ -155,7 +159,7 @@ write_config() {
       "destination": "/run",
       "type": "bind",
       "source": "/run",
-      "options": ["rbind", "rw"]
+      "options": ["rbind", "rslave", "rw"]
     },
     {
       "destination": "/etc/tizen-platform.conf",
@@ -186,6 +190,18 @@ write_config() {
       "type": "bind",
       "source": "/etc/dlog.conf.d",
       "options": ["rbind", "ro"]
+    },
+    {
+      "destination": "/etc/passwd",
+      "type": "bind",
+      "source": "/etc/passwd",
+      "options": ["bind", "ro"]
+    },
+    {
+      "destination": "/etc/group",
+      "type": "bind",
+      "source": "/etc/group",
+      "options": ["bind", "ro"]
     }
   ],
   "linux": {
