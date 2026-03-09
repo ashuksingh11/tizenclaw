@@ -87,13 +87,14 @@ int ConnectToSocket() {
     return -1;
   }
 
-  struct sockaddr_un addr;
-  std::memset(&addr, 0, sizeof(addr));
+  struct sockaddr_un addr = {};
   addr.sun_family = AF_UNIX;
   // Abstract namespace: \0tizenclaw.sock
   const char kName[] = "tizenclaw.sock";
-  std::memcpy(addr.sun_path + 1, kName,
-              sizeof(kName) - 1);
+  // Use a loop instead of memcpy(sun_path+1,...) to avoid
+  // GCC -Wstringop-overread false positive on ARM32.
+  for (size_t i = 0; i < sizeof(kName) - 1; ++i)
+      addr.sun_path[1 + i] = kName[i];
   socklen_t addr_len =
       offsetof(struct sockaddr_un, sun_path) +
       1 + sizeof(kName) - 1;

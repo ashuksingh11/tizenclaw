@@ -7,10 +7,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -fPIC")
 
 # Suppress GCC ARM ABI change notes ("parameter passing changed in GCC 7.1")
-# These are emitted for every STL iterator pass on 32-bit ARM and are
-# informational only — the generated code is correct for the target ABI.
+# and false-positive stringop-overread/overflow warnings from nlohmann/json
+# and sockaddr_un memcpy patterns on 32-bit ARM.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^arm")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-psabi")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-psabi -Wno-stringop-overread -Wno-stringop-overflow")
 endif()
 
 # Get package information

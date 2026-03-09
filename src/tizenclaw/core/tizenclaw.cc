@@ -176,16 +176,18 @@ void TizenClawDaemon::IpcServerLoop() {
     }
     ipc_socket_ = sock;
 
-    struct sockaddr_un addr;
-    std::memset(&addr, 0, sizeof(addr));
+    struct sockaddr_un addr = {};
     addr.sun_family = AF_UNIX;
 
     // Abstract namespace socket: "\0tizenclaw.sock"
     const char kSocketName[] = "tizenclaw.sock";
     constexpr size_t kNameLen =
         1 + sizeof(kSocketName) - 1;
-    std::memcpy(addr.sun_path + 1, kSocketName,
-                sizeof(kSocketName) - 1);
+    // Copy into sun_path at offset 1 (abstract namespace).
+    // Use a loop instead of memcpy(sun_path+1,...) to avoid
+    // GCC -Wstringop-overread false positive on ARM32.
+    for (size_t i = 0; i < sizeof(kSocketName) - 1; ++i)
+        addr.sun_path[1 + i] = kSocketName[i];
 
     socklen_t addr_len =
         offsetof(struct sockaddr_un, sun_path) +
@@ -338,10 +340,14 @@ void TizenClawDaemon::HandleIpcClient(int client_sock) {
             raw_msg.assign(buffer.data(), len);
         } else if (hdr_read > 0) {
             // Fallback: Legacy EOF-based protocol
-            // We read 1-3 bytes into net_len by accident, append it
-            raw_msg.append(
-                reinterpret_cast<char*>(&net_len),
-                hdr_read);
+            // We read 1-3 bytes into net_len by accident, append it.
+            // Copy via char array to avoid GCC -Wstringop-overread
+            // on reinterpret_cast<char*>(&net_len) for ARM32.
+            {
+                char hdr_bytes[4];
+                std::memcpy(hdr_bytes, &net_len, sizeof(net_len));
+                raw_msg.append(hdr_bytes, hdr_read);
+            }
             
             std::vector<char> buffer(4096);
             ssize_t bytes_read;
