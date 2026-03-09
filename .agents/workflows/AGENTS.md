@@ -14,7 +14,8 @@ description: Main Development Workflow (Plan -> Develop -> Verify)
 ## 2. Develop (개발 & 로컬 검증)
 - 소스 코드를 수정하고 단위 테스트를 추가/수정합니다.
 - `gbs_build.md` 워크플로우를 참조하여 로컬에서 코드를 빌드하고 검증합니다.
-  - 명령어: `gbs build -A x86_64 --include-all`
+  - 명령어: `gbs build -A <arch> --include-all`
+  - `<arch>`는 연결된 디바이스에 따라 결정 (`sdb capability`의 `cpu_arch` 필드 참조, 예: `x86_64`, `aarch64`)
 - `gtest_integration.md` 워크플로우를 참조하여 컴포넌트 단위 검증이 통과하는지 확인합니다.
 
 ## 3. Verify (기기 배포 및 검증)
@@ -33,8 +34,9 @@ description: Main Development Workflow (Plan -> Develop -> Verify)
    - 명령어: `sdb shell mount -o remount,rw /`
 
 3. **RPM 패키지 배포 및 설치**
-   - 명령어: `sdb push ~/GBS-ROOT/local/repos/tizen/x86_64/RPMS/tizenclaw-1.0.0-1.x86_64.rpm /tmp/`
-   - 명령어: `sdb shell rpm -Uvh --force /tmp/tizenclaw-1.0.0-1.x86_64.rpm`
+   - 명령어: `sdb push ~/GBS-ROOT/local/repos/tizen/<arch>/RPMS/tizenclaw-1.0.0-1.<arch>.rpm /tmp/`
+   - 명령어: `sdb shell rpm -Uvh --force /tmp/tizenclaw-1.0.0-1.<arch>.rpm`
+   - `<arch>`는 `sdb capability`의 `cpu_arch`로 자동 감지 (예: `x86_64`, `aarch64`)
 
 4. **데몬 재시작 및 상태 확인**
    - 명령어: `sdb shell systemctl daemon-reload`
@@ -92,18 +94,23 @@ does not provide the `pkgconfig(lxc)` dependency.
 
 #### `gbs build` 빌드 완료 감지
 ```bash
+# 0. 아키텍처 감지 (sdb capability의 cpu_arch 필드 사용)
+ARCH=$(sdb capability 2>/dev/null | grep '^cpu_arch:' | cut -d':' -f2)
+# 감지 실패 시 x86_64 폴백
+[ -z "${ARCH}" ] && ARCH=x86_64
+
 # 1. 빌드 실행 (WaitMsBeforeAsync=3000)
-gbs build -A x86_64 --include-all 2>&1
+gbs build -A ${ARCH} --include-all 2>&1
 
 # 2. RPM 수정시간 폴링으로 완료 감지 (command_status WaitDurationSeconds=60, 최대 5회)
-stat -c '%Y' ~/GBS-ROOT/local/repos/tizen/x86_64/RPMS/tizenclaw-*.x86_64.rpm 2>/dev/null
+stat -c '%Y' ~/GBS-ROOT/local/repos/tizen/${ARCH}/RPMS/tizenclaw-*.${ARCH}.rpm 2>/dev/null
 
 # 3. 빌드 결과 확인
-ls -lt ~/GBS-ROOT/local/repos/tizen/x86_64/logs/success/ 2>/dev/null | head -3
-ls -lt ~/GBS-ROOT/local/repos/tizen/x86_64/logs/fail/ 2>/dev/null | head -3
+ls -lt ~/GBS-ROOT/local/repos/tizen/${ARCH}/logs/success/ 2>/dev/null | head -3
+ls -lt ~/GBS-ROOT/local/repos/tizen/${ARCH}/logs/fail/ 2>/dev/null | head -3
 
 # 4. 테스트 결과 확인
-grep -E "PASSED|FAILED|tests from" ~/GBS-ROOT/local/repos/tizen/x86_64/logs/success/tizenclaw-*/log.txt | tail -5
+grep -E "PASSED|FAILED|tests from" ~/GBS-ROOT/local/repos/tizen/${ARCH}/logs/success/tizenclaw-*/log.txt | tail -5
 ```
 
 #### `git` 명령 실행 (파일 리다이렉트 필수)

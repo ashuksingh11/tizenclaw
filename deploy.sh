@@ -31,7 +31,8 @@ NC='\033[0m'
 # ─────────────────────────────────────────────
 # Defaults
 # ─────────────────────────────────────────────
-ARCH="x86_64"
+ARCH=""
+ARCH_EXPLICIT=false
 NOINIT=false
 SKIP_BUILD=false
 DRY_RUN=false
@@ -62,6 +63,36 @@ sdb_shell() {
 }
 
 # ─────────────────────────────────────────────
+# Auto-detect device architecture via sdb
+# ─────────────────────────────────────────────
+detect_arch() {
+  # If user explicitly specified arch via -a, skip auto-detection
+  if [ "${ARCH_EXPLICIT}" = true ]; then
+    log "Using explicit architecture: ${ARCH}"
+    return 0
+  fi
+
+  log "Auto-detecting device architecture via sdb..."
+
+  local sdb_cap_cmd=(sdb)
+  if [ -n "${DEVICE_SERIAL}" ]; then
+    sdb_cap_cmd=(sdb -s "${DEVICE_SERIAL}")
+  fi
+
+  local cpu_arch
+  cpu_arch=$("${sdb_cap_cmd[@]}" capability 2>/dev/null | grep '^cpu_arch:' | cut -d':' -f2 || true)
+
+  if [ -z "${cpu_arch}" ]; then
+    warn "Could not detect device architecture. Falling back to x86_64"
+    ARCH="x86_64"
+    return 0
+  fi
+
+  ARCH="${cpu_arch}"
+  ok "Detected device architecture: ${ARCH}"
+}
+
+# ─────────────────────────────────────────────
 # Dry-run wrapper
 # ─────────────────────────────────────────────
 run() {
@@ -83,7 +114,7 @@ ${CYAN}Usage:${NC}
   $(basename "$0") [options]
 
 ${CYAN}Options:${NC}
-  -a, --arch <arch>     Build architecture (default: x86_64)
+  -a, --arch <arch>     Build architecture (default: auto-detect via sdb)
   -n, --noinit          Skip build-env init (faster rebuild)
   -s, --skip-build      Skip GBS build, deploy existing RPM
   -d, --device <serial> Target a specific sdb device
@@ -107,7 +138,7 @@ EOF
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      -a|--arch)       ARCH="$2"; shift 2 ;;
+      -a|--arch)       ARCH="$2"; ARCH_EXPLICIT=true; shift 2 ;;
       -n|--noinit)     NOINIT=true; shift ;;
       -s|--skip-build) SKIP_BUILD=true; shift ;;
       -d|--device)     DEVICE_SERIAL="$2"; shift 2 ;;
@@ -348,6 +379,7 @@ show_summary() {
 # ─────────────────────────────────────────────
 main() {
   parse_args "$@"
+  detect_arch
   check_prerequisites
   do_build
   find_rpm
