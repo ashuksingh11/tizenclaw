@@ -20,7 +20,7 @@ namespace tizenclaw {
 enum class RiskLevel {
   kLow,     // Read-only (get_battery_info, etc.)
   kNormal,  // Default
-  kHigh,    // Side-effect (launch_app, etc.)
+  kHigh,    // Side-effect (send_app_control, etc.)
 };
 
 struct ToolPolicyConfig {

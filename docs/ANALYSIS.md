@@ -105,7 +105,7 @@ tizenclaw/
 │   ├── common/tizen_capi_utils.py   # ctypes-based Tizen C-API wrapper
 │   ├── skill_executor.py            # Container-side IPC skill executor
 │   ├── list_apps/                   # List installed apps
-│   ├── launch_app/                  # Launch an app
+│   ├── send_app_control/            # Launch app (explicit app_id or implicit intent)
 │   ├── terminate_app/               # Terminate an app
 │   ├── get_device_info/             # Device info query
 │   ├── get_battery_info/            # Battery status query
@@ -225,7 +225,7 @@ tizenclaw/
 | Skill | Parameters | Tizen C-API | Status |
 |-------|-----------|-------------|--------|
 | `list_apps` | None | `app_manager` | ✅ |
-| `launch_app` | `app_id` (string, required) | `app_control` | ✅ |
+| `send_app_control` | `app_id`, `operation`, `uri`, `mime`, `extra_data` | `app_control` | ✅ |
 | `terminate_app` | `app_id` (string, required) | `app_manager` | ✅ |
 | `get_device_info` | None | `system_info` | ✅ |
 | `get_battery_info` | None | `device` (battery) | ✅ |
@@ -254,7 +254,7 @@ tizenclaw/
 | `get_media_content` | `media_type`, `max_count` | `media-content` | ✅ |
 | `get_mime_type` | `file_extension`, `file_path`, `mime_type` | `mime-type` | ✅ |
 | `scan_wifi_networks` | None | `wifi-manager` + `tizen-core` (async) | ✅ |
-| `send_app_control` | `operation`, `uri`, `mime`, `app_id`, `action`, `extra_data` | `app_control` + `app_info` | ✅ |
+
 | `get_metadata` | `file_path` | `metadata-extractor` | ✅ |
 | `download_file` | `url`, `destination`, `file_name` | `url-download` + `tizen-core` (async) | ✅ |
 | `scan_bluetooth_devices` | `action` | `bluetooth` + `tizen-core` (async) | ✅ |

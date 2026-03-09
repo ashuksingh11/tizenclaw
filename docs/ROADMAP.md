@@ -295,7 +295,7 @@ timeline
 | **Plan** | Per-skill `risk_level` + loop detection + policy violation feedback |
 
 **Done When:**
-- [x] Side-effect skills (`launch_app`, `terminate_app`, `schedule_alarm`, `control_display`, `control_haptic`, `control_led`, `control_power`, `control_volume`, `send_notification`) marked `risk_level: "high"` or `"medium"`
+- [x] Side-effect skills (`send_app_control`, `terminate_app`, `schedule_alarm`, `control_display`, `control_haptic`, `control_led`, `control_power`, `control_volume`, `send_notification`) marked `risk_level: "high"` or `"medium"`
 - [x] Read-only skills (`get_battery_info`, `get_wifi_info`, `get_bluetooth_info`, `list_apps`, `get_device_info`, `get_display_info`, `get_system_info`, `get_runtime_info`, `get_storage_info`, `get_system_settings`, `get_network_info`, `get_sensor_data`, `get_package_info`, `get_thermal_info`, `get_data_usage`, `get_sound_devices`, `get_media_content`, `get_mime_type`, `scan_wifi_networks`, `scan_bluetooth_devices`, `get_metadata`) marked `risk_level: "low"`
 - [x] Same skill + same args repeated 3x → blocked (loop prevention)
 - [x] Policy violation reason fed back to LLM as tool result

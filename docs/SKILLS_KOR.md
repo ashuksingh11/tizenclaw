@@ -13,9 +13,8 @@ TizenClaw는 **35개 컨테이너 스킬** (Python, OCI 샌드박스)과 **10개
 | 스킬 | 파라미터 | C-API | 설명 |
 |------|---------|-------|------|
 | `list_apps` | — | `app_manager` | 설치된 앱 목록 조회 |
-| `launch_app` | `app_id` | `app_control` | 앱 ID로 앱 실행 |
+| `send_app_control` | `app_id`, `operation`, `uri`, `mime`, `extra_data` | `app_control` | 명시적 app_id 또는 암시적 인텐트(operation/URI/MIME)로 앱 실행 |
 | `terminate_app` | `app_id` | `app_manager` | 실행 중인 앱 종료 |
-| `send_app_control` | `operation`, `uri`, `mime`, `app_id`, `action`, `extra_data` | `app_control` + `app_info` | 인텐트 기반 암시적/명시적 실행, 매칭 앱 조회 |
 | `get_package_info` | `package_id` | `package_manager` | 패키지 상세 정보 (버전, 타입, 크기) |
 
 ### 디바이스 정보 & 센서

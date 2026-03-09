@@ -164,7 +164,7 @@ TizenClaw ships with **35 container skills** (Python, OCI sandbox) and **10+ bui
 
 | Category | Skills | Examples |
 |----------|:------:|---------|
-| **App Management** | 5 | `launch_app`, `send_app_control`, `list_apps`, `terminate_app`, `get_package_info` |
+| **App Management** | 5 | `send_app_control`, `list_apps`, `terminate_app`, `get_package_info` |
 | **Device Info & Sensors** | 7 | `get_device_info`, `get_sensor_data`, `get_thermal_info`, `get_runtime_info` |
 | **Network & Connectivity** | 6 | `get_wifi_info`, `scan_wifi_networks` ⚡, `scan_bluetooth_devices` ⚡, `get_data_usage` |
 | **Display & Hardware** | 6 | `control_display`, `control_volume`, `control_haptic`, `control_led` |

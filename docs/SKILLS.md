@@ -13,9 +13,8 @@ TizenClaw provides **35 container skills** (Python, sandboxed via OCI) and **10+
 | Skill | Parameters | C-API | Description |
 |-------|-----------|-------|-------------|
 | `list_apps` | — | `app_manager` | List all installed applications |
-| `launch_app` | `app_id` | `app_control` | Launch an app by explicit app ID |
+| `send_app_control` | `app_id`, `operation`, `uri`, `mime`, `extra_data` | `app_control` | Launch app via explicit app_id or implicit intent (operation/URI/MIME) |
 | `terminate_app` | `app_id` | `app_manager` | Terminate a running app |
-| `send_app_control` | `operation`, `uri`, `mime`, `app_id`, `action`, `extra_data` | `app_control` + `app_info` | Intent-based implicit/explicit launch, query matching apps |
 | `get_package_info` | `package_id` | `package_manager` | Query package details (version, type, size) |
 
 ### Device Info & Sensors

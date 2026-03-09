@@ -105,7 +105,7 @@ tizenclaw/
 │   ├── common/tizen_capi_utils.py   # ctypes 기반 Tizen C-API 래퍼
 │   ├── skill_executor.py            # 컨테이너 측 IPC 스킬 실행기
 │   ├── list_apps/                   # 설치된 앱 목록 조회
-│   ├── launch_app/                  # 앱 실행
+│   ├── send_app_control/            # 앱 실행 (명시적 app_id 또는 암시적 인텐트)
 │   ├── terminate_app/               # 앱 종료
 │   ├── get_device_info/             # 디바이스 정보 조회
 │   ├── get_battery_info/            # 배터리 상태 조회
@@ -225,7 +225,7 @@ tizenclaw/
 | 스킬 | 파라미터 | Tizen C-API | 상태 |
 |------|---------|-------------|------|
 | `list_apps` | 없음 | `app_manager` | ✅ |
-| `launch_app` | `app_id` (string, required) | `app_control` | ✅ |
+| `send_app_control` | `app_id`, `operation`, `uri`, `mime`, `extra_data` | `app_control` | ✅ |
 | `terminate_app` | `app_id` (string, required) | `app_manager` | ✅ |
 | `get_device_info` | 없음 | `system_info` | ✅ |
 | `get_battery_info` | 없음 | `device` (battery) | ✅ |
@@ -254,7 +254,7 @@ tizenclaw/
 | `get_media_content` | `media_type`, `max_count` | `media-content` | ✅ |
 | `get_mime_type` | `file_extension`, `file_path`, `mime_type` | `mime-type` | ✅ |
 | `scan_wifi_networks` | 없음 | `wifi-manager` + `tizen-core` (비동기) | ✅ |
-| `send_app_control` | `operation`, `uri`, `mime`, `app_id`, `action`, `extra_data` | `app_control` + `app_info` | ✅ |
+
 | `get_metadata` | `file_path` | `metadata-extractor` | ✅ |
 | `download_file` | `url`, `destination`, `file_name` | `url-download` + `tizen-core` (비동기) | ✅ |
 | `scan_bluetooth_devices` | `action` | `bluetooth` + `tizen-core` (비동기) | ✅ |

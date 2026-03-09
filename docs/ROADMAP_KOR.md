@@ -298,7 +298,7 @@ timeline
 | **계획** | 스킬별 `risk_level` + 루프 감지 + 정책 위반 피드백 |
 
 **완료 기준:**
-- [x] 부작용 스킬 (`launch_app`, `terminate_app`, `schedule_alarm`, `control_display`, `control_haptic`, `control_led`, `control_power`, `control_volume`, `send_notification`) `risk_level: "high"` 또는 `"medium"` 지정
+- [x] 부작용 스킬 (`send_app_control`, `terminate_app`, `schedule_alarm`, `control_display`, `control_haptic`, `control_led`, `control_power`, `control_volume`, `send_notification`) `risk_level: "high"` 또는 `"medium"` 지정
 - [x] 읽기 전용 스킬 (`get_battery_info`, `get_wifi_info`, `get_bluetooth_info`, `list_apps`, `get_device_info`, `get_display_info`, `get_system_info`, `get_runtime_info`, `get_storage_info`, `get_system_settings`, `get_network_info`, `get_sensor_data`, `get_package_info`, `get_thermal_info`, `get_data_usage`, `get_sound_devices`, `get_media_content`, `get_mime_type`, `scan_wifi_networks`, `scan_bluetooth_devices`, `get_metadata`) `risk_level: "low"` 지정
 - [x] 동일 스킬 + 동일 인자 3회 반복 → 차단 (루프 방지)
 - [x] 정책 위반 사유를 LLM에 도구 결과로 피드백
