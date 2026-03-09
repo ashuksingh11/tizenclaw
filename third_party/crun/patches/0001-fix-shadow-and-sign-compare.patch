@@ -40,7 +40,7 @@ diff -ruN a/src/libcrun/cgroup-resources.c b/src/libcrun/cgroup-resources.c
        if (UNLIKELY (ret < 0))
 diff -ruN a/src/libcrun/container.c b/src/libcrun/container.c
 --- a/src/libcrun/container.c	2025-12-23 00:42:51.000000000 +0900
-+++ b/src/libcrun/container.c	2026-03-09 17:03:00.945025679 +0900
++++ b/src/libcrun/container.c	2026-03-09 17:19:15.057469237 +0900
 @@ -691,7 +691,7 @@
  
  static int
@@ -88,7 +88,7 @@ diff -ruN a/src/libcrun/container.c b/src/libcrun/container.c
        for (i = 0; non_blocking_fds[i] >= 0; i++)
          {
            ret = set_blocking_fd (non_blocking_fds[i], false, err);
-@@ -2234,7 +2234,7 @@
+@@ -2234,14 +2234,14 @@
        struct epoll_event events[max_events];
        struct signalfd_siginfo si;
        struct winsize ws;
@@ -97,6 +97,14 @@ diff -ruN a/src/libcrun/container.c b/src/libcrun/container.c
        ssize_t res;
  
        nr_events = TEMP_FAILURE_RETRY (epoll_wait (epollfd, events, max_events, -1));
+       if (UNLIKELY (nr_events < 0))
+         return crun_make_error (err, errno, "epoll_wait");
+ 
+-      for (i = 0; i < nr_events; i++)
++      for (i = 0; i < (size_t) nr_events; i++)
+         {
+           if (events[i].data.fd == 0 || events[i].data.fd == terminal_fd_to)
+             {
 @@ -4053,7 +4053,7 @@
  
        if (context->console_socket)
@@ -181,7 +189,7 @@ diff -ruN a/src/libcrun/ebpf.c b/src/libcrun/ebpf.c
  }
 diff -ruN a/src/libcrun/linux.c b/src/libcrun/linux.c
 --- a/src/libcrun/linux.c	2025-12-23 00:42:51.000000000 +0900
-+++ b/src/libcrun/linux.c	2026-03-09 16:54:14.419295317 +0900
++++ b/src/libcrun/linux.c	2026-03-09 17:19:15.061309288 +0900
 @@ -373,8 +373,8 @@
  
        if (relative)
@@ -205,7 +213,7 @@ diff -ruN a/src/libcrun/linux.c b/src/libcrun/linux.c
 -          for (i = 0; i < mappings_len; i++)
 -            if (value[1] >= mappings[i]->container_id && value[1] < mappings[i]->container_id + mappings[i]->size)
 +          for (i = 0; i < id_mappings_len; i++)
-+            if (value[1] >= id_mappings[i]->container_id && value[1] < id_mappings[i]->container_id + id_mappings[i]->size)
++            if ((uint32_t) value[1] >= id_mappings[i]->container_id && (uint32_t) (uint32_t) value[1] < id_mappings[i]->container_id + id_mappings[i]->size)
                break;
  
 -          if (i == mappings_len)
