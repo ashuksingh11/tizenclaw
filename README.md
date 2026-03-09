@@ -267,7 +267,7 @@ TizenClaw reads its configuration from `/opt/usr/share/tizenclaw/` on the device
 | `discord_config.json` | Discord bot token and guild/channel allowlists |
 | `webhook_config.json` | Webhook route mapping and HMAC secrets |
 | `tool_policy.json` | Tool execution policy (max iterations, blocked skills, risk overrides) |
-| `system_prompt.txt` | System prompt for agent behavior customization |
+| `agent_roles.json` | Agent roles and specialized system prompts |
 
 ### Example: LLM Backend (`llm_config.json`)
 
@@ -346,7 +346,7 @@ tizenclaw/
 │       │   └── a2a_handler.cc     #   A2A protocol
 │       └── scheduler/             # Task automation
 │           └── task_scheduler.cc  #   Cron/interval tasks
-├── skills/                        # Python skill scripts
+├── tools/skills/                  # Python skill scripts
 ├── tools/embedded/                # Embedded tool MD schemas (13 files)
 ├── scripts/                       # Container setup, CI, hooks
 ├── test/unit_tests/               # Google Test unit tests

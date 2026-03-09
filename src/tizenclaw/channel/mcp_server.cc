@@ -20,7 +20,7 @@ void McpServer::DiscoverTools() {
 
   // Scan skill manifests
   const std::string skills_dir =
-      "/opt/usr/share/tizenclaw/skills";
+      "/opt/usr/share/tizenclaw/tools/skills";
 
   DIR* dir = opendir(skills_dir.c_str());
   if (dir) {

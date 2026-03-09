@@ -45,7 +45,7 @@ WebDashboard::WebDashboard(
 
   // Initialize OTA updater
   std::string skills_dir =
-      std::string(APP_DATA_DIR) + "/skills";
+      std::string(APP_DATA_DIR) + "/tools/skills";
   ota_updater_ =
       std::make_unique<OtaUpdater>(
           skills_dir,
@@ -937,7 +937,7 @@ const std::vector<std::string>
   "discord_config",
   "webhook_config",
   "tool_policy",
-  "system_prompt"
+  "agent_roles"
 };
 
 // --- Auth helpers ---
@@ -1173,15 +1173,11 @@ bool WebDashboard::IsAllowedConfig(
 
 std::string WebDashboard::ConfigFilePath(
     const std::string& name) const {
-  if (name == "system_prompt")
-    return config_dir_ + "/system_prompt.txt";
   return config_dir_ + "/" + name + ".json";
 }
 
 std::string WebDashboard::SampleFilePath(
     const std::string& name) const {
-  if (name == "system_prompt")
-    return config_dir_ + "/system_prompt.txt";
   return config_dir_ + "/" + name +
       ".json.sample";
 }

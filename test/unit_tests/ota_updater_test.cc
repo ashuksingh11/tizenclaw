@@ -13,7 +13,7 @@ class OtaUpdaterTest
   void SetUp() override {
     test_dir_ = "/tmp/ota_test_" +
         std::to_string(getpid());
-    skills_dir_ = test_dir_ + "/skills";
+    skills_dir_ = test_dir_ + "/tools/skills";
     fs::create_directories(skills_dir_);
 
     updater_ = std::make_unique<OtaUpdater>(

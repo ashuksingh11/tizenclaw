@@ -159,7 +159,6 @@ tizenclaw/
 │   ├── config/                      # Active configuration files
 │   │   ├── tool_policy.json         # Tool execution policy
 │   │   └── agent_roles.json         # Agent roles configuration
-│   ├── system_prompt.txt            # Default system prompt
 │   ├── web/                         # Dashboard SPA files
 │   └── img/                         # Container rootfs images (per-arch)
 │       └── <arch>/rootfs.tar.gz     # Alpine RootFS (49 MB)

@@ -702,7 +702,7 @@ AgentCore::LoadSkillDeclarations() {
 
   std::vector<LlmToolDecl> tools;
   const std::string skills_dir =
-      "/opt/usr/share/tizenclaw/skills";
+      "/opt/usr/share/tizenclaw/tools/skills";
 
   std::error_code ec;
   if (!fs::is_directory(skills_dir, ec))
@@ -813,8 +813,8 @@ AgentCore::LoadSkillDeclarations() {
       "Manage files on the Tizen device. "
       "Create, read, delete files or list "
       "directory contents. Paths MUST start "
-      "with /skills/ or /data/ — other paths "
-      "are rejected. Use /skills/ to save new "
+      "with /tools/skills/ or /data/ — other paths "
+      "are rejected. Use /tools/skills/ to save new "
       "skill scripts, /data/ for persistent data.";
   file_tool.parameters = {
       {"type", "object"},
@@ -831,7 +831,7 @@ AgentCore::LoadSkillDeclarations() {
               {"type", "string"},
               {"description",
                "File or directory path. Must start "
-               "with /skills/ or /data/"}
+               "with /tools/skills/ or /data/"}
           }},
           {"content", {
               {"type", "string"},
@@ -1452,24 +1452,7 @@ std::string AgentCore::LoadSystemPrompt(
     }
   }
 
-  // Priority 3: Default file path
-  const std::string default_path =
-      "/opt/usr/share/tizenclaw/config/"
-      "system_prompt.txt";
-  std::ifstream df(default_path);
-  if (df.is_open()) {
-    std::string content(
-        (std::istreambuf_iterator<char>(df)),
-        std::istreambuf_iterator<char>());
-    df.close();
-    if (!content.empty()) {
-      LOG(INFO) << "System prompt loaded from default: "
-                << default_path;
-      return content;
-    }
-  }
-
-  // Priority 4: Hardcoded fallback
+  // Priority 3: Hardcoded fallback
   LOG(INFO) << "Using hardcoded default system prompt";
   return
       "You are TizenClaw, an AI assistant running "

@@ -78,7 +78,7 @@ ContainerEngine::ContainerEngine()
     : initialized_(false),
       runtime_bin_("crun"),
       app_data_dir_(APP_DATA_DIR),
-      skills_dir_(BuildPaths("skills")),
+      skills_dir_(BuildPaths("tools/skills")),
       bundle_dir_(BuildPaths("bundles/skills_secure")),
       rootfs_tar_(BuildPaths("img/rootfs.tar.gz")),
       container_id_(kSkillsContainerId),

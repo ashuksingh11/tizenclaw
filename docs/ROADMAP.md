@@ -388,7 +388,7 @@ timeline
 |------|---------|
 | **Gap** | System prompt hardcoded in C++ — requires rebuild to change |
 | **Ref** | NanoClaw: per-group `CLAUDE.md` · OpenClaw: `system-prompt.ts` |
-| **Plan** | `system_prompt` in `llm_config.json` or `/opt/usr/share/tizenclaw/config/system_prompt.txt` |
+| **Plan** | `system_prompt` in `llm_config.json` or `agent_roles.json` |
 
 **Implementation:**
 - `LlmBackend::Chat()` interface: added `system_prompt` parameter
@@ -437,7 +437,7 @@ timeline
 | **Impl** | `SkillWatcher` class using Linux `inotify` API with 500ms debouncing |
 
 **Implementation:**
-- `SkillWatcher` monitors `/opt/usr/share/tizenclaw/skills/` for `manifest.json` changes
+- `SkillWatcher` monitors `/opt/usr/share/tizenclaw/tools/skills/` for `manifest.json` changes
 - 500ms debouncing to batch rapid file changes
 - Auto-watch for newly created skill subdirectories
 - Thread-safe `ReloadSkills()` in `AgentCore` clears cache and rebuilds system prompt
@@ -609,7 +609,7 @@ timeline
 | **Plan** | In-browser JSON editor with validation and backup-on-write |
 
 **Done When:**
-- [x] 7 config files editable via web UI (`llm_config.json`, `telegram_config.json`, `slack_config.json`, `discord_config.json`, `webhook_config.json`, `tool_policy.json`, `system_prompt.txt`)
+- [x] 7 config files editable via web UI (`llm_config.json`, `telegram_config.json`, `slack_config.json`, `discord_config.json`, `webhook_config.json`, `tool_policy.json`, `agent_roles.json`)
 - [x] Automatic backup before overwrite
 - [x] File whitelist to prevent arbitrary writes
 - [x] Daemon restart trigger from admin interface

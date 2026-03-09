@@ -112,7 +112,7 @@ void TizenClawDaemon::OnCreate() {
 
     // Start Skill Watcher (inotify)
     skill_watcher_.Start(
-        "/opt/usr/share/tizenclaw/skills",
+        "/opt/usr/share/tizenclaw/tools/skills",
         [this]() {
           if (agent_) {
             agent_->ReloadSkills();

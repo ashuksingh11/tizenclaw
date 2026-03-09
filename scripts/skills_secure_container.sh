@@ -69,7 +69,7 @@ write_config() {
     {
       "destination": "/skills",
       "type": "bind",
-      "source": "${APP_DATA_DIR}/skills",
+      "source": "${APP_DATA_DIR}/tools/skills",
       "options": ["rbind", "rw"]
     },
     {
@@ -197,7 +197,7 @@ run_without_container() {
     mount --make-rprivate / || true
     mount -t proc proc \"${BUNDLE_DIR}/rootfs/proc\" || true
     mount --rbind /dev \"${BUNDLE_DIR}/rootfs/dev\" || true
-    mount --rbind \"${APP_DATA_DIR}/skills\" \"${BUNDLE_DIR}/rootfs/skills\" || true
+    mount --rbind \"${APP_DATA_DIR}/tools/skills\" \"${BUNDLE_DIR}/rootfs/skills\" || true
     mount --rbind \"${APP_DATA_DIR}/data\" \"${BUNDLE_DIR}/rootfs/data\" || true
     mount --rbind /tmp \"${BUNDLE_DIR}/rootfs/tmp\" || true
 

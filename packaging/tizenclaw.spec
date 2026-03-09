@@ -53,7 +53,7 @@ mkdir -p %{buildroot}%{_bindir}
 mkdir -p %{buildroot}%{_unitdir}
 mkdir -p %{buildroot}%{_unitdir}/multi-user.target.wants
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/img
-mkdir -p %{buildroot}/opt/usr/share/tizenclaw/skills
+mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/skills
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/config
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/embedded
 
@@ -75,7 +75,7 @@ ln -sf ../tizenclaw-skills-secure.service %{buildroot}%{_unitdir}/multi-user.tar
 /usr/libexec/tizenclaw/crun
 /opt/usr/share/tizenclaw/img/rootfs.tar.gz
 /opt/usr/share/tizenclaw/config/*
-/opt/usr/share/tizenclaw/skills/
+/opt/usr/share/tizenclaw/tools/skills/
 /opt/usr/share/tizenclaw/web/
 /opt/usr/share/tizenclaw/tools/embedded/
 %dir /opt/usr/share/tizenclaw/tools/

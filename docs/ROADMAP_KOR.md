@@ -391,7 +391,7 @@ timeline
 |------|------|
 | **갭** | 시스템 프롬프트 C++ 하드코딩 — 변경 시 재빌드 필요 |
 | **참고** | NanoClaw: 그룹별 `CLAUDE.md` · OpenClaw: `system-prompt.ts` |
-| **계획** | `llm_config.json`의 `system_prompt` 또는 `/opt/usr/share/tizenclaw/config/system_prompt.txt` |
+| **계획** | `llm_config.json`의 `system_prompt` 또는 `agent_roles.json` |
 
 **구현 내용:**
 - `LlmBackend::Chat()` 인터페이스: `system_prompt` 파라미터 추가
@@ -440,7 +440,7 @@ timeline
 | **구현** | `SkillWatcher` 클래스 — Linux `inotify` API + 500ms 디바운싱 |
 
 **구현 내용:**
-- `SkillWatcher`가 `/opt/usr/share/tizenclaw/skills/`에서 `manifest.json` 변경 감시
+- `SkillWatcher`가 `/opt/usr/share/tizenclaw/tools/skills/`에서 `manifest.json` 변경 감시
 - 500ms 디바운싱으로 빠른 파일 변경 배치 처리
 - 새로 생성된 스킬 하위 디렉터리 자동 감시
 - `AgentCore`의 스레드 안전 `ReloadSkills()` — 캐시 삭제 및 시스템 프롬프트 재생성
@@ -612,7 +612,7 @@ timeline
 | **계획** | 검증 및 백업-온-라이트 기능의 인브라우저 JSON 편집기 |
 
 **완료 기준:**
-- [x] 웹 UI를 통한 7개 설정 파일 편집 (`llm_config.json`, `telegram_config.json`, `slack_config.json`, `discord_config.json`, `webhook_config.json`, `tool_policy.json`, `system_prompt.txt`)
+- [x] 웹 UI를 통한 7개 설정 파일 편집 (`llm_config.json`, `telegram_config.json`, `slack_config.json`, `discord_config.json`, `webhook_config.json`, `tool_policy.json`, `agent_roles.json`)
 - [x] 덮어쓰기 전 자동 백업
 - [x] 임의 파일 쓰기 방지를 위한 파일 화이트리스트
 - [x] 관리 인터페이스에서 데몬 재시작 트리거
