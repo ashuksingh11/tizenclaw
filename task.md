@@ -1,50 +1,37 @@
-# Task: Move skills to tools directory
+# Task: Implement Tool Routing Guide for LLM
 
 ## Objectives
-- [x] Move the `skills/` directory to `tools/skills/`.
-- [x] Update all source code, scripts, build configuration, and documentation that reference the `skills/` directory.
-- [x] Verify the changes via local build and device deployment.
+- Enhance `tools/routing_guide.md` with comprehensive tool selection logic.
+- Integrate the routing guide into the LLM's system prompt dynamically.
+- Ensure the guide is correctly packaged and deployed to the device.
+- Verify LLM's adherence to the guide via the emulator.
 
 ## Detailed Plan
 
-### 1. Analysis & Preparation
-- [x] List all files in the current `skills/` directory.
-- [x] Confirm the target structure: `tools/skills/`.
-- [x] Create `task.md` (this file).
+### 1. Analysis & Refinement
+- [ ] Review all available tool categories: `embedded`, `skills`, `custom_skills`, `actions`.
+- [ ] Refine `tools/routing_guide.md` with explicit priority rules and usage patterns.
 
 ### 2. Implementation (Develop)
-- [x] Move `skills/` to `tools/skills/`.
-- [x] Update `CMakeLists.txt` and `src/tizenclaw/CMakeLists.txt`.
-- [x] Update C++ source files:
-  - `src/tizenclaw/core/agent_core.cc`
-  - `src/tizenclaw/core/tizenclaw.cc`
-  - `src/tizenclaw/channel/web_dashboard.cc`
-  - `src/tizenclaw/channel/mcp_server.cc`
-  - `src/tizenclaw/infra/container_engine.cc`
-  - `src/tizenclaw/core/skill_watcher.hh`
-- [x] Update Python scripts:
-  - `skills/skill_executor.py` (now `tools/skills/skill_executor.py`)
-- [x] Update shell scripts:
-  - `scripts/skills_secure_container.sh`
-  - `scripts/ci_build.sh`
-- [x] Update packaging files:
-  - `packaging/tizenclaw.spec`
-- [x] Update documentation:
-  - `README.md`
-  - `docs/ROADMAP.md`
-  - `docs/ROADMAP_KOR.md`
-  - `tools/embedded/file_manager.md`
-- [x] Update Dockerfile:
-  - `scripts/Dockerfile`
+- [ ] Update `tools/routing_guide.md` with detailed instructions.
+- [ ] Modify `src/tizenclaw/core/agent_core.cc`:
+    - Add `LoadRoutingGuide()` helper method.
+    - Update `BuildSystemPrompt()` to append the routing guide content.
+- [ ] Update `src/tizenclaw/CMakeLists.txt` to install `tools/routing_guide.md` to `/opt/usr/share/tizenclaw/tools/`.
+- [ ] Update `packaging/tizenclaw.spec` to include the routing guide in the RPM.
 
 ### 3. Local Verification
-- [x] Run `gbs build` for the emulator architecture (`x86_64`).
-- [x] Check if unit tests pass during the build.
+- [ ] Run `gbs build` to ensure the project compiles and unit tests pass.
+- [ ] Verify that `routing_guide.md` is correctly included in the build root.
 
 ### 4. Device Verification
-- [x] Deploy the RPM to the emulator.
-- [x] Restart the `tizenclaw` service.
-- [x] Verify using `tizenclaw-cli` that tools (formerly skills) are still correctly discovered and executable.
+- [ ] Deploy the RPM to the emulator.
+- [ ] Verify that the system prompt includes the routing guide content (check logs).
+- [ ] Test LLM tool selection logic using `tizenclaw-cli chat` with scenarios like:
+    - "Set display brightness to 50" (should prefer `action_` if available).
+    - "List all running apps" (should use `list_apps`).
+    - "Search for Tizen documentation" (should use `web_search`).
 
 ### 5. Completion
 - [ ] Commit changes following `commit_guidelines.md`.
+- [ ] Push to main.

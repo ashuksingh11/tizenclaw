@@ -1,36 +1,47 @@
-# Tool Selection & Routing Guide
+# TizenClaw Tool Selection & Routing Guide
 
-This guide defines the principles and strategies for selecting the most appropriate tool among 35+ Python skills, 13+ built-in tools, and device-specific Tizen Actions.
+You must follow this guide strictly when selecting tools to fulfill user requests. Tools are categorized by implementation type and priority.
 
-## 1. Classification & Hierarchy
+## 1. Tool Categories
 
-Tools are grouped into functional categories. If multiple tools seem applicable, prioritize based on the category.
+### A. Tizen Actions (`action_*`) - Highest Priority
+Native Tizen Platform features. These are the fastest and most reliable for core device control.
+- **Usage**: Use for display brightness, volume, flashlight, notifications, and core system settings.
+- **Priority**: Always check if an `action_` tool exists for a task before using a Python skill.
 
-### A. Device Control (Highest Priority: Tizen Actions)
-For hardware-level controls (display, volume, notification), prioritize **Tizen Action Framework** tools (`action_`).
-- **Priority**: `action_<name>` > `control_<name>` (Python skill)
-- **Reason**: Actions are native, device-specific, and handle permissions/lifecycle via the platform.
+### B. Embedded Tools (`embedded`) - High Priority
+C++ built-in tools for system management and agent coordination.
+- **Core Operations**: `file_manager` (file I/O), `task_scheduler` (automation).
+- **Agent Coordination**: `supervisor_engine` (multi-agent delegation), `session_manager` (context handling).
 
-### B. Information Query
-Use `get_` prefix skills to fetch device status before attempting any state-changing operations.
-- **Pattern**: If the user's goal is ambiguous (e.g., "Screen is dark"), always call `get_display_info` first to confirm the state.
+### C. Standard Skills (`skills/`) - Medium Priority
+Pre-defined Python scripts for specific functionalities (e.g., `web_search`, `get_battery_info`).
+- **Usage**: Use when a native Tizen Action is not available or for specialized logic like web scraping or data parsing.
 
-### C. System Automation & Multi-Agent
-Use built-in tools for managing the agent's own lifecycle and background tasks.
-- **Task Management**: `create_task`, `list_tasks`, `cancel_task`
-- **Agent Coordination**: `create_session`, `send_to_session`, `run_supervisor`
-- **Skill Extension**: `manage_custom_skill`
+### D. Custom Skills (`custom_skills/`) - Dynamic Priority
+User-defined or AI-generated scripts added at runtime.
+- **Usage**: Use when standard tools/skills are insufficient for a specific, newly defined requirement.
 
-## 2. Selection Principles
+## 2. Selection Strategy & Logic
 
-1. **Native over Scripted**: Prefer `action_` tools over Python `skills/` if both provide the same functionality.
-2. **Context-Aware Chaining**: If an app ID is required but unknown, call `list_apps` first. Never guess an app ID.
-3. **Safety First**: For high-risk operations (e.g., `terminate_app`, `control_power`), always confirm the target with the user or via a query skill if the intent is not 100% explicit.
-4. **RAG vs. Memory**: Use `search_knowledge` for facts or technical documentation. Use conversation history for personal preferences or previous context.
+1. **Prefer Native**: If `action_brightness` and `control_display` are both available, you MUST use `action_brightness`.
+2. **Confirm State First**: Before changing a system state, use a `get_` skill (e.g., `get_display_info`, `get_battery_info`) to verify current values unless the user is explicit.
+3. **Handle Failure Gracefully**:
+   - If an `action_` tool fails, try the corresponding Python `skill` if it exists.
+   - If a Python skill fails, explain the error and suggest an alternative if possible.
+4. **App Interaction**:
+   - Never guess an `app_id`. Use `list_apps` to find the correct identifier before calling `send_app_control` or `terminate_app`.
+5. **Security & Safety**:
+   - For irreversible operations (e.g., `delete_file`, `terminate_app`), always ask for confirmation unless the user's intent is absolutely clear and specific.
+   - Paths for `file_manager` MUST start with `/tools/skills/` (for code) or `/data/` (for data).
 
-## 3. Natural Language Mapping Examples
+## 3. Decision Tree Examples
 
-- "Turn off the lights" -> `action_flashlight` (if available) or `control_led(action="off")`
-- "I'm busy now" -> `control_volume(action="set", sound_type="system", volume=0)`
-- "Remind me later" -> `create_task(...)`
-- "What's wrong with the phone?" -> `run_supervisor(goal="Check overall device health and status")`
+- **"Make the screen brighter"**
+  -> `get_display_info` (check current level) -> `action_brightness` (set new level).
+- **"Search for the weather in Seoul"**
+  -> `web_search(query="weather in Seoul")`.
+- **"Kill the music player"**
+  -> `list_apps(filter="music")` -> `terminate_app(app_id="...")`.
+- **"Remind me to take medicine in 2 hours"**
+  -> `create_task(command="send_notification(...)", trigger_type="interval", interval_seconds=7200)`.

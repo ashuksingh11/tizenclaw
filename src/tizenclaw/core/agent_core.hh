@@ -150,6 +150,9 @@ private:
     std::string LoadSystemPrompt(
         const nlohmann::json& config);
 
+    // Load tool routing guide from MD
+    std::string LoadRoutingGuide();
+
     // Build final system prompt with dynamic
     // skill list
     std::string BuildSystemPrompt(

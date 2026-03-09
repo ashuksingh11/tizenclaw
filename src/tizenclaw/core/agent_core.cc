@@ -1462,9 +1462,25 @@ std::string AgentCore::LoadSystemPrompt(
       "Be concise and helpful.";
 }
 
+std::string AgentCore::LoadRoutingGuide() {
+  const std::string guide_path =
+      "/opt/usr/share/tizenclaw/tools/routing_guide.md";
+  std::ifstream f(guide_path);
+  if (f.is_open()) {
+    std::string content(
+        (std::istreambuf_iterator<char>(f)),
+        std::istreambuf_iterator<char>());
+    f.close();
+    if (!content.empty()) {
+      return "\n\n## Tool Selection Strategy\n" + content;
+    }
+  }
+  return "";
+}
+
 std::string AgentCore::BuildSystemPrompt(
     const std::vector<LlmToolDecl>& tools) {
-  std::string prompt = system_prompt_;
+  std::string prompt = system_prompt_ + LoadRoutingGuide();
 
   // Build tool list string
   std::string tool_list;

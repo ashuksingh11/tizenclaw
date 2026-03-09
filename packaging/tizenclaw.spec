@@ -76,6 +76,7 @@ ln -sf ../tizenclaw-skills-secure.service %{buildroot}%{_unitdir}/multi-user.tar
 /opt/usr/share/tizenclaw/img/rootfs.tar.gz
 /opt/usr/share/tizenclaw/config/*
 /opt/usr/share/tizenclaw/tools/skills/
+/opt/usr/share/tizenclaw/tools/routing_guide.md
 /opt/usr/share/tizenclaw/web/
 /opt/usr/share/tizenclaw/tools/embedded/
 %dir /opt/usr/share/tizenclaw/tools/

@@ -91,6 +91,7 @@ FILE(GLOB CONFIG_FILES ${CMAKE_SOURCE_DIR}/data/config/*.txt ${CMAKE_SOURCE_DIR}
 INSTALL(FILES ${CONFIG_FILES} DESTINATION /opt/usr/share/tizenclaw/config/)
 
 # Skills, tools, web
+INSTALL(FILES ${CMAKE_SOURCE_DIR}/tools/routing_guide.md DESTINATION /opt/usr/share/tizenclaw/tools/)
 INSTALL(DIRECTORY ${CMAKE_SOURCE_DIR}/tools/skills/ DESTINATION /opt/usr/share/tizenclaw/tools/skills/)
 INSTALL(DIRECTORY ${CMAKE_SOURCE_DIR}/tools/embedded/ DESTINATION /opt/usr/share/tizenclaw/tools/embedded/)
 INSTALL(DIRECTORY ${CMAKE_SOURCE_DIR}/data/web/ DESTINATION /opt/usr/share/tizenclaw/web/)
