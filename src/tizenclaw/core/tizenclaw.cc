@@ -331,7 +331,7 @@ void TizenClawDaemon::HandleIpcClient(int client_sock) {
             ssize_t body_read = ::recv(
                 client_sock, buffer.data(),
                 len, MSG_WAITALL);
-            if (body_read != len) {
+            if (body_read != static_cast<ssize_t>(len)) {
                 LOG(ERROR) << "Incomplete IPC payload read";
                 break;
             }
