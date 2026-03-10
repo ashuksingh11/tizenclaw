@@ -179,6 +179,13 @@ private:
     std::unique_ptr<LlmBackend> backend_;
     bool initialized_ = false;
 
+    // Memory flush tracking
+    std::atomic<int64_t> last_activity_time_{0};
+    std::atomic<bool> stop_maintenance_{false};
+    std::thread maintenance_thread_;
+    void MaintenanceLoop();
+    void UpdateActivityTime();
+
     // System prompt loaded from external file
     std::string system_prompt_;
 

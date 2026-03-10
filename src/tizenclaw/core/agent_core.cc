@@ -13,6 +13,9 @@
 #include "../infra/key_store.hh"
 #include "../../common/logging.hh"
 
+#include <malloc.h>
+#include <sqlite3.h>
+
 namespace tizenclaw {
 
 
@@ -24,6 +27,47 @@ AgentCore::AgentCore()
 
 AgentCore::~AgentCore() {
   Shutdown();
+  stop_maintenance_ = true;
+  if (maintenance_thread_.joinable()) {
+      maintenance_thread_.join();
+  }
+}
+
+void AgentCore::UpdateActivityTime() {
+    auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    last_activity_time_.store(now);
+}
+
+void AgentCore::MaintenanceLoop() {
+    LOG(INFO) << "AgentCore Maintenance thread started";
+    // 5 minutes idle timeout
+    const int64_t IDLE_TIMEOUT_SEC = 300; 
+    
+    while (!stop_maintenance_) {
+        std::this_thread::sleep_for(std::chrono::seconds(10));
+        
+        auto now = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        auto last_active = last_activity_time_.load();
+        
+        if (last_active > 0 && (now - last_active) > IDLE_TIMEOUT_SEC) {
+            LOG(INFO) << "System idle for " << (now - last_active) << "s, flushing memory...";
+            
+            // Release SQLite memory cache
+            int bytes_freed = sqlite3_release_memory(1024 * 1024 * 50); // Try to free 50MB
+            if (bytes_freed > 0) {
+                LOG(INFO) << "sqlite3_release_memory freed " << bytes_freed << " bytes";
+            }
+            
+            // Return heap memory to OS
+            int trim_result = malloc_trim(0);
+            LOG(INFO) << "malloc_trim(0) returned " << trim_result;
+            
+            // Reset activity time so we don't spam flush
+            last_activity_time_.store(0);
+        }
+    }
 }
 
 bool AgentCore::Initialize() {
@@ -256,6 +300,10 @@ bool AgentCore::Initialize() {
   }
 #endif
 
+  // Start background maintenance thread immediately
+  UpdateActivityTime();
+  maintenance_thread_ = std::thread(&AgentCore::MaintenanceLoop, this);
+
   return true;
 }
 
@@ -299,6 +347,8 @@ std::string AgentCore::ProcessPrompt(
   }
 
   LOG(INFO) << "ProcessPrompt [" << session_id << "]: " << prompt;
+
+  UpdateActivityTime();
 
   auto tools = LoadSkillDeclarations();
 
@@ -1737,6 +1787,7 @@ void AgentCore::ClearSession(
 std::string AgentCore::ExecuteSkillForMcp(
     const std::string& skill_name,
     const nlohmann::json& args) {
+  UpdateActivityTime();
   return ExecuteSkill(skill_name, args);
 }
 
