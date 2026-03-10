@@ -76,9 +76,6 @@ export LDFLAGS="$LDFLAGS -Wl,--as-needed -flto"
 %cmake . -DTIZENCLAW_ARCH=%{_arch} -DFULLVER=%{version}
 %__make %{?_smp_mflags}
 
-%check
-# export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:../../src/libtizenclaw-llm-backend
-# ctest --output-on-failure %{?_smp_mflags}
 
 %install
 %make_install
