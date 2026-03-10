@@ -23,7 +23,7 @@ graph LR
     end
 
     subgraph Daemon["TizenClaw Daemon (C++)"]
-        IPC["IPC Server<br/>(Abstract Unix Socket)"]
+        IPC["IPC Server<br/>(JSON-RPC 2.0 over UDS)"]
         Agent["AgentCore<br/>(Agentic Loop)"]
         Factory["LlmBackendFactory"]
         Http["HttpClient<br/>(libcurl + retry)"]
@@ -182,14 +182,15 @@ tizenclaw/
 | Module | Files | Role | Status |
 |--------|-------|------|--------|
 | **Daemon** | `tizenclaw.cc/hh` | systemd service, IPC server (thread pool), channel lifecycle, signal handling | ✅ |
-| **AgentCore** | `agent_core.cc/hh` | Agentic Loop, streaming, context compaction, multi-session, model fallback | ✅ |
+| **AgentCore** | `agent_core.cc/hh` | Agentic Loop, streaming, context compaction, multi-session, edge memory flush (PSS) | ✅ |
 | **ContainerEngine** | `container_engine.cc/hh` | crun OCI container, Skill Executor IPC, host bind-mounts, chroot fallback | ✅ |
 | **HttpClient** | `http_client.cc/hh` | libcurl POST, exponential backoff, SSL CA auto-discovery | ✅ |
 | **SessionStore** | `session_store.cc/hh` | Markdown persistence (YAML frontmatter), daily logs, token usage tracking | ✅ |
 | **TaskScheduler** | `task_scheduler.cc/hh` | Cron/interval/once/weekly tasks, LLM-integrated execution, retry with backoff | ✅ |
-| **ActionBridge** | `action_bridge.cc/hh` | Tizen Action Framework bridge, MD schema management, event-driven updates | ✅ |
-| **EmbeddingStore** | `embedding_store.cc/hh` | SQLite vector store, cosine similarity, multi-provider embeddings | ✅ |
+| **ActionBridge** | `action_bridge.cc/hh` | Tizen Action Framework worker thread, MD schema management, event-driven updates | ✅ |
+| **EmbeddingStore** | `embedding_store.cc/hh` | SQLite vector store | ✅ |
 | **WebDashboard** | `web_dashboard.cc/hh` | libsoup SPA, REST API, admin auth, config editor | ✅ |
+| **TunnelManager** | `infra/tunnel_manager.cc` | Secure ngrok tunneling abstraction | ✅ |
 
 ### 3.2 LLM Backend Layer
 
@@ -211,7 +212,7 @@ tizenclaw/
 
 | Module | Implementation | Protocol | Status |
 |--------|---------------|----------|--------|
-| **IPC Server** | `tizenclaw.cc` | Abstract Unix Socket, length-prefix framing, thread pool | ✅ |
+| **IPC Server** | `tizenclaw.cc` | Abstract Unix Socket, JSON-RPC 2.0, length-prefix framing, thread pool | ✅ |
 | **UID Auth** | `IsAllowedUid()` | `SO_PEERCRED` (root, app_fw, system, developer) | ✅ |
 | **Telegram** | `telegram_client.cc` | Bot API Long-Polling, streaming `editMessageText` | ✅ |
 | **Slack** | `slack_channel.cc` | Socket Mode via libwebsockets | ✅ |
@@ -350,8 +351,10 @@ Most gaps identified in the original analysis have been resolved through Phases 
 | Strength | Description |
 |----------|-------------|
 | **Native C++ Performance** | Lower memory/CPU vs TypeScript — optimal for embedded |
+| **Edge Memory Optimization** | Aggressive idle memory reclamation using `malloc_trim` and SQLite cache flushing via PSS profiling |
 | **OCI Container Isolation** | crun-based `seccomp` + `namespace` — finer syscall control |
 | **Direct Tizen C-API** | ctypes wrappers for device hardware (battery, Wi-Fi, BT, haptic, etc.) |
+| **Modular CAPI Export** | External library generation (`src/lib`) enabling TizenClaw to act as a system-level AI SDK for other apps |
 | **Multi-LLM Support** | 5 backends switchable at runtime with automatic fallback |
 | **Lightweight Deployment** | systemd + RPM — standalone device execution without Node.js/Docker |
 | **Native MCP Server** | C++ MCP server integrated into daemon — Claude Desktop controls Tizen devices |

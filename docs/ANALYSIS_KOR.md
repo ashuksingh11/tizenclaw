@@ -23,7 +23,7 @@ graph LR
     end
 
     subgraph Daemon["TizenClaw Daemon (C++)"]
-        IPC["IPC Server<br/>(Abstract Unix Socket)"]
+        IPC["IPC Server<br/>(JSON-RPC 2.0 over UDS)"]
         Agent["AgentCore<br/>(Agentic Loop)"]
         Factory["LlmBackendFactory"]
         Http["HttpClient<br/>(libcurl + retry)"]
@@ -182,14 +182,15 @@ tizenclaw/
 | 모듈 | 파일 | 역할 | 상태 |
 |------|------|------|------|
 | **Daemon** | `tizenclaw.cc/hh` | systemd 서비스, IPC 서버 (스레드 풀), 채널 생명주기, 시그널 핸들링 | ✅ |
-| **AgentCore** | `agent_core.cc/hh` | Agentic Loop, 스트리밍, 컨텍스트 압축, 멀티 세션, 모델 폴백 | ✅ |
+| **AgentCore** | `agent_core.cc/hh` | Agentic Loop, 스트리밍, 컨텍스트 압축, 멀티 세션, 엣지 메모리 플러시 (PSS) | ✅ |
 | **ContainerEngine** | `container_engine.cc/hh` | crun OCI 컨테이너, Skill Executor IPC, 호스트 바인드 마운트, chroot 폴백 | ✅ |
 | **HttpClient** | `http_client.cc/hh` | libcurl POST, 지수 백오프, SSL CA 자동 탐색 | ✅ |
 | **SessionStore** | `session_store.cc/hh` | Markdown 영구 저장 (YAML frontmatter), 일별 로그, 토큰 사용량 추적 | ✅ |
 | **TaskScheduler** | `task_scheduler.cc/hh` | Cron/interval/once/weekly 태스크, LLM 연동 실행, 백오프 재시도 | ✅ |
-| **ActionBridge** | `action_bridge.cc/hh` | Tizen Action Framework 브릿지, MD 스키마 관리, 이벤트 기반 업데이트 | ✅ |
-| **EmbeddingStore** | `embedding_store.cc/hh` | SQLite 벡터 스토어, 코사인 유사도, 다중 프로바이더 임베딩 | ✅ |
+| **ActionBridge** | `action_bridge.cc/hh` | Tizen Action Framework 워커 스레드, MD 스키마 관리, 이벤트 기반 업데이트 | ✅ |
+| **EmbeddingStore** | `embedding_store.cc/hh` | SQLite 벡터 스토어 | ✅ |
 | **WebDashboard** | `web_dashboard.cc/hh` | libsoup SPA, REST API, 관리자 인증, 설정 편집기 | ✅ |
+| **TunnelManager** | `infra/tunnel_manager.cc` | 안전한 ngrok 터널링 추상화 레이어 | ✅ |
 
 ### 3.2 LLM 백엔드 계층
 
@@ -211,7 +212,7 @@ tizenclaw/
 
 | 모듈 | 구현 | 프로토콜 | 상태 |
 |------|------|---------|------|
-| **IPC 서버** | `tizenclaw.cc` | Abstract Unix Socket, 길이-프리픽스, 스레드 풀 | ✅ |
+| **IPC 서버** | `tizenclaw.cc` | Abstract Unix Socket, JSON-RPC 2.0, 길이-프리픽스, 스레드 풀 | ✅ |
 | **UID 인증** | `IsAllowedUid()` | `SO_PEERCRED` (root, app_fw, system, developer) | ✅ |
 | **Telegram** | `telegram_client.cc` | Bot API Long-Polling, 스트리밍 `editMessageText` | ✅ |
 | **Slack** | `slack_channel.cc` | Socket Mode (libwebsockets) | ✅ |
@@ -350,8 +351,10 @@ Phase 6-18을 통해 원래 분석에서 식별된 대부분의 Gap이 해소되
 | 강점 | 설명 |
 |------|------|
 | **네이티브 C++ 성능** | TypeScript 대비 낮은 메모리/CPU — 임베디드 환경에 최적 |
+| **공격적인 엣지 메모리 관리** | 데몬 유휴 상태 모니터링 및 `malloc_trim`, SQLite 캐시 플러시를 통한 공격적 PSS 기반 엣지 메모리 최적화 |
 | **OCI 컨테이너 격리** | crun 기반 `seccomp` + `namespace` — 앱 수준보다 정밀한 시스콜 제어 |
 | **Tizen C-API 직접 호출** | ctypes 래퍼를 통한 디바이스 하드웨어 직접 제어 |
+| **모듈형 CAPI 익스포트** | 타 앱의 시스템 레벨 AI SDK로 동작 가능하도록 외부 라이브러리(`src/lib`) 캡슐화 |
 | **강력한 다중 LLM 지원** | 5개 백엔드 런타임 전환 가능 + 자동 폴백 |
 | **경량 배포** | systemd + RPM — Node.js/Docker 없이 단독 디바이스 실행 |
 | **네이티브 MCP 서버** | C++ 데몬 내장 MCP — Claude Desktop에서 Tizen 디바이스 제어 |

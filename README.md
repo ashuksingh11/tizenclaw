@@ -65,7 +65,7 @@ The recommended way to build and deploy TizenClaw is using the included `deploy.
 ./deploy.sh --with-ngrok
 ```
 
-Once deployed, the `deploy.sh` script will output the URL to access the Web Dashboard.
+Once deployed, the `deploy.sh` script will automatically fetch the secure public URL from the local ngrok API (`127.0.0.1:4040`) and output the URL to access the Web Dashboard.
 
 #### What gets installed?
 The build process generates two primary RPM packages:
@@ -111,6 +111,8 @@ sdb shell systemctl restart tizenclaw
 
 ### Key Features
 
+- **Standardized IPC (JSON-RPC 2.0)** — Communicates with the `tizenclaw-cli` and external clients over Unix Domain Sockets using standard JSON-RPC 2.0.
+- **Aggressive Edge Memory Management** — Monitors daemon idle states locally and dynamically flushes SQLite caches (`sqlite3_release_memory(50MB)`) while aggressively reclaiming heap space back to Tizen OS (`malloc_trim(0)`) utilizing PSS profiling.
 - **Multi-LLM Backend** — Supports Gemini, OpenAI, Anthropic, xAI (Grok), and Ollama via a unified `LlmBackend` interface with automatic model fallback.
 - **7 Communication Channels** — Telegram, Slack, Discord, MCP (Claude Desktop), Webhook, Voice (TTS/STT), and Web Dashboard — all managed through a `Channel` abstraction.
 - **Function Calling / Tool Use** — The LLM autonomously invokes device skills through an iterative Agentic Loop with streaming responses.
@@ -146,10 +148,10 @@ graph TB
 
     subgraph Daemon["TizenClaw Daemon (systemd)"]
         ChannelReg["ChannelRegistry"]
-        IPC["IPC Server<br/>(Unix Socket)"]
+        IPC["IPC Server<br/>(JSON-RPC 2.0 via UDS)"]
         AgentCore["AgentCore<br/>(Agentic Loop)"]
         ContainerEngine["ContainerEngine"]
-        ActionBridge["ActionBridge<br/>(Tizen Action Framework)"]
+        ActionBridge["ActionBridge<br/>(Tizen Action Framework Worker)"]
         SessionStore["SessionStore"]
         TaskScheduler["TaskScheduler"]
         EmbeddingStore["EmbeddingStore (RAG)"]

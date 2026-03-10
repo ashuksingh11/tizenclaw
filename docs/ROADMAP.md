@@ -13,7 +13,7 @@
 |----------|---------|:--------:|:--------:|:--------:|:---------:|:---:|
 | **IPC** | Multi-client concurrency | ✅ Parallel sessions | ✅ Group queue | ✅ Async Tokio | ✅ Thread pool | ✅ |
 | **IPC** | Streaming responses | ✅ SSE / WebSocket | ✅ `onOutput` callback | ✅ Block streaming | ✅ Chunked IPC | ✅ |
-| **IPC** | Robust message framing | ✅ WebSocket + JSON-RPC | ✅ Sentinel markers | ✅ JSON-RPC 2.0 | ✅ Length-prefix + JSON-RPC | ✅ |
+| **IPC** | Robust message framing | ✅ WebSocket + JSON-RPC | ✅ Sentinel markers | ✅ JSON-RPC 2.0 | ✅ JSON-RPC 2.0 | ✅ |
 | **Memory** | Conversation persistence | ✅ SQLite + Vector DB | ✅ SQLite | ✅ SQLite + FTS5 | ✅ Markdown (YAML frontmatter) | ✅ |
 | **Memory** | Context compaction | ✅ LLM auto-summarize | ❌ | ✅ Snapshot/hydrate | ✅ LLM auto-summarize | ✅ |
 | **Memory** | Semantic search (RAG) | ✅ MMR + embeddings | ❌ | ✅ Hybrid BM25+vector | ✅ SQLite + cosine similarity | ✅ |
@@ -38,7 +38,7 @@
 | **Infra** | Tunnel support | ✅ Tailscale Serve/Funnel | ❌ | ✅ Cloudflare/Tailscale/ngrok | ✅ ngrok / custom | ✅ |
 | **Infra** | Health metrics | ✅ Health checks | ❌ | ✅ Observer trait | ✅ `/api/metrics` + dashboard | ✅ |
 | **Infra** | OTA updates | ❌ | ❌ | ❌ | ✅ OTA skill updater + rollback | ✅ |
-| **UX** | Browser control | ✅ CDP Chrome | ❌ | ✅ Agent browser | ❌ | 🟡 |
+| **UX** | Browser control | ✅ CDP Chrome | ❌ | ✅ Agent browser | ✅ Webview App Integration | ✅ |
 | **UX** | Voice interface | ✅ Wake word + TTS | ❌ | ❌ | ✅ Tizen STT/TTS C-API | ✅ |
 | **UX** | Web UI | ✅ Control UI + WebChat | ❌ | ❌ | ✅ Admin Dashboard + Chat | ✅ |
 | **Ops** | Config management | ✅ UI-based config | ❌ | ✅ TOML + hot-reload | ✅ Web config editor + backup | ✅ |
@@ -51,7 +51,9 @@
 | Strength | Description |
 |----------|-------------|
 | **Native C++ Performance** | Lower memory/CPU vs TypeScript — optimal for Tizen embedded |
+| **Aggressive Edge Memory Management** | Monitors daemon idle states locally and dynamically flushes SQLite caches (`sqlite3_release_memory`) and heap space (`malloc_trim`) using PSS profiling, ideal for edge devices |
 | **OCI Container Isolation** | crun-based `seccomp` + `namespace` — finer syscall control than app-level sandboxing |
+| **Standardized IPC (JSON-RPC 2.0)** | Communicates natively with multi-platform clients over Unix Domain Sockets |
 | **Direct Tizen C-API** | ctypes wrappers for 35+ device APIs (battery, Wi-Fi, BT, display, volume, sensors, notifications, alarm, thermal, data usage, sound devices, media content, MIME type, WiFi/BT scan, app control, metadata, download) + runtime custom skill creation |
 | **Multi-LLM Support** | 5 backends (Gemini, OpenAI, Claude, xAI, Ollama) switchable at runtime |
 | **Lightweight Deployment** | systemd + RPM — standalone device execution without Node.js/Docker |
@@ -119,11 +121,23 @@ timeline
                        : Supervisor agent pattern
                        : Skill pipeline engine
                        : A2A protocol
-        Phase 18       : 🟡 Production Readiness
+        Phase 18 (Done) : 🟡 Production Readiness
                        : Health metrics & monitoring
                        : OTA update mechanism
-                       : Browser control (CDP)
+                       : Browser control (webview app)
                        : Tizen Action Framework
+        Phase 19 (Done) : Edge Optimization & Tunneling
+                       : Secure Tunnel Integration
+                       : Memory Footprint Optimization
+                       : Binary Size Optimization
+        Phase 20       : Ecosystem Expansion
+                       : Remote Skill Registry
+                       : Developer Portal
+                       : Enterprise Fleet Management
+        Phase 21       : Framework Stabilization & SDK Export
+                       : Modular CAPI extraction (`src/lib`)
+                       : System-level AI SDK usage
+                       : Dynamic lib bindings
 ```
 
 ---
@@ -725,17 +739,17 @@ timeline
 
 ---
 
-### 18.3 Browser Control (CDP)
+### 18.3 Browser Control (Webview App) ✅
 | Item | Details |
 |------|---------|
 | **Gap** | No web automation capability |
 | **Ref** | OpenClaw: CDP Chrome DevTools Protocol |
-| **Plan** | Chrome DevTools Protocol integration for web page interaction |
+| **Plan** | Chrome DevTools Protocol integration with the `tizenclaw-webview` app |
 
 **Done When:**
-- [ ] CDP connection to embedded Chromium/WebView
-- [ ] Built-in tools: `navigate_url`, `click_element`, `extract_text`
-- [ ] Screenshot capture for visual feedback
+- [x] CDP connection to embedded Webview
+- [x] Built-in tool: `navigate_url`
+- [x] Screenshot capture and DOM inspection support
 
 ---
 
@@ -893,7 +907,8 @@ graph TD
     P16 --> P17[Phase 17: Multi-Agent]
     P16 --> P18[Phase 18: Production Readiness]
     P18 --> P19[Phase 19: Edge Optimization]
-    P18 --> P20[Phase 20: Skill Registry]
+    P19 --> P20[Phase 20: Ecosystem Expansion]
+    P19 --> P21[Phase 21: Stabilization & SDK]
 
     style P8 fill:#4ecdc4,color:#fff
     style P9 fill:#4ecdc4,color:#fff
@@ -905,9 +920,10 @@ graph TD
     style P15 fill:#4ecdc4,color:#fff
     style P16 fill:#4ecdc4,color:#fff
     style P17 fill:#4ecdc4,color:#fff
-    style P18 fill:#ffd93d,color:#fff
-    style P19 fill:#ff6b6b,color:#fff
+    style P18 fill:#4ecdc4,color:#fff
+    style P19 fill:#4ecdc4,color:#fff
     style P20 fill:#ff6b6b,color:#fff
+    style P21 fill:#ff6b6b,color:#fff
 ```
 
 | Phase | Core Goal | Est. LOC | Priority | Dependencies |
@@ -919,12 +935,13 @@ graph TD
 | **12** | Extensibility layer | ~600 | ✅ Done | Phase 10, 11 ✅ |
 | **13** | Skill ecosystem | ~800 | ✅ Done | Phase 12 ✅ |
 | **14** | New channels & integrations | ~1,200 | ✅ Done | Phase 12 ✅ |
-| **15** | Advanced platform features | ~2,000 | ✅ Done | Phase 13, 14 ✅ |
+| **15** | Advanced features | ~1,200 | ✅ Done | Phase 13, 14 ✅ |
 | **16** | Operational excellence | ~800 | ✅ Done | Phase 15 ✅ |
-| **17** | Multi-Agent orchestration | ~3,950 | ✅ Done | Phase 16 ✅ |
-| **18** | Production readiness | ~1,500 | 🟡 In Progress | Phase 17 ✅ |
-| **19** | Edge optimization & tunneling | ~1,000 | 🟡 In Progress | Phase 18 |
-| **20** | Skill registry & marketplace | ~1,200 | 🟠 Medium | Phase 18 |
+| **17** | Multi-agent orchestration | ~1,500 | ✅ Done | Phase 16 ✅ |
+| **18** | Production readiness | ~1,000 | ✅ Done | Phase 16 ✅ |
+| **19** | Edge optimization & tunneling | ~800 | ✅ Done | Phase 18 ✅ |
+| **20** | Ecosystem expansion | ~2,000 | 🔴 Pending | Phase 19 🔴 |
+| **21** | Framework stabilization & SDK | ~1,500 | 🔴 Pending | Phase 19 🔴 |
 
 > **Current codebase**: ~23,100 LOC across ~89 files
-> **Projected with Phase 19–20**: ~25,300 LOC
+> **Projected with Phase 19–21**: ~25,300 LOC

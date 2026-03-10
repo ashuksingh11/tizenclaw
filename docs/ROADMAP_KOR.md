@@ -13,7 +13,7 @@
 |----------|------|:--------:|:--------:|:--------:|:---------:|:--:|
 | **IPC** | 다중 클라이언트 동시 처리 | ✅ 병렬 세션 | ✅ 그룹 큐 | ✅ Async Tokio | ✅ 스레드 풀 | ✅ |
 | **IPC** | 스트리밍 응답 | ✅ SSE / WebSocket | ✅ `onOutput` 콜백 | ✅ Block 스트리밍 | ✅ 청크 IPC | ✅ |
-| **IPC** | 견고한 메시지 프레이밍 | ✅ WebSocket + JSON-RPC | ✅ 센티널 마커 | ✅ JSON-RPC 2.0 | ✅ 길이-프리픽스 + JSON-RPC | ✅ |
+| **IPC** | 견고한 메시지 프레이밍 | ✅ WebSocket + JSON-RPC | ✅ 센티널 마커 | ✅ JSON-RPC 2.0 | ✅ JSON-RPC 2.0 | ✅ |
 | **메모리** | 대화 영구 저장 | ✅ SQLite + Vector DB | ✅ SQLite | ✅ SQLite + FTS5 | ✅ Markdown (YAML frontmatter) | ✅ |
 | **메모리** | 컨텍스트 압축 | ✅ LLM 자동 요약 | ❌ | ✅ Snapshot/hydrate | ✅ LLM 자동 요약 | ✅ |
 | **메모리** | 시맨틱 검색 (RAG) | ✅ MMR + 임베딩 | ❌ | ✅ 하이브리드 BM25+벡터 | ✅ SQLite + 코사인 유사도 | ✅ |
@@ -38,7 +38,7 @@
 | **인프라** | 터널 지원 | ✅ Tailscale Serve/Funnel | ❌ | ✅ Cloudflare/Tailscale/ngrok | ✅ ngrok / 커스텀 | ✅ |
 | **인프라** | 헬스 메트릭스 | ✅ Health checks | ❌ | ✅ Observer trait | ✅ `/api/metrics` + 대시보드 | ✅ |
 | **인프라** | OTA 업데이트 | ❌ | ❌ | ❌ | ✅ OTA 스킬 업데이터 + 롤백 | ✅ |
-| **UX** | 브라우저 제어 | ✅ CDP Chrome | ❌ | ✅ Agent 브라우저 | ❌ | 🟡 |
+| **UX** | 브라우저 제어 | ✅ CDP Chrome | ❌ | ✅ Agent 브라우저 | ✅ 웹뷰 앱 연동 | ✅ |
 | **UX** | 음성 인터페이스 | ✅ 웨이크 워드 + TTS | ❌ | ❌ | ✅ Tizen STT/TTS C-API | ✅ |
 | **UX** | 웹 UI | ✅ 제어 UI + 웹챗 | ❌ | ❌ | ✅ 관리 대시보드 + 채팅 | ✅ |
 | **운영** | 설정 관리 | ✅ UI 기반 설정 | ❌ | ✅ TOML + 핫리로드 | ✅ 웹 설정 편집기 + 백업 | ✅ |
@@ -51,12 +51,8 @@
 | 강점 | 설명 |
 |------|------|
 | **네이티브 C++ 성능** | TypeScript 대비 낮은 메모리/CPU — Tizen 임베디드 환경에 최적 |
+| **공격적인 엣지 메모리 관리** | 데몬의 유휴 상태를 모니터링하여 SQLite 캐시(`sqlite3_release_memory`)와 힙 메모리를 Tizen OS로 적극 반환(`malloc_trim`)하는 PSS 프로파일링 지원 강점 |
 | **OCI 컨테이너 격리** | crun 기반 `seccomp` + `namespace` — 앱 수준 샌드박싱보다 정밀한 시스콜 제어 |
-| **Tizen C-API 직접 접근** | ctypes 래퍼로 35개 이상 디바이스 API (배터리, Wi-Fi, BT, 디스플레이, 볼륨, 센서, 알림, 알람, 온도, 데이터 사용량, 오디오, 미디어, MIME, WiFi/BT 스캔, 앱 컨트롤, 메타데이터, 다운로드) 직접 제어 + 런타임 커스텀 스킬 생성 |
-| **멀티 LLM 지원** | 5개 백엔드 (Gemini, OpenAI, Claude, xAI, Ollama) 런타임 전환 가능 |
-| **경량 배포** | systemd + RPM — Node.js/Docker 없이 단독 디바이스 실행 |
-| **네이티브 MCP 서버** | C++ MCP 서버가 데몬에 내장 — Claude Desktop에서 sdb를 통해 Tizen 디바이스 제어 |
-| **멀티 에이전트 시스템** | 기본 오케스트레이터, 스킬 매니저, 디바이스 모니터 에이전트 + `create_session` / `send_to_session` 협업 |
 | **Tizen Action Framework** | Per-action LLM 도구 + MD 스키마 캐싱 + 이벤트 기반 업데이트 |
 | **도구 스키마 디스커버리** | 내장 + 액션 도구 스키마를 MD 파일로 저장, LLM 시스템 프롬프트에 자동 로드 |
 
@@ -121,12 +117,24 @@ timeline
                        : 슈퍼바이저 에이전트 패턴
                        : 스킬 파이프라인 엔진
                        : A2A 프로토콜
-        Phase 18       : 🟡 프로덕션 준비
+        Phase 18 (완료) : 🟡 프로덕션 준비
                        : 헬스 메트릭스 & 모니터링
                        : OTA 업데이트 메커니즘
-                       : 브라우저 제어 (CDP)
+                       : 브라우저 제어 (웹뷰 앱)
                        : Tizen Action Framework
                        : 도구 스키마 디스커버리
+        Phase 19 (완료) : 엣지 환경 최적화 & 터널링
+                       : 보안 터널 연동
+                       : 메모리 사용량 최적화 (PSS)
+                       : 바이너리 크기 최적화 (LTO)
+        Phase 20       : 생태계 확장
+                       : 원격 스킬 원격 저장소 (Registry)
+                       : 개발자 포털
+                       : 기업용 디바이스 관리 (Fleet Management)
+        Phase 21       : 프레임워크 안정화 및 SDK 익스포트
+                       : 모듈형 CAPI 분리 (`src/lib`)
+                       : 시스템 레벨 AI SDK 지원
+                       : 동적 라이브러리 바인딩 지원
 ```
 
 ---
@@ -893,10 +901,10 @@ graph TD
     P13 --> P15[Phase 15: 고급 기능]
     P14 --> P15
     P15 --> P16[Phase 16: 운영 우수성]
-    P16 --> P17[Phase 17: 멀티 에이전트]
     P16 --> P18[Phase 18: 프로덕션 준비]
     P18 --> P19[Phase 19: 엣지 최적화]
-    P18 --> P20[Phase 20: 스킬 레지스트리]
+    P19 --> P20[Phase 20: 생태계 확장]
+    P19 --> P21[Phase 21: 프레임워크 안정화 및 SDK]
 
     style P8 fill:#4ecdc4,color:#fff
     style P9 fill:#4ecdc4,color:#fff
@@ -907,10 +915,10 @@ graph TD
     style P14 fill:#4ecdc4,color:#fff
     style P15 fill:#4ecdc4,color:#fff
     style P16 fill:#4ecdc4,color:#fff
-    style P17 fill:#4ecdc4,color:#fff
-    style P18 fill:#ffd93d,color:#fff
-    style P19 fill:#ff6b6b,color:#fff
+    style P18 fill:#4ecdc4,color:#fff
+    style P19 fill:#4ecdc4,color:#fff
     style P20 fill:#ff6b6b,color:#fff
+    style P21 fill:#ff6b6b,color:#fff
 ```
 
 | Phase | 핵심 목표 | 예상 LOC | 우선순위 | 의존성 |

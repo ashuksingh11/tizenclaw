@@ -36,7 +36,7 @@ graph TB
 
     subgraph Daemon["TizenClaw Daemon (C++ / systemd)"]
         ChannelReg["ChannelRegistry"]
-        IPC["IPC Server<br/>(Abstract Unix Socket)"]
+        IPC["IPC Server<br/>(JSON-RPC 2.0 over UDS)"]
 
         subgraph Core["Agent Core"]
             AgentCore["AgentCore<br/>(Agentic Loop)"]
@@ -111,10 +111,11 @@ graph TB
 The main daemon process manages the overall lifecycle:
 
 - **systemd integration**: Runs as `Type=simple` service, handles `SIGINT`/`SIGTERM` for graceful shutdown
-- **IPC Server**: Abstract Unix Domain Socket (`\0tizenclaw.sock`) with length-prefix framing (`[4-byte len][JSON]`)
+- **IPC Server**: Abstract Unix Domain Socket (`\0tizenclaw.sock`) with standard `JSON-RPC 2.0` and length-prefix framing (`[4-byte len][JSON]`)
 - **UID Authentication**: `SO_PEERCRED`-based sender validation (root, app_fw, system, developer)
 - **Thread Pool**: `kMaxConcurrentClients = 4` concurrent request handling
 - **Channel Lifecycle**: Initializes and manages all channels via `ChannelRegistry`
+- **Modular CAPI (`src/lib`)**: The internal logic is fully decoupled from the external CAPI layer (`tizenclaw.h`), facilitating distribution as an SDK.
 
 ### 3.2 Agent Core (`agent_core.cc`)
 
@@ -123,6 +124,7 @@ The central orchestration engine implementing the **Agentic Loop**:
 - **Iterative Tool Calling**: LLM generates tool calls → execute → feed results back → repeat (configurable `max_iterations`)
 - **Streaming Responses**: Chunked IPC delivery (`stream_chunk` / `stream_end`) with progressive Telegram message editing
 - **Context Compaction**: When exceeding 15 turns, oldest 10 turns are summarized via LLM into 1 compressed turn
+- **Edge Memory Management**: The `MaintenanceLoop` aggressively monitors idle time, calling `malloc_trim(0)` and `sqlite3_release_memory` after 5 minutes of inactivity to reclaim PSS memory.
 - **Multi-Session**: Concurrent agent sessions with per-session system prompts and history isolation
 - **Model Fallback**: Sequential retry across `fallback_backends` with rate-limit backoff
 - **Built-in Tools**: `execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (per-action tools)

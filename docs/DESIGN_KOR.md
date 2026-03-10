@@ -36,7 +36,7 @@ graph TB
 
     subgraph Daemon["TizenClaw Daemon (C++ / systemd)"]
         ChannelReg["ChannelRegistry"]
-        IPC["IPC Server<br/>(Abstract Unix Socket)"]
+        IPC["IPC Server<br/>(JSON-RPC 2.0 over UDS)"]
 
         subgraph Core["Agent Core"]
             AgentCore["AgentCore<br/>(Agentic Loop)"]
@@ -111,10 +111,11 @@ graph TB
 메인 데몬 프로세스가 전체 생명주기를 관리합니다:
 
 - **systemd 통합**: `Type=simple` 서비스로 실행, `SIGINT`/`SIGTERM`으로 안전한 종료
-- **IPC 서버**: Abstract Unix Domain Socket (`\0tizenclaw.sock`), 길이-프리픽스 프레이밍 (`[4바이트 길이][JSON]`)
+- **IPC 서버**: Abstract Unix Domain Socket (`\0tizenclaw.sock`), 표준 `JSON-RPC 2.0` 및 길이-프리픽스 프레이밍 (`[4바이트 길이][JSON]`)
 - **UID 인증**: `SO_PEERCRED` 기반 발신자 검증 (root, app_fw, system, developer)
 - **스레드 풀**: `kMaxConcurrentClients = 4` 동시 요청 처리
 - **채널 생명주기**: `ChannelRegistry`를 통한 모든 채널 초기화 및 관리
+- **모듈형 CAPI (`src/lib`)**: 내부 로직이 외부 CAPI 계층(`tizenclaw.h`)과 완전히 분리되어, SDK로서의 배포가 용이합니다.
 
 ### 3.2 Agent Core (`agent_core.cc`)
 
@@ -123,6 +124,7 @@ graph TB
 - **반복적 도구 호출**: LLM이 도구 호출 생성 → 실행 → 결과 피드백 → 반복 (설정 가능한 `max_iterations`)
 - **스트리밍 응답**: 청크 IPC 전달 (`stream_chunk` / `stream_end`), Telegram `editMessageText` 점진적 편집
 - **컨텍스트 압축**: 15턴 초과 시 가장 오래된 10턴을 LLM으로 요약하여 1턴으로 압축
+- **엣지 메모리 최적화**: `MaintenanceLoop`가 유휴 시간을 적극 모니터링하여, 5분 비활성 시 `malloc_trim(0)` 및 `sqlite3_release_memory`를 호출해 PSS 메모리를 회수합니다.
 - **멀티 세션**: 세션별 시스템 프롬프트와 히스토리 격리를 통한 동시 에이전트 세션
 - **모델 폴백**: `fallback_backends` 순차 재시도 + rate-limit 백오프
 - **내장 도구**: `execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (Per-action 도구)
