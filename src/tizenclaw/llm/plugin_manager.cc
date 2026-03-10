@@ -110,29 +110,21 @@ int PluginManager::PkgmgrHandler(uid_t target_uid, int req_id,
 
 void PluginManager::HandleInstallEvent(const std::string& pkgid) {
   LOG(INFO) << "Install event for " << pkgid;
-  std::thread([this, pkgid]() { LoadPluginFromPkg(pkgid); }).detach();
+  LoadPluginFromPkg(pkgid);
 }
 
 void PluginManager::HandleUpdateEvent(const std::string& pkgid) {
   LOG(INFO) << "Update event for " << pkgid;
-  std::thread([this, pkgid]() {
-    UnloadPluginFromPkg(pkgid);
-    LoadPluginFromPkg(pkgid);
-  }).detach();
+  UnloadPluginFromPkg(pkgid);
+  LoadPluginFromPkg(pkgid);
 }
 
 void PluginManager::HandleUninstallEvent(const std::string& pkgid) {
   LOG(INFO) << "Uninstall event for " << pkgid;
-  std::thread([this, pkgid]() { UnloadPluginFromPkg(pkgid); }).detach();
+  UnloadPluginFromPkg(pkgid);
 }
 
 bool PluginManager::LoadPluginFromPkg(const std::string& pkgid) {
-  char* res_path = nullptr;
-  // Fallback to pkgmgrinfo_pkginfo_get_res_path or
-  // pkgmgrinfo_appinfo_get_res_path. In Tizen, there is
-  // pkgmgrinfo_pkginfo_get_pkginfo_string() available for generic properties.
-  // Actually, there is an explicit API: pkgmgrinfo_pkginfo_get_res_path in
-  // some profiles. Wait, let's try the common one.
   pkgmgrinfo_pkginfo_h pkginfo = nullptr;
   int ret = pkgmgrinfo_pkginfo_get_usr_pkginfo(
       pkgid.c_str(), getuid(), &pkginfo);
@@ -141,16 +133,28 @@ bool PluginManager::LoadPluginFromPkg(const std::string& pkgid) {
     return false;
   }
 
+  char* res_path = nullptr;
   ret = pkgmgrinfo_pkginfo_get_root_path(pkginfo, &res_path);
-  pkgmgrinfo_pkginfo_destroy_pkginfo(pkginfo);
-
   if (ret != PMINFO_R_OK || !res_path) {
     LOG(ERROR) << "Failed to get root path for " << pkgid;
+    pkgmgrinfo_pkginfo_destroy_pkginfo(pkginfo);
     return false;
   }
   
   std::string path(res_path);
   free(res_path);
+
+  char* so_value = nullptr;
+  ret = pkgmgrinfo_pkginfo_get_metadata_value(
+      pkginfo, "http://tizen.org/metadata/tizenclaw/llm-backend", &so_value);
+  if (ret != PMINFO_R_OK || !so_value) {
+    LOG(ERROR) << "Failed to find metadata llm-backend for " << pkgid;
+    pkgmgrinfo_pkginfo_destroy_pkginfo(pkginfo);
+    return false;
+  }
+  std::string so_local_path = so_value;
+  free(so_value);
+  pkgmgrinfo_pkginfo_destroy_pkginfo(pkginfo);
 
   // Usually plugins install their res/ to rootpath/res
   std::string config_path = path + "/res/plugin_llm_config.json";
@@ -159,27 +163,21 @@ bool PluginManager::LoadPluginFromPkg(const std::string& pkgid) {
     config_path = path + "/plugin_llm_config.json";
     if (!std::filesystem::exists(config_path)) {
       LOG(INFO) << "No plugin_llm_config.json found in " << pkgid
-                << ", skipping";
-      return false;
+                << ", continuing with empty config";
     }
   }
 
-  std::ifstream f(config_path);
   nlohmann::json config;
-  try {
-    f >> config;
-  } catch (const std::exception& e) {
-    LOG(ERROR) << "Failed to parse plugin_llm_config.json: " << e.what();
-    return false;
+  if (std::filesystem::exists(config_path)) {
+    std::ifstream f(config_path);
+    try {
+      f >> config;
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "Failed to parse plugin_llm_config.json: " << e.what();
+    }
   }
 
-  if (!config.contains("path")) {
-    LOG(ERROR) << "Config missing path";
-    return false;
-  }
-
-  std::string so_local_path = config["path"].get<std::string>();
-  std::string full_so_path = path + "/" + so_local_path;
+  std::string full_so_path = path + "/lib/" + so_local_path;
 
   auto backend =
       std::make_shared<PluginLlmBackend>(pkgid, full_so_path, config);

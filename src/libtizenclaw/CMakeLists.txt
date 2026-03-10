@@ -30,6 +30,7 @@ INSTALL(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/inc/
   FILES_MATCHING PATTERN "*.h"
 )
 
+
 configure_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/tizenclaw.pc.in
   ${CMAKE_CURRENT_BINARY_DIR}/tizenclaw.pc
