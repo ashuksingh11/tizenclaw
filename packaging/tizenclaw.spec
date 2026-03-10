@@ -42,9 +42,9 @@ Optional pre-built SQLite Knowledge RAG database for Tizen Docs.
 cp %{SOURCE1001} .
 
 %build
-export CFLAGS="$CFLAGS -Wall -Wno-shadow -Wno-unused-function"
-export CXXFLAGS="$CXXFLAGS -Wall"
-export LDFLAGS="$LDFLAGS -Wl,--as-needed"
+export CFLAGS="$CFLAGS -Wall -Wno-shadow -Wno-unused-function -Os -flto"
+export CXXFLAGS="$CXXFLAGS -Wall -Os -flto"
+export LDFLAGS="$LDFLAGS -Wl,--as-needed -flto"
 
 %cmake . -DTIZENCLAW_ARCH=%{_arch}
 %__make %{?_smp_mflags}

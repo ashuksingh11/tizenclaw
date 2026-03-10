@@ -7,6 +7,16 @@ SET(CMAKE_CXX_STANDARD 20)
 SET(CMAKE_CXX_STANDARD_REQUIRED ON)
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -fPIC")
 
+# Add IPO/LTO Support
+cmake_policy(SET CMP0069 NEW)
+include(CheckIPOSupported)
+check_ipo_supported(RESULT ipo_supported OUTPUT ipo_output)
+if(ipo_supported)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+else()
+    message(WARNING "IPO is not supported: ${ipo_output}")
+endif()
+
 # Suppress GCC ARM false-positive warnings on 32-bit ARM
 IF(CMAKE_SYSTEM_PROCESSOR MATCHES "^arm")
   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-psabi -Wno-stringop-overread -Wno-stringop-overflow")

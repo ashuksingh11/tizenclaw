@@ -41,7 +41,7 @@ TizenClaw is part of the **Claw** family of AI agent runtimes, each targeting di
 
 **What makes TizenClaw different:**
 
-- 🚀 **Native C++ Performance** — Lower memory/CPU vs TypeScript/Node.js runtimes, optimal for embedded devices
+- 🚀 **Native C++ Performance** — Lower memory/CPU vs TypeScript/Node.js runtimes, ~812KB stripped native executable (armv7l), optimal for embedded devices
 - 🔒 **OCI Container Isolation** — crun-based seccomp + namespace, finer syscall control than app-level sandboxing
 - 📱 **Direct Tizen C-API** — ctypes wrappers for device hardware (battery, Wi-Fi, BT, display, volume, sensors, notifications, alarm, app management)
 - 🎯 **Tizen Action Framework** — Native integration with per-action LLM tools, MD schema caching, event-driven updates

@@ -782,7 +782,7 @@ timeline
 - [x] System prompt loads MD content from both tool directories
 - [x] Verified: LLM correctly recognizes all embedded + action tools
 
-## Phase 19: Edge Optimization & Tunneling (In Progress)
+## Phase 19: Edge Optimization & Tunneling (Done)
 
 > **Goal**: Optimize for constrained devices and enable secure remote access
 > **Ref**: ZeroClaw — <5MB RAM, Rust binary · OpenClaw — Tailscale Serve/Funnel
@@ -809,9 +809,9 @@ timeline
 | **Plan** | Profile RSS, reduce allocations, lazy-init heavy subsystems |
 
 **Done When:**
-- [ ] RSS profiling baseline documented
-- [ ] Lazy initialization for unused channels/backends
-- [ ] Idle RSS reduced by ≥30%
+- [x] RSS profiling baseline documented
+- [x] Lazy initialization for unused channels/backends
+- [x] Idle RSS reduced by ≥30%
 
 ---
 
@@ -823,9 +823,9 @@ timeline
 | **Plan** | Enable LTO, strip symbols, remove unused code paths |
 
 **Done When:**
-- [ ] LTO enabled in release CMake profile
-- [ ] Binary size reduced by ≥20%
-- [ ] Symbols stripped in RPM package
+- [x] LTO enabled in release CMake profile
+- [x] Binary size reduced by ≥20%
+- [x] Symbols stripped in RPM package
 
 ---
 
