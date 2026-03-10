@@ -20,6 +20,7 @@
 
 #include <pkgmgr-info.h>
 #include <fstream>
+#include <thread>
 
 namespace tizenclaw {
 
@@ -109,18 +110,20 @@ int PluginManager::PkgmgrHandler(uid_t target_uid, int req_id,
 
 void PluginManager::HandleInstallEvent(const std::string& pkgid) {
   LOG(INFO) << "Install event for " << pkgid;
-  LoadPluginFromPkg(pkgid);
+  std::thread([this, pkgid]() { LoadPluginFromPkg(pkgid); }).detach();
 }
 
 void PluginManager::HandleUpdateEvent(const std::string& pkgid) {
   LOG(INFO) << "Update event for " << pkgid;
-  UnloadPluginFromPkg(pkgid);
-  LoadPluginFromPkg(pkgid);
+  std::thread([this, pkgid]() {
+    UnloadPluginFromPkg(pkgid);
+    LoadPluginFromPkg(pkgid);
+  }).detach();
 }
 
 void PluginManager::HandleUninstallEvent(const std::string& pkgid) {
   LOG(INFO) << "Uninstall event for " << pkgid;
-  UnloadPluginFromPkg(pkgid);
+  std::thread([this, pkgid]() { UnloadPluginFromPkg(pkgid); }).detach();
 }
 
 bool PluginManager::LoadPluginFromPkg(const std::string& pkgid) {
@@ -194,18 +197,27 @@ bool PluginManager::LoadPluginFromPkg(const std::string& pkgid) {
 }
 
 void PluginManager::UnloadPluginFromPkg(const std::string& pkgid) {
-  std::lock_guard<std::mutex> lock(llm_backends_mutex_);
-  
-  auto it = std::remove_if(
-      llm_backends_.begin(), llm_backends_.end(),
-      [&pkgid](const std::shared_ptr<PluginLlmBackend>& b) {
-                             return b->GetPkgId() == pkgid;
-                           });
-  if (it != llm_backends_.end()) {
-    for (auto i = it; i != llm_backends_.end(); ++i) {
-      (*i)->Shutdown();
+  std::vector<std::shared_ptr<PluginLlmBackend>> to_shutdown;
+  {
+    std::lock_guard<std::mutex> lock(llm_backends_mutex_);
+    
+    auto it = std::remove_if(
+        llm_backends_.begin(), llm_backends_.end(),
+        [&pkgid](const std::shared_ptr<PluginLlmBackend>& b) {
+                               return b->GetPkgId() == pkgid;
+                             });
+    if (it != llm_backends_.end()) {
+      to_shutdown.insert(to_shutdown.end(), std::make_move_iterator(it),
+                         std::make_move_iterator(llm_backends_.end()));
+      llm_backends_.erase(it, llm_backends_.end());
     }
-    llm_backends_.erase(it, llm_backends_.end());
+  }
+
+  for (auto& backend : to_shutdown) {
+    backend->Shutdown();
+  }
+  
+  if (!to_shutdown.empty()) {
     LOG(INFO) << "Unloaded plugin(s) for pkg " << pkgid;
   }
 }
