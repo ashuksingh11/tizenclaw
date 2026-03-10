@@ -309,7 +309,8 @@ Built-in tools (implemented in AgentCore directly):
 | 15 | Advanced Features | RAG (SQLite embeddings), Web Dashboard, Voice (TTS/STT) | ✅ |
 | 16 | Operational Excellence | Admin authentication, config editor, branding | ✅ |
 | 17 | Multi-Agent Orchestration | Supervisor agent, skill pipelines, A2A protocol | ✅ |
-| 18 | Production Readiness | Health metrics, OTA updates (18.3 CDP pending) | 🟡 |
+| 18 | Production Readiness | Health metrics, OTA updates, Action Framework | ✅ |
+| 19 | Edge & Tunneling | ngrok integration, memory trim, binary optimization | ✅ |
 
 ---
 
@@ -333,14 +334,11 @@ Built-in tools (implemented in AgentCore directly):
 
 ### 5.2 Remaining Gaps
 
-Most gaps identified in the original analysis have been resolved through Phases 6-18. Remaining gaps:
+Most gaps identified in the original analysis have been resolved through Phases 6-19. Remaining gaps:
 
 | Area | Reference Project | TizenClaw Status | Priority |
 |------|---------|-----------------|:--------:|
 | **RAG scalability** | OpenClaw: sqlite-vec + ANN | Brute-force cosine similarity | 🟡 Medium |
-| **Browser control** | OpenClaw: CDP Chrome | ❌ Not implemented (Phase 18.3) | 🟡 Medium |
-| **Tunnel support** | OpenClaw/ZeroClaw: Tailscale/ngrok | ❌ Not implemented (Phase 19.1) | 🔴 High |
-| **Resource optimization** | ZeroClaw: <5MB RAM | Not profiled/optimized (Phase 19.2-3) | 🔴 High |
 | **Skill registry** | OpenClaw: ClawHub | Manual copy/inotify (Phase 20) | 🟢 Low |
 | **Channel count** | OpenClaw: 22+ / ZeroClaw: 17 | 7 channels | 🟢 Low |
 
@@ -379,7 +377,6 @@ Most gaps identified in the original analysis have been resolved through Phases 
 | Skill output parsing | Raw stdout JSON | JSON schema validation |
 | Error recovery | In-flight request loss on crash | Request journaling |
 | Log aggregation | Local Markdown files | Remote syslog forwarding |
-| Resource profiling | No RSS/binary size tracking | Lazy-init, LTO, strip (Phase 19) |
 | Skill versioning | No version metadata | Manifest v2 standard (Phase 20) |
 
 ---
