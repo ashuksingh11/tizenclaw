@@ -72,7 +72,7 @@ The build process generates two primary RPM packages:
 1. **`tizenclaw`**: The core AI daemon, Action Framework bridge, and built-in skills.
 2. **`tizenclaw-rag`**: A pre-built SQLite vector database containing Tizen Native C-API documentation for on-device RAG (Retrieval-Augmented Generation). **This is highly recommended** for accurate skill generation.
 
-#### On-Device Dashboard (tizenclaw-webview)
+#### On-Device Dashboard ([tizenclaw-webview](https://github.com/hjhun/tizenclaw-webview))
 TizenClaw also includes a companion Tizen web app (`tizenclaw-webview`) that provides direct on-device access to the Web Admin Dashboard. 
 If installed, you can launch the dashboard directly on the device screen:
 
