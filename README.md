@@ -55,7 +55,7 @@ TizenClaw is part of the **Claw** family of AI agent runtimes, each targeting di
 
 ## Quick Start
 
-The recommended way to build and deploy TizenClaw is using the included `deploy.sh` script:
+The recommended way to build and deploy TizenClaw is using the included `deploy.sh` script. This script automatically handles building the core daemon, the RAG knowledge base, and deploying them to your connected device.
 
 ```bash
 # Automated build + deploy to device
@@ -63,8 +63,27 @@ The recommended way to build and deploy TizenClaw is using the included `deploy.
 
 # To build and deploy with the secure tunnel dependency (ngrok):
 ./deploy.sh --with-ngrok
+```
 
-# Access dashboard once deployed
+Once deployed, the `deploy.sh` script will output the URL to access the Web Dashboard.
+
+#### What gets installed?
+The build process generates two primary RPM packages:
+1. **`tizenclaw`**: The core AI daemon, Action Framework bridge, and built-in skills.
+2. **`tizenclaw-rag`**: A pre-built SQLite vector database containing Tizen Native C-API documentation for on-device RAG (Retrieval-Augmented Generation). **This is highly recommended** for accurate skill generation.
+
+#### On-Device Dashboard (tizenclaw-webview)
+TizenClaw also includes a companion Tizen web app (`tizenclaw-webview`) that provides direct on-device access to the Web Admin Dashboard. 
+If installed, you can launch the dashboard directly on the device screen:
+
+```bash
+# Launch the dashboard UI on the device
+sdb shell app_control --uri http://localhost:9090
+```
+
+Alternatively, access it from your development machine:
+```bash
+# Access dashboard from host
 open http://<device-ip>:9090
 ```
 
@@ -243,6 +262,7 @@ The build system automatically selects the correct rootfs image from `data/img/<
 RPM output:
 ```
 ~/GBS-ROOT/local/repos/tizen/<arch>/RPMS/tizenclaw-1.0.0-1.<arch>.rpm
+~/GBS-ROOT/local/repos/tizen/<arch>/RPMS/tizenclaw-rag-1.0.0-1.<arch>.rpm
 ```
 
 Unit tests are automatically executed during the build via `%check`.
