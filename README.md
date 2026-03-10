@@ -33,7 +33,7 @@ TizenClaw is part of the **Claw** family of AI agent runtimes, each targeting di
 |---|:---:|:---:|:---:|:---:|
 | **Language** | C++20 | TypeScript | TypeScript | Rust |
 | **Target** | Tizen embedded | Cloud / Desktop | Container hosts | Edge hardware |
-| **Binary** | ~15MB RPM | Node.js runtime | Node.js runtime | ~8.8MB single binary |
+| **Binary** | ~812KB binary | Node.js runtime | Node.js runtime | ~8.8MB single binary |
 | **Channels** | 7 | 22+ | 5 | 17 |
 | **LLM Backends** | 5 | 4+ | 1 (Claude) | 5+ |
 | **Sandboxing** | OCI (crun) | Docker | Docker | Docker |
