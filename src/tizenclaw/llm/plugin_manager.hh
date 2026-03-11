@@ -39,7 +39,7 @@ class PluginManager : public PkgmgrClient::IListener {
   void Shutdown();
 
   // Get currently loaded plugin backends
-  std::vector<std::shared_ptr<PluginLlmBackend>> GetLlmBackends();
+  std::vector<std::shared_ptr<PluginLlmBackend>> GetLlmBackends() const;
 
   using ChangeCallback = std::function<void()>;
   void SetChangeCallback(ChangeCallback cb) { change_callback_ = cb; }
@@ -64,7 +64,7 @@ class PluginManager : public PkgmgrClient::IListener {
   std::mutex map_mutex_;
   std::map<std::string, std::shared_ptr<PkgmgrEventArgs>> package_events_;
 
-  std::mutex llm_backends_mutex_;
+  mutable std::mutex llm_backends_mutex_;
   std::vector<std::shared_ptr<PluginLlmBackend>> llm_backends_;
   ChangeCallback change_callback_;
 };

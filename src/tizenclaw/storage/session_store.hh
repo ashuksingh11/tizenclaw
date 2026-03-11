@@ -95,7 +95,7 @@ class SessionStore {
                      int completion_tokens);
 
   // Load token usage for a session
-  [[nodiscard]] TokenUsageSummary LoadTokenUsage(const std::string& session_id);
+  [[nodiscard]] TokenUsageSummary LoadTokenUsage(const std::string& session_id) const;
 
   // Load daily aggregate usage
   [[nodiscard]] DailyUsageSummary LoadDailyUsage(const std::string& date) const;

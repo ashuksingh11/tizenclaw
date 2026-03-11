@@ -74,7 +74,7 @@ void PluginManager::Shutdown() {
   llm_backends_.clear();
 }
 
-std::vector<std::shared_ptr<PluginLlmBackend>> PluginManager::GetLlmBackends() {
+std::vector<std::shared_ptr<PluginLlmBackend>> PluginManager::GetLlmBackends() const {
   std::lock_guard<std::mutex> lock(llm_backends_mutex_);
   return llm_backends_;
 }

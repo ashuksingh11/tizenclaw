@@ -35,7 +35,18 @@ When implementing TizenClaw in this repository, the Agent (AI) must **strictly**
   - `std::ranges`: Prioritize range-based algorithms.
   - `using enum`: Apply for repeated enumeration use within scope.
 
-## 2. CMake and Build Support
+## 2. Clean Code & Effective C++ Principles
+- **Effective C++ (Scott Meyers)**:
+  - **Item 3/16**: Proactively use `const`. All getter methods and any function not modifying class state MUST be marked `const`. Variables whose values never change should be `const`.
+  - **Item 20**: Prefer pass-by-reference-to-const for complex objects (`const std::string&`, `const std::vector&`) over pass-by-value.
+  - **Item 22**: Declare data members `private`. Never expose class variables publicly without a clear reason.
+  - **Modern Item 15**: Use `constexpr` proactively for simple constants to allow compile-time evaluation.
+- **Clean Code (Robert C. Martin)**:
+  - **Meaningful Names**: Don't use magic numbers. Name your variables and functions clearly to express intent.
+  - **Early Returns (Guard Clauses)**: Never deeply nest your conditional logic (3+ levels deep). Instead, invert the `if` and return/continue/break early to reduce indentations.
+  - **Do One Thing**: Break huge functions into smaller, private helper methods. A function should ideally fit on a single screen without needing to scroll endlessly.
+
+## 3. CMake and Build Support
 - Written targeting the Tizen GBS (Gerrit Build System) environment, `gbs build` must always succeed via CMake.
 - When adding new C++ source files, you must update the `SOURCES` list in `CMakeLists.txt`.
 

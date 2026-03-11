@@ -71,7 +71,7 @@ class AgentCore {
   void SetHealthMonitor(HealthMonitor* monitor) { health_monitor_ = monitor; }
 
   // Access session store (for IPC usage queries)
-  SessionStore& GetSessionStore() { return session_store_; }
+  const SessionStore& GetSessionStore() const { return session_store_; }
 
   // Reload skill declarations (thread-safe)
   // Called by SkillWatcher on manifest changes

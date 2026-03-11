@@ -655,37 +655,31 @@ bool AgentCore::SwitchToBestBackend(bool is_reload) {
       }
     }
 
-    if (new_backend->Initialize(backend_config)) {
-      if (backend_ && backend_->GetName() != bname) {
-        backend_->Shutdown();
-      }
-      backend_ = new_backend;
-      LOG(INFO) << (is_reload ? "ReloadBackend" : "AgentCore")
-                << " selected backend: " << bname
-                << " (priority: " << cand.priority << ")";
-
-      if (is_reload) {
-        AuditLogger::Instance().Log(
-            AuditLogger::MakeEvent(AuditEventType::kConfigChange, "",
-                                   {{"backend", backend_->GetName()}}));
-      }
-
-      // Populate fallback_names_ with the remaining candidates
-      fallback_names_.clear();
-      for (size_t j = i + 1; j < candidates.size(); ++j) {
-        if (std::find(fallback_names_.begin(), fallback_names_.end(),
-                      candidates[j].name) == fallback_names_.end()) {
-          fallback_names_.push_back(candidates[j].name);
-        }
-      }
-      if (!fallback_names_.empty()) {
-        LOG(INFO) << "Fallback backends queues: " << fallback_names_.size();
-      }
-
-      return true;
-    } else {
-      LOG(WARNING) << "Failed to initialize backend candidate: " << bname;
+    if (!new_backend->Initialize(backend_config)) {
+      continue;
     }
+
+    backend_ = std::move(new_backend);
+
+    if (is_reload) {
+      AuditLogger::Instance().Log(AuditLogger::MakeEvent(
+          AuditEventType::kConfigChange, "",
+          {{"backend", backend_->GetName()}}));
+    }
+
+    // Populate fallback_names_ with the remaining candidates
+    fallback_names_.clear();
+    for (size_t j = i + 1; j < candidates.size(); ++j) {
+      if (std::find(fallback_names_.begin(), fallback_names_.end(),
+                    candidates[j].name) == fallback_names_.end()) {
+        fallback_names_.push_back(candidates[j].name);
+      }
+    }
+    if (!fallback_names_.empty()) {
+      LOG(INFO) << "Fallback backends queues: " << fallback_names_.size();
+    }
+
+    return true;
   }
 
   LOG(ERROR) << "Failed to initialize ANY backend from candidates list!";

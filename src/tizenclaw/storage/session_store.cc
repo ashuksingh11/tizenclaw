@@ -856,7 +856,7 @@ void SessionStore::LogTokenUsage(const std::string& session_id,
   AtomicWrite(monthly_path, mmd.str());
 }
 
-TokenUsageSummary SessionStore::LoadTokenUsage(const std::string& session_id) {
+TokenUsageSummary SessionStore::LoadTokenUsage(const std::string& session_id) const {
   TokenUsageSummary summary;
 
   std::string usage_path = FindSessionFile(GetUsageDir(), session_id);
