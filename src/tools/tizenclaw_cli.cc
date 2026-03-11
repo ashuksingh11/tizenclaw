@@ -24,13 +24,13 @@
  *   tizenclaw-cli   (interactive mode)
  */
 
-#include "tizenclaw.h"
-
+#include <future>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <vector>
-#include <future>
-#include <mutex>
+
+#include "tizenclaw.h"
 
 namespace {
 
@@ -39,16 +39,18 @@ struct RequestContext {
   std::string response;
 };
 
-void OnResponseReady(const char* session_id, const char* response, void* user_data) {
-  (void)session_id; // Unused in single-shot CLI
+void OnResponseReady(const char* session_id, const char* response,
+                     void* user_data) {
+  (void)session_id;  // Unused in single-shot CLI
   auto* ctx = static_cast<RequestContext*>(user_data);
   if (ctx) {
     ctx->promise.set_value(response ? response : "");
   }
 }
 
-void OnStreamChunk(const char* session_id, const char* chunk, bool is_done, void* user_data) {
-  (void)session_id; // Unused
+void OnStreamChunk(const char* session_id, const char* chunk, bool is_done,
+                   void* user_data) {
+  (void)session_id;  // Unused
   auto* ctx = static_cast<RequestContext*>(user_data);
   if (!ctx) return;
 
@@ -66,24 +68,32 @@ void OnStreamChunk(const char* session_id, const char* chunk, bool is_done, void
   }
 }
 
-void OnErrorCallback(const char* session_id, int error_code, const char* error_message, void* user_data) {
-  (void)session_id; // Unused
+void OnErrorCallback(const char* session_id, int error_code,
+                     const char* error_message, void* user_data) {
+  (void)session_id;  // Unused
   auto* ctx = static_cast<RequestContext*>(user_data);
   if (!ctx) return;
 
-  std::cerr << "\n[Error " << error_code << "] " << (error_message ? error_message : "Unknown error") << "\n";
+  std::cerr << "\n[Error " << error_code << "] "
+            << (error_message ? error_message : "Unknown error") << "\n";
   ctx->promise.set_value("");
 }
 
-std::string SendRequestThroughCAPI(tizenclaw_client_h client, const std::string& session_id, const std::string& prompt, bool stream) {
+std::string SendRequestThroughCAPI(tizenclaw_client_h client,
+                                   const std::string& session_id,
+                                   const std::string& prompt, bool stream) {
   RequestContext ctx;
   auto future = ctx.promise.get_future();
 
   int ret;
   if (stream) {
-    ret = tizenclaw_client_send_request_stream(client, session_id.c_str(), prompt.c_str(), OnStreamChunk, OnErrorCallback, &ctx);
+    ret = tizenclaw_client_send_request_stream(client, session_id.c_str(),
+                                               prompt.c_str(), OnStreamChunk,
+                                               OnErrorCallback, &ctx);
   } else {
-    ret = tizenclaw_client_send_request(client, session_id.c_str(), prompt.c_str(), OnResponseReady, OnErrorCallback, &ctx);
+    ret = tizenclaw_client_send_request(client, session_id.c_str(),
+                                        prompt.c_str(), OnResponseReady,
+                                        OnErrorCallback, &ctx);
   }
 
   if (ret != TIZENCLAW_ERROR_NONE) {
@@ -139,7 +149,8 @@ int main(int argc, char* argv[]) {
 
   // Single-shot mode
   if (!prompt.empty()) {
-    std::string resp = SendRequestThroughCAPI(client, session_id, prompt, stream);
+    std::string resp =
+        SendRequestThroughCAPI(client, session_id, prompt, stream);
     if (!stream && !resp.empty()) {
       std::cout << resp << "\n";
     }

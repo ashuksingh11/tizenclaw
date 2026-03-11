@@ -15,42 +15,37 @@
  */
 #include "audit_logger.hh"
 
+#include <sys/stat.h>
+
 #include <chrono>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
-#include <sys/stat.h>
 
 #include "../../common/logging.hh"
 
 namespace tizenclaw {
 
-AuditLogger::AuditLogger()
-    : log_dir_(
-          "/opt/usr/share/tizenclaw/audit") {
-}
+AuditLogger::AuditLogger() : log_dir_("/opt/usr/share/tizenclaw/audit") {}
 
 AuditLogger& AuditLogger::Instance() {
   static AuditLogger instance;
   return instance;
 }
 
-void AuditLogger::SetLogDir(
-    const std::string& dir) {
+void AuditLogger::SetLogDir(const std::string& dir) {
   std::lock_guard<std::mutex> lock(mutex_);
   log_dir_ = dir;
 }
 
-void AuditLogger::Log(
-    const AuditEvent& event) {
+void AuditLogger::Log(const AuditEvent& event) {
   std::lock_guard<std::mutex> lock(mutex_);
 
   EnsureDir(log_dir_);
 
   std::string date = GetDateStr();
-  std::string path =
-      log_dir_ + "/" + date + ".md";
+  std::string path = log_dir_ + "/" + date + ".md";
 
   RotateIfNeeded(path);
 
@@ -59,16 +54,13 @@ void AuditLogger::Log(
   bool needs_header = true;
   {
     std::ifstream check(path);
-    needs_header = !check.good() ||
-        check.peek() == std::ifstream::traits_type
-            ::eof();
+    needs_header =
+        !check.good() || check.peek() == std::ifstream::traits_type ::eof();
   }
 
-  std::ofstream f(
-      path, std::ios::app);
+  std::ofstream f(path, std::ios::app);
   if (!f.is_open()) {
-    LOG(ERROR) << "Cannot open audit log: "
-               << path;
+    LOG(ERROR) << "Cannot open audit log: " << path;
     return;
   }
 
@@ -78,29 +70,22 @@ void AuditLogger::Log(
       << "type: audit_log\n"
       << "---\n\n"
       << "## Audit Events\n\n"
-      << "| Time | Type | Session "
-      << "| Details |\n"
-      << "|------|------|--------- "
-      << "|---------|\n";
+      << "| Time | Type | Session " << "| Details |\n"
+      << "|------|------|--------- " << "|---------|\n";
   }
 
   f << EventToRow(event) << "\n";
   f.close();
 
   // Also log via dlog for backward compat
-  LOG(INFO) << "[AUDIT] "
-            << TypeToString(event.type)
-            << " session="
-            << (event.session_id.empty()
-                    ? "-" : event.session_id)
-            << " " << DetailsToString(
-                          event.details);
+  LOG(INFO) << "[AUDIT] " << TypeToString(event.type) << " session="
+            << (event.session_id.empty() ? "-" : event.session_id) << " "
+            << DetailsToString(event.details);
 }
 
-AuditEvent AuditLogger::MakeEvent(
-    AuditEventType type,
-    const std::string& session_id,
-    const nlohmann::json& details) {
+AuditEvent AuditLogger::MakeEvent(AuditEventType type,
+                                  const std::string& session_id,
+                                  const nlohmann::json& details) {
   AuditEvent event;
   event.timestamp = GetTimestamp();
   event.type = type;
@@ -109,12 +94,10 @@ AuditEvent AuditLogger::MakeEvent(
   return event;
 }
 
-std::vector<AuditEvent> AuditLogger::Query(
-    const std::string& date,
-    const std::string& type_filter) {
+std::vector<AuditEvent> AuditLogger::Query(const std::string& date,
+                                           const std::string& type_filter) {
   std::vector<AuditEvent> results;
-  std::string path =
-      log_dir_ + "/" + date + ".md";
+  std::string path = log_dir_ + "/" + date + ".md";
 
   std::ifstream f(path);
   if (!f.is_open()) return results;
@@ -124,15 +107,13 @@ std::vector<AuditEvent> AuditLogger::Query(
 
   while (std::getline(f, line)) {
     // Skip headers and separator
-    if (line.find("| Time") != std::string::npos
-        || line.find("|---") !=
-               std::string::npos) {
+    if (line.find("| Time") != std::string::npos ||
+        line.find("|---") != std::string::npos) {
       in_table = true;
       continue;
     }
 
-    if (!in_table || line.empty()
-        || line[0] != '|') {
+    if (!in_table || line.empty() || line[0] != '|') {
       continue;
     }
 
@@ -145,8 +126,7 @@ std::vector<AuditEvent> AuditLogger::Query(
       size_t start = col.find_first_not_of(' ');
       size_t end = col.find_last_not_of(' ');
       if (start != std::string::npos) {
-        cols.push_back(
-            col.substr(start, end - start + 1));
+        cols.push_back(col.substr(start, end - start + 1));
       }
     }
 
@@ -158,8 +138,7 @@ std::vector<AuditEvent> AuditLogger::Query(
       event.details = {{"raw", cols[3]}};
 
       // Apply type filter
-      if (!type_filter.empty() &&
-          cols[1] != type_filter) {
+      if (!type_filter.empty() && cols[1] != type_filter) {
         continue;
       }
 
@@ -170,20 +149,14 @@ std::vector<AuditEvent> AuditLogger::Query(
   return results;
 }
 
-std::string AuditLogger::EventToRow(
-    const AuditEvent& event) const {
-  std::string session =
-      event.session_id.empty()
-          ? "-" : event.session_id;
+std::string AuditLogger::EventToRow(const AuditEvent& event) const {
+  std::string session = event.session_id.empty() ? "-" : event.session_id;
 
-  return "| " + GetTimeStr() + " | "
-      + TypeToString(event.type) + " | "
-      + session + " | "
-      + DetailsToString(event.details) + " |";
+  return "| " + GetTimeStr() + " | " + TypeToString(event.type) + " | " +
+         session + " | " + DetailsToString(event.details) + " |";
 }
 
-std::string AuditLogger::DetailsToString(
-    const nlohmann::json& details) const {
+std::string AuditLogger::DetailsToString(const nlohmann::json& details) const {
   if (details.is_null() || details.empty()) {
     return "-";
   }
@@ -202,8 +175,7 @@ std::string AuditLogger::DetailsToString(
   return result;
 }
 
-std::string AuditLogger::TypeToString(
-    AuditEventType type) {
+std::string AuditLogger::TypeToString(AuditEventType type) {
   switch (type) {
     case AuditEventType::kIpcConnect:
       return "ipc_connect";
@@ -224,8 +196,7 @@ std::string AuditLogger::TypeToString(
 
 std::string AuditLogger::GetTimeStr() {
   auto now = std::chrono::system_clock::now();
-  auto t = std::chrono::system_clock::to_time_t(
-      now);
+  auto t = std::chrono::system_clock::to_time_t(now);
   struct tm tm_buf;
   localtime_r(&t, &tm_buf);
   std::ostringstream oss;
@@ -235,8 +206,7 @@ std::string AuditLogger::GetTimeStr() {
 
 std::string AuditLogger::GetDateStr() {
   auto now = std::chrono::system_clock::now();
-  auto t = std::chrono::system_clock::to_time_t(
-      now);
+  auto t = std::chrono::system_clock::to_time_t(now);
   struct tm tm_buf;
   localtime_r(&t, &tm_buf);
   std::ostringstream oss;
@@ -246,44 +216,36 @@ std::string AuditLogger::GetDateStr() {
 
 std::string AuditLogger::GetTimestamp() {
   auto now = std::chrono::system_clock::now();
-  auto t = std::chrono::system_clock::to_time_t(
-      now);
+  auto t = std::chrono::system_clock::to_time_t(now);
   struct tm tm_buf;
   localtime_r(&t, &tm_buf);
   std::ostringstream oss;
-  oss << std::put_time(
-      &tm_buf, "%Y-%m-%dT%H:%M:%S");
+  oss << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%S");
   return oss.str();
 }
 
-void AuditLogger::EnsureDir(
-    const std::string& dir) {
+void AuditLogger::EnsureDir(const std::string& dir) {
   struct stat st;
   if (stat(dir.c_str(), &st) != 0) {
     mkdir(dir.c_str(), 0755);
   }
 }
 
-void AuditLogger::RotateIfNeeded(
-    const std::string& path) {
+void AuditLogger::RotateIfNeeded(const std::string& path) {
   struct stat st;
   if (stat(path.c_str(), &st) != 0) return;
 
-  if (static_cast<size_t>(st.st_size)
-      < kMaxFileSize) {
+  if (static_cast<size_t>(st.st_size) < kMaxFileSize) {
     return;
   }
 
   // Rotate: file.md → file.1.md, etc.
   for (int i = kMaxRotation - 1; i >= 1; --i) {
-    std::string from = path + "."
-        + std::to_string(i);
-    std::string to = path + "."
-        + std::to_string(i + 1);
+    std::string from = path + "." + std::to_string(i);
+    std::string to = path + "." + std::to_string(i + 1);
     rename(from.c_str(), to.c_str());
   }
-  rename(path.c_str(),
-         (path + ".1").c_str());
+  rename(path.c_str(), (path + ".1").c_str());
 }
 
 }  // namespace tizenclaw

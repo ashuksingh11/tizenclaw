@@ -14,17 +14,19 @@
  * limitations under the License.
  */
 #include "tunnel_manager.hh"
-#include "../../common/logging.hh"
-#include "http_client.hh"
 
-#include <fstream>
-#include <unistd.h>
 #include <fcntl.h>
-#include <csignal>
 #include <spawn.h>
 #include <sys/wait.h>
-#include <vector>
+#include <unistd.h>
+
 #include <chrono>
+#include <csignal>
+#include <fstream>
+#include <vector>
+
+#include "../../common/logging.hh"
+#include "http_client.hh"
 
 extern char** environ;
 
@@ -35,9 +37,7 @@ TunnelManager::TunnelManager(const std::string& config_file)
   LoadConfig();
 }
 
-TunnelManager::~TunnelManager() {
-  StopTunnel();
-}
+TunnelManager::~TunnelManager() { StopTunnel(); }
 
 bool TunnelManager::LoadConfig() {
   std::ifstream f(config_file_);
@@ -69,22 +69,21 @@ bool TunnelManager::StartTunnel(int local_port) {
 
   if (provider_ != "ngrok") {
     if (provider_ != "none") {
-      LOG(WARNING) << "Tunnel provider '" << provider_ << "' is not supported yet.";
+      LOG(WARNING) << "Tunnel provider '" << provider_
+                   << "' is not supported yet.";
     }
     return false;
   }
 
   if (auth_token_.empty()) {
-    LOG(WARNING) << "ngrok auth token is empty. Tunnel may not start or have rate limits.";
+    LOG(WARNING) << "ngrok auth token is empty. Tunnel may not start or have "
+                    "rate limits.";
   }
 
   // Build the ngrok command
   // ngrok http <port> --authtoken <token> --log=stdout
-  std::vector<std::string> args = {
-    "ngrok",
-    "http",
-    std::to_string(local_port_)
-  };
+  std::vector<std::string> args = {"ngrok", "http",
+                                   std::to_string(local_port_)};
 
   if (!auth_token_.empty()) {
     args.push_back("--authtoken");
@@ -110,12 +109,15 @@ bool TunnelManager::StartTunnel(int local_port) {
   posix_spawn_file_actions_init(&file_actions);
 
   // Redirect stdout/stderr to /dev/null to avoid spamming the daemon log
-  posix_spawn_file_actions_addopen(&file_actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
-  posix_spawn_file_actions_addopen(&file_actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+  posix_spawn_file_actions_addopen(&file_actions, STDOUT_FILENO, "/dev/null",
+                                   O_WRONLY, 0);
+  posix_spawn_file_actions_addopen(&file_actions, STDERR_FILENO, "/dev/null",
+                                   O_WRONLY, 0);
 
   LOG(INFO) << "Starting ngrok tunnel for port " << local_port_;
 
-  if (posix_spawnp(&pid, "ngrok", &file_actions, nullptr, c_args.data(), environ) != 0) {
+  if (posix_spawnp(&pid, "ngrok", &file_actions, nullptr, c_args.data(),
+                   environ) != 0) {
     LOG(ERROR) << "posix_spawnp failed to spawn ngrok daemon. Is it in PATH?";
     posix_spawn_file_actions_destroy(&file_actions);
     return false;
@@ -130,7 +132,7 @@ bool TunnelManager::StartTunnel(int local_port) {
   if (monitor_thread_.joinable()) {
     monitor_thread_.join();
   }
-  
+
   monitor_thread_ = std::thread(&TunnelManager::MonitorTunnel, this);
 
   return true;
@@ -142,13 +144,13 @@ void TunnelManager::StopTunnel() {
   }
 
   LOG(INFO) << "Stopping ngrok tunnel (PID: " << tunnel_pid_ << ")";
-  
+
   // Terminate the process gently
   kill(tunnel_pid_, SIGTERM);
-  
+
   // Wait shortly
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
-  
+
   // Check if it's still alive, if so forcefully kill it
   int status;
   if (waitpid(tunnel_pid_, &status, WNOHANG) == 0) {
@@ -165,17 +167,15 @@ void TunnelManager::StopTunnel() {
   }
 }
 
-std::string TunnelManager::GetPublicUrl() const {
-  return public_url_;
-}
+std::string TunnelManager::GetPublicUrl() const { return public_url_; }
 
 void TunnelManager::MonitorTunnel() {
   int retries = 0;
   std::string api_url = "http://127.0.0.1:4040/api/tunnels";
 
-  while (running_ && retries < 15) { // Try for 15 seconds
+  while (running_ && retries < 15) {  // Try for 15 seconds
     std::this_thread::sleep_for(std::chrono::seconds(1));
-    
+
     // Check if process died
     int status;
     if (tunnel_pid_ > 0 && waitpid(tunnel_pid_, &status, WNOHANG) > 0) {
@@ -189,7 +189,8 @@ void TunnelManager::MonitorTunnel() {
     if (resp.success && resp.status_code == 200 && !resp.body.empty()) {
       try {
         auto j = nlohmann::json::parse(resp.body);
-        if (j.contains("tunnels") && j["tunnels"].is_array() && j["tunnels"].size() > 0) {
+        if (j.contains("tunnels") && j["tunnels"].is_array() &&
+            j["tunnels"].size() > 0) {
           public_url_ = j["tunnels"][0].value("public_url", "");
           if (!public_url_.empty()) {
             LOG(INFO) << "========================================";
@@ -197,7 +198,7 @@ void TunnelManager::MonitorTunnel() {
             LOG(INFO) << "Public URL: " << public_url_;
             LOG(INFO) << "Routing to: localhost:" << local_port_;
             LOG(INFO) << "========================================";
-            return; // Success
+            return;  // Success
           }
         }
       } catch (...) {
@@ -208,7 +209,8 @@ void TunnelManager::MonitorTunnel() {
   }
 
   if (running_) {
-    LOG(WARNING) << "ngrok tunnel started but could not retrieve public URL from local API after 15s.";
+    LOG(WARNING) << "ngrok tunnel started but could not retrieve public URL "
+                    "from local API after 15s.";
   }
 }
 

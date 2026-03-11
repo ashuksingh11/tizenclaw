@@ -13,28 +13,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef FILE_LOG_BACKEND_HH_
-#define FILE_LOG_BACKEND_HH_
-
-#include "logging.hh"
+#ifndef FILE_LOG_BACKEND_HH
+#define FILE_LOG_BACKEND_HH
 
 #include <memory>
 #include <mutex>
 #include <string>
 
-namespace tizenclaw {
+#include "logging.hh"
 
+namespace tizenclaw {
 
 namespace utils {
 
 class FileLogBackend : public ILogBackend {
-public:
+ public:
   FileLogBackend(std::string file_path, int rotation_size, int max_rotation);
 
   void WriteLog(LogLevel level, const std::string& tag,
                 const std::string& logstr) override;
 
-private:
+ private:
   bool Rotate();
   int GetFileSize(const std::string& file_path);
   std::string GetTimeStamp();
@@ -42,15 +41,15 @@ private:
   std::string GetLogDir();
   std::string GetFileName();
 
-private:
+ private:
   std::string file_path_;
   int rotation_size_;
   int max_rotation_;
   std::mutex mutex_;
 };
 
-} // namespace utils
+}  // namespace utils
 
-} // namespace tizenclaw
+}  // namespace tizenclaw
 
-#endif // FILE_LOG_BACKEND_HH_
+#endif  // FILE_LOG_BACKEND_HH

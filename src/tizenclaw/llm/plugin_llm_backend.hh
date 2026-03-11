@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef TIZENCLAW_PLUGIN_LLM_BACKEND_HH_
-#define TIZENCLAW_PLUGIN_LLM_BACKEND_HH_
+#ifndef PLUGIN_LLM_BACKEND_HH
+#define PLUGIN_LLM_BACKEND_HH
 
 #include <json.hpp>
 #include <string>
@@ -63,4 +63,4 @@ class PluginLlmBackend : public LlmBackend {
 
 }  // namespace tizenclaw
 
-#endif  // TIZENCLAW_PLUGIN_LLM_BACKEND_HH_
+#endif  // PLUGIN_LLM_BACKEND_HH

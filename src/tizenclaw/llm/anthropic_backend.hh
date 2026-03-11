@@ -13,41 +13,33 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_LLM_ANTHROPIC_BACKEND_HH_
-#define TIZENCLAW_LLM_ANTHROPIC_BACKEND_HH_
+#ifndef ANTHROPIC_BACKEND_HH
+#define ANTHROPIC_BACKEND_HH
 
 #include "llm_backend.hh"
 
 namespace tizenclaw {
 
-
 class AnthropicBackend : public LlmBackend {
-public:
-  [[nodiscard]] bool Initialize(
-      const nlohmann::json& config) override;
+ public:
+  [[nodiscard]] bool Initialize(const nlohmann::json& config) override;
   [[nodiscard]] LlmResponse Chat(
       const std::vector<LlmMessage>& messages,
       const std::vector<LlmToolDecl>& tools,
       std::function<void(const std::string&)> on_chunk = nullptr,
-      const std::string& system_prompt = "")
-      override;
-  [[nodiscard]] std::string GetName()
-      const override {
-    return "anthropic";
-  }
+      const std::string& system_prompt = "") override;
+  [[nodiscard]] std::string GetName() const override { return "anthropic"; }
 
-private:
+ private:
   nlohmann::json ToAnthropicMessages(
       const std::vector<LlmMessage>& messages) const;
-  nlohmann::json ToAnthropicTools(
-      const std::vector<LlmToolDecl>& tools) const;
-  LlmResponse ParseAnthropicResponse(
-      const std::string& body) const;
+  nlohmann::json ToAnthropicTools(const std::vector<LlmToolDecl>& tools) const;
+  LlmResponse ParseAnthropicResponse(const std::string& body) const;
 
   std::string api_key_;
   std::string model_;
 };
 
-} // namespace tizenclaw
+}  // namespace tizenclaw
 
-#endif // TIZENCLAW_LLM_ANTHROPIC_BACKEND_HH_
+#endif  // ANTHROPIC_BACKEND_HH

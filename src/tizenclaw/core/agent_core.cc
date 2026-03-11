@@ -13,80 +13,81 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <curl/curl.h>
-#include <fstream>
-#include <iostream>
-#include <chrono>
-#include <filesystem>
-#include <sstream>
-#include <sys/stat.h>
-#include <thread>
-#include <climits>
-#include <algorithm>
-
 #include "agent_core.hh"
-#include "../infra/http_client.hh"
-#include "../storage/audit_logger.hh"
-#include "../infra/key_store.hh"
-#include "../llm/plugin_manager.hh"
-#include "../llm/plugin_llm_backend.hh"
-#include "../../common/logging.hh"
 
+#include <curl/curl.h>
 #include <malloc.h>
 #include <sqlite3.h>
+#include <sys/stat.h>
+
+#include <algorithm>
+#include <chrono>
+#include <climits>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <thread>
+
+#include "../../common/logging.hh"
+#include "../infra/http_client.hh"
+#include "../infra/key_store.hh"
+#include "../llm/plugin_llm_backend.hh"
+#include "../llm/plugin_manager.hh"
+#include "../storage/audit_logger.hh"
 
 namespace tizenclaw {
 
-
 AgentCore::AgentCore()
-    : container_(
-          std::make_unique<ContainerEngine>()),
-      initialized_(false) {
-}
+    : container_(std::make_unique<ContainerEngine>()), initialized_(false) {}
 
 AgentCore::~AgentCore() {
   Shutdown();
   stop_maintenance_ = true;
   if (maintenance_thread_.joinable()) {
-      maintenance_thread_.join();
+    maintenance_thread_.join();
   }
 }
 
 void AgentCore::UpdateActivityTime() {
-    auto now = std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-    last_activity_time_.store(now);
+  auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                 std::chrono::system_clock::now().time_since_epoch())
+                 .count();
+  last_activity_time_.store(now);
 }
 
 void AgentCore::MaintenanceLoop() {
-    LOG(INFO) << "AgentCore Maintenance thread started";
-    // 5 minutes idle timeout
-    const int64_t IDLE_TIMEOUT_SEC = 300; 
-    
-    while (!stop_maintenance_) {
-        std::this_thread::sleep_for(std::chrono::seconds(10));
-        
-        auto now = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
-        auto last_active = last_activity_time_.load();
-        
-        if (last_active > 0 && (now - last_active) > IDLE_TIMEOUT_SEC) {
-            LOG(INFO) << "System idle for " << (now - last_active) << "s, flushing memory...";
-            
-            // Release SQLite memory cache
-            int bytes_freed = sqlite3_release_memory(1024 * 1024 * 50); // Try to free 50MB
-            if (bytes_freed > 0) {
-                LOG(INFO) << "sqlite3_release_memory freed " << bytes_freed << " bytes";
-            }
-            
-            // Return heap memory to OS
-            int trim_result = malloc_trim(0);
-            LOG(INFO) << "malloc_trim(0) returned " << trim_result;
-            
-            // Reset activity time so we don't spam flush
-            last_activity_time_.store(0);
-        }
+  LOG(INFO) << "AgentCore Maintenance thread started";
+  // 5 minutes idle timeout
+  const int64_t IDLE_TIMEOUT_SEC = 300;
+
+  while (!stop_maintenance_) {
+    std::this_thread::sleep_for(std::chrono::seconds(10));
+
+    auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                   std::chrono::system_clock::now().time_since_epoch())
+                   .count();
+    auto last_active = last_activity_time_.load();
+
+    if (last_active > 0 && (now - last_active) > IDLE_TIMEOUT_SEC) {
+      LOG(INFO) << "System idle for " << (now - last_active)
+                << "s, flushing memory...";
+
+      // Release SQLite memory cache
+      int bytes_freed =
+          sqlite3_release_memory(1024 * 1024 * 50);  // Try to free 50MB
+      if (bytes_freed > 0) {
+        LOG(INFO) << "sqlite3_release_memory freed " << bytes_freed << " bytes";
+      }
+
+      // Return heap memory to OS
+      int trim_result = malloc_trim(0);
+      LOG(INFO) << "malloc_trim(0) returned " << trim_result;
+
+      // Reset activity time so we don't spam flush
+      last_activity_time_.store(0);
     }
+  }
 }
 
 bool AgentCore::Initialize() {
@@ -101,10 +102,9 @@ bool AgentCore::Initialize() {
 
   // Load LLM config
   const char* env_path = std::getenv("TIZENCLAW_CONFIG_PATH");
-  std::string config_path = env_path
-      ? env_path
-      : "/opt/usr/share/tizenclaw/"
-        "config/llm_config.json";
+  std::string config_path = env_path ? env_path
+                                     : "/opt/usr/share/tizenclaw/"
+                                       "config/llm_config.json";
   nlohmann::json llm_config;
 
   std::ifstream cf(config_path);
@@ -130,13 +130,8 @@ bool AgentCore::Initialize() {
     }
     llm_config = {
         {"active_backend", "gemini"},
-        {"backends", {
-            {"gemini", {
-                {"api_key", api_key},
-                {"model", "gemini-2.5-flash"}
-            }}
-        }}
-    };
+        {"backends",
+         {{"gemini", {{"api_key", api_key}, {"model", "gemini-2.5-flash"}}}}}};
   }
 
   llm_config_ = llm_config;
@@ -145,9 +140,7 @@ bool AgentCore::Initialize() {
   // Load system prompt
   system_prompt_ = LoadSystemPrompt(llm_config);
   if (!system_prompt_.empty()) {
-    LOG(INFO) << "System prompt loaded ("
-              << system_prompt_.size()
-              << " chars)";
+    LOG(INFO) << "System prompt loaded (" << system_prompt_.size() << " chars)";
   } else {
     LOG(WARNING) << "No system prompt configured";
   }
@@ -166,90 +159,64 @@ bool AgentCore::Initialize() {
   }
 
   // Audit: config loaded
-  AuditLogger::Instance().Log(
-      AuditLogger::MakeEvent(
-          AuditEventType::kConfigChange,
-          "",
-          {{"backend",
-            backend_->GetName()}}));
+  AuditLogger::Instance().Log(AuditLogger::MakeEvent(
+      AuditEventType::kConfigChange, "", {{"backend", backend_->GetName()}}));
 
   LOG(INFO) << "AgentCore initialized with "
-            << "backend: "
-            << backend_->GetName();
+            << "backend: " << backend_->GetName();
   initialized_ = true;
 
   // React to plugin install/uninstall
-  PluginManager::GetInstance().SetChangeCallback([this]() {
-    ReloadBackend();
-  });
+  PluginManager::GetInstance().SetChangeCallback([this]() { ReloadBackend(); });
 
   // Initialize embedding store for RAG
-  std::string rag_db =
-      std::string(APP_DATA_DIR) +
-      "/rag/embeddings.db";
+  std::string rag_db = std::string(APP_DATA_DIR) + "/rag/embeddings.db";
   // Ensure rag directory exists
-  std::string rag_dir =
-      std::string(APP_DATA_DIR) + "/rag";
+  std::string rag_dir = std::string(APP_DATA_DIR) + "/rag";
   mkdir(rag_dir.c_str(), 0755);
   if (embedding_store_.Initialize(rag_db)) {
     LOG(INFO) << "RAG embedding store ready";
 
     // Attach pre-built knowledge DB if available
     std::string knowledge_db =
-        std::string(APP_DATA_DIR) +
-        "/rag/tizen_knowledge.db";
-    if (embedding_store_.AttachKnowledgeDB(
-            knowledge_db)) {
+        std::string(APP_DATA_DIR) + "/rag/tizen_knowledge.db";
+    if (embedding_store_.AttachKnowledgeDB(knowledge_db)) {
       LOG(INFO) << "Tizen knowledge DB loaded";
     }
   } else {
-    LOG(WARNING) << "RAG embedding store "
-                 << "init failed (non-fatal)";
+    LOG(WARNING) << "RAG embedding store " << "init failed (non-fatal)";
   }
 
   // Initialize supervisor engine
-  supervisor_ =
-      std::make_unique<SupervisorEngine>(this);
+  supervisor_ = std::make_unique<SupervisorEngine>(this);
   std::string roles_path =
-      std::string(APP_DATA_DIR) +
-      "/config/agent_roles.json";
+      std::string(APP_DATA_DIR) + "/config/agent_roles.json";
   if (supervisor_->LoadRoles(roles_path)) {
-    LOG(INFO)
-        << "Supervisor engine ready with "
-        << supervisor_->GetRoleNames().size()
-        << " roles";
+    LOG(INFO) << "Supervisor engine ready with "
+              << supervisor_->GetRoleNames().size() << " roles";
   } else {
-    LOG(WARNING)
-        << "Supervisor engine: no roles "
-        << "configured (non-fatal)";
+    LOG(WARNING) << "Supervisor engine: no roles " << "configured (non-fatal)";
   }
 
   // Initialize pipeline executor
-  pipeline_executor_ =
-      std::make_unique<PipelineExecutor>(this);
+  pipeline_executor_ = std::make_unique<PipelineExecutor>(this);
   pipeline_executor_->LoadPipelines();
   LOG(INFO) << "Pipeline executor ready";
 
 #ifdef TIZEN_ACTION_ENABLED
   // Initialize Tizen Action Framework bridge
-  action_bridge_ =
-      std::make_unique<ActionBridge>();
+  action_bridge_ = std::make_unique<ActionBridge>();
   if (action_bridge_->Start()) {
     // Sync action schemas to MD files
     action_bridge_->SyncActionSchemas();
     // React to action install/uninstall/update
     action_bridge_->SetChangeCallback([this]() {
-      LOG(INFO)
-          << "Action schemas changed, "
-          << "reloading tools";
+      LOG(INFO) << "Action schemas changed, " << "reloading tools";
       cached_tools_loaded_.store(false);
     });
-    LOG(INFO)
-        << "Tizen Action bridge ready";
+    LOG(INFO) << "Tizen Action bridge ready";
   } else {
-    LOG(WARNING)
-        << "Tizen Action bridge init failed "
-        << "(non-fatal)";
+    LOG(WARNING) << "Tizen Action bridge init failed " << "(non-fatal)";
     action_bridge_.reset();
   }
 #endif
@@ -295,8 +262,7 @@ void AgentCore::Shutdown() {
 }
 
 std::string AgentCore::ProcessPrompt(
-    const std::string& session_id,
-    const std::string& prompt,
+    const std::string& session_id, const std::string& prompt,
     std::function<void(const std::string&)> on_chunk) {
   std::shared_ptr<LlmBackend> current_backend;
   {
@@ -342,67 +308,49 @@ std::string AgentCore::ProcessPrompt(
 
   int iterations = 0;
   std::string last_text;
-  int max_iter =
-      tool_policy_.GetMaxIterations();
+  int max_iter = tool_policy_.GetMaxIterations();
 
   // Reset idle tracking for this prompt
   tool_policy_.ResetIdleTracking(session_id);
 
   while (iterations < max_iter) {
     // Build session-specific system prompt
-    std::string full_prompt =
-        GetSessionPrompt(session_id, tools);
+    std::string full_prompt = GetSessionPrompt(session_id, tools);
 
     // Query LLM backend without holding lock
-    LlmResponse resp = current_backend->Chat(
-        local_history, tools, on_chunk,
-        full_prompt);
+    LlmResponse resp =
+        current_backend->Chat(local_history, tools, on_chunk, full_prompt);
 
     // Track LLM call in health metrics
-    if (health_monitor_)
-      health_monitor_->IncrementLlmCallCount();
+    if (health_monitor_) health_monitor_->IncrementLlmCallCount();
 
     if (!resp.success) {
-      LOG(ERROR) << "LLM error: "
-                 << resp.error_message;
+      LOG(ERROR) << "LLM error: " << resp.error_message;
 
       // Try fallback backends
-      resp = TryFallbackBackends(
-          local_history, tools, on_chunk,
-          full_prompt);
+      resp = TryFallbackBackends(local_history, tools, on_chunk, full_prompt);
 
       if (!resp.success) {
         // All backends failed — track error
-        if (health_monitor_)
-          health_monitor_->IncrementErrorCount();
+        if (health_monitor_) health_monitor_->IncrementErrorCount();
         // Rollback: remove the user message
         {
-          std::lock_guard<std::mutex> lock(
-              session_mutex_);
-          if (!sessions_[session_id]
-                   .empty()) {
-            sessions_[session_id]
-                .pop_back();
+          std::lock_guard<std::mutex> lock(session_mutex_);
+          if (!sessions_[session_id].empty()) {
+            sessions_[session_id].pop_back();
           }
         }
-        return "Error: "
-               + resp.error_message;
+        return "Error: " + resp.error_message;
       }
     }
 
     // Log token usage
     if (resp.total_tokens > 0) {
-      session_store_.LogTokenUsage(
-          session_id,
-          current_backend->GetName(),
-          resp.prompt_tokens,
-          resp.completion_tokens);
-      LOG(INFO) << "Tokens: prompt="
-                << resp.prompt_tokens
-                << " completion="
-                << resp.completion_tokens
-                << " total="
-                << resp.total_tokens;
+      session_store_.LogTokenUsage(session_id, current_backend->GetName(),
+                                   resp.prompt_tokens, resp.completion_tokens);
+      LOG(INFO) << "Tokens: prompt=" << resp.prompt_tokens
+                << " completion=" << resp.completion_tokens
+                << " total=" << resp.total_tokens;
     }
 
     if (!resp.HasToolCalls()) {
@@ -410,14 +358,13 @@ std::string AgentCore::ProcessPrompt(
       LlmMessage model_msg;
       model_msg.role = "assistant";
       model_msg.text = resp.text;
-      
+
       {
         std::lock_guard<std::mutex> lock(session_mutex_);
         sessions_[session_id].push_back(model_msg);
         TrimHistory(session_id);
-        
-        (void)session_store_.SaveSession(
-            session_id, sessions_[session_id]);
+
+        (void)session_store_.SaveSession(session_id, sessions_[session_id]);
       }
 
       LOG(INFO) << "Final response: " << resp.text;
@@ -431,7 +378,7 @@ std::string AgentCore::ProcessPrompt(
     assistant_msg.role = "assistant";
     assistant_msg.text = resp.text;
     assistant_msg.tool_calls = resp.tool_calls;
-    
+
     // Add to local history and global session
     local_history.push_back(assistant_msg);
     {
@@ -439,12 +386,8 @@ std::string AgentCore::ProcessPrompt(
       sessions_[session_id].push_back(assistant_msg);
     }
 
-    LOG(INFO)
-        << "Iteration "
-        << (iterations + 1)
-        << ": Executing "
-        << resp.tool_calls.size()
-        << " tools in parallel";
+    LOG(INFO) << "Iteration " << (iterations + 1) << ": Executing "
+              << resp.tool_calls.size() << " tools in parallel";
 
     // Execute multiple tools in parallel using std::async
     struct ToolExecResult {
@@ -454,115 +397,72 @@ std::string AgentCore::ProcessPrompt(
     };
     std::vector<std::future<ToolExecResult>> futures;
     for (auto& tc : resp.tool_calls) {
-      futures.push_back(std::async(
-          std::launch::async,
-          [this, tc, &session_id]() {
+      futures.push_back(std::async(std::launch::async, [this, tc,
+                                                        &session_id]() {
         ToolExecResult r;
         r.id = tc.id;
         r.name = tc.name;
 
         // Check tool execution policy
         std::string violation =
-            tool_policy_.CheckPolicy(
-                session_id, tc.name, tc.args);
+            tool_policy_.CheckPolicy(session_id, tc.name, tc.args);
         if (!violation.empty()) {
-          LOG(WARNING)
-              << "Tool blocked by policy: "
-              << tc.name << " - "
-              << violation;
-          r.output = "{\"error\": \""
-              + violation + "\"}";
-          AuditLogger::Instance().Log(
-              AuditLogger::MakeEvent(
-                  AuditEventType::kToolBlocked,
-                  session_id,
-                  {{"skill", tc.name},
-                   {"reason", violation}}));
+          LOG(WARNING) << "Tool blocked by policy: " << tc.name << " - "
+                       << violation;
+          r.output = "{\"error\": \"" + violation + "\"}";
+          AuditLogger::Instance().Log(AuditLogger::MakeEvent(
+              AuditEventType::kToolBlocked, session_id,
+              {{"skill", tc.name}, {"reason", violation}}));
           return r;
         }
 
-        auto start =
-            std::chrono::steady_clock::now();
+        auto start = std::chrono::steady_clock::now();
         if (tc.name == "execute_code") {
-          std::string code =
-              tc.args.value("code", "");
+          std::string code = tc.args.value("code", "");
           r.output = ExecuteCode(code);
         } else if (tc.name == "file_manager") {
-          std::string op =
-              tc.args.value("operation", "");
-          std::string path =
-              tc.args.value("path", "");
-          std::string content =
-              tc.args.value("content", "");
-          r.output = ExecuteFileOp(
-              op, path, content);
-        } else if (tc.name == "create_task" ||
-                   tc.name == "list_tasks" ||
+          std::string op = tc.args.value("operation", "");
+          std::string path = tc.args.value("path", "");
+          std::string content = tc.args.value("content", "");
+          r.output = ExecuteFileOp(op, path, content);
+        } else if (tc.name == "create_task" || tc.name == "list_tasks" ||
                    tc.name == "cancel_task") {
-          r.output = ExecuteTaskOp(
-              tc.name, tc.args);
-        } else if (
-            tc.name == "create_session" ||
-            tc.name == "list_sessions" ||
-            tc.name == "send_to_session") {
-          r.output = ExecuteSessionOp(
-              tc.name, tc.args,
-              session_id);
-        } else if (
-            tc.name == "manage_custom_skill") {
-          r.output = ExecuteCustomSkillOp(
-              tc.args);
-        } else if (
-            tc.name == "ingest_document" ||
-            tc.name == "search_knowledge") {
-          r.output = ExecuteRagOp(
-              tc.name, tc.args);
-        } else if (
-            tc.name == "run_supervisor" ||
-            tc.name == "list_agent_roles") {
-          r.output = ExecuteSupervisorOp(
-              tc.name, tc.args,
-              session_id);
-        } else if (
-            tc.name == "create_pipeline" ||
-            tc.name == "list_pipelines" ||
-            tc.name == "run_pipeline" ||
-            tc.name == "delete_pipeline") {
-          r.output = ExecutePipelineOp(
-              tc.name, tc.args,
-              session_id);
-        } else if (
-            tc.name == "execute_action" ||
-            tc.name.starts_with("action_")) {
-          r.output = ExecuteActionOp(
-              tc.name, tc.args);
+          r.output = ExecuteTaskOp(tc.name, tc.args);
+        } else if (tc.name == "create_session" || tc.name == "list_sessions" ||
+                   tc.name == "send_to_session") {
+          r.output = ExecuteSessionOp(tc.name, tc.args, session_id);
+        } else if (tc.name == "manage_custom_skill") {
+          r.output = ExecuteCustomSkillOp(tc.args);
+        } else if (tc.name == "ingest_document" ||
+                   tc.name == "search_knowledge") {
+          r.output = ExecuteRagOp(tc.name, tc.args);
+        } else if (tc.name == "run_supervisor" ||
+                   tc.name == "list_agent_roles") {
+          r.output = ExecuteSupervisorOp(tc.name, tc.args, session_id);
+        } else if (tc.name == "create_pipeline" ||
+                   tc.name == "list_pipelines" || tc.name == "run_pipeline" ||
+                   tc.name == "delete_pipeline") {
+          r.output = ExecutePipelineOp(tc.name, tc.args, session_id);
+        } else if (tc.name == "execute_action" ||
+                   tc.name.starts_with("action_")) {
+          r.output = ExecuteActionOp(tc.name, tc.args);
         } else {
-          r.output = ExecuteSkill(
-              tc.name, tc.args);
+          r.output = ExecuteSkill(tc.name, tc.args);
         }
-        auto elapsed =
-            std::chrono::duration_cast<
-                std::chrono::milliseconds>(
-                std::chrono::steady_clock::now()
-                - start).count();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now() - start)
+                           .count();
         // Log skill execution
         session_store_.LogSkillExecution(
             session_id, tc.name, tc.args,
-            r.output.substr(
-                0, std::min((size_t)200,
-                            r.output.size())),
+            r.output.substr(0, std::min((size_t)200, r.output.size())),
             static_cast<int>(elapsed));
-        AuditLogger::Instance().Log(
-            AuditLogger::MakeEvent(
-                AuditEventType::kToolExecution,
-                session_id,
-                {{"skill", tc.name},
-                 {"duration",
-                  std::to_string(elapsed)
-                      + "ms"}}));
+        AuditLogger::Instance().Log(AuditLogger::MakeEvent(
+            AuditEventType::kToolExecution, session_id,
+            {{"skill", tc.name},
+             {"duration", std::to_string(elapsed) + "ms"}}));
         // Track tool call in health metrics
-        if (health_monitor_)
-          health_monitor_->IncrementToolCallCount();
+        if (health_monitor_) health_monitor_->IncrementToolCallCount();
         return r;
       }));
     }
@@ -576,23 +476,19 @@ std::string AgentCore::ProcessPrompt(
       tool_msg.tool_name = result.name;
       tool_msg.tool_call_id = result.id;
       try {
-        tool_msg.tool_result =
-            nlohmann::json::parse(result.output);
+        tool_msg.tool_result = nlohmann::json::parse(result.output);
       } catch (...) {
-        tool_msg.tool_result =
-            {{"output", result.output}};
+        tool_msg.tool_result = {{"output", result.output}};
       }
-      
+
       tool_msgs.push_back(tool_msg);
       local_history.push_back(tool_msg);
     }
 
     {
       std::lock_guard<std::mutex> lock(session_mutex_);
-      sessions_[session_id].insert(
-          sessions_[session_id].end(),
-          tool_msgs.begin(),
-          tool_msgs.end());
+      sessions_[session_id].insert(sessions_[session_id].end(),
+                                   tool_msgs.begin(), tool_msgs.end());
       TrimHistory(session_id);
     }
 
@@ -605,11 +501,8 @@ std::string AgentCore::ProcessPrompt(
       }
       iter_sig << ";";
     }
-    if (tool_policy_.CheckIdleProgress(
-            session_id, iter_sig.str())) {
-      LOG(WARNING)
-          << "Idle loop detected in session: "
-          << session_id;
+    if (tool_policy_.CheckIdleProgress(session_id, iter_sig.str())) {
+      LOG(WARNING) << "Idle loop detected in session: " << session_id;
       std::string idle_msg =
           "I've been running the same tools "
           "without making progress. "
@@ -621,13 +514,9 @@ std::string AgentCore::ProcessPrompt(
       stop_msg.role = "assistant";
       stop_msg.text = idle_msg;
       {
-        std::lock_guard<std::mutex> lock(
-            session_mutex_);
-        sessions_[session_id].push_back(
-            stop_msg);
-        (void)session_store_.SaveSession(
-            session_id,
-            sessions_[session_id]);
+        std::lock_guard<std::mutex> lock(session_mutex_);
+        sessions_[session_id].push_back(stop_msg);
+        (void)session_store_.SaveSession(session_id, sessions_[session_id]);
       }
       return idle_msg;
     }
@@ -635,32 +524,24 @@ std::string AgentCore::ProcessPrompt(
     iterations++;
   }
 
-  LOG(WARNING)
-      << "Reached max tool iterations ("
-      << max_iter << ")";
+  LOG(WARNING) << "Reached max tool iterations (" << max_iter << ")";
 
   {
-    std::lock_guard<std::mutex> lock(
-        session_mutex_);
-    (void)session_store_.SaveSession(
-        session_id, sessions_[session_id]);
+    std::lock_guard<std::mutex> lock(session_mutex_);
+    (void)session_store_.SaveSession(session_id, sessions_[session_id]);
   }
 
-  return last_text.empty()
-      ? "Task partially completed "
-        "(reached iteration limit)."
-      : last_text;
+  return last_text.empty() ? "Task partially completed "
+                             "(reached iteration limit)."
+                           : last_text;
 }
 
-std::string AgentCore::ExecuteSkill(
-    const std::string& skill_name,
-    const nlohmann::json& args) {
+std::string AgentCore::ExecuteSkill(const std::string& skill_name,
+                                    const nlohmann::json& args) {
   LOG(INFO) << "Executing skill: " << skill_name;
 
   std::string arg_str = args.dump();
-  std::string response =
-      container_->ExecuteSkill(skill_name,
-                                arg_str);
+  std::string response = container_->ExecuteSkill(skill_name, arg_str);
 
   if (response.empty()) {
     LOG(ERROR) << "Skill execution failed";
@@ -671,13 +552,10 @@ std::string AgentCore::ExecuteSkill(
   return response;
 }
 
-std::string AgentCore::ExecuteCode(
-    const std::string& code) {
-  LOG(INFO) << "ExecuteCode: "
-            << code.size() << " chars";
+std::string AgentCore::ExecuteCode(const std::string& code) {
+  LOG(INFO) << "ExecuteCode: " << code.size() << " chars";
 
-  std::string response =
-      container_->ExecuteCode(code);
+  std::string response = container_->ExecuteCode(code);
 
   if (response.empty()) {
     LOG(ERROR) << "Code execution failed";
@@ -703,7 +581,7 @@ struct BackendCandidate {
 
 bool AgentCore::SwitchToBestBackend(bool is_reload) {
   std::string default_backend = llm_config_.value("active_backend", "openai");
-  
+
   std::vector<BackendCandidate> candidates;
   // 1. Add active backend with baseline priority 1
   candidates.push_back({default_backend, 1, nullptr});
@@ -713,9 +591,10 @@ bool AgentCore::SwitchToBestBackend(bool is_reload) {
     for (const auto& name_val : llm_config_["fallback_backends"]) {
       std::string fb = name_val.get<std::string>();
       if (fb == default_backend) continue;
-      
+
       int prio = 1;
-      if (llm_config_.contains("backends") && llm_config_["backends"].contains(fb)) {
+      if (llm_config_.contains("backends") &&
+          llm_config_["backends"].contains(fb)) {
         prio = llm_config_["backends"][fb].value("priority", 1);
       }
       candidates.push_back({fb, prio, nullptr});
@@ -731,25 +610,26 @@ bool AgentCore::SwitchToBestBackend(bool is_reload) {
   }
 
   // 4. Sort descending by priority
-  std::stable_sort(candidates.begin(), candidates.end(), 
-    [](const BackendCandidate& a, const BackendCandidate& b) {
-      return a.priority > b.priority;
-    });
+  std::stable_sort(candidates.begin(), candidates.end(),
+                   [](const BackendCandidate& a, const BackendCandidate& b) {
+                     return a.priority > b.priority;
+                   });
 
   // 5. Try to initialize the best backend
   std::lock_guard<std::mutex> lock(backend_mutex_);
-  
+
   for (size_t i = 0; i < candidates.size(); ++i) {
     auto& cand = candidates[i];
     std::string bname = cand.name;
-    
+
     std::shared_ptr<LlmBackend> new_backend = LlmBackendFactory::Create(bname);
     if (!new_backend) continue;
 
     nlohmann::json backend_config;
     if (cand.plugin) {
       backend_config = cand.plugin->GetConfig();
-    } else if (llm_config_.contains("backends") && llm_config_["backends"].contains(bname)) {
+    } else if (llm_config_.contains("backends") &&
+               llm_config_["backends"].contains(bname)) {
       backend_config = llm_config_["backends"][bname];
     }
 
@@ -777,30 +657,31 @@ bool AgentCore::SwitchToBestBackend(bool is_reload) {
 
     if (new_backend->Initialize(backend_config)) {
       if (backend_ && backend_->GetName() != bname) {
-         backend_->Shutdown();
+        backend_->Shutdown();
       }
       backend_ = new_backend;
-      LOG(INFO) << (is_reload ? "ReloadBackend" : "AgentCore") << " selected backend: " << bname << " (priority: " << cand.priority << ")";
+      LOG(INFO) << (is_reload ? "ReloadBackend" : "AgentCore")
+                << " selected backend: " << bname
+                << " (priority: " << cand.priority << ")";
 
       if (is_reload) {
         AuditLogger::Instance().Log(
-            AuditLogger::MakeEvent(
-                AuditEventType::kConfigChange,
-                "",
-                {{"backend", backend_->GetName()}}));
+            AuditLogger::MakeEvent(AuditEventType::kConfigChange, "",
+                                   {{"backend", backend_->GetName()}}));
       }
 
       // Populate fallback_names_ with the remaining candidates
       fallback_names_.clear();
       for (size_t j = i + 1; j < candidates.size(); ++j) {
-        if (std::find(fallback_names_.begin(), fallback_names_.end(), candidates[j].name) == fallback_names_.end()) {
-           fallback_names_.push_back(candidates[j].name);
+        if (std::find(fallback_names_.begin(), fallback_names_.end(),
+                      candidates[j].name) == fallback_names_.end()) {
+          fallback_names_.push_back(candidates[j].name);
         }
       }
       if (!fallback_names_.empty()) {
         LOG(INFO) << "Fallback backends queues: " << fallback_names_.size();
       }
-      
+
       return true;
     } else {
       LOG(WARNING) << "Failed to initialize backend candidate: " << bname;
@@ -811,16 +692,12 @@ bool AgentCore::SwitchToBestBackend(bool is_reload) {
   return false;
 }
 
-std::string AgentCore::ExecuteFileOp(
-    const std::string& operation,
-    const std::string& path,
-    const std::string& content) {
-  LOG(INFO) << "ExecuteFileOp: op=" << operation
-            << " path=" << path;
+std::string AgentCore::ExecuteFileOp(const std::string& operation,
+                                     const std::string& path,
+                                     const std::string& content) {
+  LOG(INFO) << "ExecuteFileOp: op=" << operation << " path=" << path;
 
-  std::string response =
-      container_->ExecuteFileOp(
-          operation, path, content);
+  std::string response = container_->ExecuteFileOp(operation, path, content);
 
   if (response.empty()) {
     LOG(ERROR) << "File operation failed";
@@ -831,36 +708,28 @@ std::string AgentCore::ExecuteFileOp(
   return response;
 }
 
-std::vector<LlmToolDecl>
-AgentCore::LoadSkillDeclarations() {
+std::vector<LlmToolDecl> AgentCore::LoadSkillDeclarations() {
   // Return cached declarations after first load
   if (cached_tools_loaded_.load()) {
-    std::lock_guard<std::mutex> lock(
-        tools_mutex_);
+    std::lock_guard<std::mutex> lock(tools_mutex_);
     return cached_tools_;
   }
 
-  std::lock_guard<std::mutex> lock(
-      tools_mutex_);
+  std::lock_guard<std::mutex> lock(tools_mutex_);
 
   namespace fs = std::filesystem;
 
   std::vector<LlmToolDecl> tools;
-  const std::string skills_dir =
-      "/opt/usr/share/tizenclaw/tools/skills";
+  const std::string skills_dir = "/opt/usr/share/tizenclaw/tools/skills";
 
   std::error_code ec;
-  if (!fs::is_directory(skills_dir, ec))
-    return tools;
+  if (!fs::is_directory(skills_dir, ec)) return tools;
 
-  for (const auto& entry :
-       fs::directory_iterator(skills_dir, ec)) {
+  for (const auto& entry : fs::directory_iterator(skills_dir, ec)) {
     if (!entry.is_directory()) continue;
-    auto dirname =
-        entry.path().filename().string();
+    auto dirname = entry.path().filename().string();
     if (dirname[0] == '.') continue;
-    std::string manifest_path =
-        entry.path() / "manifest.json";
+    std::string manifest_path = entry.path() / "manifest.json";
     std::ifstream mf(manifest_path);
     if (!mf.is_open()) continue;
 
@@ -869,20 +738,15 @@ AgentCore::LoadSkillDeclarations() {
       mf >> j;
       if (j.contains("parameters")) {
         LlmToolDecl t;
-        t.name =
-            j.value("name", dirname);
-        t.description =
-            j.value("description", "");
+        t.name = j.value("name", dirname);
+        t.description = j.value("description", "");
         t.parameters = j["parameters"];
         tools.push_back(t);
         // Load risk_level from manifest
-        tool_policy_.LoadManifestRiskLevel(
-            t.name, j);
+        tool_policy_.LoadManifestRiskLevel(t.name, j);
       }
     } catch (...) {
-      LOG(WARNING) << "Failed to parse "
-                   << "manifest: "
-                   << manifest_path;
+      LOG(WARNING) << "Failed to parse " << "manifest: " << manifest_path;
     }
   }
 
@@ -891,15 +755,11 @@ AgentCore::LoadSkillDeclarations() {
       "/opt/usr/share/tizenclaw/tools/"
       "custom_skills";
   if (fs::is_directory(custom_skills_dir, ec)) {
-    for (const auto& entry :
-         fs::directory_iterator(
-             custom_skills_dir, ec)) {
+    for (const auto& entry : fs::directory_iterator(custom_skills_dir, ec)) {
       if (!entry.is_directory()) continue;
-      auto dirname =
-          entry.path().filename().string();
+      auto dirname = entry.path().filename().string();
       if (dirname[0] == '.') continue;
-      std::string manifest_path =
-          entry.path() / "manifest.json";
+      std::string manifest_path = entry.path() / "manifest.json";
       std::ifstream mf(manifest_path);
       if (!mf.is_open()) continue;
 
@@ -908,20 +768,15 @@ AgentCore::LoadSkillDeclarations() {
         mf >> j;
         if (j.contains("parameters")) {
           LlmToolDecl t;
-          t.name =
-              j.value("name", dirname);
-          t.description =
-              j.value("description", "");
+          t.name = j.value("name", dirname);
+          t.description = j.value("description", "");
           t.parameters = j["parameters"];
           tools.push_back(t);
-          tool_policy_.LoadManifestRiskLevel(
-              t.name, j);
+          tool_policy_.LoadManifestRiskLevel(t.name, j);
         }
       } catch (...) {
-        LOG(WARNING)
-            << "Failed to parse custom "
-            << "manifest: "
-            << manifest_path;
+        LOG(WARNING) << "Failed to parse custom "
+                     << "manifest: " << manifest_path;
       }
     }
   }
@@ -937,18 +792,14 @@ AgentCore::LoadSkillDeclarations() {
       "Available: ctypes for Tizen C-API, os, "
       "subprocess, json, sys. "
       "Libraries at /tizen_libs or system path.";
-  code_tool.parameters = {
-      {"type", "object"},
-      {"properties", {
-          {"code", {
-              {"type", "string"},
-              {"description",
-               "Python code to execute on the "
-               "Tizen device"}
-          }}
-      }},
-      {"required", nlohmann::json::array({"code"})}
-  };
+  code_tool.parameters = {{"type", "object"},
+                          {"properties",
+                           {{"code",
+                             {{"type", "string"},
+                              {"description",
+                               "Python code to execute on the "
+                               "Tizen device"}}}}},
+                          {"required", nlohmann::json::array({"code"})}};
   tools.push_back(code_tool);
 
   // Built-in tool: file_manager
@@ -963,30 +814,21 @@ AgentCore::LoadSkillDeclarations() {
       "skill scripts, /data/ for persistent data.";
   file_tool.parameters = {
       {"type", "object"},
-      {"properties", {
-          {"operation", {
-              {"type", "string"},
-              {"enum", nlohmann::json::array(
-                  {"write_file", "read_file",
-                   "delete_file", "list_dir"})},
-              {"description",
-               "The file operation to perform"}
-          }},
-          {"path", {
-              {"type", "string"},
-              {"description",
-               "File or directory path. Must start "
-               "with /tools/skills/ or /data/"}
-          }},
-          {"content", {
-              {"type", "string"},
-              {"description",
-               "File content (for write_file only)"}
-          }}
-      }},
-      {"required", nlohmann::json::array(
-          {"operation", "path"})}
-  };
+      {"properties",
+       {{"operation",
+         {{"type", "string"},
+          {"enum", nlohmann::json::array(
+                       {"write_file", "read_file", "delete_file", "list_dir"})},
+          {"description", "The file operation to perform"}}},
+        {"path",
+         {{"type", "string"},
+          {"description",
+           "File or directory path. Must start "
+           "with /tools/skills/ or /data/"}}},
+        {"content",
+         {{"type", "string"},
+          {"description", "File content (for write_file only)"}}}}},
+      {"required", nlohmann::json::array({"operation", "path"})}};
   tools.push_back(file_tool);
 
   // Built-in tool: create_task
@@ -1003,26 +845,21 @@ AgentCore::LoadSkillDeclarations() {
       "at the scheduled time.";
   create_task_tool.parameters = {
       {"type", "object"},
-      {"properties", {
-          {"schedule", {
-              {"type", "string"},
-              {"description",
-               "Schedule expression, e.g. "
-               "'daily 09:00', "
-               "'interval 30m', "
-               "'once 2026-03-10 14:00', "
-               "'weekly mon 09:00'"}
-          }},
-          {"prompt", {
-              {"type", "string"},
-              {"description",
-               "The prompt to execute at "
-               "the scheduled time"}
-          }}
-      }},
-      {"required", nlohmann::json::array(
-          {"schedule", "prompt"})}
-  };
+      {"properties",
+       {{"schedule",
+         {{"type", "string"},
+          {"description",
+           "Schedule expression, e.g. "
+           "'daily 09:00', "
+           "'interval 30m', "
+           "'once 2026-03-10 14:00', "
+           "'weekly mon 09:00'"}}},
+        {"prompt",
+         {{"type", "string"},
+          {"description",
+           "The prompt to execute at "
+           "the scheduled time"}}}}},
+      {"required", nlohmann::json::array({"schedule", "prompt"})}};
   tools.push_back(create_task_tool);
 
   // Built-in tool: list_tasks
@@ -1033,34 +870,23 @@ AgentCore::LoadSkillDeclarations() {
       "filter by session_id.";
   list_tasks_tool.parameters = {
       {"type", "object"},
-      {"properties", {
-          {"session_id", {
-              {"type", "string"},
-              {"description",
-               "Optional session ID to filter"}
-          }}
-      }},
-      {"required", nlohmann::json::array()}
-  };
+      {"properties",
+       {{"session_id",
+         {{"type", "string"},
+          {"description", "Optional session ID to filter"}}}}},
+      {"required", nlohmann::json::array()}};
   tools.push_back(list_tasks_tool);
 
   // Built-in tool: cancel_task
   LlmToolDecl cancel_task_tool;
   cancel_task_tool.name = "cancel_task";
-  cancel_task_tool.description =
-      "Cancel a scheduled task by its ID.";
+  cancel_task_tool.description = "Cancel a scheduled task by its ID.";
   cancel_task_tool.parameters = {
       {"type", "object"},
-      {"properties", {
-          {"task_id", {
-              {"type", "string"},
-              {"description",
-               "The task ID to cancel"}
-          }}
-      }},
-      {"required", nlohmann::json::array(
-          {"task_id"})}
-  };
+      {"properties",
+       {{"task_id",
+         {{"type", "string"}, {"description", "The task ID to cancel"}}}}},
+      {"required", nlohmann::json::array({"task_id"})}};
   tools.push_back(cancel_task_tool);
 
   // Built-in tool: create_session
@@ -1074,24 +900,19 @@ AgentCore::LoadSkillDeclarations() {
       "tasks to a purpose-built agent.";
   create_session_tool.parameters = {
       {"type", "object"},
-      {"properties", {
-          {"name", {
-              {"type", "string"},
-              {"description",
-               "Short name for the session "
-               "(used as session_id prefix)"}
-          }},
-          {"system_prompt", {
-              {"type", "string"},
-              {"description",
-               "Custom system prompt that "
-               "defines the agent's role and "
-               "behavior"}
-          }}
-      }},
-      {"required", nlohmann::json::array(
-          {"name", "system_prompt"})}
-  };
+      {"properties",
+       {{"name",
+         {{"type", "string"},
+          {"description",
+           "Short name for the session "
+           "(used as session_id prefix)"}}},
+        {"system_prompt",
+         {{"type", "string"},
+          {"description",
+           "Custom system prompt that "
+           "defines the agent's role and "
+           "behavior"}}}}},
+      {"required", nlohmann::json::array({"name", "system_prompt"})}};
   tools.push_back(create_session_tool);
 
   // Built-in tool: list_sessions
@@ -1100,11 +921,9 @@ AgentCore::LoadSkillDeclarations() {
   list_sessions_tool.description =
       "List all active agent sessions with "
       "their names and system prompts.";
-  list_sessions_tool.parameters = {
-      {"type", "object"},
-      {"properties", nlohmann::json::object()},
-      {"required", nlohmann::json::array()}
-  };
+  list_sessions_tool.parameters = {{"type", "object"},
+                                   {"properties", nlohmann::json::object()},
+                                   {"required", nlohmann::json::array()}};
   tools.push_back(list_sessions_tool);
 
   // Built-in tool: send_to_session
@@ -1119,29 +938,23 @@ AgentCore::LoadSkillDeclarations() {
       "communication and task delegation.";
   send_to_session_tool.parameters = {
       {"type", "object"},
-      {"properties", {
-          {"target_session", {
-              {"type", "string"},
-              {"description",
-               "The session_id of the target "
-               "agent to send the message to"}
-          }},
-          {"message", {
-              {"type", "string"},
-              {"description",
-               "The message to send to the "
-               "target agent session"}
-          }}
-      }},
-      {"required", nlohmann::json::array(
-          {"target_session", "message"})}
-  };
+      {"properties",
+       {{"target_session",
+         {{"type", "string"},
+          {"description",
+           "The session_id of the target "
+           "agent to send the message to"}}},
+        {"message",
+         {{"type", "string"},
+          {"description",
+           "The message to send to the "
+           "target agent session"}}}}},
+      {"required", nlohmann::json::array({"target_session", "message"})}};
   tools.push_back(send_to_session_tool);
 
   // Built-in tool: manage_custom_skill
   LlmToolDecl custom_skill_tool;
-  custom_skill_tool.name =
-      "manage_custom_skill";
+  custom_skill_tool.name = "manage_custom_skill";
   custom_skill_tool.description =
       "Create, update, delete, or list custom "
       "Python skills at runtime. Custom skills "
@@ -1155,51 +968,38 @@ AgentCore::LoadSkillDeclarations() {
       "CLAW_ARGS env for parameters.";
   custom_skill_tool.parameters = {
       {"type", "object"},
-      {"properties", {
-          {"operation", {
-              {"type", "string"},
-              {"enum", nlohmann::json::array(
-                  {"create", "update",
-                   "delete", "list"})},
-              {"description",
-               "Operation to perform"}
-          }},
-          {"skill_name", {
-              {"type", "string"},
-              {"description",
-               "Name of the custom skill "
-               "(alphanumeric + underscore)"}
-          }},
-          {"description", {
-              {"type", "string"},
-              {"description",
-               "Description of what the "
-               "skill does"}
-          }},
-          {"parameters_schema", {
-              {"type", "object"},
-              {"description",
-               "JSON Schema for skill "
-               "parameters (type, properties, "
-               "required)"}
-          }},
-          {"python_code", {
-              {"type", "string"},
-              {"description",
-               "Complete Python source code "
-               "for the skill"}
-          }},
-          {"risk_level", {
-              {"type", "string"},
-              {"enum", nlohmann::json::array(
-                  {"low", "medium", "high"})},
-              {"description",
-               "Risk level (default: low)"}
-          }}
-      }},
-      {"required", nlohmann::json::array(
-          {"operation"})}
-  };
+      {"properties",
+       {{"operation",
+         {{"type", "string"},
+          {"enum",
+           nlohmann::json::array({"create", "update", "delete", "list"})},
+          {"description", "Operation to perform"}}},
+        {"skill_name",
+         {{"type", "string"},
+          {"description",
+           "Name of the custom skill "
+           "(alphanumeric + underscore)"}}},
+        {"description",
+         {{"type", "string"},
+          {"description",
+           "Description of what the "
+           "skill does"}}},
+        {"parameters_schema",
+         {{"type", "object"},
+          {"description",
+           "JSON Schema for skill "
+           "parameters (type, properties, "
+           "required)"}}},
+        {"python_code",
+         {{"type", "string"},
+          {"description",
+           "Complete Python source code "
+           "for the skill"}}},
+        {"risk_level",
+         {{"type", "string"},
+          {"enum", nlohmann::json::array({"low", "medium", "high"})},
+          {"description", "Risk level (default: low)"}}}}},
+      {"required", nlohmann::json::array({"operation"})}};
   tools.push_back(custom_skill_tool);
 
   // Built-in tool: ingest_document (RAG)
@@ -1212,22 +1012,16 @@ AgentCore::LoadSkillDeclarations() {
       "stored in the local vector database.";
   ingest_tool.parameters = {
       {"type", "object"},
-      {"properties", {
-          {"source", {
-              {"type", "string"},
-              {"description",
-               "Source identifier (filename, "
-               "URL, or label)"}
-          }},
-          {"text", {
-              {"type", "string"},
-              {"description",
-               "The document text to ingest"}
-          }}
-      }},
-      {"required", nlohmann::json::array(
-          {"source", "text"})}
-  };
+      {"properties",
+       {{"source",
+         {{"type", "string"},
+          {"description",
+           "Source identifier (filename, "
+           "URL, or label)"}}},
+        {"text",
+         {{"type", "string"},
+          {"description", "The document text to ingest"}}}}},
+      {"required", nlohmann::json::array({"source", "text"})}};
   tools.push_back(ingest_tool);
 
   // Built-in tool: search_knowledge (RAG)
@@ -1239,21 +1033,12 @@ AgentCore::LoadSkillDeclarations() {
       "most relevant document chunks.";
   search_tool.parameters = {
       {"type", "object"},
-      {"properties", {
-          {"query", {
-              {"type", "string"},
-              {"description",
-               "The search query"}
-          }},
-          {"top_k", {
-              {"type", "integer"},
-              {"description",
-               "Number of results (default 5)"}
-          }}
-      }},
-      {"required", nlohmann::json::array(
-          {"query"})}
-  };
+      {"properties",
+       {{"query", {{"type", "string"}, {"description", "The search query"}}},
+        {"top_k",
+         {{"type", "integer"},
+          {"description", "Number of results (default 5)"}}}}},
+      {"required", nlohmann::json::array({"query"})}};
   tools.push_back(search_tool);
 
   // Built-in tool: run_supervisor
@@ -1270,26 +1055,20 @@ AgentCore::LoadSkillDeclarations() {
       "configuration.";
   run_supervisor_tool.parameters = {
       {"type", "object"},
-      {"properties", {
-          {"goal", {
-              {"type", "string"},
-              {"description",
-               "The high-level goal to "
-               "decompose and delegate"}
-          }},
-          {"strategy", {
-              {"type", "string"},
-              {"enum", nlohmann::json::array(
-                  {"sequential", "parallel"})},
-              {"description",
-               "Execution strategy: "
-               "'sequential' (default) or "
-               "'parallel'"}
-          }}
-      }},
-      {"required", nlohmann::json::array(
-          {"goal"})}
-  };
+      {"properties",
+       {{"goal",
+         {{"type", "string"},
+          {"description",
+           "The high-level goal to "
+           "decompose and delegate"}}},
+        {"strategy",
+         {{"type", "string"},
+          {"enum", nlohmann::json::array({"sequential", "parallel"})},
+          {"description",
+           "Execution strategy: "
+           "'sequential' (default) or "
+           "'parallel'"}}}}},
+      {"required", nlohmann::json::array({"goal"})}};
   tools.push_back(run_supervisor_tool);
 
   // Built-in tool: list_agent_roles
@@ -1299,17 +1078,14 @@ AgentCore::LoadSkillDeclarations() {
       "List all configured agent roles with "
       "their names, system prompts, and "
       "allowed tools.";
-  list_roles_tool.parameters = {
-      {"type", "object"},
-      {"properties", nlohmann::json::object()},
-      {"required", nlohmann::json::array()}
-  };
+  list_roles_tool.parameters = {{"type", "object"},
+                                {"properties", nlohmann::json::object()},
+                                {"required", nlohmann::json::array()}};
   tools.push_back(list_roles_tool);
 
   // Built-in tool: create_pipeline
   LlmToolDecl create_pipeline_tool;
-  create_pipeline_tool.name =
-      "create_pipeline";
+  create_pipeline_tool.name = "create_pipeline";
   create_pipeline_tool.description =
       "Create a multi-step pipeline for "
       "deterministic workflow execution. "
@@ -1321,88 +1097,49 @@ AgentCore::LoadSkillDeclarations() {
       "{{variable}} interpolation.";
   create_pipeline_tool.parameters = {
       {"type", "object"},
-      {"properties", {
-          {"name", {
-              {"type", "string"},
-              {"description",
-               "Pipeline name"}
-          }},
-          {"description", {
-              {"type", "string"},
-              {"description",
-               "Pipeline description"}
-          }},
-          {"trigger", {
-              {"type", "string"},
-              {"description",
-               "Trigger type: 'manual' or "
-               "'cron:daily HH:MM' etc."}
-          }},
-          {"steps", {
-              {"type", "array"},
-              {"description",
-               "Array of step objects"},
-              {"items", {
-                  {"type", "object"},
-                  {"properties", {
-                      {"id", {
-                          {"type", "string"},
-                          {"description",
-                           "Step identifier"}}},
-                      {"type", {
-                          {"type", "string"},
-                          {"description",
-                           "Step type: tool, "
-                           "prompt, or condition"}}},
-                      {"tool_name", {
-                          {"type", "string"},
-                          {"description",
-                           "Tool to invoke"}}},
-                      {"args", {
-                          {"type", "object"},
-                          {"description",
-                           "Tool arguments"}}},
-                      {"prompt", {
-                          {"type", "string"},
-                          {"description",
-                           "LLM prompt text"}}},
-                      {"condition", {
-                          {"type", "string"},
-                          {"description",
-                           "Condition expression"
-                          }}},
-                      {"then_step", {
-                          {"type", "string"},
-                          {"description",
-                           "Step ID if true"}}},
-                      {"else_step", {
-                          {"type", "string"},
-                          {"description",
-                           "Step ID if false"}}},
-                      {"output_var", {
-                          {"type", "string"},
-                          {"description",
-                           "Variable name for "
-                           "step output"}}},
-                      {"skip_on_failure", {
-                          {"type", "boolean"},
-                          {"description",
-                           "Continue on error"
-                          }}},
-                      {"max_retries", {
-                          {"type", "integer"},
-                          {"description",
-                           "Max retry count"}}}
-                  }},
-                  {"required",
-                   nlohmann::json::array(
-                       {"id", "type"})}
-              }}
-          }}
-      }},
-      {"required", nlohmann::json::array(
-          {"name", "steps"})}
-  };
+      {"properties",
+       {{"name", {{"type", "string"}, {"description", "Pipeline name"}}},
+        {"description",
+         {{"type", "string"}, {"description", "Pipeline description"}}},
+        {"trigger",
+         {{"type", "string"},
+          {"description",
+           "Trigger type: 'manual' or "
+           "'cron:daily HH:MM' etc."}}},
+        {"steps",
+         {{"type", "array"},
+          {"description", "Array of step objects"},
+          {"items",
+           {{"type", "object"},
+            {"properties",
+             {{"id", {{"type", "string"}, {"description", "Step identifier"}}},
+              {"type",
+               {{"type", "string"},
+                {"description",
+                 "Step type: tool, "
+                 "prompt, or condition"}}},
+              {"tool_name",
+               {{"type", "string"}, {"description", "Tool to invoke"}}},
+              {"args", {{"type", "object"}, {"description", "Tool arguments"}}},
+              {"prompt",
+               {{"type", "string"}, {"description", "LLM prompt text"}}},
+              {"condition",
+               {{"type", "string"}, {"description", "Condition expression"}}},
+              {"then_step",
+               {{"type", "string"}, {"description", "Step ID if true"}}},
+              {"else_step",
+               {{"type", "string"}, {"description", "Step ID if false"}}},
+              {"output_var",
+               {{"type", "string"},
+                {"description",
+                 "Variable name for "
+                 "step output"}}},
+              {"skip_on_failure",
+               {{"type", "boolean"}, {"description", "Continue on error"}}},
+              {"max_retries",
+               {{"type", "integer"}, {"description", "Max retry count"}}}}},
+            {"required", nlohmann::json::array({"id", "type"})}}}}}}},
+      {"required", nlohmann::json::array({"name", "steps"})}};
   tools.push_back(create_pipeline_tool);
 
   // Built-in tool: list_pipelines
@@ -1412,11 +1149,9 @@ AgentCore::LoadSkillDeclarations() {
       "List all configured pipelines with "
       "their names, triggers, and step "
       "counts.";
-  list_pipelines_tool.parameters = {
-      {"type", "object"},
-      {"properties", nlohmann::json::object()},
-      {"required", nlohmann::json::array()}
-  };
+  list_pipelines_tool.parameters = {{"type", "object"},
+                                    {"properties", nlohmann::json::object()},
+                                    {"required", nlohmann::json::array()}};
   tools.push_back(list_pipelines_tool);
 
   // Built-in tool: run_pipeline
@@ -1429,43 +1164,28 @@ AgentCore::LoadSkillDeclarations() {
       "via {{variable}} syntax.";
   run_pipeline_tool.parameters = {
       {"type", "object"},
-      {"properties", {
-          {"pipeline_id", {
-              {"type", "string"},
-              {"description",
-               "The pipeline ID to execute"}
-          }},
-          {"input_vars", {
-              {"type", "object"},
-              {"description",
-               "Input variables (key-value "
-               "pairs) available to all "
-               "pipeline steps"}
-          }}
-      }},
-      {"required", nlohmann::json::array(
-          {"pipeline_id"})}
-  };
+      {"properties",
+       {{"pipeline_id",
+         {{"type", "string"}, {"description", "The pipeline ID to execute"}}},
+        {"input_vars",
+         {{"type", "object"},
+          {"description",
+           "Input variables (key-value "
+           "pairs) available to all "
+           "pipeline steps"}}}}},
+      {"required", nlohmann::json::array({"pipeline_id"})}};
   tools.push_back(run_pipeline_tool);
 
   // Built-in tool: delete_pipeline
   LlmToolDecl delete_pipeline_tool;
-  delete_pipeline_tool.name =
-      "delete_pipeline";
-  delete_pipeline_tool.description =
-      "Delete a pipeline by its ID.";
+  delete_pipeline_tool.name = "delete_pipeline";
+  delete_pipeline_tool.description = "Delete a pipeline by its ID.";
   delete_pipeline_tool.parameters = {
       {"type", "object"},
-      {"properties", {
-          {"pipeline_id", {
-              {"type", "string"},
-              {"description",
-               "The pipeline ID to delete"}
-          }}
-      }},
-      {"required", nlohmann::json::array(
-          {"pipeline_id"})}
-  };
+      {"properties",
+       {{"pipeline_id",
+         {{"type", "string"}, {"description", "The pipeline ID to delete"}}}}},
+      {"required", nlohmann::json::array({"pipeline_id"})}};
   tools.push_back(delete_pipeline_tool);
 
 #ifdef TIZEN_ACTION_ENABLED
@@ -1473,43 +1193,33 @@ AgentCore::LoadSkillDeclarations() {
     // Load per-action tools from cached MD files
     auto cached = action_bridge_->LoadCachedActions();
     for (const auto& schema : cached) {
-      std::string aname =
-          schema.value("name", "");
+      std::string aname = schema.value("name", "");
       if (aname.empty()) continue;
 
-      std::string adesc =
-          schema.value("description", "");
+      std::string adesc = schema.value("description", "");
 
       LlmToolDecl tool;
       tool.name = "action_" + aname;
-      tool.description = adesc +
-          " (Tizen Action: " + aname +
-          "). Execute this action on the "
-          "device via the Tizen Action "
-          "Framework.";
+      tool.description = adesc + " (Tizen Action: " + aname +
+                         "). Execute this action on the "
+                         "device via the Tizen Action "
+                         "Framework.";
 
       // Build parameters from inputSchema
-      nlohmann::json props =
-          nlohmann::json::object();
-      nlohmann::json required_arr =
-          nlohmann::json::array();
+      nlohmann::json props = nlohmann::json::object();
+      nlohmann::json required_arr = nlohmann::json::array();
 
       if (schema.contains("inputSchema") &&
-          schema["inputSchema"].contains(
-              "properties")) {
-        props =
-            schema["inputSchema"]["properties"];
-        if (schema["inputSchema"].contains(
-                "required")) {
-          required_arr =
-              schema["inputSchema"]["required"];
+          schema["inputSchema"].contains("properties")) {
+        props = schema["inputSchema"]["properties"];
+        if (schema["inputSchema"].contains("required")) {
+          required_arr = schema["inputSchema"]["required"];
         }
       }
 
-      tool.parameters = {
-          {"type", "object"},
-          {"properties", props},
-          {"required", required_arr}};
+      tool.parameters = {{"type", "object"},
+                         {"properties", props},
+                         {"required", required_arr}};
       tools.push_back(tool);
     }
 
@@ -1523,21 +1233,12 @@ AgentCore::LoadSkillDeclarations() {
         "when available.";
     exec_action_tool.parameters = {
         {"type", "object"},
-        {"properties", {
-            {"name", {
-                {"type", "string"},
-                {"description",
-                 "The action name to execute"}
-            }},
-            {"arguments", {
-                {"type", "object"},
-                {"description",
-                 "Arguments for the action"}
-            }}
-        }},
-        {"required",
-         nlohmann::json::array(
-             {"name"})}};
+        {"properties",
+         {{"name",
+           {{"type", "string"}, {"description", "The action name to execute"}}},
+          {"arguments",
+           {{"type", "object"}, {"description", "Arguments for the action"}}}}},
+        {"required", nlohmann::json::array({"name"})}};
     tools.push_back(exec_action_tool);
   }
 #endif
@@ -1550,27 +1251,21 @@ AgentCore::LoadSkillDeclarations() {
 void AgentCore::ReloadSkills() {
   LOG(INFO) << "Reloading skill declarations";
   {
-    std::lock_guard<std::mutex> lock(
-        tools_mutex_);
+    std::lock_guard<std::mutex> lock(tools_mutex_);
     cached_tools_.clear();
   }
   cached_tools_loaded_.store(false);
 
   // Force reload and rebuild system prompt
   auto tools = LoadSkillDeclarations();
-  system_prompt_ =
-      BuildSystemPrompt(tools);
-  LOG(INFO) << "Skill reload complete: "
-            << tools.size() << " tools";
+  system_prompt_ = BuildSystemPrompt(tools);
+  LOG(INFO) << "Skill reload complete: " << tools.size() << " tools";
 }
 
-std::string AgentCore::LoadSystemPrompt(
-    const nlohmann::json& config) {
+std::string AgentCore::LoadSystemPrompt(const nlohmann::json& config) {
   // Priority 1: Inline system_prompt in config
-  if (config.contains("system_prompt") &&
-      config["system_prompt"].is_string()) {
-    std::string prompt =
-        config["system_prompt"].get<std::string>();
+  if (config.contains("system_prompt") && config["system_prompt"].is_string()) {
+    std::string prompt = config["system_prompt"].get<std::string>();
     if (!prompt.empty()) {
       LOG(INFO) << "System prompt loaded from config (inline)";
       return prompt;
@@ -1580,18 +1275,14 @@ std::string AgentCore::LoadSystemPrompt(
   // Priority 2: system_prompt_file path in config
   if (config.contains("system_prompt_file") &&
       config["system_prompt_file"].is_string()) {
-    std::string file_path =
-        config["system_prompt_file"]
-            .get<std::string>();
+    std::string file_path = config["system_prompt_file"].get<std::string>();
     std::ifstream pf(file_path);
     if (pf.is_open()) {
-      std::string content(
-          (std::istreambuf_iterator<char>(pf)),
-          std::istreambuf_iterator<char>());
+      std::string content((std::istreambuf_iterator<char>(pf)),
+                          std::istreambuf_iterator<char>());
       pf.close();
       if (!content.empty()) {
-        LOG(INFO) << "System prompt loaded from: "
-                  << file_path;
+        LOG(INFO) << "System prompt loaded from: " << file_path;
         return content;
       }
     }
@@ -1599,14 +1290,13 @@ std::string AgentCore::LoadSystemPrompt(
 
   // Priority 3: Hardcoded fallback
   LOG(INFO) << "Using hardcoded default system prompt";
-  return
-      "You are TizenClaw, an AI assistant running "
-      "on a Tizen device. You can control the device "
-      "using the available tools. You possess extensive "
-      "documentation on Tizen Native APIs in your knowledge base; "
-      "always use the search_knowledge tool for Tizen development queries. "
-      "Always respond in the same language as the user's message. "
-      "Be concise and helpful.";
+  return "You are TizenClaw, an AI assistant running "
+         "on a Tizen device. You can control the device "
+         "using the available tools. You possess extensive "
+         "documentation on Tizen Native APIs in your knowledge base; "
+         "always use the search_knowledge tool for Tizen development queries. "
+         "Always respond in the same language as the user's message. "
+         "Be concise and helpful.";
 }
 
 std::string AgentCore::LoadRoutingGuide() {
@@ -1614,9 +1304,8 @@ std::string AgentCore::LoadRoutingGuide() {
       "/opt/usr/share/tizenclaw/tools/routing_guide.md";
   std::ifstream f(guide_path);
   if (f.is_open()) {
-    std::string content(
-        (std::istreambuf_iterator<char>(f)),
-        std::istreambuf_iterator<char>());
+    std::string content((std::istreambuf_iterator<char>(f)),
+                        std::istreambuf_iterator<char>());
     f.close();
     if (!content.empty()) {
       return "\n\n## Tool Selection Strategy\n" + content;
@@ -1632,37 +1321,29 @@ std::string AgentCore::BuildSystemPrompt(
   // Build tool list string
   std::string tool_list;
   for (const auto& t : tools) {
-    tool_list += "- " + t.name + ": "
-        + t.description + "\n";
+    tool_list += "- " + t.name + ": " + t.description + "\n";
   }
 
   // Load embedded tool descriptions from MD
   {
     namespace fs = std::filesystem;
-    const std::string embedded_dir =
-        "/opt/usr/share/tizenclaw/tools/embedded";
+    const std::string embedded_dir = "/opt/usr/share/tizenclaw/tools/embedded";
     std::error_code ec;
     if (fs::exists(embedded_dir, ec)) {
       std::string embedded_docs;
-      for (const auto& entry :
-           fs::directory_iterator(
-               embedded_dir, ec)) {
+      for (const auto& entry : fs::directory_iterator(embedded_dir, ec)) {
         if (!entry.is_regular_file()) continue;
-        if (entry.path().extension() != ".md")
-          continue;
+        if (entry.path().extension() != ".md") continue;
         std::ifstream in(entry.path());
         if (!in.is_open()) continue;
-        std::string content(
-            (std::istreambuf_iterator<char>(in)),
-            std::istreambuf_iterator<char>());
+        std::string content((std::istreambuf_iterator<char>(in)),
+                            std::istreambuf_iterator<char>());
         if (!content.empty()) {
           embedded_docs += "\n" + content + "\n";
         }
       }
       if (!embedded_docs.empty()) {
-        tool_list +=
-            "\n## Embedded Tool Details\n"
-            + embedded_docs;
+        tool_list += "\n## Embedded Tool Details\n" + embedded_docs;
       }
     }
   }
@@ -1670,41 +1351,32 @@ std::string AgentCore::BuildSystemPrompt(
   // Load action tool descriptions from MD
   {
     namespace fs = std::filesystem;
-    const std::string actions_dir =
-        "/opt/usr/share/tizenclaw/tools/actions";
+    const std::string actions_dir = "/opt/usr/share/tizenclaw/tools/actions";
     std::error_code ec;
     if (fs::exists(actions_dir, ec)) {
       std::string action_docs;
-      for (const auto& entry :
-           fs::directory_iterator(
-               actions_dir, ec)) {
+      for (const auto& entry : fs::directory_iterator(actions_dir, ec)) {
         if (!entry.is_regular_file()) continue;
-        if (entry.path().extension() != ".md")
-          continue;
+        if (entry.path().extension() != ".md") continue;
         std::ifstream in(entry.path());
         if (!in.is_open()) continue;
-        std::string content(
-            (std::istreambuf_iterator<char>(in)),
-            std::istreambuf_iterator<char>());
+        std::string content((std::istreambuf_iterator<char>(in)),
+                            std::istreambuf_iterator<char>());
         if (!content.empty()) {
           action_docs += "\n" + content + "\n";
         }
       }
       if (!action_docs.empty()) {
-        tool_list +=
-            "\n## Device Action Details\n"
-            + action_docs;
+        tool_list += "\n## Device Action Details\n" + action_docs;
       }
     }
   }
 
   // Replace {{AVAILABLE_TOOLS}} placeholder
-  const std::string placeholder =
-      "{{AVAILABLE_TOOLS}}";
+  const std::string placeholder = "{{AVAILABLE_TOOLS}}";
   size_t pos = prompt.find(placeholder);
   if (pos != std::string::npos) {
-    prompt.replace(pos, placeholder.size(),
-                   tool_list);
+    prompt.replace(pos, placeholder.size(), tool_list);
   } else if (!tool_list.empty()) {
     // If no placeholder, append tool list
     prompt += "\n\nAvailable tools:\n" + tool_list;
@@ -1713,8 +1385,7 @@ std::string AgentCore::BuildSystemPrompt(
   return prompt;
 }
 
-void AgentCore::CompactHistory(
-    const std::string& session_id) {
+void AgentCore::CompactHistory(const std::string& session_id) {
   // MUST be called with session_mutex_ held
   auto& history = sessions_[session_id];
   if (history.size() <= kCompactionThreshold) {
@@ -1723,19 +1394,16 @@ void AgentCore::CompactHistory(
   if (!backend_) return;
 
   // Gather oldest N messages to summarize
-  size_t count = std::min(
-      kCompactionCount, history.size() - 2);
+  size_t count = std::min(kCompactionCount, history.size() - 2);
   if (count < 2) return;
 
   // Extend count to include complete
   // tool_call/tool pairs — never split a pair
   while (count < history.size() - 2) {
     auto& last = history[count - 1];
-    if (last.role == "assistant" &&
-        !last.tool_calls.empty()) {
+    if (last.role == "assistant" && !last.tool_calls.empty()) {
       // Include all following tool results
-      while (count < history.size() - 2 &&
-             history[count].role == "tool") {
+      while (count < history.size() - 2 && history[count].role == "tool") {
         count++;
       }
       break;
@@ -1747,9 +1415,8 @@ void AgentCore::CompactHistory(
     }
   }
 
-  std::vector<LlmMessage> to_summarize(
-      history.begin(),
-      history.begin() + count);
+  std::vector<LlmMessage> to_summarize(history.begin(),
+                                       history.begin() + count);
 
   // Build compaction prompt
   std::string summary_prompt;
@@ -1765,10 +1432,8 @@ void AgentCore::CompactHistory(
       }
       summary_prompt += "]";
     }
-    if (msg.role == "tool" &&
-        !msg.tool_name.empty()) {
-      summary_prompt += "[" + msg.tool_name
-          + " result]";
+    if (msg.role == "tool" && !msg.tool_name.empty()) {
+      summary_prompt += "[" + msg.tool_name + " result]";
     }
     summary_prompt += "\n";
   }
@@ -1779,8 +1444,8 @@ void AgentCore::CompactHistory(
       "Summarize this conversation concisely "
       "in 2-3 sentences. Preserve key facts, "
       "decisions, and results. Respond ONLY "
-      "with the summary, nothing else:\n\n"
-      + summary_prompt;
+      "with the summary, nothing else:\n\n" +
+      summary_prompt;
 
   std::vector<LlmMessage> compact_msgs;
   compact_msgs.push_back(compact_prompt);
@@ -1791,11 +1456,9 @@ void AgentCore::CompactHistory(
 
   LlmResponse resp;
   try {
-    resp = backend_->Chat(
-        compact_msgs,
-        {},       // no tools for compaction
-        nullptr,  // no streaming
-        "");      // no system prompt
+    resp = backend_->Chat(compact_msgs, {},  // no tools for compaction
+                          nullptr,           // no streaming
+                          "");               // no system prompt
   } catch (...) {
     session_mutex_.lock();
     LOG(WARNING) << "Compaction LLM call failed";
@@ -1811,11 +1474,9 @@ void AgentCore::CompactHistory(
   auto& hist = sessions_[session_id];
 
   if (!resp.success || resp.text.empty()) {
-    LOG(WARNING) << "Compaction failed, "
-                 << "falling back to FIFO";
+    LOG(WARNING) << "Compaction failed, " << "falling back to FIFO";
     // Fallback: simple FIFO trim
-    while (hist.size() >
-           kCompactionThreshold) {
+    while (hist.size() > kCompactionThreshold) {
       hist.erase(hist.begin());
     }
     return;
@@ -1824,30 +1485,23 @@ void AgentCore::CompactHistory(
   // Replace oldest N turns with 1 compressed
   LlmMessage compressed;
   compressed.role = "assistant";
-  compressed.text =
-      "[compressed] " + resp.text;
+  compressed.text = "[compressed] " + resp.text;
 
-  hist.erase(
-      hist.begin(),
-      hist.begin() + count);
+  hist.erase(hist.begin(), hist.begin() + count);
   hist.insert(hist.begin(), compressed);
 
   LOG(INFO) << "Compacted " << count
-            << " turns into 1 for session: "
-            << session_id;
+            << " turns into 1 for session: " << session_id;
 
   // Log compaction token usage if available
   if (resp.total_tokens > 0) {
-    session_store_.LogTokenUsage(
-        session_id,
-        backend_->GetName() + "_compaction",
-        resp.prompt_tokens,
-        resp.completion_tokens);
+    session_store_.LogTokenUsage(session_id,
+                                 backend_->GetName() + "_compaction",
+                                 resp.prompt_tokens, resp.completion_tokens);
   }
 }
 
-void AgentCore::TrimHistory(
-    const std::string& session_id) {
+void AgentCore::TrimHistory(const std::string& session_id) {
   // MUST be called with session_mutex_ held
   auto& history = sessions_[session_id];
 
@@ -1862,24 +1516,21 @@ void AgentCore::TrimHistory(
   }
 }
 
-void AgentCore::ClearSession(
-    const std::string& session_id) {
+void AgentCore::ClearSession(const std::string& session_id) {
   std::lock_guard<std::mutex> lock(session_mutex_);
   sessions_.erase(session_id);
   session_store_.DeleteSession(session_id);
   tool_policy_.ResetSession(session_id);
 }
 
-std::string AgentCore::ExecuteSkillForMcp(
-    const std::string& skill_name,
-    const nlohmann::json& args) {
+std::string AgentCore::ExecuteSkillForMcp(const std::string& skill_name,
+                                          const nlohmann::json& args) {
   UpdateActivityTime();
   return ExecuteSkill(skill_name, args);
 }
 
-std::string AgentCore::ExecuteTaskOp(
-    const std::string& operation,
-    const nlohmann::json& args) {
+std::string AgentCore::ExecuteTaskOp(const std::string& operation,
+                                     const nlohmann::json& args) {
   if (!scheduler_) {
     return "{\"error\": "
            "\"TaskScheduler not available\"}";
@@ -1888,77 +1539,47 @@ std::string AgentCore::ExecuteTaskOp(
   nlohmann::json result;
 
   if (operation == "create_task") {
-    std::string schedule =
-        args.value("schedule", "");
-    std::string prompt =
-        args.value("prompt", "");
-    std::string session_id =
-        args.value("session_id", "default");
+    std::string schedule = args.value("schedule", "");
+    std::string prompt = args.value("prompt", "");
+    std::string session_id = args.value("session_id", "default");
 
     if (schedule.empty() || prompt.empty()) {
-      result = {
-          {"error",
-           "schedule and prompt are required"}
-      };
+      result = {{"error", "schedule and prompt are required"}};
     } else {
       std::string task_id =
-          scheduler_->CreateTask(
-              schedule, prompt, session_id);
+          scheduler_->CreateTask(schedule, prompt, session_id);
       if (task_id.empty()) {
-        result = {
-            {"error",
-             "Invalid schedule expression. "
-             "Use: 'daily HH:MM', "
-             "'interval Ns/Nm/Nh', "
-             "'once YYYY-MM-DD HH:MM', or "
-             "'weekly DAY HH:MM'"}
-        };
+        result = {{"error",
+                   "Invalid schedule expression. "
+                   "Use: 'daily HH:MM', "
+                   "'interval Ns/Nm/Nh', "
+                   "'once YYYY-MM-DD HH:MM', or "
+                   "'weekly DAY HH:MM'"}};
       } else {
-        result = {
-            {"status", "created"},
-            {"task_id", task_id},
-            {"schedule", schedule},
-            {"prompt", prompt}
-        };
+        result = {{"status", "created"},
+                  {"task_id", task_id},
+                  {"schedule", schedule},
+                  {"prompt", prompt}};
       }
     }
   } else if (operation == "list_tasks") {
-    std::string session_id =
-        args.value("session_id", "");
-    auto tasks =
-        scheduler_->ListTasks(session_id);
-    result = {
-        {"status", "ok"},
-        {"tasks", tasks},
-        {"count", tasks.size()}
-    };
+    std::string session_id = args.value("session_id", "");
+    auto tasks = scheduler_->ListTasks(session_id);
+    result = {{"status", "ok"}, {"tasks", tasks}, {"count", tasks.size()}};
   } else if (operation == "cancel_task") {
-    std::string task_id =
-        args.value("task_id", "");
+    std::string task_id = args.value("task_id", "");
     if (task_id.empty()) {
-      result = {
-          {"error", "task_id is required"}
-      };
+      result = {{"error", "task_id is required"}};
     } else {
-      bool ok =
-          scheduler_->CancelTask(task_id);
+      bool ok = scheduler_->CancelTask(task_id);
       if (ok) {
-        result = {
-            {"status", "cancelled"},
-            {"task_id", task_id}
-        };
+        result = {{"status", "cancelled"}, {"task_id", task_id}};
       } else {
-        result = {
-            {"error", "Task not found"},
-            {"task_id", task_id}
-        };
+        result = {{"error", "Task not found"}, {"task_id", task_id}};
       }
     }
   } else {
-    result = {
-        {"error", "Unknown task operation: "
-                  + operation}
-    };
+    result = {{"error", "Unknown task operation: " + operation}};
   }
 
   return result.dump();
@@ -1967,48 +1588,37 @@ std::string AgentCore::ExecuteTaskOp(
 LlmResponse AgentCore::TryFallbackBackends(
     const std::vector<LlmMessage>& history,
     const std::vector<LlmToolDecl>& tools,
-    std::function<void(
-        const std::string&)> on_chunk,
+    std::function<void(const std::string&)> on_chunk,
     const std::string& system_prompt) {
   LlmResponse last_resp;
   last_resp.success = false;
-  last_resp.error_message =
-      "No fallback backends configured";
+  last_resp.error_message = "No fallback backends configured";
 
   if (fallback_names_.empty()) {
     return last_resp;
   }
 
   for (const auto& fb_name : fallback_names_) {
-    LOG(INFO) << "Trying fallback backend: "
-              << fb_name;
+    LOG(INFO) << "Trying fallback backend: " << fb_name;
 
-    auto fb_backend =
-        LlmBackendFactory::Create(fb_name);
+    auto fb_backend = LlmBackendFactory::Create(fb_name);
     if (!fb_backend) {
-      LOG(WARNING)
-          << "Failed to create fallback: "
-          << fb_name;
+      LOG(WARNING) << "Failed to create fallback: " << fb_name;
       continue;
     }
 
     // Get backend config
     nlohmann::json fb_config;
     if (llm_config_.contains("backends") &&
-        llm_config_["backends"]
-            .contains(fb_name)) {
-      fb_config =
-          llm_config_["backends"][fb_name];
+        llm_config_["backends"].contains(fb_name)) {
+      fb_config = llm_config_["backends"][fb_name];
     }
 
     // Decrypt API key if encrypted
     if (fb_config.contains("api_key")) {
-      std::string api_key =
-          fb_config["api_key"]
-              .get<std::string>();
+      std::string api_key = fb_config["api_key"].get<std::string>();
       if (KeyStore::IsEncrypted(api_key)) {
-        std::string decrypted =
-            KeyStore::Decrypt(api_key);
+        std::string decrypted = KeyStore::Decrypt(api_key);
         if (!decrypted.empty()) {
           fb_config["api_key"] = decrypted;
         }
@@ -2016,19 +1626,15 @@ LlmResponse AgentCore::TryFallbackBackends(
     }
 
     // xAI identity injection
-    if (fb_name == "xai" ||
-        fb_name == "grok") {
+    if (fb_name == "xai" || fb_name == "grok") {
       fb_config["provider_name"] = "xai";
       if (!fb_config.contains("endpoint")) {
-        fb_config["endpoint"] =
-            "https://api.x.ai/v1";
+        fb_config["endpoint"] = "https://api.x.ai/v1";
       }
     }
 
     if (!fb_backend->Initialize(fb_config)) {
-      LOG(WARNING)
-          << "Failed to init fallback: "
-          << fb_name;
+      LOG(WARNING) << "Failed to init fallback: " << fb_name;
       continue;
     }
 
@@ -2036,58 +1642,42 @@ LlmResponse AgentCore::TryFallbackBackends(
     int backoff_ms = 0;
     if (last_resp.http_status == 429) {
       backoff_ms = 1000;  // 1s initial backoff
-      LOG(INFO)
-          << "Rate-limited, backing off "
-          << backoff_ms << "ms";
-      std::this_thread::sleep_for(
-          std::chrono::milliseconds(
-              backoff_ms));
+      LOG(INFO) << "Rate-limited, backing off " << backoff_ms << "ms";
+      std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
     }
 
-    LlmResponse resp = fb_backend->Chat(
-        history, tools, on_chunk,
-        system_prompt);
+    LlmResponse resp =
+        fb_backend->Chat(history, tools, on_chunk, system_prompt);
 
     if (resp.success) {
-      LOG(INFO)
-          << "Fallback succeeded: "
-          << fb_name;
+      LOG(INFO) << "Fallback succeeded: " << fb_name;
 
       // Switch primary backend
       backend_ = std::move(fb_backend);
 
-      AuditLogger::Instance().Log(
-          AuditLogger::MakeEvent(
-              AuditEventType::kConfigChange,
-              "",
-              {{"fallback_from",
-                "primary"},
-               {"fallback_to",
-                fb_name}}));
+      AuditLogger::Instance().Log(AuditLogger::MakeEvent(
+          AuditEventType::kConfigChange, "",
+          {{"fallback_from", "primary"}, {"fallback_to", fb_name}}));
 
       return resp;
     }
 
     last_resp = resp;
-    LOG(WARNING)
-        << "Fallback failed (" << fb_name
-        << "): " << resp.error_message;
+    LOG(WARNING) << "Fallback failed (" << fb_name
+                 << "): " << resp.error_message;
   }
 
   return last_resp;
 }
 
-std::string AgentCore::ExecuteSessionOp(
-    const std::string& operation,
-    const nlohmann::json& args,
-    const std::string& caller_session) {
+std::string AgentCore::ExecuteSessionOp(const std::string& operation,
+                                        const nlohmann::json& args,
+                                        const std::string& caller_session) {
   LOG(INFO) << "SessionOp: " << operation;
 
   if (operation == "create_session") {
-    std::string name =
-        args.value("name", "agent");
-    std::string prompt =
-        args.value("system_prompt", "");
+    std::string name = args.value("name", "agent");
+    std::string prompt = args.value("system_prompt", "");
 
     if (prompt.empty()) {
       return "{\"error\": \"system_prompt "
@@ -2096,55 +1686,39 @@ std::string AgentCore::ExecuteSessionOp(
 
     // Generate unique session_id
     auto now = std::chrono::system_clock::now();
-    auto ts = std::chrono::duration_cast<
-        std::chrono::milliseconds>(
-        now.time_since_epoch()).count();
+    auto ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  now.time_since_epoch())
+                  .count();
     std::string session_id =
-        "agent_" + name + "_" +
-        std::to_string(ts % 100000);
+        "agent_" + name + "_" + std::to_string(ts % 100000);
 
     // Store per-session system prompt
     {
-      std::lock_guard<std::mutex> lock(
-          session_mutex_);
+      std::lock_guard<std::mutex> lock(session_mutex_);
       session_prompts_[session_id] = prompt;
     }
 
-    LOG(INFO) << "Created agent session: "
-              << session_id;
+    LOG(INFO) << "Created agent session: " << session_id;
 
-    nlohmann::json result = {
-        {"status", "ok"},
-        {"session_id", session_id},
-        {"name", name},
-        {"system_prompt_length",
-         (int)prompt.size()}
-    };
+    nlohmann::json result = {{"status", "ok"},
+                             {"session_id", session_id},
+                             {"name", name},
+                             {"system_prompt_length", (int)prompt.size()}};
     return result.dump();
   }
 
   if (operation == "list_sessions") {
-    nlohmann::json sessions =
-        nlohmann::json::array();
+    nlohmann::json sessions = nlohmann::json::array();
     {
-      std::lock_guard<std::mutex> lock(
-          session_mutex_);
-      for (auto& [sid, prompt] :
-           session_prompts_) {
+      std::lock_guard<std::mutex> lock(session_mutex_);
+      for (auto& [sid, prompt] : session_prompts_) {
         nlohmann::json s = {
             {"session_id", sid},
             {"system_prompt",
-             prompt.substr(
-                 0, std::min((size_t)100,
-                             prompt.size()))
-             + (prompt.size() > 100
-                    ? "..."
-                    : "")},
+             prompt.substr(0, std::min((size_t)100, prompt.size())) +
+                 (prompt.size() > 100 ? "..." : "")},
             {"history_size",
-             sessions_.contains(sid)
-                 ? (int)sessions_[sid].size()
-                 : 0}
-        };
+             sessions_.contains(sid) ? (int)sessions_[sid].size() : 0}};
         sessions.push_back(s);
       }
 
@@ -2152,30 +1726,23 @@ std::string AgentCore::ExecuteSessionOp(
       // prompts (default sessions)
       for (auto& [sid, hist] : sessions_) {
         if (!session_prompts_.contains(sid)) {
-          nlohmann::json s = {
-              {"session_id", sid},
-              {"system_prompt", "(default)"},
-              {"history_size",
-               (int)hist.size()}
-          };
+          nlohmann::json s = {{"session_id", sid},
+                              {"system_prompt", "(default)"},
+                              {"history_size", (int)hist.size()}};
           sessions.push_back(s);
         }
       }
     }
 
-    nlohmann::json result = {
-        {"status", "ok"},
-        {"sessions", sessions},
-        {"count", (int)sessions.size()}
-    };
+    nlohmann::json result = {{"status", "ok"},
+                             {"sessions", sessions},
+                             {"count", (int)sessions.size()}};
     return result.dump();
   }
 
   if (operation == "send_to_session") {
-    std::string target =
-        args.value("target_session", "");
-    std::string message =
-        args.value("message", "");
+    std::string target = args.value("target_session", "");
+    std::string message = args.value("message", "");
 
     if (target.empty() || message.empty()) {
       return "{\"error\": \"target_session "
@@ -2188,34 +1755,28 @@ std::string AgentCore::ExecuteSessionOp(
              "message to self\"}";
     }
 
-    LOG(INFO) << "Sending to session: "
-              << target << " from: "
-              << caller_session;
+    LOG(INFO) << "Sending to session: " << target
+              << " from: " << caller_session;
 
     // Call ProcessPrompt on target session
     // Note: no streaming for inter-agent
-    std::string response =
-        ProcessPrompt(target, message);
+    std::string response = ProcessPrompt(target, message);
 
     nlohmann::json result = {
-        {"status", "ok"},
-        {"target_session", target},
-        {"response", response}
-    };
+        {"status", "ok"}, {"target_session", target}, {"response", response}};
     return result.dump();
   }
 
   return "{\"error\": \"Unknown session "
-         "operation: " + operation + "\"}";
+         "operation: " +
+         operation + "\"}";
 }
 
-std::string AgentCore::GetSessionPrompt(
-    const std::string& session_id,
-    const std::vector<LlmToolDecl>& tools) {
+std::string AgentCore::GetSessionPrompt(const std::string& session_id,
+                                        const std::vector<LlmToolDecl>& tools) {
   // Check for per-session prompt override
   {
-    std::lock_guard<std::mutex> lock(
-        session_mutex_);
+    std::lock_guard<std::mutex> lock(session_mutex_);
     auto it = session_prompts_.find(session_id);
     if (it != session_prompts_.end()) {
       // Use custom prompt with tool list
@@ -2223,20 +1784,15 @@ std::string AgentCore::GetSessionPrompt(
 
       std::string tool_list;
       for (const auto& t : tools) {
-        tool_list += "- " + t.name + ": "
-            + t.description + "\n";
+        tool_list += "- " + t.name + ": " + t.description + "\n";
       }
 
-      const std::string placeholder =
-          "{{AVAILABLE_TOOLS}}";
+      const std::string placeholder = "{{AVAILABLE_TOOLS}}";
       size_t pos = prompt.find(placeholder);
       if (pos != std::string::npos) {
-        prompt.replace(
-            pos, placeholder.size(),
-            tool_list);
+        prompt.replace(pos, placeholder.size(), tool_list);
       } else if (!tool_list.empty()) {
-        prompt +=
-            "\n\nAvailable tools:\n" + tool_list;
+        prompt += "\n\nAvailable tools:\n" + tool_list;
       }
 
       return prompt;
@@ -2247,34 +1803,27 @@ std::string AgentCore::GetSessionPrompt(
   return BuildSystemPrompt(tools);
 }
 
-std::string AgentCore::ExecuteRagOp(
-    const std::string& operation,
-    const nlohmann::json& args) {
+std::string AgentCore::ExecuteRagOp(const std::string& operation,
+                                    const nlohmann::json& args) {
   if (operation == "ingest_document") {
-    std::string source =
-        args.value("source", "");
-    std::string text =
-        args.value("text", "");
+    std::string source = args.value("source", "");
+    std::string text = args.value("text", "");
 
     if (source.empty() || text.empty()) {
       return "{\"error\": \"source and text "
              "are required\"}";
     }
 
-    auto chunks =
-        EmbeddingStore::ChunkText(text);
+    auto chunks = EmbeddingStore::ChunkText(text);
     int stored = 0;
     for (const auto& chunk : chunks) {
       auto emb = GenerateEmbedding(chunk);
       if (emb.empty()) {
-        LOG(WARNING)
-            << "Failed to generate embedding "
-            << "for chunk (" << chunk.size()
-            << " chars)";
+        LOG(WARNING) << "Failed to generate embedding " << "for chunk ("
+                     << chunk.size() << " chars)";
         continue;
       }
-      if (embedding_store_.StoreChunk(
-              source, chunk, emb)) {
+      if (embedding_store_.StoreChunk(source, chunk, emb)) {
         stored++;
       }
     }
@@ -2282,18 +1831,14 @@ std::string AgentCore::ExecuteRagOp(
     nlohmann::json result = {
         {"status", "ok"},
         {"source", source},
-        {"chunks_total",
-         static_cast<int>(chunks.size())},
+        {"chunks_total", static_cast<int>(chunks.size())},
         {"chunks_stored", stored},
-        {"total_documents",
-         embedding_store_.GetChunkCount()}
-    };
+        {"total_documents", embedding_store_.GetChunkCount()}};
     return result.dump();
   }
 
   if (operation == "search_knowledge") {
-    std::string query =
-        args.value("query", "");
+    std::string query = args.value("query", "");
     int top_k = args.value("top_k", 5);
 
     if (query.empty()) {
@@ -2306,35 +1851,26 @@ std::string AgentCore::ExecuteRagOp(
              "query embedding\"}";
     }
 
-    auto results =
-        embedding_store_.Search(query_emb, top_k);
+    auto results = embedding_store_.Search(query_emb, top_k);
 
-    nlohmann::json j_results =
-        nlohmann::json::array();
+    nlohmann::json j_results = nlohmann::json::array();
     for (const auto& r : results) {
-      j_results.push_back({
-          {"source", r.source},
-          {"text", r.chunk_text},
-          {"score", r.score}
-      });
+      j_results.push_back(
+          {{"source", r.source}, {"text", r.chunk_text}, {"score", r.score}});
     }
 
-    return nlohmann::json({
-        {"status", "ok"},
-        {"query", query},
-        {"results", j_results}
-    }).dump();
+    return nlohmann::json(
+               {{"status", "ok"}, {"query", query}, {"results", j_results}})
+        .dump();
   }
 
   return "{\"error\": \"Unknown RAG operation\"}";
 }
 
-std::vector<float> AgentCore::GenerateEmbedding(
-    const std::string& text) {
+std::vector<float> AgentCore::GenerateEmbedding(const std::string& text) {
   if (!backend_ || text.empty()) return {};
 
-  std::string backend_name =
-      backend_->GetName();
+  std::string backend_name = backend_->GetName();
 
   // Determine embedding API endpoint + model
   std::string url;
@@ -2344,8 +1880,7 @@ std::vector<float> AgentCore::GenerateEmbedding(
   // Get backend config
   nlohmann::json bc;
   if (llm_config_.contains("backends") &&
-      llm_config_["backends"].contains(
-          backend_name)) {
+      llm_config_["backends"].contains(backend_name)) {
     bc = llm_config_["backends"][backend_name];
   }
   api_key = bc.value("api_key", "");
@@ -2357,69 +1892,40 @@ std::vector<float> AgentCore::GenerateEmbedding(
   std::map<std::string, std::string> headers;
 
   if (backend_name == "gemini") {
-    model = bc.value(
-        "embedding_model",
-        "text-embedding-004");
-    url = "https://generativelanguage.googleapis"
-          ".com/v1beta/models/" + model +
-          ":embedContent?key=" + api_key;
-    req_body = {
-        {"model", "models/" + model},
-        {"content", {{"parts",
-            {{{"text", text}}}
-        }}}
-    };
-  } else if (backend_name == "openai" ||
-             backend_name == "xai" ||
+    model = bc.value("embedding_model", "text-embedding-004");
+    url =
+        "https://generativelanguage.googleapis"
+        ".com/v1beta/models/" +
+        model + ":embedContent?key=" + api_key;
+    req_body = {{"model", "models/" + model},
+                {"content", {{"parts", {{{"text", text}}}}}}};
+  } else if (backend_name == "openai" || backend_name == "xai" ||
              backend_name == "grok") {
-    std::string endpoint = bc.value(
-        "endpoint",
-        "https://api.openai.com/v1");
-    model = bc.value(
-        "embedding_model",
-        "text-embedding-3-small");
+    std::string endpoint = bc.value("endpoint", "https://api.openai.com/v1");
+    model = bc.value("embedding_model", "text-embedding-3-small");
     url = endpoint + "/embeddings";
-    req_body = {
-        {"model", model},
-        {"input", text}
-    };
-    headers = {
-        {"Authorization",
-         "Bearer " + api_key},
-        {"Content-Type", "application/json"}
-    };
+    req_body = {{"model", model}, {"input", text}};
+    headers = {{"Authorization", "Bearer " + api_key},
+               {"Content-Type", "application/json"}};
   } else if (backend_name == "ollama") {
-    std::string endpoint = bc.value(
-        "endpoint",
-        "http://localhost:11434");
-    model = bc.value(
-        "embedding_model", "nomic-embed-text");
+    std::string endpoint = bc.value("endpoint", "http://localhost:11434");
+    model = bc.value("embedding_model", "nomic-embed-text");
     url = endpoint + "/api/embeddings";
-    req_body = {
-        {"model", model},
-        {"prompt", text}
-    };
-    headers = {
-        {"Content-Type", "application/json"}
-    };
+    req_body = {{"model", model}, {"prompt", text}};
+    headers = {{"Content-Type", "application/json"}};
   } else {
-    LOG(WARNING) << "No embedding support for: "
-                 << backend_name;
+    LOG(WARNING) << "No embedding support for: " << backend_name;
     return {};
   }
 
   if (backend_name == "gemini") {
-    headers = {
-        {"Content-Type", "application/json"}
-    };
+    headers = {{"Content-Type", "application/json"}};
   }
 
-  auto resp = HttpClient::Post(
-      url, headers, req_body.dump(), 2);
+  auto resp = HttpClient::Post(url, headers, req_body.dump(), 2);
 
   if (!resp.success) {
-    LOG(ERROR) << "Embedding API failed: "
-               << resp.error;
+    LOG(ERROR) << "Embedding API failed: " << resp.error;
     return {};
   }
 
@@ -2429,22 +1935,17 @@ std::vector<float> AgentCore::GenerateEmbedding(
 
     if (backend_name == "gemini") {
       // Response: {"embedding":{"values":[...]}}
-      if (j.contains("embedding") &&
-          j["embedding"].contains("values")) {
-        for (auto& v :
-             j["embedding"]["values"]) {
+      if (j.contains("embedding") && j["embedding"].contains("values")) {
+        for (auto& v : j["embedding"]["values"]) {
           emb.push_back(v.get<float>());
         }
       }
-    } else if (backend_name == "openai" ||
-               backend_name == "xai" ||
+    } else if (backend_name == "openai" || backend_name == "xai" ||
                backend_name == "grok") {
       // Response: {"data":[{"embedding":[...]}]}
-      if (j.contains("data") &&
-          !j["data"].empty() &&
+      if (j.contains("data") && !j["data"].empty() &&
           j["data"][0].contains("embedding")) {
-        for (auto& v :
-             j["data"][0]["embedding"]) {
+        for (auto& v : j["data"][0]["embedding"]) {
           emb.push_back(v.get<float>());
         }
       }
@@ -2458,21 +1959,18 @@ std::vector<float> AgentCore::GenerateEmbedding(
     }
 
     if (emb.empty()) {
-      LOG(WARNING) << "Empty embedding from: "
-                   << backend_name;
+      LOG(WARNING) << "Empty embedding from: " << backend_name;
     }
     return emb;
   } catch (const std::exception& e) {
-    LOG(ERROR) << "Embedding parse error: "
-               << e.what();
+    LOG(ERROR) << "Embedding parse error: " << e.what();
     return {};
   }
 }
 
-std::string AgentCore::ExecuteSupervisorOp(
-    const std::string& operation,
-    const nlohmann::json& args,
-    const std::string& session_id) {
+std::string AgentCore::ExecuteSupervisorOp(const std::string& operation,
+                                           const nlohmann::json& args,
+                                           const std::string& session_id) {
   if (!supervisor_) {
     return "{\"error\": "
            "\"SupervisorEngine not available\"}";
@@ -2481,46 +1979,30 @@ std::string AgentCore::ExecuteSupervisorOp(
   nlohmann::json result;
 
   if (operation == "run_supervisor") {
-    std::string goal =
-        args.value("goal", "");
-    std::string strategy =
-        args.value("strategy", "sequential");
+    std::string goal = args.value("goal", "");
+    std::string strategy = args.value("strategy", "sequential");
 
     if (goal.empty()) {
-      result = {
-          {"error", "goal is required"}
-      };
+      result = {{"error", "goal is required"}};
     } else {
       std::string response =
-          supervisor_->RunSupervisor(
-              goal, strategy, session_id);
-      result = {
-          {"status", "ok"},
-          {"goal", goal},
-          {"strategy", strategy},
-          {"result", response}
-      };
+          supervisor_->RunSupervisor(goal, strategy, session_id);
+      result = {{"status", "ok"},
+                {"goal", goal},
+                {"strategy", strategy},
+                {"result", response}};
     }
   } else if (operation == "list_agent_roles") {
     auto roles = supervisor_->ListRoles();
-    result = {
-        {"status", "ok"},
-        {"roles", roles},
-        {"count", (int)roles.size()}
-    };
+    result = {{"status", "ok"}, {"roles", roles}, {"count", (int)roles.size()}};
   } else {
-    result = {
-        {"error",
-         "Unknown supervisor operation: "
-         + operation}
-    };
+    result = {{"error", "Unknown supervisor operation: " + operation}};
   }
 
   return result.dump();
 }
 
-std::vector<LlmToolDecl>
-AgentCore::GetToolsFiltered(
+std::vector<LlmToolDecl> AgentCore::GetToolsFiltered(
     const std::vector<std::string>& allowed) {
   auto all_tools = LoadSkillDeclarations();
 
@@ -2542,10 +2024,9 @@ AgentCore::GetToolsFiltered(
   return filtered;
 }
 
-std::string AgentCore::ExecutePipelineOp(
-    const std::string& operation,
-    const nlohmann::json& args,
-    const std::string& session_id) {
+std::string AgentCore::ExecutePipelineOp(const std::string& operation,
+                                         const nlohmann::json& args,
+                                         const std::string& session_id) {
   (void)session_id;  // Reserved for future use
   if (!pipeline_executor_) {
     return "{\"error\": "
@@ -2555,105 +2036,64 @@ std::string AgentCore::ExecutePipelineOp(
   nlohmann::json result;
 
   if (operation == "create_pipeline") {
-    std::string id =
-        pipeline_executor_->CreatePipeline(args);
+    std::string id = pipeline_executor_->CreatePipeline(args);
     if (id.empty()) {
-      result = {
-          {"error",
-           "Failed to create pipeline. "
-           "name and steps are required."}
-      };
+      result = {{"error",
+                 "Failed to create pipeline. "
+                 "name and steps are required."}};
     } else {
-      result = {
-          {"status", "ok"},
-          {"pipeline_id", id},
-          {"name", args.value("name", "")}
-      };
+      result = {{"status", "ok"},
+                {"pipeline_id", id},
+                {"name", args.value("name", "")}};
     }
   } else if (operation == "list_pipelines") {
-    auto pipelines =
-        pipeline_executor_->ListPipelines();
-    result = {
-        {"status", "ok"},
-        {"pipelines", pipelines},
-        {"count",
-         static_cast<int>(pipelines.size())}
-    };
+    auto pipelines = pipeline_executor_->ListPipelines();
+    result = {{"status", "ok"},
+              {"pipelines", pipelines},
+              {"count", static_cast<int>(pipelines.size())}};
   } else if (operation == "run_pipeline") {
-    std::string pid =
-        args.value("pipeline_id", "");
+    std::string pid = args.value("pipeline_id", "");
     if (pid.empty()) {
-      result = {
-          {"error", "pipeline_id is required"}
-      };
+      result = {{"error", "pipeline_id is required"}};
     } else {
       nlohmann::json input_vars =
-          args.value("input_vars",
-                     nlohmann::json::object());
-      auto run_result =
-          pipeline_executor_->RunPipeline(
-              pid, input_vars);
+          args.value("input_vars", nlohmann::json::object());
+      auto run_result = pipeline_executor_->RunPipeline(pid, input_vars);
 
-      nlohmann::json steps_json =
-          nlohmann::json::array();
-      for (auto& [step_id, step_result] :
-           run_result.step_results) {
-        steps_json.push_back({
-            {"step_id", step_id},
-            {"result",
-             step_result.substr(
-                 0,
-                 std::min((size_t)500,
-                          step_result.size()))}
-        });
+      nlohmann::json steps_json = nlohmann::json::array();
+      for (auto& [step_id, step_result] : run_result.step_results) {
+        steps_json.push_back(
+            {{"step_id", step_id},
+             {"result", step_result.substr(
+                            0, std::min((size_t)500, step_result.size()))}});
       }
 
-      result = {
-          {"status", run_result.status},
-          {"pipeline_id",
-           run_result.pipeline_id},
-          {"duration_ms",
-           run_result.duration_ms},
-          {"steps", steps_json}
-      };
+      result = {{"status", run_result.status},
+                {"pipeline_id", run_result.pipeline_id},
+                {"duration_ms", run_result.duration_ms},
+                {"steps", steps_json}};
     }
   } else if (operation == "delete_pipeline") {
-    std::string pid =
-        args.value("pipeline_id", "");
+    std::string pid = args.value("pipeline_id", "");
     if (pid.empty()) {
-      result = {
-          {"error", "pipeline_id is required"}
-      };
+      result = {{"error", "pipeline_id is required"}};
     } else {
-      bool ok =
-          pipeline_executor_->DeletePipeline(
-              pid);
+      bool ok = pipeline_executor_->DeletePipeline(pid);
       if (ok) {
-        result = {
-            {"status", "ok"},
-            {"deleted", pid}
-        };
+        result = {{"status", "ok"}, {"deleted", pid}};
       } else {
-        result = {
-            {"error",
-             "Pipeline not found: " + pid}
-        };
+        result = {{"error", "Pipeline not found: " + pid}};
       }
     }
   } else {
-    result = {
-        {"error",
-         "Unknown pipeline operation: "
-         + operation}
-    };
+    result = {{"error", "Unknown pipeline operation: " + operation}};
   }
 
   return result.dump();
 }
 
-std::string AgentCore::ExecuteActionOp(
-    const std::string& operation,
-    const nlohmann::json& args) {
+std::string AgentCore::ExecuteActionOp(const std::string& operation,
+                                       const nlohmann::json& args) {
 #ifdef TIZEN_ACTION_ENABLED
   if (!action_bridge_) {
     return "{\"error\":"
@@ -2661,34 +2101,25 @@ std::string AgentCore::ExecuteActionOp(
   }
 
   if (operation == "execute_action") {
-    std::string name =
-        args.value("name", "");
+    std::string name = args.value("name", "");
     nlohmann::json arguments =
-        args.value("arguments",
-                   nlohmann::json::object());
+        args.value("arguments", nlohmann::json::object());
     if (name.empty()) {
       return "{\"error\":"
              "\"Action name is required\"}";
     }
-    LOG(INFO)
-        << "Executing Tizen action: " << name;
-    return action_bridge_->ExecuteAction(
-        name, arguments);
+    LOG(INFO) << "Executing Tizen action: " << name;
+    return action_bridge_->ExecuteAction(name, arguments);
   }
 
   // Per-action tool: action_<name>
   if (operation.starts_with("action_")) {
-    std::string name =
-        operation.substr(7);  // skip "action_"
-    LOG(INFO)
-        << "Executing Tizen action (tool): "
-        << name;
-    return action_bridge_->ExecuteAction(
-        name, args);
+    std::string name = operation.substr(7);  // skip "action_"
+    LOG(INFO) << "Executing Tizen action (tool): " << name;
+    return action_bridge_->ExecuteAction(name, args);
   }
 
-  return "{\"error\":\"Unknown action op: "
-         + operation + "\"}";
+  return "{\"error\":\"Unknown action op: " + operation + "\"}";
 #else
   (void)operation;
   (void)args;
@@ -2698,24 +2129,17 @@ std::string AgentCore::ExecuteActionOp(
 #endif
 }
 
-std::string AgentCore::ExecuteCustomSkillOp(
-    const nlohmann::json& args) {
+std::string AgentCore::ExecuteCustomSkillOp(const nlohmann::json& args) {
   namespace fs = std::filesystem;
   LOG(INFO) << "CustomSkillOp";
 
-  std::string op =
-      args.value("operation", "");
-  std::string name =
-      args.value("skill_name", "");
-  std::string desc =
-      args.value("description", "");
-  std::string code =
-      args.value("python_code", "");
-  std::string risk =
-      args.value("risk_level", "low");
+  std::string op = args.value("operation", "");
+  std::string name = args.value("skill_name", "");
+  std::string desc = args.value("description", "");
+  std::string code = args.value("python_code", "");
+  std::string risk = args.value("risk_level", "low");
   nlohmann::json params_schema =
-      args.value("parameters_schema",
-                 nlohmann::json::object());
+      args.value("parameters_schema", nlohmann::json::object());
 
   const std::string base_dir =
       "/opt/usr/share/tizenclaw/tools/"
@@ -2726,45 +2150,32 @@ std::string AgentCore::ExecuteCustomSkillOp(
   fs::create_directories(base_dir, ec);
 
   if (op == "list") {
-    nlohmann::json skills =
-        nlohmann::json::array();
+    nlohmann::json skills = nlohmann::json::array();
     if (fs::is_directory(base_dir, ec)) {
-      for (const auto& entry :
-           fs::directory_iterator(base_dir, ec)) {
+      for (const auto& entry : fs::directory_iterator(base_dir, ec)) {
         if (!entry.is_directory()) continue;
-        auto dirname =
-            entry.path().filename().string();
-        std::string mpath =
-            entry.path() / "manifest.json";
+        auto dirname = entry.path().filename().string();
+        std::string mpath = entry.path() / "manifest.json";
         std::ifstream mf(mpath);
         if (mf.is_open()) {
           try {
             nlohmann::json j;
             mf >> j;
-            skills.push_back({
-                {"name", j.value("name",
-                                 dirname)},
-                {"description",
-                 j.value("description", "")},
-                {"risk_level",
-                 j.value("risk_level", "low")}
-            });
+            skills.push_back({{"name", j.value("name", dirname)},
+                              {"description", j.value("description", "")},
+                              {"risk_level", j.value("risk_level", "low")}});
           } catch (...) {
-            skills.push_back({
-                {"name", dirname},
-                {"error",
-                 "Failed to parse manifest"}
-            });
+            skills.push_back(
+                {{"name", dirname}, {"error", "Failed to parse manifest"}});
           }
         }
       }
     }
-    return nlohmann::json({
-        {"status", "ok"},
-        {"custom_skills", skills},
-        {"count", (int)skills.size()},
-        {"base_dir", base_dir}
-    }).dump();
+    return nlohmann::json({{"status", "ok"},
+                           {"custom_skills", skills},
+                           {"count", (int)skills.size()},
+                           {"base_dir", base_dir}})
+        .dump();
   }
 
   if (name.empty()) {
@@ -2780,8 +2191,7 @@ std::string AgentCore::ExecuteCustomSkillOp(
     }
   }
 
-  std::string skill_dir =
-      base_dir + "/" + name;
+  std::string skill_dir = base_dir + "/" + name;
 
   if (op == "create" || op == "update") {
     if (desc.empty() || code.empty()) {
@@ -2790,36 +2200,28 @@ std::string AgentCore::ExecuteCustomSkillOp(
              "create/update\"}";
     }
 
-    if (op == "create" &&
-        fs::is_directory(skill_dir, ec)) {
+    if (op == "create" && fs::is_directory(skill_dir, ec)) {
       return "{\"error\": \"Skill already "
-             "exists: " + name + "\"}";
+             "exists: " +
+             name + "\"}";
     }
 
     fs::create_directories(skill_dir, ec);
 
     // Build parameters schema if not provided
-    if (params_schema.empty() ||
-        !params_schema.contains("type")) {
-      params_schema = {
-          {"type", "object"},
-          {"properties",
-           nlohmann::json::object()},
-          {"required",
-           nlohmann::json::array()}
-      };
+    if (params_schema.empty() || !params_schema.contains("type")) {
+      params_schema = {{"type", "object"},
+                       {"properties", nlohmann::json::object()},
+                       {"required", nlohmann::json::array()}};
     }
 
     // Write manifest.json
-    nlohmann::json manifest = {
-        {"name", name},
-        {"risk_level", risk},
-        {"description", desc},
-        {"parameters", params_schema}
-    };
+    nlohmann::json manifest = {{"name", name},
+                               {"risk_level", risk},
+                               {"description", desc},
+                               {"parameters", params_schema}};
 
-    std::string manifest_path =
-        skill_dir + "/manifest.json";
+    std::string manifest_path = skill_dir + "/manifest.json";
     std::ofstream mf(manifest_path);
     if (!mf.is_open()) {
       return "{\"error\": \"Failed to "
@@ -2829,8 +2231,7 @@ std::string AgentCore::ExecuteCustomSkillOp(
     mf.close();
 
     // Write Python script
-    std::string py_path =
-        skill_dir + "/" + name + ".py";
+    std::string py_path = skill_dir + "/" + name + ".py";
     std::ofstream pf(py_path);
     if (!pf.is_open()) {
       return "{\"error\": \"Failed to "
@@ -2843,41 +2244,34 @@ std::string AgentCore::ExecuteCustomSkillOp(
     // is discovered on next prompt
     cached_tools_loaded_.store(false);
 
-    return nlohmann::json({
-        {"status", "ok"},
-        {"operation", op},
-        {"skill_name", name},
-        {"manifest_path", manifest_path},
-        {"python_path", py_path},
-        {"message",
-         "Skill " + name +
-         (op == "create"
-              ? " created"
-              : " updated") +
-         " and will be available "
-         "immediately"}
-    }).dump();
+    return nlohmann::json(
+               {{"status", "ok"},
+                {"operation", op},
+                {"skill_name", name},
+                {"manifest_path", manifest_path},
+                {"python_path", py_path},
+                {"message", "Skill " + name +
+                                (op == "create" ? " created" : " updated") +
+                                " and will be available "
+                                "immediately"}})
+        .dump();
 
   } else if (op == "delete") {
     if (!fs::is_directory(skill_dir, ec)) {
-      return "{\"error\": \"Skill not found: "
-             + name + "\"}";
+      return "{\"error\": \"Skill not found: " + name + "\"}";
     }
 
     fs::remove_all(skill_dir, ec);
     cached_tools_loaded_.store(false);
 
-    return nlohmann::json({
-        {"status", "ok"},
-        {"operation", "delete"},
-        {"skill_name", name},
-        {"message",
-         "Skill " + name + " deleted"}
-    }).dump();
+    return nlohmann::json({{"status", "ok"},
+                           {"operation", "delete"},
+                           {"skill_name", name},
+                           {"message", "Skill " + name + " deleted"}})
+        .dump();
   }
 
-  return "{\"error\": \"Unknown operation: "
-         + op + "\"}";
+  return "{\"error\": \"Unknown operation: " + op + "\"}";
 }
 
-} // namespace tizenclaw
+}  // namespace tizenclaw

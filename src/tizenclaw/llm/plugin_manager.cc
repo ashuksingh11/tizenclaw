@@ -15,12 +15,14 @@
  */
 
 #include "plugin_manager.hh"
-#include "plugin_llm_backend.hh"
-#include "../../common/logging.hh"
 
 #include <pkgmgr-info.h>
+
 #include <fstream>
 #include <thread>
+
+#include "../../common/logging.hh"
+#include "plugin_llm_backend.hh"
 
 namespace tizenclaw {
 
@@ -31,9 +33,7 @@ PluginManager& PluginManager::GetInstance() {
 
 PluginManager::PluginManager() {}
 
-PluginManager::~PluginManager() {
-  Shutdown();
-}
+PluginManager::~PluginManager() { Shutdown(); }
 
 bool PluginManager::Initialize() {
   PkgmgrClient::GetInstance().AddListener(this);
@@ -42,7 +42,7 @@ bool PluginManager::Initialize() {
   int ret = pkgmgrinfo_pkginfo_metadata_filter_create(&filter);
   if (ret != PMINFO_R_OK) {
     LOG(ERROR) << "Failed to create metadata filter: " << ret;
-    return true; // Graceful fallback for headless unit tests
+    return true;  // Graceful fallback for headless unit tests
   }
 
   pkgmgrinfo_pkginfo_metadata_filter_add(
@@ -53,7 +53,8 @@ bool PluginManager::Initialize() {
       [](pkgmgrinfo_pkginfo_h handle, void* user_data) {
         auto* manager = static_cast<PluginManager*>(user_data);
         char* pkgid = nullptr;
-        if (pkgmgrinfo_pkginfo_get_pkgid(handle, &pkgid) == PMINFO_R_OK && pkgid) {
+        if (pkgmgrinfo_pkginfo_get_pkgid(handle, &pkgid) == PMINFO_R_OK &&
+            pkgid) {
           manager->LoadPluginFromPkg(pkgid);
         }
         return 0;
@@ -73,8 +74,7 @@ void PluginManager::Shutdown() {
   llm_backends_.clear();
 }
 
-std::vector<std::shared_ptr<PluginLlmBackend>>
-PluginManager::GetLlmBackends() {
+std::vector<std::shared_ptr<PluginLlmBackend>> PluginManager::GetLlmBackends() {
   std::lock_guard<std::mutex> lock(llm_backends_mutex_);
   return llm_backends_;
 }
@@ -128,8 +128,8 @@ void PluginManager::HandleUninstallEvent(const std::string& pkgid) {
 
 bool PluginManager::LoadPluginFromPkg(const std::string& pkgid) {
   pkgmgrinfo_pkginfo_h pkginfo = nullptr;
-  int ret = pkgmgrinfo_pkginfo_get_usr_pkginfo(
-      pkgid.c_str(), getuid(), &pkginfo);
+  int ret =
+      pkgmgrinfo_pkginfo_get_usr_pkginfo(pkgid.c_str(), getuid(), &pkginfo);
   if (ret != PMINFO_R_OK || !pkginfo) {
     LOG(ERROR) << "Failed to get pkginfo for " << pkgid;
     return false;
@@ -142,7 +142,7 @@ bool PluginManager::LoadPluginFromPkg(const std::string& pkgid) {
     pkgmgrinfo_pkginfo_destroy_pkginfo(pkginfo);
     return false;
   }
-  
+
   std::string path(res_path);
 
   char* so_value = nullptr;
@@ -202,12 +202,12 @@ void PluginManager::UnloadPluginFromPkg(const std::string& pkgid) {
   std::vector<std::shared_ptr<PluginLlmBackend>> to_shutdown;
   {
     std::lock_guard<std::mutex> lock(llm_backends_mutex_);
-    
-    auto it = std::remove_if(
-        llm_backends_.begin(), llm_backends_.end(),
-        [&pkgid](const std::shared_ptr<PluginLlmBackend>& b) {
-                               return b->GetPkgId() == pkgid;
-                             });
+
+    auto it =
+        std::remove_if(llm_backends_.begin(), llm_backends_.end(),
+                       [&pkgid](const std::shared_ptr<PluginLlmBackend>& b) {
+                         return b->GetPkgId() == pkgid;
+                       });
     if (it != llm_backends_.end()) {
       to_shutdown.insert(to_shutdown.end(), std::make_move_iterator(it),
                          std::make_move_iterator(llm_backends_.end()));
@@ -218,7 +218,7 @@ void PluginManager::UnloadPluginFromPkg(const std::string& pkgid) {
   for (auto& backend : to_shutdown) {
     backend->Shutdown();
   }
-  
+
   if (!to_shutdown.empty()) {
     LOG(INFO) << "Unloaded plugin(s) for pkg " << pkgid;
     if (change_callback_) {
@@ -227,4 +227,4 @@ void PluginManager::UnloadPluginFromPkg(const std::string& pkgid) {
   }
 }
 
-} // namespace tizenclaw
+}  // namespace tizenclaw

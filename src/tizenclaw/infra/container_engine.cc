@@ -15,23 +15,25 @@
  */
 #include "container_engine.hh"
 
-#include "../../common/logging.hh"
 #include <arpa/inet.h>
+#include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include <array>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fcntl.h>
 #include <fstream>
 #include <json.hpp>
 #include <memory>
 #include <string>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <sys/wait.h>
-#include <unistd.h>
 #include <vector>
+
+#include "../../common/logging.hh"
 
 namespace tizenclaw {
 
@@ -97,12 +99,9 @@ ContainerEngine::ContainerEngine()
       bundle_dir_(BuildPaths("bundles/skills_secure")),
       rootfs_tar_(BuildPaths("img/rootfs.tar.gz")),
       container_id_(kSkillsContainerId),
-      crun_root_(BuildPaths(".crun")) {
-}
+      crun_root_(BuildPaths(".crun")) {}
 
-ContainerEngine::~ContainerEngine() {
-    StopSkillsContainer();
-}
+ContainerEngine::~ContainerEngine() { StopSkillsContainer(); }
 
 bool ContainerEngine::Initialize() {
   if (initialized_) return true;
@@ -124,10 +123,8 @@ bool ContainerEngine::Initialize() {
     if (r2 == 0) {
       runtime_bin_ = "runc";
     } else {
-      LOG(WARNING)
-          << "Neither crun nor runc "
-          << "found. UDS skill execution "
-          << "will still work.";
+      LOG(WARNING) << "Neither crun nor runc " << "found. UDS skill execution "
+                   << "will still work.";
       runtime_bin_ = "";
     }
   }
@@ -136,25 +133,20 @@ bool ContainerEngine::Initialize() {
   // Prepare crun state directory in a writable path.
   // Default /run/crun may not be writable inside
   // chroot/unshare environments.
-  RunCommand("mkdir -p " +
-             EscapeShellArg(crun_root_));
+  RunCommand("mkdir -p " + EscapeShellArg(crun_root_));
   LOG(INFO) << "crun root dir: " << crun_root_;
 
   // Ensure data directory exists
-  RunCommand("mkdir -p " +
-             EscapeShellArg(
-                 app_data_dir_ + "/data"));
+  RunCommand("mkdir -p " + EscapeShellArg(app_data_dir_ + "/data"));
 
   initialized_ = true;
   return true;
 }
 
-std::string ContainerEngine::ExecuteSkill(
-    const std::string& skill_name,
-    const std::string& arg_str) {
+std::string ContainerEngine::ExecuteSkill(const std::string& skill_name,
+                                          const std::string& arg_str) {
   if (!initialized_) {
-    LOG(ERROR) << "Cannot run skill. "
-               << "Engine not initialized.";
+    LOG(ERROR) << "Cannot run skill. " << "Engine not initialized.";
     return "{}";
   }
 
@@ -163,26 +155,17 @@ std::string ContainerEngine::ExecuteSkill(
 
   // 1st priority: UDS to skill_executor in secure
   // container
-  std::string result =
-      ExecuteSkillViaSocket(skill_name, arg_str);
-  LOG(ERROR) << "[DEBUG] UDS result: len=" << result.length()
-             << " content="
-             << result.substr(
-                 0, std::min(
-                     (size_t)200,
-                     result.size()));
+  std::string result = ExecuteSkillViaSocket(skill_name, arg_str);
+  LOG(ERROR) << "[DEBUG] UDS result: len=" << result.length() << " content="
+             << result.substr(0, std::min((size_t)200, result.size()));
   if (!result.empty() && result != "{}") {
     // Check if the result is an error wrapper
     // (e.g., glibc/musl incompatibility)
     try {
       auto rj = nlohmann::json::parse(result);
       if (rj.contains("error")) {
-        LOG(ERROR)
-            << "[DEBUG] UDS returned error "
-            << "result, skipping crun: "
-            << rj["error"]
-                .get<std::string>()
-                .substr(0, 100);
+        LOG(ERROR) << "[DEBUG] UDS returned error " << "result, skipping crun: "
+                   << rj["error"].get<std::string>().substr(0, 100);
         // Skip crun exec — if UDS (same container) failed, crun exec will too.
         // Fall through directly to host-direct below.
       } else {
@@ -193,45 +176,33 @@ std::string ContainerEngine::ExecuteSkill(
     }
   } else {
     // UDS unavailable — try crun exec before host-direct
-    LOG(WARNING) << "UDS unavailable, trying crun "
-                 << "exec fallback";
-    result =
-        ExecuteSkillViaCrun(skill_name, arg_str);
+    LOG(WARNING) << "UDS unavailable, trying crun " << "exec fallback";
+    result = ExecuteSkillViaCrun(skill_name, arg_str);
     if (!result.empty() && result != "{}") {
       return result;
     }
   }
 
   // 3rd priority: host-direct fallback
-  LOG(WARNING) << "crun exec failed, trying "
-               << "host-direct fallback";
+  LOG(WARNING) << "crun exec failed, trying " << "host-direct fallback";
   std::string host_skill_path =
-      skills_dir_ + "/" + skill_name + "/" +
-      skill_name + ".py";
+      skills_dir_ + "/" + skill_name + "/" + skill_name + ".py";
   if (access(host_skill_path.c_str(), R_OK) != 0) {
-    LOG(ERROR) << "Skill not found: "
-               << host_skill_path;
+    LOG(ERROR) << "Skill not found: " << host_skill_path;
     nlohmann::json err;
-    err["error"] =
-        "Skill script not found: " +
-        host_skill_path;
+    err["error"] = "Skill script not found: " + host_skill_path;
     return err.dump();
   }
 
-  std::string run_cmd =
-      "CLAW_ARGS=" + EscapeShellArg(arg_str) +
-      " /usr/bin/python3 " +
-      EscapeShellArg(host_skill_path);
+  std::string run_cmd = "CLAW_ARGS=" + EscapeShellArg(arg_str) +
+                        " /usr/bin/python3 " + EscapeShellArg(host_skill_path);
   LOG(INFO) << "Host-direct skill: " << run_cmd;
   auto [output, rc] = RunCommand(run_cmd);
   if (rc != 0 || output.empty()) {
     LOG(ERROR) << "Host skill failed: rc=" << rc;
     nlohmann::json err;
-    err["error"] =
-        "Skill failed with exit " +
-        std::to_string(rc);
-    err["details"] = output.length() > 500
-        ? output.substr(0, 500) : output;
+    err["error"] = "Skill failed with exit " + std::to_string(rc);
+    err["details"] = output.length() > 500 ? output.substr(0, 500) : output;
     return err.dump();
   }
 
@@ -239,35 +210,27 @@ std::string ContainerEngine::ExecuteSkill(
 }
 
 std::string ContainerEngine::ExecuteSkillViaSocket(
-    const std::string& skill_name,
-    const std::string& arg_str) {
+    const std::string& skill_name, const std::string& arg_str) {
   int sock = socket(AF_UNIX, SOCK_STREAM, 0);
   if (sock < 0) {
-    LOG(WARNING) << "UDS socket() failed: "
-                 << strerror(errno);
+    LOG(WARNING) << "UDS socket() failed: " << strerror(errno);
     return "{}";
   }
 
   struct sockaddr_un addr;
   std::memset(&addr, 0, sizeof(addr));
   addr.sun_family = AF_UNIX;
-  strncpy(addr.sun_path, kSkillSocketPath,
-          sizeof(addr.sun_path) - 1);
+  strncpy(addr.sun_path, kSkillSocketPath, sizeof(addr.sun_path) - 1);
 
-  if (connect(sock,
-              reinterpret_cast<struct sockaddr*>(
-                  &addr),
-              sizeof(addr)) < 0) {
-    LOG(WARNING) << "UDS connect failed: "
-                 << strerror(errno);
+  if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) <
+      0) {
+    LOG(WARNING) << "UDS connect failed: " << strerror(errno);
     close(sock);
     return "{}";
   }
 
-  LOG(ERROR)
-      << "[DEBUG] UDS connected to "
-      << "skill_executor at "
-      << kSkillSocketPath;
+  LOG(ERROR) << "[DEBUG] UDS connected to " << "skill_executor at "
+             << kSkillSocketPath;
 
   // Build request JSON
   nlohmann::json req;
@@ -284,12 +247,9 @@ std::string ContainerEngine::ExecuteSkillViaSocket(
   }
 
   ssize_t total = 0;
-  ssize_t len =
-      static_cast<ssize_t>(payload.size());
+  ssize_t len = static_cast<ssize_t>(payload.size());
   while (total < len) {
-    ssize_t w = ::write(
-        sock, payload.data() + total,
-        len - total);
+    ssize_t w = ::write(sock, payload.data() + total, len - total);
     if (w <= 0) {
       LOG(ERROR) << "UDS write body failed";
       close(sock);
@@ -300,8 +260,7 @@ std::string ContainerEngine::ExecuteSkillViaSocket(
 
   // Read 4-byte response header
   uint32_t resp_net_len = 0;
-  ssize_t hr = ::recv(
-      sock, &resp_net_len, 4, MSG_WAITALL);
+  ssize_t hr = ::recv(sock, &resp_net_len, 4, MSG_WAITALL);
   if (hr != 4) {
     LOG(ERROR) << "UDS recv header failed";
     close(sock);
@@ -310,17 +269,14 @@ std::string ContainerEngine::ExecuteSkillViaSocket(
 
   uint32_t resp_len = ntohl(resp_net_len);
   if (resp_len > 10 * 1024 * 1024) {
-    LOG(ERROR) << "UDS response too large: "
-               << resp_len;
+    LOG(ERROR) << "UDS response too large: " << resp_len;
     close(sock);
     return "{}";
   }
 
   // Read response body
   std::vector<char> resp_buf(resp_len);
-  ssize_t br = ::recv(
-      sock, resp_buf.data(), resp_len,
-      MSG_WAITALL);
+  ssize_t br = ::recv(sock, resp_buf.data(), resp_len, MSG_WAITALL);
   close(sock);
 
   if (br != static_cast<ssize_t>(resp_len)) {
@@ -328,77 +284,55 @@ std::string ContainerEngine::ExecuteSkillViaSocket(
     return "{}";
   }
 
-  std::string resp_str(
-      resp_buf.data(), resp_len);
-  LOG(INFO) << "UDS response (" << resp_len
-            << " bytes)";
+  std::string resp_str(resp_buf.data(), resp_len);
+  LOG(INFO) << "UDS response (" << resp_len << " bytes)";
 
   // Parse response
-  LOG(ERROR)
-      << "[DEBUG] UDS raw response: "
-      << resp_str.substr(
-          0, std::min(
-              (size_t)300,
-              resp_str.size()));
+  LOG(ERROR) << "[DEBUG] UDS raw response: "
+             << resp_str.substr(0, std::min((size_t)300, resp_str.size()));
   try {
     auto resp = nlohmann::json::parse(resp_str);
-    std::string status =
-        resp.value("status", "error");
-    std::string output =
-        resp.value("output", "");
+    std::string status = resp.value("status", "error");
+    std::string output = resp.value("output", "");
     LOG(ERROR) << "[DEBUG] UDS parsed: status=" << status
-               << " output_len=" << output.length()
-               << " output_preview="
-               << output.substr(
-                   0, std::min(
-                       (size_t)200,
-                       output.size()));
+               << " output_len=" << output.length() << " output_preview="
+               << output.substr(0, std::min((size_t)200, output.size()));
     if (status == "ok") {
       return output;
     }
-    LOG(ERROR) << "Skill executor error: "
-               << output;
+    LOG(ERROR) << "Skill executor error: " << output;
     nlohmann::json err;
     err["error"] = output;
     return err.dump();
   } catch (const std::exception& e) {
-    LOG(ERROR) << "UDS JSON parse error: "
-               << e.what();
+    LOG(ERROR) << "UDS JSON parse error: " << e.what();
     return "{}";
   }
 }
 
-std::string ContainerEngine::ExecuteCode(
-    const std::string& code) {
+std::string ContainerEngine::ExecuteCode(const std::string& code) {
   if (!initialized_) {
-    LOG(ERROR) << "Cannot execute code. "
-               << "Engine not initialized.";
+    LOG(ERROR) << "Cannot execute code. " << "Engine not initialized.";
     return "{}";
   }
 
-  LOG(INFO) << "ExecuteCode: " << code.size()
-            << " chars";
+  LOG(INFO) << "ExecuteCode: " << code.size() << " chars";
 
   // Connect to skill executor via UDS
   int sock = socket(AF_UNIX, SOCK_STREAM, 0);
   if (sock < 0) {
-    LOG(WARNING) << "UDS socket() failed: "
-                 << strerror(errno);
+    LOG(WARNING) << "UDS socket() failed: " << strerror(errno);
     return "{}";
   }
 
   struct sockaddr_un addr;
   std::memset(&addr, 0, sizeof(addr));
   addr.sun_family = AF_UNIX;
-  strncpy(addr.sun_path, kSkillSocketPath,
-          sizeof(addr.sun_path) - 1);
+  strncpy(addr.sun_path, kSkillSocketPath, sizeof(addr.sun_path) - 1);
 
-  if (connect(sock,
-              reinterpret_cast<struct sockaddr*>(
-                  &addr),
-              sizeof(addr)) < 0) {
-    LOG(WARNING) << "UDS connect failed: "
-                 << strerror(errno);
+  if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) <
+      0) {
+    LOG(WARNING) << "UDS connect failed: " << strerror(errno);
     close(sock);
     return "{}";
   }
@@ -419,12 +353,9 @@ std::string ContainerEngine::ExecuteCode(
   }
 
   ssize_t total = 0;
-  ssize_t len =
-      static_cast<ssize_t>(payload.size());
+  ssize_t len = static_cast<ssize_t>(payload.size());
   while (total < len) {
-    ssize_t w = ::write(
-        sock, payload.data() + total,
-        len - total);
+    ssize_t w = ::write(sock, payload.data() + total, len - total);
     if (w <= 0) {
       LOG(ERROR) << "UDS write body failed";
       close(sock);
@@ -435,8 +366,7 @@ std::string ContainerEngine::ExecuteCode(
 
   // Read 4-byte response header
   uint32_t resp_net_len = 0;
-  ssize_t hr = ::recv(
-      sock, &resp_net_len, 4, MSG_WAITALL);
+  ssize_t hr = ::recv(sock, &resp_net_len, 4, MSG_WAITALL);
   if (hr != 4) {
     LOG(ERROR) << "UDS recv header failed";
     close(sock);
@@ -445,17 +375,14 @@ std::string ContainerEngine::ExecuteCode(
 
   uint32_t resp_len = ntohl(resp_net_len);
   if (resp_len > 10 * 1024 * 1024) {
-    LOG(ERROR) << "UDS response too large: "
-               << resp_len;
+    LOG(ERROR) << "UDS response too large: " << resp_len;
     close(sock);
     return "{}";
   }
 
   // Read response body
   std::vector<char> resp_buf(resp_len);
-  ssize_t br = ::recv(
-      sock, resp_buf.data(), resp_len,
-      MSG_WAITALL);
+  ssize_t br = ::recv(sock, resp_buf.data(), resp_len, MSG_WAITALL);
   close(sock);
 
   if (br != static_cast<ssize_t>(resp_len)) {
@@ -463,17 +390,13 @@ std::string ContainerEngine::ExecuteCode(
     return "{}";
   }
 
-  std::string resp_str(
-      resp_buf.data(), resp_len);
-  LOG(INFO) << "ExecuteCode response ("
-            << resp_len << " bytes)";
+  std::string resp_str(resp_buf.data(), resp_len);
+  LOG(INFO) << "ExecuteCode response (" << resp_len << " bytes)";
 
   try {
     auto resp = nlohmann::json::parse(resp_str);
-    std::string status =
-        resp.value("status", "error");
-    std::string output =
-        resp.value("output", "");
+    std::string status = resp.value("status", "error");
+    std::string output = resp.value("output", "");
     if (status == "ok") {
       return output;
     }
@@ -482,44 +405,35 @@ std::string ContainerEngine::ExecuteCode(
     err["error"] = output;
     return err.dump();
   } catch (const std::exception& e) {
-    LOG(ERROR) << "UDS JSON parse error: "
-               << e.what();
+    LOG(ERROR) << "UDS JSON parse error: " << e.what();
     return "{}";
   }
 }
 
-std::string ContainerEngine::ExecuteFileOp(
-    const std::string& operation,
-    const std::string& path,
-    const std::string& content) {
+std::string ContainerEngine::ExecuteFileOp(const std::string& operation,
+                                           const std::string& path,
+                                           const std::string& content) {
   if (!initialized_) {
-    LOG(ERROR) << "Cannot execute file op. "
-               << "Engine not initialized.";
+    LOG(ERROR) << "Cannot execute file op. " << "Engine not initialized.";
     return "{}";
   }
 
-  LOG(INFO) << "ExecuteFileOp: op=" << operation
-            << " path=" << path;
+  LOG(INFO) << "ExecuteFileOp: op=" << operation << " path=" << path;
 
   int sock = socket(AF_UNIX, SOCK_STREAM, 0);
   if (sock < 0) {
-    LOG(WARNING) << "UDS socket() failed: "
-                 << strerror(errno);
+    LOG(WARNING) << "UDS socket() failed: " << strerror(errno);
     return "{}";
   }
 
   struct sockaddr_un addr;
   std::memset(&addr, 0, sizeof(addr));
   addr.sun_family = AF_UNIX;
-  strncpy(addr.sun_path, kSkillSocketPath,
-          sizeof(addr.sun_path) - 1);
+  strncpy(addr.sun_path, kSkillSocketPath, sizeof(addr.sun_path) - 1);
 
-  if (connect(sock,
-              reinterpret_cast<struct sockaddr*>(
-                  &addr),
-              sizeof(addr)) < 0) {
-    LOG(WARNING) << "UDS connect failed: "
-                 << strerror(errno);
+  if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) <
+      0) {
+    LOG(WARNING) << "UDS connect failed: " << strerror(errno);
     close(sock);
     return "{}";
   }
@@ -541,12 +455,9 @@ std::string ContainerEngine::ExecuteFileOp(
   }
 
   ssize_t total = 0;
-  ssize_t len =
-      static_cast<ssize_t>(payload.size());
+  ssize_t len = static_cast<ssize_t>(payload.size());
   while (total < len) {
-    ssize_t w = ::write(
-        sock, payload.data() + total,
-        len - total);
+    ssize_t w = ::write(sock, payload.data() + total, len - total);
     if (w <= 0) {
       LOG(ERROR) << "UDS write body failed";
       close(sock);
@@ -556,8 +467,7 @@ std::string ContainerEngine::ExecuteFileOp(
   }
 
   uint32_t resp_net_len = 0;
-  ssize_t hr = ::recv(
-      sock, &resp_net_len, 4, MSG_WAITALL);
+  ssize_t hr = ::recv(sock, &resp_net_len, 4, MSG_WAITALL);
   if (hr != 4) {
     LOG(ERROR) << "UDS recv header failed";
     close(sock);
@@ -566,16 +476,13 @@ std::string ContainerEngine::ExecuteFileOp(
 
   uint32_t resp_len = ntohl(resp_net_len);
   if (resp_len > 10 * 1024 * 1024) {
-    LOG(ERROR) << "UDS response too large: "
-               << resp_len;
+    LOG(ERROR) << "UDS response too large: " << resp_len;
     close(sock);
     return "{}";
   }
 
   std::vector<char> resp_buf(resp_len);
-  ssize_t br = ::recv(
-      sock, resp_buf.data(), resp_len,
-      MSG_WAITALL);
+  ssize_t br = ::recv(sock, resp_buf.data(), resp_len, MSG_WAITALL);
   close(sock);
 
   if (br != static_cast<ssize_t>(resp_len)) {
@@ -583,17 +490,13 @@ std::string ContainerEngine::ExecuteFileOp(
     return "{}";
   }
 
-  std::string resp_str(
-      resp_buf.data(), resp_len);
-  LOG(INFO) << "ExecuteFileOp response ("
-            << resp_len << " bytes)";
+  std::string resp_str(resp_buf.data(), resp_len);
+  LOG(INFO) << "ExecuteFileOp response (" << resp_len << " bytes)";
 
   try {
     auto resp = nlohmann::json::parse(resp_str);
-    std::string status =
-        resp.value("status", "error");
-    std::string output =
-        resp.value("output", "");
+    std::string status = resp.value("status", "error");
+    std::string output = resp.value("output", "");
     if (status == "ok") {
       return output;
     }
@@ -602,15 +505,13 @@ std::string ContainerEngine::ExecuteFileOp(
     err["error"] = output;
     return err.dump();
   } catch (const std::exception& e) {
-    LOG(ERROR) << "UDS JSON parse error: "
-               << e.what();
+    LOG(ERROR) << "UDS JSON parse error: " << e.what();
     return "{}";
   }
 }
 
-std::string ContainerEngine::ExecuteSkillViaCrun(
-    const std::string& skill_name,
-    const std::string& arg_str) {
+std::string ContainerEngine::ExecuteSkillViaCrun(const std::string& skill_name,
+                                                 const std::string& arg_str) {
   if (runtime_bin_.empty()) {
     return "{}";
   }
@@ -619,32 +520,22 @@ std::string ContainerEngine::ExecuteSkillViaCrun(
   }
 
   std::string claw_env = "CLAW_ARGS=" + arg_str;
-  std::string skill_path =
-      "/skills/" + skill_name + "/" +
-      skill_name + ".py";
+  std::string skill_path = "/skills/" + skill_name + "/" + skill_name + ".py";
   std::string run_cmd =
-      CrunCmd("exec --env " +
-              EscapeShellArg(claw_env) + " " +
-              container_id_ +
-              " python3 " +
-              EscapeShellArg(skill_path));
+      CrunCmd("exec --env " + EscapeShellArg(claw_env) + " " + container_id_ +
+              " python3 " + EscapeShellArg(skill_path));
   LOG(INFO) << "crun exec skill: " << skill_name;
 
   auto [output, rc] = RunCommand(run_cmd);
-  LOG(INFO) << "crun exec result: rc=" << rc
-            << " len=" << output.length();
+  LOG(INFO) << "crun exec result: rc=" << rc << " len=" << output.length();
   if (rc == -1 && output.empty()) {
     return "{}";
   }
   if (rc != 0) {
-    LOG(ERROR) << "crun exec failed: " << rc
-               << " output: " << output;
+    LOG(ERROR) << "crun exec failed: " << rc << " output: " << output;
     nlohmann::json err;
-    err["error"] =
-        "crun exec failed with exit " +
-        std::to_string(rc);
-    err["details"] = output.length() > 500
-        ? output.substr(0, 500) : output;
+    err["error"] = "crun exec failed with exit " + std::to_string(rc);
+    err["details"] = output.length() > 500 ? output.substr(0, 500) : output;
     return err.dump();
   }
 
@@ -690,15 +581,13 @@ bool ContainerEngine::PrepareSkillsBundle() {
 }
 
 bool ContainerEngine::IsContainerRunning() const {
-  std::string check_cmd =
-      CrunCmd("state " + container_id_);
+  std::string check_cmd = CrunCmd("state " + container_id_);
   auto [output, rc] = RunCommand(check_cmd);
   return rc == 0;
 }
 
 bool ContainerEngine::StartSkillsContainer() {
-  std::string delete_cmd =
-      CrunCmd("delete -f " + container_id_);
+  std::string delete_cmd = CrunCmd("delete -f " + container_id_);
   auto [del_out, delete_ret] = RunCommand(delete_cmd);
   if (delete_ret != 0) {
     LOG(WARNING) << "Pre-delete secure container returned: " << delete_ret;
@@ -707,19 +596,15 @@ bool ContainerEngine::StartSkillsContainer() {
   // Workaround for Tizen emulator: disable cgroup manager if crun supports it
   std::string cgroup_arg = "";
   if (runtime_bin_.find("crun") != std::string::npos) {
-    auto [help_out, help_rc] = RunCommand(
-        runtime_bin_ + " run --help");
+    auto [help_out, help_rc] = RunCommand(runtime_bin_ + " run --help");
     if (help_rc == 0 &&
-        help_out.find("--cgroup-manager") !=
-            std::string::npos) {
+        help_out.find("--cgroup-manager") != std::string::npos) {
       cgroup_arg = " --cgroup-manager=disabled";
     }
   }
 
-  std::string run_cmd =
-      "cd " + EscapeShellArg(bundle_dir_) +
-      " && " + CrunCmd("run" + cgroup_arg +
-      " -d " + container_id_);
+  std::string run_cmd = "cd " + EscapeShellArg(bundle_dir_) + " && " +
+                        CrunCmd("run" + cgroup_arg + " -d " + container_id_);
   auto [run_out, ret] = RunCommand(run_cmd);
   if (ret != 0) {
     LOG(ERROR) << "Failed to start secure skills container. Return: " << ret
@@ -734,8 +619,7 @@ void ContainerEngine::StopSkillsContainer() {
     return;
   }
 
-  std::string stop_cmd =
-      CrunCmd("delete -f " + container_id_);
+  std::string stop_cmd = CrunCmd("delete -f " + container_id_);
   auto [output, stop_ret] = RunCommand(stop_cmd);
   if (stop_ret != 0) {
     LOG(WARNING) << "Delete secure container returned: " << stop_ret;
@@ -794,13 +678,15 @@ bool ContainerEngine::WriteSkillsConfig() const {
     {
       "destination": "/skills",
       "type": "bind",
-      "source": ")" + skills_dir_ + R"(",
+      "source": ")" + skills_dir_ +
+                            R"(",
       "options": ["rbind", "rw"]
     },
     {
       "destination": "/data",
       "type": "bind",
-      "source": ")" + app_data_dir_ + R"(/data",
+      "source": ")" + app_data_dir_ +
+                            R"(/data",
       "options": ["rbind", "rw"]
     },
     {
@@ -902,16 +788,14 @@ bool ContainerEngine::WriteSkillsConfig() const {
   return true;
 }
 
-std::string ContainerEngine::BuildPaths(
-    const std::string& leaf) const {
+std::string ContainerEngine::BuildPaths(const std::string& leaf) const {
   if (leaf.empty()) {
     return app_data_dir_;
   }
   return app_data_dir_ + "/" + leaf;
 }
 
-std::string ContainerEngine::EscapeShellArg(
-    const std::string& input) const {
+std::string ContainerEngine::EscapeShellArg(const std::string& input) const {
   std::string output = "'";
   for (char c : input) {
     if (c == '\'') {
@@ -924,30 +808,22 @@ std::string ContainerEngine::EscapeShellArg(
   return output;
 }
 
-std::string ContainerEngine::CrunCmd(
-    const std::string& subcmd) const {
-  return runtime_bin_ + " --root " +
-         EscapeShellArg(crun_root_) +
-         " " + subcmd;
+std::string ContainerEngine::CrunCmd(const std::string& subcmd) const {
+  return runtime_bin_ + " --root " + EscapeShellArg(crun_root_) + " " + subcmd;
 }
 
-std::string ContainerEngine::ExtractJsonResult(
-    const std::string& raw) {
+std::string ContainerEngine::ExtractJsonResult(const std::string& raw) {
   std::string trimmed = raw;
   while (!trimmed.empty() &&
-         (trimmed.back() == '\n' ||
-          trimmed.back() == '\r' ||
+         (trimmed.back() == '\n' || trimmed.back() == '\r' ||
           trimmed.back() == ' ')) {
     trimmed.pop_back();
   }
   auto pos = trimmed.rfind('\n');
   if (pos != std::string::npos) {
     std::string last = trimmed.substr(pos + 1);
-    if (!last.empty() &&
-        (last.front() == '{' ||
-         last.front() == '[')) {
-      LOG(INFO) << "Extracted JSON from last "
-                << "line (skipped "
+    if (!last.empty() && (last.front() == '{' || last.front() == '[')) {
+      LOG(INFO) << "Extracted JSON from last " << "line (skipped "
                 << (int)(pos + 1) << " bytes)";
       return last;
     }
@@ -955,4 +831,4 @@ std::string ContainerEngine::ExtractJsonResult(
   return trimmed;
 }
 
-} // namespace tizenclaw
+}  // namespace tizenclaw

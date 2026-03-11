@@ -13,6 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "session_store.hh"
+
 #include <algorithm>
 #include <chrono>
 #include <ctime>
@@ -23,28 +25,20 @@
 #include <set>
 #include <sstream>
 
-#include "session_store.hh"
 #include "../../common/logging.hh"
 
 namespace tizenclaw {
 
 namespace fs = std::filesystem;
 
-
 SessionStore::SessionStore()
-    : sessions_dir_(
-          "/opt/usr/share/tizenclaw/sessions") {
-}
+    : sessions_dir_("/opt/usr/share/tizenclaw/sessions") {}
 
-void SessionStore::SetDirectory(
-    const std::string& dir) {
-  sessions_dir_ = dir;
-}
+void SessionStore::SetDirectory(const std::string& dir) { sessions_dir_ = dir; }
 
 std::string SessionStore::GetDatePrefix() {
   auto now = std::chrono::system_clock::now();
-  auto t =
-      std::chrono::system_clock::to_time_t(now);
+  auto t = std::chrono::system_clock::to_time_t(now);
   std::tm tm_buf{};
   localtime_r(&t, &tm_buf);
   std::ostringstream oss;
@@ -52,46 +46,34 @@ std::string SessionStore::GetDatePrefix() {
   return oss.str();
 }
 
-std::string SessionStore::FindSessionFile(
-    const std::string& dir,
-    const std::string& session_id) const {
+std::string SessionStore::FindSessionFile(const std::string& dir,
+                                          const std::string& session_id) const {
   // Look for *-{session_id}.md in dir
-  std::string suffix =
-      "-" + session_id + ".md";
+  std::string suffix = "-" + session_id + ".md";
   std::error_code ec;
-  for (const auto& entry :
-       fs::directory_iterator(dir, ec)) {
+  for (const auto& entry : fs::directory_iterator(dir, ec)) {
     if (!entry.is_regular_file(ec)) continue;
-    std::string name =
-        entry.path().filename().string();
+    std::string name = entry.path().filename().string();
     if (name.size() > suffix.size() &&
-        name.compare(
-            name.size() - suffix.size(),
-            suffix.size(), suffix) == 0) {
+        name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0) {
       return entry.path().string();
     }
   }
   return "";
 }
 
-std::string SessionStore::GetSessionPath(
-    const std::string& session_id) const {
+std::string SessionStore::GetSessionPath(const std::string& session_id) const {
   // Reuse existing file if found
-  std::string existing =
-      FindSessionFile(
-          sessions_dir_, session_id);
+  std::string existing = FindSessionFile(sessions_dir_, session_id);
   if (!existing.empty()) return existing;
 
   // New file: YYYY-MM-DD-{session_id}.md
-  return sessions_dir_ + "/" +
-      GetDatePrefix() + "-" +
-      session_id + ".md";
+  return sessions_dir_ + "/" + GetDatePrefix() + "-" + session_id + ".md";
 }
 
 std::string SessionStore::GetLegacySessionPath(
     const std::string& session_id) const {
-  return sessions_dir_ + "/" +
-      session_id + ".json";
+  return sessions_dir_ + "/" + session_id + ".json";
 }
 
 std::string SessionStore::GetLogsDir() const {
@@ -113,37 +95,31 @@ std::string SessionStore::GetUsageDir() const {
   return base + "/usage";
 }
 
-std::string SessionStore::GetDailyUsageDir()
-    const {
+std::string SessionStore::GetDailyUsageDir() const {
   return GetUsageDir() + "/daily";
 }
 
-std::string SessionStore::GetMonthlyUsageDir()
-    const {
+std::string SessionStore::GetMonthlyUsageDir() const {
   return GetUsageDir() + "/monthly";
 }
 
 std::string SessionStore::GetTimestamp() {
   auto now = std::chrono::system_clock::now();
-  auto t = std::chrono::system_clock::to_time_t(
-      now);
+  auto t = std::chrono::system_clock::to_time_t(now);
   std::tm tm_buf{};
   localtime_r(&t, &tm_buf);
   std::ostringstream oss;
-  oss << std::put_time(
-      &tm_buf, "%Y-%m-%dT%H:%M:%S%z");
+  oss << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%S%z");
   return oss.str();
 }
 
-void SessionStore::EnsureDir(
-    const std::string& dir) {
+void SessionStore::EnsureDir(const std::string& dir) {
   std::error_code ec;
   fs::create_directories(dir, ec);
 }
 
-bool SessionStore::AtomicWrite(
-    const std::string& path,
-    const std::string& content) {
+bool SessionStore::AtomicWrite(const std::string& path,
+                               const std::string& content) {
   std::string tmp_path = path + ".tmp";
   std::ofstream out(tmp_path);
   if (!out.is_open()) {
@@ -161,8 +137,7 @@ bool SessionStore::AtomicWrite(
   std::error_code ec;
   fs::rename(tmp_path, path, ec);
   if (ec) {
-    LOG(ERROR) << "Rename failed: " << tmp_path
-               << " -> " << path;
+    LOG(ERROR) << "Rename failed: " << tmp_path << " -> " << path;
     fs::remove(tmp_path, ec);
     return false;
   }
@@ -216,8 +191,7 @@ std::string SessionStore::MessagesToMarkdown(
           md << " [" << tc.id << "]";
         }
         md << "\n\n";
-        if (!tc.args.is_null() &&
-            !tc.args.empty()) {
+        if (!tc.args.is_null() && !tc.args.empty()) {
           md << "```json\n";
           md << tc.args.dump(2) << "\n";
           md << "```\n";
@@ -234,8 +208,7 @@ std::string SessionStore::MessagesToMarkdown(
   return md.str();
 }
 
-std::vector<LlmMessage>
-SessionStore::MarkdownToMessages(
+std::vector<LlmMessage> SessionStore::MarkdownToMessages(
     const std::string& content) const {
   std::vector<LlmMessage> history;
 
@@ -279,17 +252,14 @@ SessionStore::MarkdownToMessages(
 
     // Parse header line
     auto header_end = block.find('\n');
-    std::string header = block.substr(3,
-        header_end - 3);
+    std::string header = block.substr(3, header_end - 3);
     std::string rest =
-        (header_end != std::string::npos)
-        ? block.substr(header_end + 1) : "";
+        (header_end != std::string::npos) ? block.substr(header_end + 1) : "";
 
     // Trim leading whitespace/newlines from
     // content after header
     {
-      auto first = rest.find_first_not_of(
-          " \n\r\t");
+      auto first = rest.find_first_not_of(" \n\r\t");
       if (first != std::string::npos) {
         rest = rest.substr(first);
       } else {
@@ -306,35 +276,27 @@ SessionStore::MarkdownToMessages(
       // Parse [call_id] and tool_name
       auto bracket_s = header.find('[');
       auto bracket_e = header.find(']');
-      if (bracket_s != std::string::npos &&
-          bracket_e != std::string::npos) {
-        msg.tool_call_id = header.substr(
-            bracket_s + 1,
-            bracket_e - bracket_s - 1);
+      if (bracket_s != std::string::npos && bracket_e != std::string::npos) {
+        msg.tool_call_id =
+            header.substr(bracket_s + 1, bracket_e - bracket_s - 1);
         // tool_name after "] "
         if (bracket_e + 2 < header.size()) {
-          msg.tool_name =
-              header.substr(bracket_e + 2);
+          msg.tool_name = header.substr(bracket_e + 2);
         }
       }
       // Extract JSON from fenced code block
       auto json_start = rest.find("```json\n");
-      auto json_end = rest.find("\n```",
-          json_start + 8);
-      if (json_start != std::string::npos &&
-          json_end != std::string::npos) {
-        std::string json_str = rest.substr(
-            json_start + 8,
-            json_end - json_start - 8);
+      auto json_end = rest.find("\n```", json_start + 8);
+      if (json_start != std::string::npos && json_end != std::string::npos) {
+        std::string json_str =
+            rest.substr(json_start + 8, json_end - json_start - 8);
         try {
-          msg.tool_result =
-              nlohmann::json::parse(json_str);
+          msg.tool_result = nlohmann::json::parse(json_str);
         } catch (...) {
           msg.tool_result = {{"output", json_str}};
         }
       }
-    } else if (header == "user" ||
-               header == "assistant" ||
+    } else if (header == "user" || header == "assistant" ||
                header == "[compressed]") {
       // User, assistant, or compressed message
       if (header == "[compressed]") {
@@ -350,8 +312,7 @@ SessionStore::MarkdownToMessages(
         // Text before first tool_call
         msg.text = rest.substr(0, tc_pos);
         // Trim trailing whitespace from text
-        auto last = msg.text.find_last_not_of(
-            " \n\r\t");
+        auto last = msg.text.find_last_not_of(" \n\r\t");
         if (last != std::string::npos) {
           msg.text = msg.text.substr(0, last + 1);
         } else {
@@ -367,46 +328,36 @@ SessionStore::MarkdownToMessages(
         std::string tc_json;
         bool in_json = false;
 
-        while (std::getline(
-            tc_stream, tc_line)) {
-          if (tc_line.substr(0, 14) ==
-              "### tool_call:") {
+        while (std::getline(tc_stream, tc_line)) {
+          if (tc_line.substr(0, 14) == "### tool_call:") {
             if (in_tc) {
               msg.tool_calls.push_back(current_tc);
               current_tc = LlmToolCall();
             }
             in_tc = true;
             // Parse "### tool_call: name [id]"
-            std::string tc_header =
-                tc_line.substr(15);
+            std::string tc_header = tc_line.substr(15);
             auto bid = tc_header.find('[');
             auto eid = tc_header.find(']');
-            if (bid != std::string::npos &&
-                eid != std::string::npos) {
-              current_tc.name = tc_header.substr(
-                  0, bid - 1);
-              current_tc.id = tc_header.substr(
-                  bid + 1, eid - bid - 1);
+            if (bid != std::string::npos && eid != std::string::npos) {
+              current_tc.name = tc_header.substr(0, bid - 1);
+              current_tc.id = tc_header.substr(bid + 1, eid - bid - 1);
             } else {
               current_tc.name = tc_header;
             }
             // Trim name
-            while (!current_tc.name.empty() &&
-                   current_tc.name.back() == ' ') {
+            while (!current_tc.name.empty() && current_tc.name.back() == ' ') {
               current_tc.name.pop_back();
             }
           } else if (tc_line == "```json") {
             in_json = true;
             tc_json.clear();
-          } else if (tc_line == "```" &&
-                     in_json) {
+          } else if (tc_line == "```" && in_json) {
             in_json = false;
             try {
-              current_tc.args =
-                  nlohmann::json::parse(tc_json);
+              current_tc.args = nlohmann::json::parse(tc_json);
             } catch (...) {
-              current_tc.args =
-                  nlohmann::json::object();
+              current_tc.args = nlohmann::json::object();
             }
           } else if (in_json) {
             tc_json += tc_line + "\n";
@@ -419,8 +370,7 @@ SessionStore::MarkdownToMessages(
         // No tool calls — text only
         msg.text = rest;
         // Trim trailing whitespace
-        auto last = msg.text.find_last_not_of(
-            " \n\r\t");
+        auto last = msg.text.find_last_not_of(" \n\r\t");
         if (last != std::string::npos) {
           msg.text = msg.text.substr(0, last + 1);
         } else {
@@ -429,8 +379,7 @@ SessionStore::MarkdownToMessages(
       }
 
       // Mark compressed turns
-      if (header == "[compressed]" &&
-          !msg.text.empty()) {
+      if (header == "[compressed]" && !msg.text.empty()) {
         msg.text = "[compressed] " + msg.text;
       }
     }
@@ -445,8 +394,7 @@ SessionStore::MarkdownToMessages(
 // Legacy JSON helpers (for migration)
 // ------------------------------------------------
 
-nlohmann::json SessionStore::MessageToJson(
-    const LlmMessage& msg) {
+nlohmann::json SessionStore::MessageToJson(const LlmMessage& msg) {
   nlohmann::json j;
   j["role"] = msg.role;
 
@@ -457,11 +405,7 @@ nlohmann::json SessionStore::MessageToJson(
   if (!msg.tool_calls.empty()) {
     nlohmann::json tcs = nlohmann::json::array();
     for (auto& tc : msg.tool_calls) {
-      tcs.push_back({
-          {"id", tc.id},
-          {"name", tc.name},
-          {"args", tc.args}
-      });
+      tcs.push_back({{"id", tc.id}, {"name", tc.name}, {"args", tc.args}});
     }
     j["tool_calls"] = tcs;
   }
@@ -481,8 +425,7 @@ nlohmann::json SessionStore::MessageToJson(
   return j;
 }
 
-LlmMessage SessionStore::JsonToMessage(
-    const nlohmann::json& j) {
+LlmMessage SessionStore::JsonToMessage(const nlohmann::json& j) {
   LlmMessage msg;
   msg.role = j.value("role", "");
   msg.text = j.value("text", "");
@@ -512,9 +455,8 @@ LlmMessage SessionStore::JsonToMessage(
 // Session Save/Load (Markdown with JSON fallback)
 // ------------------------------------------------
 
-bool SessionStore::SaveSession(
-    const std::string& session_id,
-    const std::vector<LlmMessage>& history) {
+bool SessionStore::SaveSession(const std::string& session_id,
+                               const std::vector<LlmMessage>& history) {
   if (session_id.empty() || history.empty()) {
     return false;
   }
@@ -525,34 +467,28 @@ bool SessionStore::SaveSession(
 
   // Check file size limit — trim oldest messages
   std::vector<LlmMessage> trimmed = history;
-  while (data.size() > kMaxFileSize &&
-         trimmed.size() > 2) {
+  while (data.size() > kMaxFileSize && trimmed.size() > 2) {
     trimmed.erase(trimmed.begin());
     data = MessagesToMarkdown(trimmed);
   }
 
   std::string path = GetSessionPath(session_id);
   if (!AtomicWrite(path, data)) {
-    LOG(ERROR) << "Failed to save session: "
-               << path;
+    LOG(ERROR) << "Failed to save session: " << path;
     return false;
   }
 
-  LOG(DEBUG) << "Session saved: " << session_id
-             << " (" << trimmed.size()
-             << " messages, " << data.size()
-             << " bytes)";
+  LOG(DEBUG) << "Session saved: " << session_id << " (" << trimmed.size()
+             << " messages, " << data.size() << " bytes)";
   return true;
 }
 
-std::vector<LlmMessage>
-SessionStore::LoadSession(
+std::vector<LlmMessage> SessionStore::LoadSession(
     const std::string& session_id) {
   std::vector<LlmMessage> history;
 
   // Try loading Markdown first
-  std::string md_path =
-      GetSessionPath(session_id);
+  std::string md_path = GetSessionPath(session_id);
   std::ifstream md_in(md_path);
   if (md_in.is_open()) {
     std::ostringstream ss;
@@ -561,17 +497,14 @@ SessionStore::LoadSession(
 
     history = MarkdownToMessages(ss.str());
     if (!history.empty()) {
-      LOG(INFO) << "Session loaded (md): "
-                << session_id << " ("
-                << history.size()
-                << " messages)";
+      LOG(INFO) << "Session loaded (md): " << session_id << " ("
+                << history.size() << " messages)";
       return history;
     }
   }
 
   // Fallback: try legacy JSON and auto-migrate
-  std::string json_path =
-      GetLegacySessionPath(session_id);
+  std::string json_path = GetLegacySessionPath(session_id);
   std::ifstream json_in(json_path);
   if (!json_in.is_open()) {
     return history;  // No saved session
@@ -583,8 +516,7 @@ SessionStore::LoadSession(
     json_in.close();
 
     if (!arr.is_array()) {
-      LOG(WARNING) << "Invalid session file: "
-                   << json_path;
+      LOG(WARNING) << "Invalid session file: " << json_path;
       return history;
     }
 
@@ -592,30 +524,25 @@ SessionStore::LoadSession(
       history.push_back(JsonToMessage(j));
     }
 
-    LOG(INFO) << "Session loaded (json): "
-              << session_id << " ("
-              << history.size()
-              << " messages)";
+    LOG(INFO) << "Session loaded (json): " << session_id << " ("
+              << history.size() << " messages)";
 
     // Auto-migrate: save as Markdown and remove
     // the old JSON file
     if (SaveSession(session_id, history)) {
       std::error_code ec;
       fs::remove(json_path, ec);
-      LOG(INFO) << "Migrated session to md: "
-                << session_id;
+      LOG(INFO) << "Migrated session to md: " << session_id;
     }
   } catch (const std::exception& e) {
-    LOG(ERROR) << "Failed to parse session "
-               << json_path << ": " << e.what();
+    LOG(ERROR) << "Failed to parse session " << json_path << ": " << e.what();
     history.clear();
   }
 
   return history;
 }
 
-void SessionStore::SanitizeHistory(
-    std::vector<LlmMessage>& history) {
+void SessionStore::SanitizeHistory(std::vector<LlmMessage>& history) {
   // Build set of valid tool_call IDs from
   // assistant messages that have tool_calls
   std::set<std::string> valid_tool_call_ids;
@@ -632,34 +559,27 @@ void SessionStore::SanitizeHistory(
   // Remove tool messages whose tool_call_id
   // is not in valid_tool_call_ids
   history.erase(
-      std::remove_if(
-          history.begin(), history.end(),
-          [&](const LlmMessage& msg) {
-            if (msg.role != "tool") return false;
-            if (msg.tool_call_id.empty())
-              return true;  // No ID = orphaned
-            return valid_tool_call_ids.find(
-                       msg.tool_call_id) ==
-                   valid_tool_call_ids.end();
-          }),
+      std::remove_if(history.begin(), history.end(),
+                     [&](const LlmMessage& msg) {
+                       if (msg.role != "tool") return false;
+                       if (msg.tool_call_id.empty())
+                         return true;  // No ID = orphaned
+                       return valid_tool_call_ids.find(msg.tool_call_id) ==
+                              valid_tool_call_ids.end();
+                     }),
       history.end());
 }
 
-void SessionStore::DeleteSession(
-    const std::string& session_id) {
+void SessionStore::DeleteSession(const std::string& session_id) {
   // Delete both .md and legacy .json if exist
   std::error_code ec;
-  std::string md_path =
-      GetSessionPath(session_id);
+  std::string md_path = GetSessionPath(session_id);
   if (fs::remove(md_path, ec)) {
-    LOG(INFO) << "Session deleted (md): "
-              << session_id;
+    LOG(INFO) << "Session deleted (md): " << session_id;
   }
-  std::string json_path =
-      GetLegacySessionPath(session_id);
+  std::string json_path = GetLegacySessionPath(session_id);
   if (fs::remove(json_path, ec)) {
-    LOG(INFO) << "Session deleted (json): "
-              << session_id;
+    LOG(INFO) << "Session deleted (json): " << session_id;
   }
 }
 
@@ -667,12 +587,11 @@ void SessionStore::DeleteSession(
 // Skill Execution Logging (Markdown table)
 // ------------------------------------------------
 
-void SessionStore::LogSkillExecution(
-    const std::string& session_id,
-    const std::string& skill_name,
-    const nlohmann::json& args,
-    const std::string& result,
-    int duration_ms) {
+void SessionStore::LogSkillExecution(const std::string& session_id,
+                                     const std::string& skill_name,
+                                     const nlohmann::json& args,
+                                     const std::string& result,
+                                     int duration_ms) {
   (void)args;
   (void)result;
   std::string logs_dir = GetLogsDir();
@@ -680,34 +599,27 @@ void SessionStore::LogSkillExecution(
 
   // Daily log file: YYYY-MM-DD.md
   auto now = std::chrono::system_clock::now();
-  auto t = std::chrono::system_clock::to_time_t(
-      now);
+  auto t = std::chrono::system_clock::to_time_t(now);
   std::tm tm_buf{};
   localtime_r(&t, &tm_buf);
   std::ostringstream date_oss;
-  date_oss << std::put_time(
-      &tm_buf, "%Y-%m-%d");
+  date_oss << std::put_time(&tm_buf, "%Y-%m-%d");
   std::string date_str = date_oss.str();
-  std::string log_path =
-      logs_dir + "/" + date_str + ".md";
+  std::string log_path = logs_dir + "/" + date_str + ".md";
 
   // Check if file exists — add header if new
   bool is_new = !fs::exists(log_path);
 
   std::ofstream out(log_path, std::ios::app);
   if (!out.is_open()) {
-    LOG(ERROR) << "Failed to open skill log: "
-               << log_path;
+    LOG(ERROR) << "Failed to open skill log: " << log_path;
     return;
   }
 
   if (is_new) {
-    out << "# Skill Execution Log — "
-        << date_str << "\n\n";
-    out << "| Time | Session | Skill | "
-        << "Duration |\n";
-    out << "|------|---------|-------|-"
-        << "--------|\n";
+    out << "# Skill Execution Log — " << date_str << "\n\n";
+    out << "| Time | Session | Skill | " << "Duration |\n";
+    out << "|------|---------|-------|-" << "--------|\n";
   }
 
   std::string ts = GetTimestamp();
@@ -717,37 +629,29 @@ void SessionStore::LogSkillExecution(
     short_sid = short_sid.substr(0, 16) + "..";
   }
 
-  out << "| " << ts
-      << " | " << short_sid
-      << " | " << skill_name
-      << " | " << duration_ms << "ms |\n";
+  out << "| " << ts << " | " << short_sid << " | " << skill_name << " | "
+      << duration_ms << "ms |\n";
   out.close();
 
-  LOG(DEBUG) << "Skill logged: " << skill_name
-             << " (" << duration_ms << "ms)";
+  LOG(DEBUG) << "Skill logged: " << skill_name << " (" << duration_ms << "ms)";
 }
 
 // ------------------------------------------------
 // Token Usage Logging (Markdown per-session)
 // ------------------------------------------------
 
-void SessionStore::LogTokenUsage(
-    const std::string& session_id,
-    const std::string& model_name,
-    int prompt_tokens,
-    int completion_tokens) {
+void SessionStore::LogTokenUsage(const std::string& session_id,
+                                 const std::string& model_name,
+                                 int prompt_tokens, int completion_tokens) {
   if (session_id.empty()) return;
 
   std::string usage_dir = GetUsageDir();
   EnsureDir(usage_dir);
 
   // Find existing or create new with date prefix
-  std::string usage_path =
-      FindSessionFile(usage_dir, session_id);
+  std::string usage_path = FindSessionFile(usage_dir, session_id);
   if (usage_path.empty()) {
-    usage_path = usage_dir + "/" +
-        GetDatePrefix() + "-" +
-        session_id + ".md";
+    usage_path = usage_dir + "/" + GetDatePrefix() + "-" + session_id + ".md";
   }
 
   // Read existing usage summary if present
@@ -767,15 +671,10 @@ void SessionStore::LogTokenUsage(
         }
       }
       if (in_frontmatter) {
-        if (line.find("total_prompt_tokens:") == 0)
-        {
-          summary.total_prompt_tokens =
-              std::stoi(line.substr(21));
-        } else if (
-            line.find(
-                "total_completion_tokens:") == 0) {
-          summary.total_completion_tokens =
-              std::stoi(line.substr(25));
+        if (line.find("total_prompt_tokens:") == 0) {
+          summary.total_prompt_tokens = std::stoi(line.substr(21));
+        } else if (line.find("total_completion_tokens:") == 0) {
+          summary.total_completion_tokens = std::stoi(line.substr(25));
         }
       }
     }
@@ -784,8 +683,7 @@ void SessionStore::LogTokenUsage(
 
   // Accumulate new usage
   summary.total_prompt_tokens += prompt_tokens;
-  summary.total_completion_tokens +=
-      completion_tokens;
+  summary.total_completion_tokens += completion_tokens;
 
   // Append new entry to the table
   // Read existing table rows
@@ -793,21 +691,17 @@ void SessionStore::LogTokenUsage(
   {
     std::ifstream re_in(usage_path);
     if (re_in.is_open()) {
-      std::string content(
-          (std::istreambuf_iterator<char>(re_in)),
-          std::istreambuf_iterator<char>());
+      std::string content((std::istreambuf_iterator<char>(re_in)),
+                          std::istreambuf_iterator<char>());
       re_in.close();
 
       // Extract table rows (lines starting with |
       // after the header)
-      auto table_start = content.find(
-          "|---");
+      auto table_start = content.find("|---");
       if (table_start != std::string::npos) {
-        auto after_sep = content.find(
-            '\n', table_start);
+        auto after_sep = content.find('\n', table_start);
         if (after_sep != std::string::npos) {
-          existing_table =
-              content.substr(after_sep + 1);
+          existing_table = content.substr(after_sep + 1);
         }
       }
     }
@@ -817,18 +711,13 @@ void SessionStore::LogTokenUsage(
   std::ostringstream md;
   md << "---\n";
   md << "session_id: " << session_id << "\n";
-  md << "total_prompt_tokens: "
-     << summary.total_prompt_tokens << "\n";
-  md << "total_completion_tokens: "
-     << summary.total_completion_tokens << "\n";
+  md << "total_prompt_tokens: " << summary.total_prompt_tokens << "\n";
+  md << "total_completion_tokens: " << summary.total_completion_tokens << "\n";
   md << "updated: " << GetTimestamp() << "\n";
   md << "---\n\n";
-  md << "# Token Usage — " << session_id
-     << "\n\n";
-  md << "| Time | Model | Prompt | "
-     << "Completion |\n";
-  md << "|------|-------|--------|-"
-     << "-----------|\n";
+  md << "# Token Usage — " << session_id << "\n\n";
+  md << "| Time | Model | Prompt | " << "Completion |\n";
+  md << "|------|-------|--------|-" << "-----------|\n";
 
   // Existing rows
   if (!existing_table.empty()) {
@@ -836,33 +725,26 @@ void SessionStore::LogTokenUsage(
   }
 
   // New row
-  md << "| " << GetTimestamp()
-     << " | " << model_name
-     << " | " << prompt_tokens
+  md << "| " << GetTimestamp() << " | " << model_name << " | " << prompt_tokens
      << " | " << completion_tokens << " |\n";
 
   AtomicWrite(usage_path, md.str());
 
-  LOG(DEBUG) << "Token usage logged: "
-             << model_name << " (prompt="
-             << prompt_tokens
-             << ", completion="
-             << completion_tokens << ")";
+  LOG(DEBUG) << "Token usage logged: " << model_name
+             << " (prompt=" << prompt_tokens
+             << ", completion=" << completion_tokens << ")";
 
   // --- Daily aggregate ---
   std::string daily_dir = GetDailyUsageDir();
   EnsureDir(daily_dir);
   auto now_t = std::chrono::system_clock::now();
-  auto tt =
-      std::chrono::system_clock::to_time_t(now_t);
+  auto tt = std::chrono::system_clock::to_time_t(now_t);
   std::tm tm_daily{};
   localtime_r(&tt, &tm_daily);
   std::ostringstream date_oss;
-  date_oss << std::put_time(
-      &tm_daily, "%Y-%m-%d");
+  date_oss << std::put_time(&tm_daily, "%Y-%m-%d");
   std::string date_str = date_oss.str();
-  std::string daily_path =
-      daily_dir + "/" + date_str + ".md";
+  std::string daily_path = daily_dir + "/" + date_str + ".md";
 
   // Read existing daily aggregate
   DailyUsageSummary daily;
@@ -881,24 +763,17 @@ void SessionStore::LogTokenUsage(
         }
         if (in_fm) {
           if (dl.find("total_prompt_tokens:") == 0)
-            daily.total_prompt_tokens =
-                std::stoi(dl.substr(21));
-          else if (
-              dl.find(
-                  "total_completion_tokens:") == 0)
-            daily.total_completion_tokens =
-                std::stoi(dl.substr(25));
-          else if (
-              dl.find("total_requests:") == 0)
-            daily.total_requests =
-                std::stoi(dl.substr(16));
+            daily.total_prompt_tokens = std::stoi(dl.substr(21));
+          else if (dl.find("total_completion_tokens:") == 0)
+            daily.total_completion_tokens = std::stoi(dl.substr(25));
+          else if (dl.find("total_requests:") == 0)
+            daily.total_requests = std::stoi(dl.substr(16));
         }
         if (dl.find("|---") == 0) {
           past_hdr = true;
           continue;
         }
-        if (past_hdr && !dl.empty() &&
-            dl[0] == '|') {
+        if (past_hdr && !dl.empty() && dl[0] == '|') {
           daily_rows += dl + "\n";
         }
       }
@@ -907,33 +782,24 @@ void SessionStore::LogTokenUsage(
   }
 
   daily.total_prompt_tokens += prompt_tokens;
-  daily.total_completion_tokens +=
-      completion_tokens;
+  daily.total_completion_tokens += completion_tokens;
   daily.total_requests += 1;
 
   // Rebuild daily file
   std::ostringstream dmd;
   dmd << "---\n";
   dmd << "date: " << date_str << "\n";
-  dmd << "total_prompt_tokens: "
-      << daily.total_prompt_tokens << "\n";
-  dmd << "total_completion_tokens: "
-      << daily.total_completion_tokens << "\n";
-  dmd << "total_requests: "
-      << daily.total_requests << "\n";
+  dmd << "total_prompt_tokens: " << daily.total_prompt_tokens << "\n";
+  dmd << "total_completion_tokens: " << daily.total_completion_tokens << "\n";
+  dmd << "total_requests: " << daily.total_requests << "\n";
   dmd << "updated: " << GetTimestamp() << "\n";
   dmd << "---\n\n";
   dmd << "# Daily Usage " << date_str << "\n\n";
-  dmd << "| Time | Session | Backend | "
-      << "Prompt | Completion |\n";
-  dmd << "|------|---------|---------|--"
-      << "------|------------|\n";
+  dmd << "| Time | Session | Backend | " << "Prompt | Completion |\n";
+  dmd << "|------|---------|---------|--" << "------|------------|\n";
   if (!daily_rows.empty()) dmd << daily_rows;
-  dmd << "| " << GetTimestamp()
-      << " | " << session_id
-      << " | " << model_name
-      << " | " << prompt_tokens
-      << " | " << completion_tokens << " |\n";
+  dmd << "| " << GetTimestamp() << " | " << session_id << " | " << model_name
+      << " | " << prompt_tokens << " | " << completion_tokens << " |\n";
 
   AtomicWrite(daily_path, dmd.str());
 
@@ -941,11 +807,9 @@ void SessionStore::LogTokenUsage(
   std::string monthly_dir = GetMonthlyUsageDir();
   EnsureDir(monthly_dir);
   std::ostringstream month_oss;
-  month_oss << std::put_time(
-      &tm_daily, "%Y-%m");
+  month_oss << std::put_time(&tm_daily, "%Y-%m");
   std::string month_str = month_oss.str();
-  std::string monthly_path =
-      monthly_dir + "/" + month_str + ".md";
+  std::string monthly_path = monthly_dir + "/" + month_str + ".md";
 
   DailyUsageSummary monthly;
   monthly.date = month_str;
@@ -961,17 +825,11 @@ void SessionStore::LogTokenUsage(
         }
         if (in_fm) {
           if (ml.find("total_prompt_tokens:") == 0)
-            monthly.total_prompt_tokens =
-                std::stoi(ml.substr(21));
-          else if (
-              ml.find(
-                  "total_completion_tokens:") == 0)
-            monthly.total_completion_tokens =
-                std::stoi(ml.substr(25));
-          else if (
-              ml.find("total_requests:") == 0)
-            monthly.total_requests =
-                std::stoi(ml.substr(16));
+            monthly.total_prompt_tokens = std::stoi(ml.substr(21));
+          else if (ml.find("total_completion_tokens:") == 0)
+            monthly.total_completion_tokens = std::stoi(ml.substr(25));
+          else if (ml.find("total_requests:") == 0)
+            monthly.total_requests = std::stoi(ml.substr(16));
         }
       }
       min.close();
@@ -979,40 +837,29 @@ void SessionStore::LogTokenUsage(
   }
 
   monthly.total_prompt_tokens += prompt_tokens;
-  monthly.total_completion_tokens +=
-      completion_tokens;
+  monthly.total_completion_tokens += completion_tokens;
   monthly.total_requests += 1;
 
   std::ostringstream mmd;
   mmd << "---\n";
   mmd << "month: " << month_str << "\n";
-  mmd << "total_prompt_tokens: "
-      << monthly.total_prompt_tokens << "\n";
-  mmd << "total_completion_tokens: "
-      << monthly.total_completion_tokens << "\n";
-  mmd << "total_requests: "
-      << monthly.total_requests << "\n";
+  mmd << "total_prompt_tokens: " << monthly.total_prompt_tokens << "\n";
+  mmd << "total_completion_tokens: " << monthly.total_completion_tokens << "\n";
+  mmd << "total_requests: " << monthly.total_requests << "\n";
   mmd << "updated: " << GetTimestamp() << "\n";
   mmd << "---\n\n";
-  mmd << "# Monthly Usage " << month_str
-      << "\n\n";
-  mmd << "**Prompt Tokens**: "
-      << monthly.total_prompt_tokens << "  \n";
-  mmd << "**Completion Tokens**: "
-      << monthly.total_completion_tokens << "  \n";
-  mmd << "**Total Requests**: "
-      << monthly.total_requests << "\n";
+  mmd << "# Monthly Usage " << month_str << "\n\n";
+  mmd << "**Prompt Tokens**: " << monthly.total_prompt_tokens << "  \n";
+  mmd << "**Completion Tokens**: " << monthly.total_completion_tokens << "  \n";
+  mmd << "**Total Requests**: " << monthly.total_requests << "\n";
 
   AtomicWrite(monthly_path, mmd.str());
 }
 
-TokenUsageSummary SessionStore::LoadTokenUsage(
-    const std::string& session_id) {
+TokenUsageSummary SessionStore::LoadTokenUsage(const std::string& session_id) {
   TokenUsageSummary summary;
 
-  std::string usage_path =
-      FindSessionFile(
-          GetUsageDir(), session_id);
+  std::string usage_path = FindSessionFile(GetUsageDir(), session_id);
   if (usage_path.empty()) return summary;
   std::ifstream in(usage_path);
   if (!in.is_open()) return summary;
@@ -1033,13 +880,9 @@ TokenUsageSummary SessionStore::LoadTokenUsage(
     }
     if (in_frontmatter) {
       if (line.find("total_prompt_tokens:") == 0) {
-        summary.total_prompt_tokens =
-            std::stoi(line.substr(21));
-      } else if (
-          line.find(
-              "total_completion_tokens:") == 0) {
-        summary.total_completion_tokens =
-            std::stoi(line.substr(25));
+        summary.total_prompt_tokens = std::stoi(line.substr(21));
+      } else if (line.find("total_completion_tokens:") == 0) {
+        summary.total_completion_tokens = std::stoi(line.substr(25));
       }
     }
 
@@ -1048,8 +891,7 @@ TokenUsageSummary SessionStore::LoadTokenUsage(
       past_header = true;
       continue;
     }
-    if (past_header && !line.empty() &&
-        line[0] == '|') {
+    if (past_header && !line.empty() && line[0] == '|') {
       // Parse: | time | model | prompt |
       //        completion |
       TokenUsageEntry entry;
@@ -1073,13 +915,14 @@ TokenUsageSummary SessionStore::LoadTokenUsage(
           case 3:
             try {
               entry.prompt_tokens = std::stoi(cell);
-            } catch (...) {}
+            } catch (...) {
+            }
             break;
           case 4:
             try {
-              entry.completion_tokens =
-                  std::stoi(cell);
-            } catch (...) {}
+              entry.completion_tokens = std::stoi(cell);
+            } catch (...) {
+            }
             break;
         }
         col++;
@@ -1098,8 +941,7 @@ TokenUsageSummary SessionStore::LoadTokenUsage(
 // Daily/Monthly Aggregate Usage
 // ------------------------------------------------
 
-static DailyUsageSummary ParseAggregateMd(
-    const std::string& path) {
+static DailyUsageSummary ParseAggregateMd(const std::string& path) {
   DailyUsageSummary summary;
   std::ifstream in(path);
   if (!in.is_open()) return summary;
@@ -1119,32 +961,26 @@ static DailyUsageSummary ParseAggregateMd(
       if (key == "date" || key == "month")
         summary.date = val;
       else if (key == "total_prompt_tokens")
-        summary.total_prompt_tokens =
-            std::stoi(val);
+        summary.total_prompt_tokens = std::stoi(val);
       else if (key == "total_completion_tokens")
-        summary.total_completion_tokens =
-            std::stoi(val);
+        summary.total_completion_tokens = std::stoi(val);
       else if (key == "total_requests")
-        summary.total_requests =
-            std::stoi(val);
+        summary.total_requests = std::stoi(val);
     }
   }
   in.close();
   return summary;
 }
 
-DailyUsageSummary SessionStore::LoadDailyUsage(
-    const std::string& date) const {
-  std::string path =
-      GetDailyUsageDir() + "/" + date + ".md";
+DailyUsageSummary SessionStore::LoadDailyUsage(const std::string& date) const {
+  std::string path = GetDailyUsageDir() + "/" + date + ".md";
   return ParseAggregateMd(path);
 }
 
 DailyUsageSummary SessionStore::LoadMonthlyUsage(
     const std::string& month) const {
-  std::string path =
-      GetMonthlyUsageDir() + "/" + month + ".md";
+  std::string path = GetMonthlyUsageDir() + "/" + month + ".md";
   return ParseAggregateMd(path);
 }
 
-} // namespace tizenclaw
+}  // namespace tizenclaw

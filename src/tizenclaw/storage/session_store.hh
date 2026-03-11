@@ -13,17 +13,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_STORAGE_SESSION_STORE_HH_
-#define TIZENCLAW_STORAGE_SESSION_STORE_HH_
+#ifndef SESSION_STORE_HH
+#define SESSION_STORE_HH
 
+#include <json.hpp>
 #include <string>
 #include <vector>
-#include <json.hpp>
 
 #include "../llm/llm_backend.hh"
 
 namespace tizenclaw {
-
 
 // Skill execution log entry
 struct SkillLogEntry {
@@ -65,114 +64,90 @@ struct DailyUsageSummary {
   std::vector<BackendEntry> backends;
 };
 
-
 class SessionStore {
-public:
-    SessionStore();
+ public:
+  SessionStore();
 
-    // Set the directory for session files
-    void SetDirectory(const std::string& dir);
+  // Set the directory for session files
+  void SetDirectory(const std::string& dir);
 
-    // Save session history to disk (Markdown format)
-    [[nodiscard]] bool SaveSession(
-        const std::string& session_id,
-        const std::vector<LlmMessage>& history);
+  // Save session history to disk (Markdown format)
+  [[nodiscard]] bool SaveSession(const std::string& session_id,
+                                 const std::vector<LlmMessage>& history);
 
-    // Load session history from disk (Markdown or
-    // legacy JSON with auto-migration)
-    [[nodiscard]] std::vector<LlmMessage>
-    LoadSession(
-        const std::string& session_id);
+  // Load session history from disk (Markdown or
+  // legacy JSON with auto-migration)
+  [[nodiscard]] std::vector<LlmMessage> LoadSession(
+      const std::string& session_id);
 
-    // Delete a session file
-    void DeleteSession(
-        const std::string& session_id);
+  // Delete a session file
+  void DeleteSession(const std::string& session_id);
 
-    // Skill execution logging
-    void LogSkillExecution(
-        const std::string& session_id,
-        const std::string& skill_name,
-        const nlohmann::json& args,
-        const std::string& result,
-        int duration_ms);
+  // Skill execution logging
+  void LogSkillExecution(const std::string& session_id,
+                         const std::string& skill_name,
+                         const nlohmann::json& args, const std::string& result,
+                         int duration_ms);
 
-    // Token usage logging
-    void LogTokenUsage(
-        const std::string& session_id,
-        const std::string& model_name,
-        int prompt_tokens,
-        int completion_tokens);
+  // Token usage logging
+  void LogTokenUsage(const std::string& session_id,
+                     const std::string& model_name, int prompt_tokens,
+                     int completion_tokens);
 
-    // Load token usage for a session
-    [[nodiscard]] TokenUsageSummary
-    LoadTokenUsage(
-        const std::string& session_id);
+  // Load token usage for a session
+  [[nodiscard]] TokenUsageSummary LoadTokenUsage(const std::string& session_id);
 
-    // Load daily aggregate usage
-    [[nodiscard]] DailyUsageSummary
-    LoadDailyUsage(
-        const std::string& date) const;
+  // Load daily aggregate usage
+  [[nodiscard]] DailyUsageSummary LoadDailyUsage(const std::string& date) const;
 
-    // Load monthly aggregate usage
-    [[nodiscard]] DailyUsageSummary
-    LoadMonthlyUsage(
-        const std::string& month) const;
+  // Load monthly aggregate usage
+  [[nodiscard]] DailyUsageSummary LoadMonthlyUsage(
+      const std::string& month) const;
 
-    // Remove orphaned tool messages that have no
-    // matching tool_calls in a preceding assistant
-    // message. This prevents OpenAI HTTP 400 errors.
-    static void SanitizeHistory(
-        std::vector<LlmMessage>& history);
+  // Remove orphaned tool messages that have no
+  // matching tool_calls in a preceding assistant
+  // message. This prevents OpenAI HTTP 400 errors.
+  static void SanitizeHistory(std::vector<LlmMessage>& history);
 
-private:
-    // Find existing session file by scanning
-    // dir for *-{session_id}.md pattern
-    std::string FindSessionFile(
-        const std::string& dir,
-        const std::string& session_id) const;
+ private:
+  // Find existing session file by scanning
+  // dir for *-{session_id}.md pattern
+  std::string FindSessionFile(const std::string& dir,
+                              const std::string& session_id) const;
 
-    std::string GetSessionPath(
-        const std::string& session_id) const;
-    std::string GetLegacySessionPath(
-        const std::string& session_id) const;
-    std::string GetLogsDir() const;
-    std::string GetUsageDir() const;
-    std::string GetDailyUsageDir() const;
-    std::string GetMonthlyUsageDir() const;
+  std::string GetSessionPath(const std::string& session_id) const;
+  std::string GetLegacySessionPath(const std::string& session_id) const;
+  std::string GetLogsDir() const;
+  std::string GetUsageDir() const;
+  std::string GetDailyUsageDir() const;
+  std::string GetMonthlyUsageDir() const;
 
-    // Get current date as YYYY-MM-DD string
-    static std::string GetDatePrefix();
+  // Get current date as YYYY-MM-DD string
+  static std::string GetDatePrefix();
 
-    // Markdown serialization
-    std::string MessagesToMarkdown(
-        const std::vector<LlmMessage>& history) const;
-    std::vector<LlmMessage> MarkdownToMessages(
-        const std::string& content) const;
+  // Markdown serialization
+  std::string MessagesToMarkdown(const std::vector<LlmMessage>& history) const;
+  std::vector<LlmMessage> MarkdownToMessages(const std::string& content) const;
 
-    // Legacy JSON support
-    static nlohmann::json MessageToJson(
-        const LlmMessage& msg);
-    static LlmMessage JsonToMessage(
-        const nlohmann::json& j);
+  // Legacy JSON support
+  static nlohmann::json MessageToJson(const LlmMessage& msg);
+  static LlmMessage JsonToMessage(const nlohmann::json& j);
 
-    // Get current timestamp as ISO string
-    static std::string GetTimestamp();
+  // Get current timestamp as ISO string
+  static std::string GetTimestamp();
 
-    // Ensure a directory exists (mkdir -p)
-    static void EnsureDir(const std::string& dir);
+  // Ensure a directory exists (mkdir -p)
+  static void EnsureDir(const std::string& dir);
 
-    // Atomic file write (write .tmp then rename)
-    static bool AtomicWrite(
-        const std::string& path,
-        const std::string& content);
+  // Atomic file write (write .tmp then rename)
+  static bool AtomicWrite(const std::string& path, const std::string& content);
 
-    std::string sessions_dir_;
+  std::string sessions_dir_;
 
-    // Max file size in bytes (512KB)
-    static constexpr size_t kMaxFileSize =
-        512 * 1024;
+  // Max file size in bytes (512KB)
+  static constexpr size_t kMaxFileSize = 512 * 1024;
 };
 
-} // namespace tizenclaw
+}  // namespace tizenclaw
 
-#endif // TIZENCLAW_STORAGE_SESSION_STORE_HH_
+#endif  // SESSION_STORE_HH

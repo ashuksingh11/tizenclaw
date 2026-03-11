@@ -13,14 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_STORAGE_AUDIT_LOGGER_HH_
-#define TIZENCLAW_STORAGE_AUDIT_LOGGER_HH_
+#ifndef AUDIT_LOGGER_HH
+#define AUDIT_LOGGER_HH
 
+#include <json.hpp>
 #include <map>
 #include <mutex>
 #include <string>
 #include <vector>
-#include <json.hpp>
 
 namespace tizenclaw {
 
@@ -41,39 +41,33 @@ struct AuditEvent {
 };
 
 class AuditLogger {
-public:
+ public:
   static AuditLogger& Instance();
 
   void SetLogDir(const std::string& dir);
   void Log(const AuditEvent& event);
 
   // Query audit entries from a date's file
-  std::vector<AuditEvent> Query(
-      const std::string& date,
-      const std::string& type_filter = "");
+  std::vector<AuditEvent> Query(const std::string& date,
+                                const std::string& type_filter = "");
 
   // Convenience helpers
-  static AuditEvent MakeEvent(
-      AuditEventType type,
-      const std::string& session_id = "",
-      const nlohmann::json& details = {});
+  static AuditEvent MakeEvent(AuditEventType type,
+                              const std::string& session_id = "",
+                              const nlohmann::json& details = {});
 
-  static std::string TypeToString(
-      AuditEventType type);
+  static std::string TypeToString(AuditEventType type);
 
-private:
+ private:
   AuditLogger();
   AuditLogger(const AuditLogger&) = delete;
-  AuditLogger& operator=(
-      const AuditLogger&) = delete;
+  AuditLogger& operator=(const AuditLogger&) = delete;
 
   // Format event as Markdown table row
-  std::string EventToRow(
-      const AuditEvent& event) const;
+  std::string EventToRow(const AuditEvent& event) const;
 
   // Build details string from JSON
-  std::string DetailsToString(
-      const nlohmann::json& details) const;
+  std::string DetailsToString(const nlohmann::json& details) const;
 
   // Get current time as HH:MM:SS
   static std::string GetTimeStr();
@@ -85,21 +79,18 @@ private:
   static std::string GetTimestamp();
 
   // Ensure directory exists
-  static void EnsureDir(
-      const std::string& dir);
+  static void EnsureDir(const std::string& dir);
 
   // Rotate file if too large
-  void RotateIfNeeded(
-      const std::string& path);
+  void RotateIfNeeded(const std::string& path);
 
   std::string log_dir_;
   std::mutex mutex_;
 
-  static constexpr size_t kMaxFileSize =
-      5 * 1024 * 1024;  // 5MB
+  static constexpr size_t kMaxFileSize = 5 * 1024 * 1024;  // 5MB
   static constexpr int kMaxRotation = 5;
 };
 
 }  // namespace tizenclaw
 
-#endif // TIZENCLAW_STORAGE_AUDIT_LOGGER_HH_
+#endif  // AUDIT_LOGGER_HH

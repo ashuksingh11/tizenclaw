@@ -13,15 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_INFRA_HTTP_CLIENT_HH_
-#define TIZENCLAW_INFRA_HTTP_CLIENT_HH_
+#ifndef HTTP_CLIENT_HH
+#define HTTP_CLIENT_HH
 
-#include <string>
-#include <map>
 #include <functional>
+#include <map>
+#include <string>
 
 namespace tizenclaw {
-
 
 struct HttpResponse {
   long status_code = 0;
@@ -31,28 +30,22 @@ struct HttpResponse {
 };
 
 class HttpClient {
-public:
+ public:
   // POST JSON with retry + exponential backoff.
   [[nodiscard]] static HttpResponse Post(
-      const std::string& url,
-      const std::map<std::string, std::string>&
-          headers,
-      const std::string& json_body,
-      int max_retries = 3,
-      long connect_timeout_sec = 10,
-      long request_timeout_sec = 30,
+      const std::string& url, const std::map<std::string, std::string>& headers,
+      const std::string& json_body, int max_retries = 3,
+      long connect_timeout_sec = 10, long request_timeout_sec = 30,
       std::function<void(const std::string&)> stream_cb = nullptr);
 
   // GET with retry + timeouts (for long polling)
   [[nodiscard]] static HttpResponse Get(
       const std::string& url,
-      const std::map<std::string, std::string>&
-          headers = {},
-      int max_retries = 3,
-      long connect_timeout_sec = 10,
+      const std::map<std::string, std::string>& headers = {},
+      int max_retries = 3, long connect_timeout_sec = 10,
       long request_timeout_sec = 40);
 };
 
-} // namespace tizenclaw
+}  // namespace tizenclaw
 
-#endif // TIZENCLAW_INFRA_HTTP_CLIENT_HH_
+#endif  // HTTP_CLIENT_HH

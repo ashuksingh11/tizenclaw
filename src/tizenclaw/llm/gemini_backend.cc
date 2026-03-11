@@ -14,21 +14,19 @@
  * limitations under the License.
  */
 #include "gemini_backend.hh"
-#include "../infra/http_client.hh"
+
+#include <chrono>
+#include <iomanip>
+#include <sstream>
 
 #include "../../common/logging.hh"
-#include <chrono>
-#include <sstream>
-#include <iomanip>
+#include "../infra/http_client.hh"
 
 namespace tizenclaw {
 
-
-bool GeminiBackend::Initialize(
-    const nlohmann::json& config) {
+bool GeminiBackend::Initialize(const nlohmann::json& config) {
   api_key_ = config.value("api_key", "");
-  model_ = config.value("model",
-                         "gemini-2.5-flash");
+  model_ = config.value("model", "gemini-2.5-flash");
   if (api_key_.empty()) {
     LOG(ERROR) << "Gemini API key is empty";
     return false;
@@ -49,14 +47,10 @@ nlohmann::json GeminiBackend::ToGeminiContents(
     } else if (msg.role == "assistant") {
       entry["role"] = "model";
       if (!msg.tool_calls.empty()) {
-        nlohmann::json parts =
-            nlohmann::json::array();
+        nlohmann::json parts = nlohmann::json::array();
         for (auto& tc : msg.tool_calls) {
-          parts.push_back({
-              {"functionCall",
-               {{"name", tc.name},
-                {"args", tc.args}}}
-          });
+          parts.push_back(
+              {{"functionCall", {{"name", tc.name}, {"args", tc.args}}}});
         }
         entry["parts"] = parts;
       } else {
@@ -68,14 +62,10 @@ nlohmann::json GeminiBackend::ToGeminiContents(
       try {
         fn_resp = msg.tool_result;
       } catch (...) {
-        fn_resp = {{"output",
-                    msg.tool_result.dump()}};
+        fn_resp = {{"output", msg.tool_result.dump()}};
       }
-      entry["parts"] = {{
-          {"functionResponse",
-           {{"name", msg.tool_name},
-            {"response", fn_resp}}}
-      }};
+      entry["parts"] = {{{"functionResponse",
+                          {{"name", msg.tool_name}, {"response", fn_resp}}}}};
     }
     contents.push_back(entry);
   }
@@ -87,77 +77,60 @@ nlohmann::json GeminiBackend::ToGeminiTools(
   if (tools.empty()) return nullptr;
   nlohmann::json decls = nlohmann::json::array();
   for (auto& t : tools) {
-    decls.push_back({
-        {"name", t.name},
-        {"description", t.description},
-        {"parameters", t.parameters}
-    });
+    decls.push_back({{"name", t.name},
+                     {"description", t.description},
+                     {"parameters", t.parameters}});
   }
   return {{{"functionDeclarations", decls}}};
 }
 
-LlmResponse GeminiBackend::ParseGeminiResponse(
-    const std::string& body) const {
+LlmResponse GeminiBackend::ParseGeminiResponse(const std::string& body) const {
   LlmResponse resp;
   try {
     auto j = nlohmann::json::parse(body);
 
     if (j.contains("error")) {
       resp.success = false;
-      resp.error_message =
-          j["error"].value("message",
-                           "Unknown API error");
+      resp.error_message = j["error"].value("message", "Unknown API error");
       return resp;
     }
 
-    if (!j.contains("candidates") ||
-        j["candidates"].empty()) {
+    if (!j.contains("candidates") || j["candidates"].empty()) {
       resp.success = false;
       resp.error_message = "Empty candidates";
       return resp;
     }
 
-    auto& parts =
-        j["candidates"][0]["content"]["parts"];
+    auto& parts = j["candidates"][0]["content"]["parts"];
     resp.success = true;
 
     for (size_t i = 0; i < parts.size(); ++i) {
       auto& part = parts[i];
       if (part.contains("functionCall")) {
         LlmToolCall tc;
-        auto now = std::chrono::steady_clock::now()
-            .time_since_epoch().count();
+        auto now = std::chrono::steady_clock::now().time_since_epoch().count();
         std::ostringstream oss;
-        oss << "gemini_" << std::hex << now
-            << "_" << i;
+        oss << "gemini_" << std::hex << now << "_" << i;
         tc.id = oss.str();
-        tc.name =
-            part["functionCall"]["name"];
-        tc.args =
-            part["functionCall"]["args"];
+        tc.name = part["functionCall"]["name"];
+        tc.args = part["functionCall"]["args"];
         resp.tool_calls.push_back(tc);
       } else if (part.contains("text")) {
-        if (!resp.text.empty())
-          resp.text += "\n";
-        resp.text +=
-            part["text"].get<std::string>();
+        if (!resp.text.empty()) resp.text += "\n";
+        resp.text += part["text"].get<std::string>();
       }
     }
 
     // Parse token usage from usageMetadata
     if (j.contains("usageMetadata")) {
       auto& um = j["usageMetadata"];
-      resp.prompt_tokens =
-          um.value("promptTokenCount", 0);
-      resp.completion_tokens =
-          um.value("candidatesTokenCount", 0);
-      resp.total_tokens =
-          um.value("totalTokenCount", 0);
+      resp.prompt_tokens = um.value("promptTokenCount", 0);
+      resp.completion_tokens = um.value("candidatesTokenCount", 0);
+      resp.total_tokens = um.value("totalTokenCount", 0);
     }
   } catch (const std::exception& e) {
     resp.success = false;
-    resp.error_message =
-        std::string("Parse error: ") + e.what();
+    resp.error_message = std::string("Parse error: ") + e.what();
   }
   return resp;
 }
@@ -167,15 +140,9 @@ LlmResponse GeminiBackend::Chat(
     const std::vector<LlmToolDecl>& tools,
     std::function<void(const std::string&)> on_chunk,
     const std::string& system_prompt) {
-  nlohmann::json payload = {
-      {"contents", ToGeminiContents(messages)}
-  };
+  nlohmann::json payload = {{"contents", ToGeminiContents(messages)}};
   if (!system_prompt.empty()) {
-    payload["system_instruction"] = {
-        {"parts", {
-            {{"text", system_prompt}}
-        }}
-    };
+    payload["system_instruction"] = {{"parts", {{{"text", system_prompt}}}}};
   }
   auto gemini_tools = ToGeminiTools(tools);
   if (!gemini_tools.is_null()) {
@@ -185,10 +152,10 @@ LlmResponse GeminiBackend::Chat(
   bool streaming = (on_chunk != nullptr);
   std::string url =
       "https://generativelanguage.googleapis.com"
-      "/v1beta/models/" + model_;
+      "/v1beta/models/" +
+      model_;
   if (streaming) {
-    url += ":streamGenerateContent?alt=sse&key="
-        + api_key_;
+    url += ":streamGenerateContent?alt=sse&key=" + api_key_;
   } else {
     url += ":generateContent?key=" + api_key_;
   }
@@ -199,19 +166,15 @@ LlmResponse GeminiBackend::Chat(
   std::vector<LlmToolCall> accumulated_tools;
   size_t tool_idx = 0;
 
-  std::function<void(const std::string&)>
-      stream_cb = nullptr;
+  std::function<void(const std::string&)> stream_cb = nullptr;
   if (streaming) {
     stream_cb = [&](const std::string& chunk) {
       sse_buffer += chunk;
       size_t pos;
-      while ((pos = sse_buffer.find('\n')) !=
-             std::string::npos) {
-        std::string line =
-            sse_buffer.substr(0, pos);
+      while ((pos = sse_buffer.find('\n')) != std::string::npos) {
+        std::string line = sse_buffer.substr(0, pos);
         sse_buffer.erase(0, pos + 1);
-        if (!line.empty() && line.back() == '\r')
-          line.pop_back();
+        if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
 
         if (line.rfind("data: ", 0) != 0) continue;
@@ -219,31 +182,24 @@ LlmResponse GeminiBackend::Chat(
 
         try {
           auto j = nlohmann::json::parse(data);
-          if (!j.contains("candidates") ||
-              j["candidates"].empty()) continue;
-          auto& parts =
-              j["candidates"][0]["content"]["parts"];
+          if (!j.contains("candidates") || j["candidates"].empty()) continue;
+          auto& parts = j["candidates"][0]["content"]["parts"];
 
           for (size_t i = 0; i < parts.size(); ++i) {
             auto& part = parts[i];
             if (part.contains("text")) {
-              std::string text_delta =
-                  part["text"].get<std::string>();
+              std::string text_delta = part["text"].get<std::string>();
               accumulated_text += text_delta;
               on_chunk(text_delta);
-            } else if (
-                part.contains("functionCall")) {
+            } else if (part.contains("functionCall")) {
               LlmToolCall tc;
-              auto now = std::chrono::steady_clock
-                  ::now().time_since_epoch().count();
+              auto now =
+                  std::chrono::steady_clock ::now().time_since_epoch().count();
               std::ostringstream oss;
-              oss << "gemini_" << std::hex << now
-                  << "_" << tool_idx++;
+              oss << "gemini_" << std::hex << now << "_" << tool_idx++;
               tc.id = oss.str();
-              tc.name =
-                  part["functionCall"]["name"];
-              tc.args =
-                  part["functionCall"]["args"];
+              tc.name = part["functionCall"]["name"];
+              tc.args = part["functionCall"]["args"];
               accumulated_tools.push_back(tc);
             }
           }
@@ -254,11 +210,8 @@ LlmResponse GeminiBackend::Chat(
     };
   }
 
-  auto http_resp = HttpClient::Post(
-      url,
-      {{"Content-Type", "application/json"}},
-      payload.dump(),
-      3, 10, 120, stream_cb);
+  auto http_resp = HttpClient::Post(url, {{"Content-Type", "application/json"}},
+                                    payload.dump(), 3, 10, 120, stream_cb);
 
   if (!http_resp.success) {
     LlmResponse r;
@@ -266,21 +219,17 @@ LlmResponse GeminiBackend::Chat(
     r.error_message = http_resp.error;
     if (!http_resp.body.empty()) {
       try {
-        auto ej =
-            nlohmann::json::parse(http_resp.body);
+        auto ej = nlohmann::json::parse(http_resp.body);
         if (ej.contains("error")) {
-          r.error_message += ": " +
-              ej["error"].value("message", "");
+          r.error_message += ": " + ej["error"].value("message", "");
         }
       } catch (...) {
-        r.error_message += ": " +
-            http_resp.body.substr(
-                0, std::min((size_t)200,
-                            http_resp.body.size()));
+        r.error_message +=
+            ": " + http_resp.body.substr(
+                       0, std::min((size_t)200, http_resp.body.size()));
       }
     }
-    LOG(ERROR) << "API error: "
-               << r.error_message;
+    LOG(ERROR) << "API error: " << r.error_message;
     return r;
   }
 
@@ -295,4 +244,4 @@ LlmResponse GeminiBackend::Chat(
   return ParseGeminiResponse(http_resp.body);
 }
 
-} // namespace tizenclaw
+}  // namespace tizenclaw

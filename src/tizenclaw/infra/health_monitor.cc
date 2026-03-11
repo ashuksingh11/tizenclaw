@@ -15,74 +15,57 @@
  */
 #include "health_monitor.hh"
 
-#include <json.hpp>
-#include <fstream>
-#include <sstream>
 #include <unistd.h>
+
+#include <fstream>
+#include <json.hpp>
+#include <sstream>
 
 namespace tizenclaw {
 
 HealthMonitor::HealthMonitor()
-    : start_time_(
-          std::chrono::steady_clock::now()) {
-}
+    : start_time_(std::chrono::steady_clock::now()) {}
 
 void HealthMonitor::IncrementRequestCount() {
-  request_count_.fetch_add(
-      1, std::memory_order_relaxed);
+  request_count_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void HealthMonitor::IncrementErrorCount() {
-  error_count_.fetch_add(
-      1, std::memory_order_relaxed);
+  error_count_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void HealthMonitor::IncrementLlmCallCount() {
-  llm_call_count_.fetch_add(
-      1, std::memory_order_relaxed);
+  llm_call_count_.fetch_add(1, std::memory_order_relaxed);
 }
 
 void HealthMonitor::IncrementToolCallCount() {
-  tool_call_count_.fetch_add(
-      1, std::memory_order_relaxed);
+  tool_call_count_.fetch_add(1, std::memory_order_relaxed);
 }
 
-uint64_t HealthMonitor::GetRequestCount()
-    const {
-  return request_count_.load(
-      std::memory_order_relaxed);
+uint64_t HealthMonitor::GetRequestCount() const {
+  return request_count_.load(std::memory_order_relaxed);
 }
 
 uint64_t HealthMonitor::GetErrorCount() const {
-  return error_count_.load(
-      std::memory_order_relaxed);
+  return error_count_.load(std::memory_order_relaxed);
 }
 
-uint64_t HealthMonitor::GetLlmCallCount()
-    const {
-  return llm_call_count_.load(
-      std::memory_order_relaxed);
+uint64_t HealthMonitor::GetLlmCallCount() const {
+  return llm_call_count_.load(std::memory_order_relaxed);
 }
 
-uint64_t HealthMonitor::GetToolCallCount()
-    const {
-  return tool_call_count_.load(
-      std::memory_order_relaxed);
+uint64_t HealthMonitor::GetToolCallCount() const {
+  return tool_call_count_.load(std::memory_order_relaxed);
 }
 
-double HealthMonitor::GetUptimeSeconds()
-    const {
-  auto now =
-      std::chrono::steady_clock::now();
+double HealthMonitor::GetUptimeSeconds() const {
+  auto now = std::chrono::steady_clock::now();
   auto duration =
-      std::chrono::duration_cast<
-          std::chrono::milliseconds>(
-          now - start_time_);
+      std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time_);
   return duration.count() / 1000.0;
 }
 
-void HealthMonitor::ParseMemoryInfo(
-    int& rss_kb, int& vm_kb) const {
+void HealthMonitor::ParseMemoryInfo(int& rss_kb, int& vm_kb) const {
   rss_kb = 0;
   vm_kb = 0;
 
@@ -92,21 +75,16 @@ void HealthMonitor::ParseMemoryInfo(
   std::string line;
   while (std::getline(f, line)) {
     if (line.compare(0, 6, "VmRSS:") == 0) {
-      std::istringstream iss(
-          line.substr(6));
+      std::istringstream iss(line.substr(6));
       iss >> rss_kb;
-    } else if (line.compare(
-                   0, 7, "VmSize:") == 0) {
-      std::istringstream iss(
-          line.substr(7));
+    } else if (line.compare(0, 7, "VmSize:") == 0) {
+      std::istringstream iss(line.substr(7));
       iss >> vm_kb;
     }
   }
 }
 
-void HealthMonitor::ParseCpuLoad(
-    double& l1, double& l5,
-    double& l15) const {
+void HealthMonitor::ParseCpuLoad(double& l1, double& l5, double& l15) const {
   l1 = l5 = l15 = 0.0;
 
   std::ifstream f("/proc/loadavg");
@@ -121,10 +99,8 @@ int HealthMonitor::GetThreadCount() const {
 
   std::string line;
   while (std::getline(f, line)) {
-    if (line.compare(
-            0, 8, "Threads:") == 0) {
-      std::istringstream iss(
-          line.substr(8));
+    if (line.compare(0, 8, "Threads:") == 0) {
+      std::istringstream iss(line.substr(8));
       int val = 0;
       iss >> val;
       return val;
@@ -133,50 +109,34 @@ int HealthMonitor::GetThreadCount() const {
   return 0;
 }
 
-std::string HealthMonitor::GetMetricsJson()
-    const {
+std::string HealthMonitor::GetMetricsJson() const {
   nlohmann::json metrics;
 
   // Uptime
   double uptime = GetUptimeSeconds();
-  int hours =
-      static_cast<int>(uptime) / 3600;
-  int minutes =
-      (static_cast<int>(uptime) % 3600) / 60;
-  int seconds =
-      static_cast<int>(uptime) % 60;
+  int hours = static_cast<int>(uptime) / 3600;
+  int minutes = (static_cast<int>(uptime) % 3600) / 60;
+  int seconds = static_cast<int>(uptime) % 60;
 
   metrics["uptime"] = {
       {"seconds", uptime},
-      {"formatted",
-       std::to_string(hours) + "h " +
-           std::to_string(minutes) + "m " +
-           std::to_string(seconds) + "s"}
-  };
+      {"formatted", std::to_string(hours) + "h " + std::to_string(minutes) +
+                        "m " + std::to_string(seconds) + "s"}};
 
   // Counters
-  metrics["counters"] = {
-      {"requests", GetRequestCount()},
-      {"errors", GetErrorCount()},
-      {"llm_calls", GetLlmCallCount()},
-      {"tool_calls", GetToolCallCount()}
-  };
+  metrics["counters"] = {{"requests", GetRequestCount()},
+                         {"errors", GetErrorCount()},
+                         {"llm_calls", GetLlmCallCount()},
+                         {"tool_calls", GetToolCallCount()}};
 
   // System
   int rss_kb = 0, vm_kb = 0;
   ParseMemoryInfo(rss_kb, vm_kb);
-  metrics["memory"] = {
-      {"vm_rss_kb", rss_kb},
-      {"vm_size_kb", vm_kb}
-  };
+  metrics["memory"] = {{"vm_rss_kb", rss_kb}, {"vm_size_kb", vm_kb}};
 
   double l1 = 0, l5 = 0, l15 = 0;
   ParseCpuLoad(l1, l5, l15);
-  metrics["cpu"] = {
-      {"load_1m", l1},
-      {"load_5m", l5},
-      {"load_15m", l15}
-  };
+  metrics["cpu"] = {{"load_1m", l1}, {"load_5m", l5}, {"load_15m", l15}};
 
   metrics["threads"] = GetThreadCount();
   metrics["pid"] = getpid();

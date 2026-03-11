@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_CHANNEL_CHANNEL_REGISTRY_HH_
-#define TIZENCLAW_CHANNEL_CHANNEL_REGISTRY_HH_
+#ifndef CHANNEL_REGISTRY_HH
+#define CHANNEL_REGISTRY_HH
 
 #include <memory>
 #include <string>
@@ -28,39 +28,35 @@ namespace tizenclaw {
 // Channels are registered during daemon startup and
 // started/stopped as a group.
 class ChannelRegistry {
-public:
-    ChannelRegistry() = default;
-    ~ChannelRegistry();
+ public:
+  ChannelRegistry() = default;
+  ~ChannelRegistry();
 
-    // Takes ownership of a channel.
-    void Register(std::unique_ptr<Channel> ch);
+  // Takes ownership of a channel.
+  void Register(std::unique_ptr<Channel> ch);
 
-    // Start all registered channels.
-    // Channels that fail to start are logged but
-    // do not prevent other channels from starting.
-    void StartAll();
+  // Start all registered channels.
+  // Channels that fail to start are logged but
+  // do not prevent other channels from starting.
+  void StartAll();
 
-    // Stop all running channels in reverse order.
-    void StopAll();
+  // Stop all running channels in reverse order.
+  void StopAll();
 
-    // Look up a channel by name (nullptr if not
-    // found).
-    [[nodiscard]] Channel* Get(
-        const std::string& name) const;
+  // Look up a channel by name (nullptr if not
+  // found).
+  [[nodiscard]] Channel* Get(const std::string& name) const;
 
-    // List names of all registered channels.
-    [[nodiscard]] std::vector<std::string>
-    ListChannels() const;
+  // List names of all registered channels.
+  [[nodiscard]] std::vector<std::string> ListChannels() const;
 
-    // Number of registered channels.
-    [[nodiscard]] size_t Size() const {
-      return channels_.size();
-    }
+  // Number of registered channels.
+  [[nodiscard]] size_t Size() const { return channels_.size(); }
 
-private:
-    std::vector<std::unique_ptr<Channel>> channels_;
+ private:
+  std::vector<std::unique_ptr<Channel>> channels_;
 };
 
-} // namespace tizenclaw
+}  // namespace tizenclaw
 
-#endif // TIZENCLAW_CHANNEL_CHANNEL_REGISTRY_HH_
+#endif  // CHANNEL_REGISTRY_HH

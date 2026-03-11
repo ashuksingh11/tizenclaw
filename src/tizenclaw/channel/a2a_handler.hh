@@ -13,15 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_CHANNEL_A2A_HANDLER_HH_
-#define TIZENCLAW_CHANNEL_A2A_HANDLER_HH_
+#ifndef A2A_HANDLER_HH
+#define A2A_HANDLER_HH
 
+#include <json.hpp>
 #include <map>
 #include <mutex>
 #include <string>
 #include <vector>
-
-#include <json.hpp>
 
 namespace tizenclaw {
 
@@ -40,8 +39,7 @@ enum class A2ATaskStatus {
 // A2A task representation
 struct A2ATask {
   std::string id;
-  A2ATaskStatus status =
-      A2ATaskStatus::kSubmitted;
+  A2ATaskStatus status = A2ATaskStatus::kSubmitted;
   std::string session_id;
   nlohmann::json message;
   nlohmann::json artifacts;
@@ -58,40 +56,30 @@ class A2AHandler {
   nlohmann::json GetAgentCard() const;
 
   // JSON-RPC 2.0 method dispatch
-  nlohmann::json HandleJsonRpc(
-      const nlohmann::json& request);
+  nlohmann::json HandleJsonRpc(const nlohmann::json& request);
 
   // Validate bearer token
-  bool ValidateBearerToken(
-      const std::string& token) const;
+  bool ValidateBearerToken(const std::string& token) const;
 
   // Load A2A config (bearer tokens etc.)
-  bool LoadConfig(
-      const std::string& config_path);
+  bool LoadConfig(const std::string& config_path);
 
  private:
   // JSON-RPC methods
-  nlohmann::json TaskSend(
-      const nlohmann::json& params);
-  nlohmann::json TaskGet(
-      const nlohmann::json& params);
-  nlohmann::json TaskCancel(
-      const nlohmann::json& params);
+  nlohmann::json TaskSend(const nlohmann::json& params);
+  nlohmann::json TaskGet(const nlohmann::json& params);
+  nlohmann::json TaskCancel(const nlohmann::json& params);
 
   // Helpers
   std::string GenerateTaskId() const;
   std::string GetTimestamp() const;
-  std::string TaskStatusToString(
-      A2ATaskStatus status) const;
+  std::string TaskStatusToString(A2ATaskStatus status) const;
 
   // JSON-RPC error helpers
-  static nlohmann::json JsonRpcError(
-      int code,
-      const std::string& message,
-      const nlohmann::json& id);
-  static nlohmann::json JsonRpcResult(
-      const nlohmann::json& result,
-      const nlohmann::json& id);
+  static nlohmann::json JsonRpcError(int code, const std::string& message,
+                                     const nlohmann::json& id);
+  static nlohmann::json JsonRpcResult(const nlohmann::json& result,
+                                      const nlohmann::json& id);
 
   AgentCore* agent_;
   std::map<std::string, A2ATask> tasks_;
@@ -106,4 +94,4 @@ class A2AHandler {
 
 }  // namespace tizenclaw
 
-#endif // TIZENCLAW_CHANNEL_A2A_HANDLER_HH_
+#endif  // A2A_HANDLER_HH

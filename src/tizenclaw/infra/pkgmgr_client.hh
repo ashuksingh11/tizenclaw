@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-#ifndef TIZENCLAW_INFRA_PKGMGR_CLIENT_HH_
-#define TIZENCLAW_INFRA_PKGMGR_CLIENT_HH_
+#ifndef PKGMGR_CLIENT_HH
+#define PKGMGR_CLIENT_HH
 
 #include <package-manager.h>
+
 #include <memory>
 #include <mutex>
 #include <string>
@@ -60,4 +61,4 @@ class PkgmgrClient {
 
 }  // namespace tizenclaw
 
-#endif  // TIZENCLAW_INFRA_PKGMGR_CLIENT_HH_
+#endif  // PKGMGR_CLIENT_HH

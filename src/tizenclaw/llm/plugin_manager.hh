@@ -14,15 +14,16 @@
  * limitations under the License.
  */
 
-#ifndef TIZENCLAW_PLUGIN_MANAGER_HH_
-#define TIZENCLAW_PLUGIN_MANAGER_HH_
+#ifndef PLUGIN_MANAGER_HH
+#define PLUGIN_MANAGER_HH
 
+#include <functional>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
-#include <mutex>
-#include <map>
-#include <functional>
+
 #include "../infra/pkgmgr_client.hh"
 
 namespace tizenclaw {
@@ -32,7 +33,7 @@ class PluginLlmBackend;
 class PluginManager : public PkgmgrClient::IListener {
  public:
   static PluginManager& GetInstance();
-  
+
   // Initialize the manager (start listening to pkgmgr events)
   bool Initialize();
   void Shutdown();
@@ -59,7 +60,7 @@ class PluginManager : public PkgmgrClient::IListener {
 
   bool LoadPluginFromPkg(const std::string& pkgid);
   void UnloadPluginFromPkg(const std::string& pkgid);
-  
+
   std::mutex map_mutex_;
   std::map<std::string, std::shared_ptr<PkgmgrEventArgs>> package_events_;
 
@@ -68,6 +69,6 @@ class PluginManager : public PkgmgrClient::IListener {
   ChangeCallback change_callback_;
 };
 
-} // namespace tizenclaw
+}  // namespace tizenclaw
 
-#endif // TIZENCLAW_PLUGIN_MANAGER_HH_
+#endif  // PLUGIN_MANAGER_HH

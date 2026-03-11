@@ -13,15 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_CORE_AGENT_ROLE_HH_
-#define TIZENCLAW_CORE_AGENT_ROLE_HH_
+#ifndef AGENT_ROLE_HH
+#define AGENT_ROLE_HH
 
+#include <json.hpp>
 #include <map>
 #include <mutex>
 #include <string>
 #include <vector>
-
-#include <json.hpp>
 
 namespace tizenclaw {
 
@@ -52,56 +51,47 @@ class SupervisorEngine {
   explicit SupervisorEngine(AgentCore* agent);
 
   // Load role definitions from JSON config
-  [[nodiscard]] bool LoadRoles(
-      const std::string& config_path);
+  [[nodiscard]] bool LoadRoles(const std::string& config_path);
 
   // Run supervisor loop:
   // decompose → delegate → collect → validate
-  [[nodiscard]] std::string RunSupervisor(
-      const std::string& goal,
-      const std::string& strategy,
-      const std::string& session_id);
+  [[nodiscard]] std::string RunSupervisor(const std::string& goal,
+                                          const std::string& strategy,
+                                          const std::string& session_id);
 
   // List configured roles
   [[nodiscard]] nlohmann::json ListRoles() const;
 
   // Get role by name (nullptr if not found)
-  [[nodiscard]] const AgentRole* GetRole(
-      const std::string& name) const;
+  [[nodiscard]] const AgentRole* GetRole(const std::string& name) const;
 
   // Get all role names
-  [[nodiscard]] std::vector<std::string>
-  GetRoleNames() const;
+  [[nodiscard]] std::vector<std::string> GetRoleNames() const;
 
  private:
   // Decompose goal into (role, sub_task) pairs
   // via LLM
-  std::vector<std::pair<std::string, std::string>>
-  DecomposeGoal(
-      const std::string& goal,
-      const std::string& session_id);
+  std::vector<std::pair<std::string, std::string>> DecomposeGoal(
+      const std::string& goal, const std::string& session_id);
 
   // Delegate sub-task to a role agent session
-  DelegationResult DelegateToRole(
-      const AgentRole& role,
-      const std::string& sub_task,
-      const std::string& parent_session);
+  DelegationResult DelegateToRole(const AgentRole& role,
+                                  const std::string& sub_task,
+                                  const std::string& parent_session);
 
   // Validate and aggregate results via LLM
-  std::string ValidateResults(
-      const std::string& goal,
-      const std::vector<DelegationResult>& results,
-      const std::string& session_id);
+  std::string ValidateResults(const std::string& goal,
+                              const std::vector<DelegationResult>& results,
+                              const std::string& session_id);
 
   AgentCore* agent_;
   std::map<std::string, AgentRole> roles_;
   mutable std::mutex roles_mutex_;
 
   // Session prefix for role agents
-  static constexpr const char* kRolePrefix =
-      "role_";
+  static constexpr const char* kRolePrefix = "role_";
 };
 
 }  // namespace tizenclaw
 
-#endif // TIZENCLAW_CORE_AGENT_ROLE_HH_
+#endif  // AGENT_ROLE_HH

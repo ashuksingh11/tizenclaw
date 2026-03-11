@@ -13,15 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_CORE_TOOL_POLICY_HH_
-#define TIZENCLAW_CORE_TOOL_POLICY_HH_
+#ifndef TOOL_POLICY_HH
+#define TOOL_POLICY_HH
 
+#include <json.hpp>
 #include <map>
 #include <mutex>
 #include <set>
 #include <string>
 #include <vector>
-#include <json.hpp>
 
 namespace tizenclaw {
 
@@ -43,73 +43,61 @@ struct ToolPolicyConfig {
 };
 
 class ToolPolicy {
-public:
+ public:
   ToolPolicy();
 
   // Load policy config from JSON file
   // Returns true if loaded (or defaults used)
-  [[nodiscard]] bool LoadConfig(
-      const std::string& config_path);
+  [[nodiscard]] bool LoadConfig(const std::string& config_path);
 
   // Load risk_level from skill manifest
-  void LoadManifestRiskLevel(
-      const std::string& skill_name,
-      const nlohmann::json& manifest);
+  void LoadManifestRiskLevel(const std::string& skill_name,
+                             const nlohmann::json& manifest);
 
   // Check if a tool call is allowed.
   // Returns empty string if allowed,
   // violation reason string if blocked.
-  [[nodiscard]] std::string CheckPolicy(
-      const std::string& session_id,
-      const std::string& skill_name,
-      const nlohmann::json& args);
+  [[nodiscard]] std::string CheckPolicy(const std::string& session_id,
+                                        const std::string& skill_name,
+                                        const nlohmann::json& args);
 
   // Track iteration outputs for idle detection.
   // Returns true if idle (no progress).
-  [[nodiscard]] bool CheckIdleProgress(
-      const std::string& session_id,
-      const std::string& iteration_output);
+  [[nodiscard]] bool CheckIdleProgress(const std::string& session_id,
+                                       const std::string& iteration_output);
 
   // Get max iterations for agentic loop
   [[nodiscard]] int GetMaxIterations() const;
 
   // Reset per-session call tracking
-  void ResetSession(
-      const std::string& session_id);
+  void ResetSession(const std::string& session_id);
 
   // Reset idle tracking for a session
-  void ResetIdleTracking(
-      const std::string& session_id);
+  void ResetIdleTracking(const std::string& session_id);
 
   // Get risk level for a skill
-  [[nodiscard]] RiskLevel GetRiskLevel(
-      const std::string& skill_name) const;
+  [[nodiscard]] RiskLevel GetRiskLevel(const std::string& skill_name) const;
 
   // Convert RiskLevel to string
-  static std::string RiskLevelToString(
-      RiskLevel level);
+  static std::string RiskLevelToString(RiskLevel level);
 
-private:
+ private:
   // Generate hash key for loop detection
-  std::string HashCall(
-      const std::string& name,
-      const nlohmann::json& args) const;
+  std::string HashCall(const std::string& name,
+                       const nlohmann::json& args) const;
 
   // Parse risk level string to enum
-  static RiskLevel ParseRiskLevel(
-      const std::string& str);
+  static RiskLevel ParseRiskLevel(const std::string& str);
 
   ToolPolicyConfig config_;
 
   // Track repeated calls per session:
   // session_id -> {call_hash -> count}
-  std::map<std::string,
-      std::map<std::string, int>> call_history_;
+  std::map<std::string, std::map<std::string, int>> call_history_;
 
   // Track iteration outputs for idle detection
   // session_id -> recent iteration signatures
-  std::map<std::string,
-      std::vector<std::string>> idle_history_;
+  std::map<std::string, std::vector<std::string>> idle_history_;
   static constexpr int kIdleWindowSize = 3;
 
   std::mutex mutex_;
@@ -117,4 +105,4 @@ private:
 
 }  // namespace tizenclaw
 
-#endif // TIZENCLAW_CORE_TOOL_POLICY_HH_
+#endif  // TOOL_POLICY_HH

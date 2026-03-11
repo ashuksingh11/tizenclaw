@@ -13,11 +13,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_CHANNEL_VOICE_CHANNEL_HH_
-#define TIZENCLAW_CHANNEL_VOICE_CHANNEL_HH_
+#ifndef VOICE_CHANNEL_HH
+#define VOICE_CHANNEL_HH
 
-#include <string>
 #include <atomic>
+#include <string>
 #include <thread>
 
 #include "channel.hh"
@@ -41,33 +41,24 @@ class AgentCore;
 // if Tizen STT/TTS packages are not available,
 // it compiles as a stub that logs a warning.
 class VoiceChannel : public Channel {
-public:
+ public:
   explicit VoiceChannel(AgentCore* agent);
   ~VoiceChannel();
 
   // Channel interface
-  std::string GetName() const override {
-    return "voice";
-  }
+  std::string GetName() const override { return "voice"; }
   bool Start() override;
   void Stop() override;
-  bool IsRunning() const override {
-    return running_;
-  }
+  bool IsRunning() const override { return running_; }
 
-private:
+ private:
 #ifdef TIZEN_STT_ENABLED
   // STT callbacks
-  static void OnSttResult(
-      stt_h stt,
-      stt_result_event_e event,
-      const char** data, int data_count,
-      const char* msg, void* user_data);
-  static void OnSttState(
-      stt_h stt,
-      stt_state_e previous,
-      stt_state_e current,
-      void* user_data);
+  static void OnSttResult(stt_h stt, stt_result_event_e event,
+                          const char** data, int data_count, const char* msg,
+                          void* user_data);
+  static void OnSttState(stt_h stt, stt_state_e previous, stt_state_e current,
+                         void* user_data);
 
   bool InitStt();
   void StartListening();
@@ -77,23 +68,17 @@ private:
 
 #ifdef TIZEN_TTS_ENABLED
   // TTS callbacks
-  static void OnTtsUtterance(
-      tts_h tts, int utt_id,
-      tts_utterance_status_e status,
-      void* user_data);
-  static void OnTtsState(
-      tts_h tts,
-      tts_state_e previous,
-      tts_state_e current,
-      void* user_data);
+  static void OnTtsUtterance(tts_h tts, int utt_id,
+                             tts_utterance_status_e status, void* user_data);
+  static void OnTtsState(tts_h tts, tts_state_e previous, tts_state_e current,
+                         void* user_data);
 
   bool InitTts();
   void Speak(const std::string& text);
   tts_h tts_ = nullptr;
 #endif
 
-  void ProcessVoiceInput(
-      const std::string& text);
+  void ProcessVoiceInput(const std::string& text);
 
   AgentCore* agent_;
   std::atomic<bool> running_{false};
@@ -102,4 +87,4 @@ private:
 
 }  // namespace tizenclaw
 
-#endif // TIZENCLAW_CHANNEL_VOICE_CHANNEL_HH_
+#endif  // VOICE_CHANNEL_HH

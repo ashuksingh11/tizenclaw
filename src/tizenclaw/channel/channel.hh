@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_CHANNEL_CHANNEL_HH_
-#define TIZENCLAW_CHANNEL_CHANNEL_HH_
+#ifndef CHANNEL_HH
+#define CHANNEL_HH
 
 #include <string>
 
@@ -25,27 +25,25 @@ namespace tizenclaw {
 // implements this interface and registers with the
 // ChannelRegistry for lifecycle management.
 class Channel {
-public:
-    virtual ~Channel() = default;
+ public:
+  virtual ~Channel() = default;
 
-    // Human-readable channel name (e.g. "telegram")
-    [[nodiscard]] virtual std::string GetName()
-        const = 0;
+  // Human-readable channel name (e.g. "telegram")
+  [[nodiscard]] virtual std::string GetName() const = 0;
 
-    // Initialize and start the channel.
-    // Returns false if startup fails (e.g. missing
-    // config). Non-fatal: daemon continues without
-    // this channel.
-    [[nodiscard]] virtual bool Start() = 0;
+  // Initialize and start the channel.
+  // Returns false if startup fails (e.g. missing
+  // config). Non-fatal: daemon continues without
+  // this channel.
+  [[nodiscard]] virtual bool Start() = 0;
 
-    // Signal the channel to stop and clean up.
-    virtual void Stop() = 0;
+  // Signal the channel to stop and clean up.
+  virtual void Stop() = 0;
 
-    // Whether the channel is currently active.
-    [[nodiscard]] virtual bool IsRunning()
-        const = 0;
+  // Whether the channel is currently active.
+  [[nodiscard]] virtual bool IsRunning() const = 0;
 };
 
-} // namespace tizenclaw
+}  // namespace tizenclaw
 
-#endif // TIZENCLAW_CHANNEL_CHANNEL_HH_
+#endif  // CHANNEL_HH

@@ -13,15 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_CHANNEL_SLACK_CHANNEL_HH_
-#define TIZENCLAW_CHANNEL_SLACK_CHANNEL_HH_
+#ifndef SLACK_CHANNEL_HH
+#define SLACK_CHANNEL_HH
 
-#include <string>
-#include <vector>
-#include <thread>
 #include <atomic>
-#include <set>
 #include <mutex>
+#include <set>
+#include <string>
+#include <thread>
+#include <vector>
 
 #include "channel.hh"
 
@@ -40,51 +40,42 @@ class AgentCore;
 //  5. Extract message text, call AgentCore
 //  6. POST chat.postMessage (bot_token)
 class SlackChannel : public Channel {
-public:
-    explicit SlackChannel(AgentCore* agent);
-    ~SlackChannel();
+ public:
+  explicit SlackChannel(AgentCore* agent);
+  ~SlackChannel();
 
-    std::string GetName() const override {
-      return "slack";
-    }
-    bool Start() override;
-    void Stop() override;
-    bool IsRunning() const override {
-      return running_;
-    }
+  std::string GetName() const override { return "slack"; }
+  bool Start() override;
+  void Stop() override;
+  bool IsRunning() const override { return running_; }
 
-private:
-    bool LoadConfig();
+ private:
+  bool LoadConfig();
 
-    // Get WebSocket URL via apps.connections.open
-    std::string GetSocketModeUrl();
+  // Get WebSocket URL via apps.connections.open
+  std::string GetSocketModeUrl();
 
-    // WebSocket event loop
-    void SocketLoop();
+  // WebSocket event loop
+  void SocketLoop();
 
-    // Process a Slack message event
-    void HandleMessageEvent(
-        const std::string& channel,
-        const std::string& user,
-        const std::string& text,
-        const std::string& ts);
+  // Process a Slack message event
+  void HandleMessageEvent(const std::string& channel, const std::string& user,
+                          const std::string& text, const std::string& ts);
 
-    // Send a reply via chat.postMessage
-    void SendReply(
-        const std::string& channel,
-        const std::string& text,
-        const std::string& thread_ts = "");
+  // Send a reply via chat.postMessage
+  void SendReply(const std::string& channel, const std::string& text,
+                 const std::string& thread_ts = "");
 
-    AgentCore* agent_;
-    std::thread ws_thread_;
-    std::atomic<bool> running_{false};
+  AgentCore* agent_;
+  std::thread ws_thread_;
+  std::atomic<bool> running_{false};
 
-    // Config
-    std::string bot_token_;
-    std::string app_token_;
-    std::set<std::string> allowed_channels_;
+  // Config
+  std::string bot_token_;
+  std::string app_token_;
+  std::set<std::string> allowed_channels_;
 };
 
-} // namespace tizenclaw
+}  // namespace tizenclaw
 
-#endif // TIZENCLAW_CHANNEL_SLACK_CHANNEL_HH_
+#endif  // SLACK_CHANNEL_HH

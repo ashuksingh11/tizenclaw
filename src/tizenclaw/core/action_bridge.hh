@@ -13,35 +13,30 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_CORE_ACTION_BRIDGE_HH_
-#define TIZENCLAW_CORE_ACTION_BRIDGE_HH_
+#ifndef ACTION_BRIDGE_HH
+#define ACTION_BRIDGE_HH
 
 #ifdef TIZEN_ACTION_ENABLED
+
+#include <action.h>
+#include <tizen_core.h>
+#include <tizen_core_channel.h>
 
 #include <atomic>
 #include <functional>
 #include <future>
+#include <json.hpp>
 #include <map>
 #include <mutex>
 #include <string>
 #include <vector>
 
-#include <tizen_core.h>
-#include <tizen_core_channel.h>
-#include <action.h>
-#include <json.hpp>
-
 namespace tizenclaw {
 
-constexpr const char* kActionsDir =
-    "/opt/usr/share/tizenclaw/tools/actions";
+constexpr const char* kActionsDir = "/opt/usr/share/tizenclaw/tools/actions";
 
 // Command types sent via channel
-enum class ActionCommand : int {
-  kList = 1,
-  kExecute = 2,
-  kSync = 3
-};
+enum class ActionCommand : int { kList = 1, kExecute = 2, kSync = 3 };
 
 // Callback invoked when action schemas change
 // (install/uninstall/update).
@@ -62,74 +57,59 @@ class ActionBridge {
   ~ActionBridge();
 
   ActionBridge(const ActionBridge&) = delete;
-  ActionBridge& operator=(
-      const ActionBridge&) = delete;
+  ActionBridge& operator=(const ActionBridge&) = delete;
 
   [[nodiscard]] bool Start();
   void Stop();
 
   // Blocks caller until result arrives.
   [[nodiscard]] std::string ListActions();
-  [[nodiscard]] std::string ExecuteAction(
-      const std::string& name,
-      const nlohmann::json& arguments);
+  [[nodiscard]] std::string ExecuteAction(const std::string& name,
+                                          const nlohmann::json& arguments);
 
   // Full sync: fetch all actions, refresh MD
   // files, remove stale ones.
   void SyncActionSchemas();
 
   // Load cached action info from MD files.
-  [[nodiscard]] std::vector<nlohmann::json>
-      LoadCachedActions() const;
+  [[nodiscard]] std::vector<nlohmann::json> LoadCachedActions() const;
 
   // Set callback for schema changes.
   void SetChangeCallback(ActionChangeCallback cb);
 
  private:
   // Send a request to worker, block on result
-  [[nodiscard]] std::string SendRequest(
-      ActionCommand cmd,
-      const std::string& payload);
+  [[nodiscard]] std::string SendRequest(ActionCommand cmd,
+                                        const std::string& payload);
 
   // Worker-side: channel receive callback
-  static void OnRequestReceived(
-      tizen_core_channel_object_h object,
-      void* user_data);
+  static void OnRequestReceived(tizen_core_channel_object_h object,
+                                void* user_data);
 
   // Worker-side: handle incoming request
-  void HandleRequest(int id,
-                     ActionCommand cmd,
-                     const std::string& payload);
+  void HandleRequest(int id, ActionCommand cmd, const std::string& payload);
 
   // Worker-side: sync implementation
   void DoSync(int id);
 
   // Worker-side: action_foreach callback
-  static bool OnActionFound(
-      const action_h action, void* user_data);
+  static bool OnActionFound(const action_h action, void* user_data);
 
   // Worker-side: execute result callback
-  static void OnActionResult(
-      int execution_id,
-      const char* json_result,
-      void* user_data);
+  static void OnActionResult(int execution_id, const char* json_result,
+                             void* user_data);
 
   // Worker-side: action event callback
-  static void OnActionEvent(
-      const char* action_name,
-      action_event_type_e event_type,
-      void* user_data);
+  static void OnActionEvent(const char* action_name,
+                            action_event_type_e event_type, void* user_data);
 
   // Send response (resolve caller promise)
-  void SendResponse(int id,
-                    const std::string& result);
+  void SendResponse(int id, const std::string& result);
 
   // MD file helpers
-  static void WriteActionMd(
-      const std::string& name,
-      const nlohmann::json& schema);
-  static void RemoveActionMd(
-      const std::string& name);
+  static void WriteActionMd(const std::string& name,
+                            const nlohmann::json& schema);
+  static void RemoveActionMd(const std::string& name);
   static void EnsureActionsDir();
 
   // tizen-core task (worker thread)
@@ -137,17 +117,13 @@ class ActionBridge {
   tizen_core_h core_ = nullptr;
 
   // Channels: request (caller→worker)
-  tizen_core_channel_sender_h req_sender_ =
-      nullptr;
-  tizen_core_channel_receiver_h req_receiver_ =
-      nullptr;
+  tizen_core_channel_sender_h req_sender_ = nullptr;
+  tizen_core_channel_receiver_h req_receiver_ = nullptr;
   tizen_core_source_h req_source_ = nullptr;
 
   // Channels: response (worker→caller)
-  tizen_core_channel_sender_h resp_sender_ =
-      nullptr;
-  tizen_core_channel_receiver_h resp_receiver_ =
-      nullptr;
+  tizen_core_channel_sender_h resp_sender_ = nullptr;
+  tizen_core_channel_receiver_h resp_receiver_ = nullptr;
 
   // Action client handle (worker thread only)
   action_client_h client_ = nullptr;
@@ -155,8 +131,7 @@ class ActionBridge {
 
   // Pending request promises
   std::mutex pending_mutex_;
-  std::map<int, std::promise<std::string>>
-      pending_;
+  std::map<int, std::promise<std::string>> pending_;
   std::atomic<int> next_id_{1};
 
   // Map execution_id → request_id
@@ -175,4 +150,4 @@ class ActionBridge {
 
 #endif  // TIZEN_ACTION_ENABLED
 
-#endif // TIZENCLAW_CORE_ACTION_BRIDGE_HH_
+#endif  // ACTION_BRIDGE_HH

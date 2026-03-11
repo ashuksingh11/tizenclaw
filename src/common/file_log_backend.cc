@@ -29,25 +29,23 @@
 
 namespace tizenclaw {
 
-
 namespace fs = std::filesystem;
 
 namespace utils {
 
 FileLogBackend::FileLogBackend(std::string file_path, int rotation_size,
                                int max_rotation)
-    : file_path_(std::move(file_path)), rotation_size_(rotation_size),
+    : file_path_(std::move(file_path)),
+      rotation_size_(rotation_size),
       max_rotation_(max_rotation) {}
 
 void FileLogBackend::WriteLog(LogLevel level, const std::string& /* tag */,
                               const std::string& logstr) {
-  if (level == LogLevel::LOG_DEBUG)
-    return;
+  if (level == LogLevel::LOG_DEBUG) return;
 
   std::lock_guard<std::mutex> lock(mutex_);
 
-  if (file_path_.empty())
-    return;
+  if (file_path_.empty()) return;
 
   // Rotate check
   std::error_code ec;
@@ -83,14 +81,12 @@ bool FileLogBackend::Rotate() {
 
       if (i == max_rotation_) {
         std::error_code ec;
-        if (fs::exists(src, ec))
-          fs::remove(src, ec);
+        if (fs::exists(src, ec)) fs::remove(src, ec);
       } else {
         fs::path dest = base_path;
         dest += "." + std::to_string(i + 1);
         std::error_code ec;
-        if (fs::exists(src, ec))
-          fs::rename(src, dest, ec);
+        if (fs::exists(src, ec)) fs::rename(src, dest, ec);
       }
     }
 
@@ -141,6 +137,6 @@ std::string FileLogBackend::GetFileName() {
   return file_path_.substr(file_path_.find_last_of("\\/") + 1);
 }
 
-} // namespace utils
+}  // namespace utils
 
-} // namespace tizenclaw
+}  // namespace tizenclaw

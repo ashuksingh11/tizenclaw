@@ -14,20 +14,20 @@
  * limitations under the License.
  */
 
-#include "tizenclaw.h"
-
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cstring>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
-#include <mutex>
-#include <atomic>
+
+#include "tizenclaw.h"
 
 namespace {
 
@@ -50,19 +50,20 @@ class TizenClawClientImpl {
 
   // Non-streaming request
   int SendRequest(const std::string& session_id, const std::string& prompt,
-                  tizenclaw_response_cb response_cb, tizenclaw_error_cb error_cb,
-                  void* user_data) {
+                  tizenclaw_response_cb response_cb,
+                  tizenclaw_error_cb error_cb, void* user_data) {
     std::lock_guard<std::mutex> lock(mutex_);
     worker_threads_.emplace_back(&TizenClawClientImpl::PerformRequestTask, this,
-                                 session_id, prompt, false, response_cb, nullptr,
-                                 error_cb, user_data);
+                                 session_id, prompt, false, response_cb,
+                                 nullptr, error_cb, user_data);
     return TIZENCLAW_ERROR_NONE;
   }
 
   // Streaming request
-  int SendRequestStream(const std::string& session_id, const std::string& prompt,
-                        tizenclaw_stream_cb stream_cb, tizenclaw_error_cb error_cb,
-                        void* user_data) {
+  int SendRequestStream(const std::string& session_id,
+                        const std::string& prompt,
+                        tizenclaw_stream_cb stream_cb,
+                        tizenclaw_error_cb error_cb, void* user_data) {
     std::lock_guard<std::mutex> lock(mutex_);
     worker_threads_.emplace_back(&TizenClawClientImpl::PerformRequestTask, this,
                                  session_id, prompt, true, nullptr, stream_cb,
@@ -77,20 +78,34 @@ class TizenClawClientImpl {
     out.reserve(s.size() + 8);
     for (char c : s) {
       switch (c) {
-        case '"': out += "\\\""; break;
-        case '\\': out += "\\\\"; break;
-        case '\n': out += "\\n"; break;
-        case '\r': out += "\\r"; break;
-        case '\t': out += "\\t"; break;
-        default: out += c; break;
+        case '"':
+          out += "\\\"";
+          break;
+        case '\\':
+          out += "\\\\";
+          break;
+        case '\n':
+          out += "\\n";
+          break;
+        case '\r':
+          out += "\\r";
+          break;
+        case '\t':
+          out += "\\t";
+          break;
+        default:
+          out += c;
+          break;
       }
     }
     return out;
   }
 
-  // Core background threaded runloop for reading sockets to maintain async behavior
-  void PerformRequestTask(std::string session_id, std::string prompt, bool stream,
-                          tizenclaw_response_cb response_cb, tizenclaw_stream_cb stream_cb,
+  // Core background threaded runloop for reading sockets to maintain async
+  // behavior
+  void PerformRequestTask(std::string session_id, std::string prompt,
+                          bool stream, tizenclaw_response_cb response_cb,
+                          tizenclaw_stream_cb stream_cb,
                           tizenclaw_error_cb error_cb, void* user_data);
 
   std::vector<std::thread> worker_threads_;
@@ -133,7 +148,8 @@ int ConnectToSocket() {
   for (size_t i = 0; i < sizeof(kName) - 1; ++i) {
     addr.sun_path[1 + i] = kName[i];
   }
-  socklen_t addr_len = offsetof(struct sockaddr_un, sun_path) + 1 + sizeof(kName) - 1;
+  socklen_t addr_len =
+      offsetof(struct sockaddr_un, sun_path) + 1 + sizeof(kName) - 1;
 
   if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), addr_len) < 0) {
     close(sock);
@@ -172,13 +188,20 @@ void TizenClawClientImpl::PerformRequestTask(std::string session_id,
     return;
   }
 
-  std::string json_req = "{\"jsonrpc\":\"2.0\",\"method\":\"prompt\",\"id\":1,\"params\":{"
-                         "\"session_id\":\"" + JsonEscape(session_id) + "\","
-                         "\"text\":\"" + JsonEscape(prompt) + "\","
-                         "\"stream\":" + (stream ? "true" : "false") + "}}";
+  std::string json_req =
+      "{\"jsonrpc\":\"2.0\",\"method\":\"prompt\",\"id\":1,\"params\":{"
+      "\"session_id\":\"" +
+      JsonEscape(session_id) +
+      "\","
+      "\"text\":\"" +
+      JsonEscape(prompt) +
+      "\","
+      "\"stream\":" +
+      (stream ? "true" : "false") + "}}";
 
   uint32_t net_len = htonl(static_cast<uint32_t>(json_req.size()));
-  if (!SendAll(sock, &net_len, 4) || !SendAll(sock, json_req.data(), json_req.size())) {
+  if (!SendAll(sock, &net_len, 4) ||
+      !SendAll(sock, json_req.data(), json_req.size())) {
     close(sock);
     if (error_cb) {
       error_cb(session_id.c_str(), TIZENCLAW_ERROR_IO_ERROR,
@@ -191,17 +214,23 @@ void TizenClawClientImpl::PerformRequestTask(std::string session_id,
     while (!is_destroyed_) {
       uint32_t resp_net_len = 0;
       if (!RecvExact(sock, &resp_net_len, 4)) {
-        if (error_cb) error_cb(session_id.c_str(), TIZENCLAW_ERROR_IO_ERROR, "Socket closed or recv header failed", user_data);
+        if (error_cb)
+          error_cb(session_id.c_str(), TIZENCLAW_ERROR_IO_ERROR,
+                   "Socket closed or recv header failed", user_data);
         break;
       }
       uint32_t resp_len = ntohl(resp_net_len);
       if (resp_len > 10 * 1024 * 1024) {
-        if (error_cb) error_cb(session_id.c_str(), TIZENCLAW_ERROR_IO_ERROR, "Response too large", user_data);
+        if (error_cb)
+          error_cb(session_id.c_str(), TIZENCLAW_ERROR_IO_ERROR,
+                   "Response too large", user_data);
         break;
       }
       std::vector<char> buf(resp_len);
       if (!RecvExact(sock, buf.data(), resp_len)) {
-        if (error_cb) error_cb(session_id.c_str(), TIZENCLAW_ERROR_IO_ERROR, "Socket body chunk failed", user_data);
+        if (error_cb)
+          error_cb(session_id.c_str(), TIZENCLAW_ERROR_IO_ERROR,
+                   "Socket body chunk failed", user_data);
         break;
       }
       std::string chunk_str(buf.data(), resp_len);
@@ -210,15 +239,18 @@ void TizenClawClientImpl::PerformRequestTask(std::string session_id,
       std::string text = ExtractJsonValue(chunk_str, "text");
 
       if (method == "stream_chunk") {
-        if (stream_cb) stream_cb(session_id.c_str(), text.c_str(), false, user_data);
+        if (stream_cb)
+          stream_cb(session_id.c_str(), text.c_str(), false, user_data);
       } else if (chunk_str.find("\"result\":") != std::string::npos ||
                  chunk_str.find("\"error\":") != std::string::npos) {
         // Complete
-        if (stream_cb) stream_cb(session_id.c_str(), text.c_str(), true, user_data);
+        if (stream_cb)
+          stream_cb(session_id.c_str(), text.c_str(), true, user_data);
         break;
       } else {
         // Fallback / Unknown
-        if (stream_cb) stream_cb(session_id.c_str(), chunk_str.c_str(), true, user_data);
+        if (stream_cb)
+          stream_cb(session_id.c_str(), chunk_str.c_str(), true, user_data);
         break;
       }
     }
@@ -227,23 +259,30 @@ void TizenClawClientImpl::PerformRequestTask(std::string session_id,
     uint32_t resp_net_len = 0;
     if (!RecvExact(sock, &resp_net_len, 4)) {
       close(sock);
-      if (error_cb) error_cb(session_id.c_str(), TIZENCLAW_ERROR_IO_ERROR, "Failed to read header", user_data);
+      if (error_cb)
+        error_cb(session_id.c_str(), TIZENCLAW_ERROR_IO_ERROR,
+                 "Failed to read header", user_data);
       return;
     }
     uint32_t resp_len = ntohl(resp_net_len);
     if (resp_len > 10 * 1024 * 1024) {
       close(sock);
-      if (error_cb) error_cb(session_id.c_str(), TIZENCLAW_ERROR_IO_ERROR, "Response too large", user_data);
+      if (error_cb)
+        error_cb(session_id.c_str(), TIZENCLAW_ERROR_IO_ERROR,
+                 "Response too large", user_data);
       return;
     }
     std::vector<char> buf(resp_len);
     if (!RecvExact(sock, buf.data(), resp_len)) {
       close(sock);
-      if (error_cb) error_cb(session_id.c_str(), TIZENCLAW_ERROR_IO_ERROR, "Failed to read body", user_data);
+      if (error_cb)
+        error_cb(session_id.c_str(), TIZENCLAW_ERROR_IO_ERROR,
+                 "Failed to read body", user_data);
       return;
     }
     std::string resp_str(buf.data(), resp_len);
-    if (response_cb) response_cb(session_id.c_str(), resp_str.c_str(), user_data);
+    if (response_cb)
+      response_cb(session_id.c_str(), resp_str.c_str(), user_data);
   }
 
   close(sock);
@@ -255,12 +294,12 @@ void TizenClawClientImpl::PerformRequestTask(std::string session_id,
 
 extern "C" {
 
-int tizenclaw_client_create(tizenclaw_client_h *client) {
+int tizenclaw_client_create(tizenclaw_client_h* client) {
   if (!client) {
     return TIZENCLAW_ERROR_INVALID_PARAMETER;
   }
   try {
-    TizenClawClientImpl *impl = new TizenClawClientImpl();
+    TizenClawClientImpl* impl = new TizenClawClientImpl();
     *client = static_cast<tizenclaw_client_h>(impl);
   } catch (const std::bad_alloc&) {
     return TIZENCLAW_ERROR_OUT_OF_MEMORY;
@@ -272,33 +311,41 @@ int tizenclaw_client_destroy(tizenclaw_client_h client) {
   if (!client) {
     return TIZENCLAW_ERROR_INVALID_PARAMETER;
   }
-  TizenClawClientImpl *impl = static_cast<TizenClawClientImpl*>(client);
+  TizenClawClientImpl* impl = static_cast<TizenClawClientImpl*>(client);
   delete impl;
   return TIZENCLAW_ERROR_NONE;
 }
 
-int tizenclaw_client_send_request(tizenclaw_client_h client, const char *session_id, const char *prompt,
-                                  tizenclaw_response_cb response_cb, tizenclaw_error_cb error_cb, void *user_data) {
+int tizenclaw_client_send_request(tizenclaw_client_h client,
+                                  const char* session_id, const char* prompt,
+                                  tizenclaw_response_cb response_cb,
+                                  tizenclaw_error_cb error_cb,
+                                  void* user_data) {
   if (!client || !prompt) {
     return TIZENCLAW_ERROR_INVALID_PARAMETER;
   }
   std::string s_id = session_id ? session_id : "default_session";
   std::string s_prompt = prompt;
 
-  TizenClawClientImpl *impl = static_cast<TizenClawClientImpl*>(client);
+  TizenClawClientImpl* impl = static_cast<TizenClawClientImpl*>(client);
   return impl->SendRequest(s_id, s_prompt, response_cb, error_cb, user_data);
 }
 
-int tizenclaw_client_send_request_stream(tizenclaw_client_h client, const char *session_id, const char *prompt,
-                                         tizenclaw_stream_cb stream_cb, tizenclaw_error_cb error_cb, void *user_data) {
+int tizenclaw_client_send_request_stream(tizenclaw_client_h client,
+                                         const char* session_id,
+                                         const char* prompt,
+                                         tizenclaw_stream_cb stream_cb,
+                                         tizenclaw_error_cb error_cb,
+                                         void* user_data) {
   if (!client || !prompt) {
     return TIZENCLAW_ERROR_INVALID_PARAMETER;
   }
   std::string s_id = session_id ? session_id : "default_session";
   std::string s_prompt = prompt;
 
-  TizenClawClientImpl *impl = static_cast<TizenClawClientImpl*>(client);
-  return impl->SendRequestStream(s_id, s_prompt, stream_cb, error_cb, user_data);
+  TizenClawClientImpl* impl = static_cast<TizenClawClientImpl*>(client);
+  return impl->SendRequestStream(s_id, s_prompt, stream_cb, error_cb,
+                                 user_data);
 }
 
-} // extern "C"
+}  // extern "C"

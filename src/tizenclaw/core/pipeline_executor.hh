@@ -13,15 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_CORE_PIPELINE_EXECUTOR_HH_
-#define TIZENCLAW_CORE_PIPELINE_EXECUTOR_HH_
+#ifndef PIPELINE_EXECUTOR_HH
+#define PIPELINE_EXECUTOR_HH
 
+#include <json.hpp>
 #include <map>
 #include <mutex>
 #include <string>
 #include <vector>
-
-#include <json.hpp>
 
 namespace tizenclaw {
 
@@ -37,16 +36,15 @@ enum class PipelineStepType {
 // Single pipeline step definition
 struct PipelineStep {
   std::string id;
-  PipelineStepType type =
-      PipelineStepType::kTool;
-  std::string tool_name;   // For kTool
-  nlohmann::json args;     // Tool args
-  std::string prompt;      // For kPrompt
+  PipelineStepType type = PipelineStepType::kTool;
+  std::string tool_name;  // For kTool
+  nlohmann::json args;    // Tool args
+  std::string prompt;     // For kPrompt
 
   // Conditional branching
-  std::string condition;   // e.g. "{{x}} == ok"
-  std::string then_step;   // Step ID on true
-  std::string else_step;   // Step ID on false
+  std::string condition;  // e.g. "{{x}} == ok"
+  std::string then_step;  // Step ID on true
+  std::string else_step;  // Step ID on false
 
   // Error handling
   bool skip_on_failure = false;
@@ -83,74 +81,56 @@ class PipelineExecutor {
   void LoadPipelines();
 
   // CRUD operations
-  [[nodiscard]] std::string CreatePipeline(
-      const nlohmann::json& def);
-  [[nodiscard]] nlohmann::json ListPipelines()
-      const;
-  [[nodiscard]] bool DeletePipeline(
-      const std::string& id);
+  [[nodiscard]] std::string CreatePipeline(const nlohmann::json& def);
+  [[nodiscard]] nlohmann::json ListPipelines() const;
+  [[nodiscard]] bool DeletePipeline(const std::string& id);
 
   // Execute pipeline
   [[nodiscard]] PipelineRunResult RunPipeline(
-      const std::string& pipeline_id,
-      const nlohmann::json& input_vars = {});
+      const std::string& pipeline_id, const nlohmann::json& input_vars = {});
 
   // Get pipeline by ID (for scheduler)
-  [[nodiscard]] const Pipeline* GetPipeline(
-      const std::string& id) const;
+  [[nodiscard]] const Pipeline* GetPipeline(const std::string& id) const;
 
  private:
   // Variable interpolation in text
   std::string Interpolate(
       const std::string& tmpl,
-      const std::map<std::string,
-                     nlohmann::json>& vars)
-      const;
+      const std::map<std::string, nlohmann::json>& vars) const;
 
   // Variable interpolation in JSON
   nlohmann::json InterpolateJson(
       const nlohmann::json& j,
-      const std::map<std::string,
-                     nlohmann::json>& vars)
-      const;
+      const std::map<std::string, nlohmann::json>& vars) const;
 
   // Evaluate simple condition expression
-  bool EvalCondition(
-      const std::string& expr,
-      const std::map<std::string,
-                     nlohmann::json>& vars)
-      const;
+  bool EvalCondition(const std::string& expr,
+                     const std::map<std::string, nlohmann::json>& vars) const;
 
   // Execute a single step
-  std::string ExecuteStep(
-      const PipelineStep& step,
-      std::map<std::string,
-               nlohmann::json>& vars,
-      const std::string& session_id);
+  std::string ExecuteStep(const PipelineStep& step,
+                          std::map<std::string, nlohmann::json>& vars,
+                          const std::string& session_id);
 
   // Persistence
   void SavePipeline(const Pipeline& p) const;
-  Pipeline LoadPipelineFile(
-      const std::string& path) const;
+  Pipeline LoadPipelineFile(const std::string& path) const;
 
   // Helpers
   static std::string GeneratePipelineId();
   std::string GetPipelinesDir() const;
 
   // Convert step type to/from string
-  static std::string StepTypeToString(
-      PipelineStepType type);
-  static PipelineStepType StringToStepType(
-      const std::string& s);
+  static std::string StepTypeToString(PipelineStepType type);
+  static PipelineStepType StringToStepType(const std::string& s);
 
   AgentCore* agent_;
   std::map<std::string, Pipeline> pipelines_;
   mutable std::mutex pipelines_mutex_;
 
-  static constexpr const char* kDataDir =
-      "/opt/usr/share/tizenclaw";
+  static constexpr const char* kDataDir = "/opt/usr/share/tizenclaw";
 };
 
 }  // namespace tizenclaw
 
-#endif // TIZENCLAW_CORE_PIPELINE_EXECUTOR_HH_
+#endif  // PIPELINE_EXECUTOR_HH

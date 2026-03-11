@@ -39,8 +39,8 @@ constexpr const char kMetadataTizenclawLlmBackend[] =
 bool HasPlatformPrivilege() {
   pkgmgr_privilege_level level = PM_PRIVILEGE_UNKNOWN;
   int ret = pkgmgr_installer_info_get_privilege_level(&level);
-    // In Tizen, the success return code is usually 0
-    if (ret != 0) {
+  // In Tizen, the success return code is usually 0
+  if (ret != 0) {
     LOG(ERROR) << "Failed to get privilege level";
     return false;
   }
@@ -61,7 +61,7 @@ extern "C" EXPORT int PKGMGR_MDPARSER_PLUGIN_INSTALL(const char* pkgid,
       if (!HasPlatformPrivilege()) {
         LOG(ERROR) << "Package(" << pkgid
                    << ") was not signed by platform level certificate";
-        return -1; // Reject installation
+        return -1;  // Reject installation
       }
       LOG(INFO) << "Package(" << pkgid
                 << ") has valid platform signature for TizenClaw LLM backend";
@@ -70,7 +70,7 @@ extern "C" EXPORT int PKGMGR_MDPARSER_PLUGIN_INSTALL(const char* pkgid,
     iter = g_list_next(iter);
   }
 
-  return 0; // Allow installation
+  return 0;  // Allow installation
 }
 
 extern "C" EXPORT int PKGMGR_MDPARSER_PLUGIN_UPGRADE(const char* pkgid,
@@ -84,7 +84,7 @@ extern "C" EXPORT int PKGMGR_MDPARSER_PLUGIN_UPGRADE(const char* pkgid,
       if (!HasPlatformPrivilege()) {
         LOG(ERROR) << "Package(" << pkgid
                    << ") was not signed by platform level certificate";
-        return -1; // Reject upgrade
+        return -1;  // Reject upgrade
       }
       LOG(INFO) << "Package(" << pkgid
                 << ") has valid platform signature for TizenClaw LLM backend";
@@ -114,22 +114,26 @@ extern "C" EXPORT int PKGMGR_MDPARSER_PLUGIN_UNDO(const char* pkgid,
   return 0;
 }
 
-extern "C" EXPORT int PKGMGR_MDPARSER_PLUGIN_REMOVED(
-    const char* pkgid, const char* appid, GList* metadata) {
+extern "C" EXPORT int PKGMGR_MDPARSER_PLUGIN_REMOVED(const char* pkgid,
+                                                     const char* appid,
+                                                     GList* metadata) {
   return 0;
 }
 
-extern "C" EXPORT int PKGMGR_MDPARSER_PLUGIN_RECOVERINSTALL(
-    const char* pkgid, const char* appid, GList* metadata) {
+extern "C" EXPORT int PKGMGR_MDPARSER_PLUGIN_RECOVERINSTALL(const char* pkgid,
+                                                            const char* appid,
+                                                            GList* metadata) {
   return PKGMGR_MDPARSER_PLUGIN_INSTALL(pkgid, appid, metadata);
 }
 
-extern "C" EXPORT int PKGMGR_MDPARSER_PLUGIN_RECOVERUPGRADE(
-    const char* pkgid, const char* appid, GList* metadata) {
+extern "C" EXPORT int PKGMGR_MDPARSER_PLUGIN_RECOVERUPGRADE(const char* pkgid,
+                                                            const char* appid,
+                                                            GList* metadata) {
   return PKGMGR_MDPARSER_PLUGIN_UPGRADE(pkgid, appid, metadata);
 }
 
-extern "C" EXPORT int PKGMGR_MDPARSER_PLUGIN_RECOVERUNINSTALL(
-    const char* pkgid, const char* appid, GList* metadata) {
+extern "C" EXPORT int PKGMGR_MDPARSER_PLUGIN_RECOVERUNINSTALL(const char* pkgid,
+                                                              const char* appid,
+                                                              GList* metadata) {
   return 0;
 }

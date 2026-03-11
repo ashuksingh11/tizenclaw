@@ -13,42 +13,34 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_LLM_GEMINI_BACKEND_HH_
-#define TIZENCLAW_LLM_GEMINI_BACKEND_HH_
+#ifndef GEMINI_BACKEND_HH
+#define GEMINI_BACKEND_HH
 
 #include "llm_backend.hh"
 
 namespace tizenclaw {
 
-
 class GeminiBackend : public LlmBackend {
-public:
-  [[nodiscard]] bool Initialize(
-      const nlohmann::json& config) override;
+ public:
+  [[nodiscard]] bool Initialize(const nlohmann::json& config) override;
   [[nodiscard]] LlmResponse Chat(
       const std::vector<LlmMessage>& messages,
       const std::vector<LlmToolDecl>& tools,
       std::function<void(const std::string&)> on_chunk = nullptr,
-      const std::string& system_prompt = "")
-      override;
-  [[nodiscard]] std::string GetName()
-      const override {
-    return "gemini";
-  }
+      const std::string& system_prompt = "") override;
+  [[nodiscard]] std::string GetName() const override { return "gemini"; }
 
-private:
+ private:
   // Convert unified messages to Gemini format
   nlohmann::json ToGeminiContents(
       const std::vector<LlmMessage>& messages) const;
-  nlohmann::json ToGeminiTools(
-      const std::vector<LlmToolDecl>& tools) const;
-  LlmResponse ParseGeminiResponse(
-      const std::string& body) const;
+  nlohmann::json ToGeminiTools(const std::vector<LlmToolDecl>& tools) const;
+  LlmResponse ParseGeminiResponse(const std::string& body) const;
 
   std::string api_key_;
   std::string model_;
 };
 
-} // namespace tizenclaw
+}  // namespace tizenclaw
 
-#endif // TIZENCLAW_LLM_GEMINI_BACKEND_HH_
+#endif  // GEMINI_BACKEND_HH

@@ -14,39 +14,30 @@
  * limitations under the License.
  */
 #include "voice_channel.hh"
-#include "../core/agent_core.hh"
+
 #include "../../common/logging.hh"
+#include "../core/agent_core.hh"
 
 namespace tizenclaw {
 
-VoiceChannel::VoiceChannel(AgentCore* agent)
-    : agent_(agent) {
-}
+VoiceChannel::VoiceChannel(AgentCore* agent) : agent_(agent) {}
 
-VoiceChannel::~VoiceChannel() {
-  Stop();
-}
+VoiceChannel::~VoiceChannel() { Stop(); }
 
-void VoiceChannel::ProcessVoiceInput(
-    const std::string& text) {
+void VoiceChannel::ProcessVoiceInput(const std::string& text) {
   if (!agent_ || text.empty()) return;
 
   LOG(INFO) << "Voice input: " << text;
 
-  std::string response =
-      agent_->ProcessPrompt(
-          session_id_, text);
+  std::string response = agent_->ProcessPrompt(session_id_, text);
 
   LOG(INFO) << "Voice response: "
-            << response.substr(
-                   0, std::min((size_t)100,
-                               response.size()));
+            << response.substr(0, std::min((size_t)100, response.size()));
 
 #ifdef TIZEN_TTS_ENABLED
   Speak(response);
 #else
-  LOG(INFO) << "TTS not available — response "
-            << "text only";
+  LOG(INFO) << "TTS not available — response " << "text only";
 #endif
 }
 
@@ -62,21 +53,17 @@ bool VoiceChannel::InitStt() {
     return false;
   }
 
-  ret = stt_set_recognition_result_cb(
-      stt_, OnSttResult, this);
+  ret = stt_set_recognition_result_cb(stt_, OnSttResult, this);
   if (ret != STT_ERROR_NONE) {
-    LOG(ERROR) << "stt_set_result_cb failed: "
-               << ret;
+    LOG(ERROR) << "stt_set_result_cb failed: " << ret;
     stt_destroy(stt_);
     stt_ = nullptr;
     return false;
   }
 
-  ret = stt_set_state_changed_cb(
-      stt_, OnSttState, this);
+  ret = stt_set_state_changed_cb(stt_, OnSttState, this);
   if (ret != STT_ERROR_NONE) {
-    LOG(ERROR) << "stt_set_state_cb failed: "
-               << ret;
+    LOG(ERROR) << "stt_set_state_cb failed: " << ret;
     stt_destroy(stt_);
     stt_ = nullptr;
     return false;
@@ -97,9 +84,7 @@ bool VoiceChannel::InitStt() {
 void VoiceChannel::StartListening() {
   if (!stt_) return;
 
-  int ret = stt_start(
-      stt_, nullptr,
-      STT_RECOGNITION_TYPE_FREE);
+  int ret = stt_start(stt_, nullptr, STT_RECOGNITION_TYPE_FREE);
   if (ret != STT_ERROR_NONE) {
     LOG(ERROR) << "stt_start failed: " << ret;
   } else {
@@ -117,17 +102,12 @@ void VoiceChannel::StopListening() {
   }
 }
 
-void VoiceChannel::OnSttResult(
-    stt_h /*stt*/,
-    stt_result_event_e event,
-    const char** data, int data_count,
-    const char* /*msg*/, void* user_data) {
-  auto* self =
-      static_cast<VoiceChannel*>(user_data);
+void VoiceChannel::OnSttResult(stt_h /*stt*/, stt_result_event_e event,
+                               const char** data, int data_count,
+                               const char* /*msg*/, void* user_data) {
+  auto* self = static_cast<VoiceChannel*>(user_data);
 
-  if (event ==
-          STT_RESULT_EVENT_FINAL_RESULT &&
-      data_count > 0 && data[0]) {
+  if (event == STT_RESULT_EVENT_FINAL_RESULT && data_count > 0 && data[0]) {
     std::string text(data[0]);
     LOG(INFO) << "STT result: " << text;
     self->ProcessVoiceInput(text);
@@ -139,13 +119,9 @@ void VoiceChannel::OnSttResult(
   }
 }
 
-void VoiceChannel::OnSttState(
-    stt_h /*stt*/,
-    stt_state_e /*previous*/,
-    stt_state_e current,
-    void* /*user_data*/) {
-  LOG(INFO) << "STT state changed to: "
-            << static_cast<int>(current);
+void VoiceChannel::OnSttState(stt_h /*stt*/, stt_state_e /*previous*/,
+                              stt_state_e current, void* /*user_data*/) {
+  LOG(INFO) << "STT state changed to: " << static_cast<int>(current);
 }
 
 #endif  // TIZEN_STT_ENABLED
@@ -162,19 +138,14 @@ bool VoiceChannel::InitTts() {
     return false;
   }
 
-  ret = tts_set_utterance_completed_cb(
-      tts_, OnTtsUtterance, this);
+  ret = tts_set_utterance_completed_cb(tts_, OnTtsUtterance, this);
   if (ret != TTS_ERROR_NONE) {
-    LOG(WARNING)
-        << "tts_set_utterance_cb failed: "
-        << ret;
+    LOG(WARNING) << "tts_set_utterance_cb failed: " << ret;
   }
 
-  ret = tts_set_state_changed_cb(
-      tts_, OnTtsState, this);
+  ret = tts_set_state_changed_cb(tts_, OnTtsState, this);
   if (ret != TTS_ERROR_NONE) {
-    LOG(WARNING)
-        << "tts_set_state_cb failed: " << ret;
+    LOG(WARNING) << "tts_set_state_cb failed: " << ret;
   }
 
   ret = tts_prepare(tts_);
@@ -189,15 +160,12 @@ bool VoiceChannel::InitTts() {
   return true;
 }
 
-void VoiceChannel::Speak(
-    const std::string& text) {
+void VoiceChannel::Speak(const std::string& text) {
   if (!tts_ || text.empty()) return;
 
   int utt_id = 0;
-  int ret = tts_add_text(
-      tts_, text.c_str(), nullptr,
-      TTS_VOICE_TYPE_AUTO,
-      TTS_SPEED_AUTO, &utt_id);
+  int ret = tts_add_text(tts_, text.c_str(), nullptr, TTS_VOICE_TYPE_AUTO,
+                         TTS_SPEED_AUTO, &utt_id);
   if (ret != TTS_ERROR_NONE) {
     LOG(ERROR) << "tts_add_text failed: " << ret;
     return;
@@ -209,22 +177,16 @@ void VoiceChannel::Speak(
   }
 }
 
-void VoiceChannel::OnTtsUtterance(
-    tts_h /*tts*/, int utt_id,
-    tts_utterance_status_e status,
-    void* /*user_data*/) {
+void VoiceChannel::OnTtsUtterance(tts_h /*tts*/, int utt_id,
+                                  tts_utterance_status_e status,
+                                  void* /*user_data*/) {
   LOG(INFO) << "TTS utterance " << utt_id
-            << " status: "
-            << static_cast<int>(status);
+            << " status: " << static_cast<int>(status);
 }
 
-void VoiceChannel::OnTtsState(
-    tts_h /*tts*/,
-    tts_state_e /*previous*/,
-    tts_state_e current,
-    void* /*user_data*/) {
-  LOG(INFO) << "TTS state changed to: "
-            << static_cast<int>(current);
+void VoiceChannel::OnTtsState(tts_h /*tts*/, tts_state_e /*previous*/,
+                              tts_state_e current, void* /*user_data*/) {
+  LOG(INFO) << "TTS state changed to: " << static_cast<int>(current);
 }
 
 #endif  // TIZEN_TTS_ENABLED
@@ -236,25 +198,21 @@ void VoiceChannel::OnTtsState(
 bool VoiceChannel::Start() {
   if (running_) return true;
 
-#if !defined(TIZEN_STT_ENABLED) && \
-    !defined(TIZEN_TTS_ENABLED)
-  LOG(WARNING) << "Voice channel: STT/TTS "
-               << "not available in this build";
+#if !defined(TIZEN_STT_ENABLED) && !defined(TIZEN_TTS_ENABLED)
+  LOG(WARNING) << "Voice channel: STT/TTS " << "not available in this build";
   return false;
 #endif
 
 #ifdef TIZEN_STT_ENABLED
   if (!InitStt()) {
-    LOG(ERROR) << "Voice channel: STT init "
-               << "failed";
+    LOG(ERROR) << "Voice channel: STT init " << "failed";
     return false;
   }
 #endif
 
 #ifdef TIZEN_TTS_ENABLED
   if (!InitTts()) {
-    LOG(WARNING) << "Voice channel: TTS "
-                 << "init failed (non-fatal)";
+    LOG(WARNING) << "Voice channel: TTS " << "init failed (non-fatal)";
   }
 #endif
 

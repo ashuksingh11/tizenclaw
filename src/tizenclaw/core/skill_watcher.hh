@@ -13,8 +13,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_CORE_SKILL_WATCHER_HH_
-#define TIZENCLAW_CORE_SKILL_WATCHER_HH_
+#ifndef SKILL_WATCHER_HH
+#define SKILL_WATCHER_HH
 
 #include <atomic>
 #include <functional>
@@ -39,15 +39,12 @@ class SkillWatcher {
   // Start watching the given directory.
   // callback is invoked when manifest changes
   // are detected (debounced 500ms).
-  bool Start(const std::string& skills_dir,
-             ReloadCallback callback);
+  bool Start(const std::string& skills_dir, ReloadCallback callback);
 
   // Stop watching and join the thread.
   void Stop();
 
-  bool IsRunning() const {
-    return running_.load();
-  }
+  bool IsRunning() const { return running_.load(); }
 
  private:
   // Watch thread entry point
@@ -72,4 +69,4 @@ class SkillWatcher {
 
 }  // namespace tizenclaw
 
-#endif // TIZENCLAW_CORE_SKILL_WATCHER_HH_
+#endif  // SKILL_WATCHER_HH

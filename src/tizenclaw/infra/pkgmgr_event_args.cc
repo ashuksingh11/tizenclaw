@@ -15,6 +15,7 @@
  */
 
 #include "pkgmgr_event_args.hh"
+
 #include <utility>
 
 namespace tizenclaw {

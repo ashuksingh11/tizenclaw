@@ -13,14 +13,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_CHANNEL_WEBHOOK_CHANNEL_HH_
-#define TIZENCLAW_CHANNEL_WEBHOOK_CHANNEL_HH_
+#ifndef WEBHOOK_CHANNEL_HH
+#define WEBHOOK_CHANNEL_HH
 
-#include <string>
-#include <vector>
-#include <thread>
-#include <atomic>
 #include <libsoup/soup.h>
+
+#include <atomic>
+#include <string>
+#include <thread>
+#include <vector>
 
 #include "channel.hh"
 
@@ -30,8 +31,8 @@ class AgentCore;
 
 // Webhook route: maps a URL path to a session
 struct WebhookRoute {
-    std::string path;
-    std::string session_id;
+  std::string path;
+  std::string session_id;
 };
 
 // Webhook inbound trigger channel.
@@ -39,57 +40,45 @@ struct WebhookRoute {
 // incoming webhook requests, validates HMAC
 // signatures, and routes payloads to AgentCore.
 class WebhookChannel : public Channel {
-public:
-    explicit WebhookChannel(AgentCore* agent);
-    ~WebhookChannel();
+ public:
+  explicit WebhookChannel(AgentCore* agent);
+  ~WebhookChannel();
 
-    // Channel interface
-    std::string GetName() const override {
-      return "webhook";
-    }
-    bool Start() override;
-    void Stop() override;
-    bool IsRunning() const override {
-      return running_;
-    }
+  // Channel interface
+  std::string GetName() const override { return "webhook"; }
+  bool Start() override;
+  void Stop() override;
+  bool IsRunning() const override { return running_; }
 
-    // Public for testing: HMAC verification
-    static bool VerifyHmac(
-        const std::string& secret,
-        const std::string& payload,
-        const std::string& signature);
+  // Public for testing: HMAC verification
+  static bool VerifyHmac(const std::string& secret, const std::string& payload,
+                         const std::string& signature);
 
-private:
-    // Load webhook_config.json
-    bool LoadConfig();
+ private:
+  // Load webhook_config.json
+  bool LoadConfig();
 
-    // libsoup request handler callback
-    static void HandleRequest(
-        SoupServer* server,
-        SoupMessage* msg,
-        const char* path,
-        GHashTable* query,
-        SoupClientContext* client,
-        gpointer user_data);
+  // libsoup request handler callback
+  static void HandleRequest(SoupServer* server, SoupMessage* msg,
+                            const char* path, GHashTable* query,
+                            SoupClientContext* client, gpointer user_data);
 
-    // Process a webhook request (runs on thread)
-    void ProcessWebhook(
-        SoupMessage* msg,
-        const std::string& path,
-        const std::string& body);
+  // Process a webhook request (runs on thread)
+  void ProcessWebhook(SoupMessage* msg, const std::string& path,
+                      const std::string& body);
 
-    AgentCore* agent_;
-    SoupServer* server_ = nullptr;
-    std::thread server_thread_;
-    GMainLoop* loop_ = nullptr;
-    std::atomic<bool> running_{false};
+  AgentCore* agent_;
+  SoupServer* server_ = nullptr;
+  std::thread server_thread_;
+  GMainLoop* loop_ = nullptr;
+  std::atomic<bool> running_{false};
 
-    // Configuration
-    int port_ = 8080;
-    std::string hmac_secret_;
-    std::vector<WebhookRoute> routes_;
+  // Configuration
+  int port_ = 8080;
+  std::string hmac_secret_;
+  std::vector<WebhookRoute> routes_;
 };
 
-} // namespace tizenclaw
+}  // namespace tizenclaw
 
-#endif // TIZENCLAW_CHANNEL_WEBHOOK_CHANNEL_HH_
+#endif  // WEBHOOK_CHANNEL_HH

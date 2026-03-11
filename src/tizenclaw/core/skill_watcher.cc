@@ -16,10 +16,10 @@
 #include "skill_watcher.hh"
 
 #include <dirent.h>
+#include <poll.h>
 #include <sys/inotify.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <poll.h>
 
 #include <chrono>
 #include <cstring>
@@ -30,22 +30,16 @@ namespace tizenclaw {
 
 namespace {
 constexpr int kDebounceMs = 500;
-constexpr uint32_t kWatchMask =
-    IN_CREATE | IN_DELETE | IN_MODIFY |
-    IN_MOVED_TO;
-constexpr const char* kManifestFile =
-    "manifest.json";
+constexpr uint32_t kWatchMask = IN_CREATE | IN_DELETE | IN_MODIFY | IN_MOVED_TO;
+constexpr const char* kManifestFile = "manifest.json";
 }  // namespace
 
 SkillWatcher::SkillWatcher() = default;
 
-SkillWatcher::~SkillWatcher() {
-  Stop();
-}
+SkillWatcher::~SkillWatcher() { Stop(); }
 
-bool SkillWatcher::Start(
-    const std::string& skills_dir,
-    ReloadCallback callback) {
+bool SkillWatcher::Start(const std::string& skills_dir,
+                         ReloadCallback callback) {
   if (running_.load()) {
     LOG(WARNING) << "SkillWatcher already running";
     return false;
@@ -53,8 +47,7 @@ bool SkillWatcher::Start(
 
   inotify_fd_ = inotify_init1(IN_NONBLOCK);
   if (inotify_fd_ < 0) {
-    LOG(ERROR) << "inotify_init1 failed: "
-               << strerror(errno);
+    LOG(ERROR) << "inotify_init1 failed: " << strerror(errno);
     return false;
   }
 
@@ -63,13 +56,9 @@ bool SkillWatcher::Start(
 
   // Watch the top-level skills directory for
   // new subdirectory creation
-  int wd = inotify_add_watch(
-      inotify_fd_, skills_dir_.c_str(),
-      kWatchMask);
+  int wd = inotify_add_watch(inotify_fd_, skills_dir_.c_str(), kWatchMask);
   if (wd < 0) {
-    LOG(ERROR) << "Failed to watch "
-               << skills_dir_ << ": "
-               << strerror(errno);
+    LOG(ERROR) << "Failed to watch " << skills_dir_ << ": " << strerror(errno);
     close(inotify_fd_);
     inotify_fd_ = -1;
     return false;
@@ -84,11 +73,9 @@ bool SkillWatcher::Start(
   ScanSubdirectories();
 
   running_.store(true);
-  watch_thread_ =
-      std::thread(&SkillWatcher::WatchLoop, this);
+  watch_thread_ = std::thread(&SkillWatcher::WatchLoop, this);
 
-  LOG(INFO) << "SkillWatcher started: "
-            << skills_dir_;
+  LOG(INFO) << "SkillWatcher started: " << skills_dir_;
   return true;
 }
 
@@ -118,13 +105,10 @@ void SkillWatcher::Stop() {
 void SkillWatcher::WatchLoop() {
   constexpr size_t kBufSize = 4096;
   char buf[kBufSize]
-      __attribute__((
-          aligned(__alignof__(
-              struct inotify_event))));
+      __attribute__((aligned(__alignof__(struct inotify_event))));
 
   bool pending_reload = false;
-  auto last_event_time =
-      std::chrono::steady_clock::now();
+  auto last_event_time = std::chrono::steady_clock::now();
 
   while (running_.load()) {
     struct pollfd pfd;
@@ -135,66 +119,51 @@ void SkillWatcher::WatchLoop() {
     int ret = poll(&pfd, 1, 100);
 
     if (ret > 0 && (pfd.revents & POLLIN)) {
-      ssize_t len = read(
-          inotify_fd_, buf, kBufSize);
+      ssize_t len = read(inotify_fd_, buf, kBufSize);
       if (len <= 0) continue;
 
       const char* ptr = buf;
       while (ptr < buf + len) {
-        auto* event =
-            reinterpret_cast<
-                const struct inotify_event*>(ptr);
+        auto* event = reinterpret_cast<const struct inotify_event*>(ptr);
 
         if (event->len > 0) {
           std::string name(event->name);
 
           // New subdirectory created: add watch
-          if ((event->mask & IN_CREATE) &&
-              (event->mask & IN_ISDIR)) {
+          if ((event->mask & IN_CREATE) && (event->mask & IN_ISDIR)) {
             std::string subdir;
             {
-              std::lock_guard<std::mutex> lock(
-                  wd_mutex_);
-              auto it =
-                  wd_to_path_.find(event->wd);
+              std::lock_guard<std::mutex> lock(wd_mutex_);
+              auto it = wd_to_path_.find(event->wd);
               if (it != wd_to_path_.end()) {
-                subdir =
-                    it->second + "/" + name;
+                subdir = it->second + "/" + name;
               }
             }
             if (!subdir.empty()) {
               AddSubdirWatch(subdir);
-              LOG(INFO) << "New skill dir: "
-                        << name;
+              LOG(INFO) << "New skill dir: " << name;
             }
           }
 
           // manifest.json changed
           if (name == kManifestFile) {
             pending_reload = true;
-            last_event_time =
-                std::chrono::steady_clock::now();
-            LOG(INFO)
-                << "Skill manifest changed: "
-                << name;
+            last_event_time = std::chrono::steady_clock::now();
+            LOG(INFO) << "Skill manifest changed: " << name;
           }
         }
 
-        ptr += sizeof(struct inotify_event)
-               + event->len;
+        ptr += sizeof(struct inotify_event) + event->len;
       }
     }
 
     // Debounce: fire callback after no events
     // for kDebounceMs
     if (pending_reload) {
-      auto now =
-          std::chrono::steady_clock::now();
-      auto elapsed =
-          std::chrono::duration_cast<
-              std::chrono::milliseconds>(
-              now - last_event_time)
-              .count();
+      auto now = std::chrono::steady_clock::now();
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         now - last_event_time)
+                         .count();
       if (elapsed >= kDebounceMs) {
         pending_reload = false;
         LOG(INFO) << "Triggering skill reload";
@@ -206,13 +175,10 @@ void SkillWatcher::WatchLoop() {
   }
 }
 
-void SkillWatcher::AddSubdirWatch(
-    const std::string& path) {
-  int wd = inotify_add_watch(
-      inotify_fd_, path.c_str(), kWatchMask);
+void SkillWatcher::AddSubdirWatch(const std::string& path) {
+  int wd = inotify_add_watch(inotify_fd_, path.c_str(), kWatchMask);
   if (wd < 0) {
-    LOG(WARNING) << "Failed to watch subdir "
-                 << path << ": "
+    LOG(WARNING) << "Failed to watch subdir " << path << ": "
                  << strerror(errno);
     return;
   }
@@ -229,11 +195,9 @@ void SkillWatcher::ScanSubdirectories() {
   while ((ent = readdir(dir)) != nullptr) {
     if (ent->d_name[0] == '.') continue;
 
-    std::string subpath =
-        skills_dir_ + "/" + ent->d_name;
+    std::string subpath = skills_dir_ + "/" + ent->d_name;
     struct stat st;
-    if (stat(subpath.c_str(), &st) == 0 &&
-        S_ISDIR(st.st_mode)) {
+    if (stat(subpath.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
       AddSubdirWatch(subpath);
     }
   }

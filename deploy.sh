@@ -34,6 +34,7 @@ NC='\033[0m'
 ARCH=""
 ARCH_EXPLICIT=false
 NOINIT=false
+INCREMENTAL=false
 SKIP_BUILD=false
 DRY_RUN=false
 DEVICE_SERIAL=""
@@ -122,6 +123,7 @@ ${CYAN}Usage:${NC}
 ${CYAN}Options:${NC}
   -a, --arch <arch>     Build architecture (default: auto-detect via sdb)
   -n, --noinit          Skip build-env init (faster rebuild)
+  -i, --incremental     Use --incremental and --skip-srcrpm for fast iterative build
   -s, --skip-build      Skip GBS build, deploy existing RPM
   -w, --with-ngrok      Auto-download and push ngrok binary to the device
   -d, --device <serial> Target a specific sdb device
@@ -131,6 +133,7 @@ ${CYAN}Options:${NC}
 ${CYAN}Examples:${NC}
   $(basename "$0")                     # Full build + deploy + run
   $(basename "$0") -n                  # Quick rebuild + deploy + run
+  $(basename "$0") -i -n               # Fastest iterative rebuild + deploy + run
   $(basename "$0") -s                  # Deploy existing RPM + run
   $(basename "$0") -w                  # Deploy and install ngrok binary
   $(basename "$0") --dry-run           # Preview all steps
@@ -148,6 +151,7 @@ parse_args() {
     case "$1" in
       -a|--arch)       ARCH="$2"; ARCH_EXPLICIT=true; shift 2 ;;
       -n|--noinit)     NOINIT=true; shift ;;
+      -i|--incremental) INCREMENTAL=true; shift ;;
       -s|--skip-build) SKIP_BUILD=true; shift ;;
       -w|--with-ngrok) WITH_NGROK=true; shift ;;
       -d|--device)     DEVICE_SERIAL="$2"; shift 2 ;;
@@ -189,6 +193,7 @@ check_prerequisites() {
   log "Architecture : ${ARCH}"
   log "Project dir  : ${PROJECT_DIR}"
   log "Skip build   : ${SKIP_BUILD}"
+  log "Incremental  : ${INCREMENTAL}"
   log "No-init      : ${NOINIT}"
   log "Dry-run      : ${DRY_RUN}"
   if [ -n "${DEVICE_SERIAL}" ]; then
@@ -208,6 +213,12 @@ do_build() {
   header "Step 1/4: GBS Build"
 
   local gbs_args=("-A" "${ARCH}" "--include-all")
+  
+  if [ "${INCREMENTAL}" = true ]; then
+    gbs_args+=("--incremental" "--skip-srcrpm")
+    log "Using --incremental & --skip-srcrpm (fast iterative build)"
+  fi
+
   if [ "${NOINIT}" = true ]; then
     gbs_args+=("--noinit")
     log "Using --noinit (skipping build-env initialization)"

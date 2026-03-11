@@ -13,21 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_SCHEDULER_TASK_SCHEDULER_HH_
-#define TIZENCLAW_SCHEDULER_TASK_SCHEDULER_HH_
+#ifndef TASK_SCHEDULER_HH
+#define TASK_SCHEDULER_HH
 
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <functional>
+#include <json.hpp>
 #include <map>
 #include <mutex>
 #include <queue>
 #include <string>
 #include <thread>
 #include <vector>
-
-#include <json.hpp>
 
 namespace tizenclaw {
 
@@ -90,9 +89,7 @@ struct ScheduledTask {
 
 // Compare tasks by next_run (priority queue)
 struct TaskTimeCompare {
-  bool operator()(
-      const ScheduledTask* a,
-      const ScheduledTask* b) const {
+  bool operator()(const ScheduledTask* a, const ScheduledTask* b) const {
     return a->next_run > b->next_run;
   }
 };
@@ -108,18 +105,15 @@ class TaskScheduler {
   void Stop();
 
   // Task CRUD operations
-  std::string CreateTask(
-      const std::string& schedule_expr,
-      const std::string& prompt,
-      const std::string& session_id);
+  std::string CreateTask(const std::string& schedule_expr,
+                         const std::string& prompt,
+                         const std::string& session_id);
 
-  nlohmann::json ListTasks(
-      const std::string& session_id = "");
+  nlohmann::json ListTasks(const std::string& session_id = "");
 
   bool CancelTask(const std::string& task_id);
 
-  nlohmann::json GetTaskHistory(
-      const std::string& task_id);
+  nlohmann::json GetTaskHistory(const std::string& task_id);
 
  private:
   // Thread entry points
@@ -127,9 +121,7 @@ class TaskScheduler {
   void ExecutorLoop();
 
   // Schedule parsing
-  bool ParseSchedule(
-      const std::string& expr,
-      ScheduledTask& task);
+  bool ParseSchedule(const std::string& expr, ScheduledTask& task);
 
   // Compute next execution time
   void ComputeNextRun(ScheduledTask& task);
@@ -140,32 +132,25 @@ class TaskScheduler {
   // Persistence (Markdown)
   void LoadTasks();
   void SaveTask(const ScheduledTask& task);
-  void DeleteTaskFile(
-      const std::string& task_id);
+  void DeleteTaskFile(const std::string& task_id);
 
   // Generate unique task ID
   static std::string GenerateTaskId();
 
   // Convert types to/from strings
-  static std::string ScheduleTypeToString(
-      ScheduleType type);
-  static ScheduleType StringToScheduleType(
-      const std::string& s);
-  static std::string TaskStatusToString(
-      TaskStatus status);
-  static TaskStatus StringToTaskStatus(
-      const std::string& s);
+  static std::string ScheduleTypeToString(ScheduleType type);
+  static ScheduleType StringToScheduleType(const std::string& s);
+  static std::string TaskStatusToString(TaskStatus status);
+  static TaskStatus StringToTaskStatus(const std::string& s);
 
   // Get tasks directory path
   std::string GetTasksDir() const;
 
   // Format time_point as ISO string
   static std::string FormatTime(
-      const std::chrono::system_clock::time_point&
-          tp);
+      const std::chrono::system_clock::time_point& tp);
   // Parse ISO string to time_point
-  static std::chrono::system_clock::time_point
-  ParseTime(const std::string& s);
+  static std::chrono::system_clock::time_point ParseTime(const std::string& s);
 
   AgentCore* agent_ = nullptr;
 
@@ -185,14 +170,12 @@ class TaskScheduler {
   std::atomic<bool> running_{false};
 
   // Data directory
-  static constexpr const char* kDataDir =
-      "/opt/usr/share/tizenclaw";
+  static constexpr const char* kDataDir = "/opt/usr/share/tizenclaw";
 
   // Max execution history entries per task
-  static constexpr size_t kMaxHistoryEntries =
-      50;
+  static constexpr size_t kMaxHistoryEntries = 50;
 };
 
 }  // namespace tizenclaw
 
-#endif // TIZENCLAW_SCHEDULER_TASK_SCHEDULER_HH_
+#endif  // TASK_SCHEDULER_HH

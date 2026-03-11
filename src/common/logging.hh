@@ -13,24 +13,22 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef LOGGING_HH_
-#define LOGGING_HH_
+#ifndef LOGGING_HH
+#define LOGGING_HH
 
 #include <dlog.h>
-
-#include <mutex>
 
 #include <cassert>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <vector>
 
 namespace tizenclaw {
-
 
 #ifndef PROJECT_TAG
 #define PROJECT_TAG "TIZENCLAW"
@@ -41,7 +39,7 @@ namespace tizenclaw {
 #endif
 
 #ifndef __FILENAME__
-#define __FILENAME__                                                           \
+#define __FILENAME__ \
   (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
 #endif
 
@@ -54,12 +52,11 @@ enum class LogLevel {
   LOG_DEBUG,
 };
 
-[[nodiscard]] log_priority LogLevelToPriority(
-    LogLevel level);
+[[nodiscard]] log_priority LogLevelToPriority(LogLevel level);
 
 template <class charT, class traits = std::char_traits<charT>>
 class StringStream : private std::basic_ostringstream<charT, traits> {
-public:
+ public:
   using std::basic_ostringstream<charT, traits>::str;
 
   template <class T>
@@ -72,14 +69,14 @@ public:
 // Interface class for logging backends. The custom LogBackend which wants
 // log using LOG() macro should be implement following interface.
 class ILogBackend {
-public:
+ public:
   virtual ~ILogBackend() = default;
   virtual void WriteLog(LogLevel level, const std::string& tag,
                         const std::string& logstr) = 0;
 };
 
 class LogCore {
-public:
+ public:
   // Do not call this function at destructor of global object
   [[nodiscard]] static LogCore& GetCore() {
     static LogCore core;
@@ -93,11 +90,10 @@ public:
 
   void Log(LogLevel level, const std::string& tag, const std::string& log) {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (auto& backend : backend_list_)
-      backend->WriteLog(level, tag, log);
+    for (auto& backend : backend_list_) backend->WriteLog(level, tag, log);
   }
 
-private:
+ private:
   LogCore() = default;
   ~LogCore() = default;
   LogCore(const LogCore&) = delete;
@@ -108,22 +104,21 @@ private:
 };
 
 class LogCatcher {
-public:
+ public:
   LogCatcher(LogLevel level, const char* tag) : level_(level), tag_(tag) {}
 
   void operator&(const StringStream<char>& str) const {
     // Direct dlog_print — proven to work in tizen-action
     dlog_print(LogLevelToPriority(level_), tag_.c_str(), "%s",
-        Escape(str.str()).c_str());
+               Escape(str.str()).c_str());
 
-    if (level_ == LogLevel::LOG_ERROR)
-      std::cerr << str.str() << std::endl;
+    if (level_ == LogLevel::LOG_ERROR) std::cerr << str.str() << std::endl;
 
     // Dispatch to additional backends (e.g., FileLogBackend)
     LogCore::GetCore().Log(level_, tag_, str.str());
   }
 
-private:
+ private:
   // Since LogCatcher passes input to dlog_print(), the input which contains
   // format string(such as %d, %n) can cause unexpected result.
   // This is simple function to escape '%'.
@@ -144,24 +139,24 @@ private:
   std::string tag_;
 };
 
-} // namespace utils
+}  // namespace utils
 
-inline static consteval const char*
-__tag_for_project() { return PROJECT_TAG; }
+inline static consteval const char* __tag_for_project() { return PROJECT_TAG; }
 
 // Simple logging macro of following usage:
 //   LOG(LEVEL) << object_1 << object_2 << object_n;
 //     where:
 //       LEVEL = ERROR | WARNING | INFO | DEBUG
-#define LOG(LEVEL)                                                             \
-  ::tizenclaw::utils::LogCatcher(::tizenclaw::utils::LogLevel::LOG_##LEVEL, ::tizenclaw::__tag_for_project()) &   \
-      ::tizenclaw::utils::StringStream<char>()                                            \
-          << std::setw(50) << std::right                                       \
-          << (std::string(__FILENAME__) + ": " + std::string(__FUNCTION__) +   \
-              "(" + std::to_string(__LINE__) + ")")                            \
-                 .c_str()                                                      \
+#define LOG(LEVEL)                                                           \
+  ::tizenclaw::utils::LogCatcher(::tizenclaw::utils::LogLevel::LOG_##LEVEL,  \
+                                 ::tizenclaw::__tag_for_project()) &         \
+      ::tizenclaw::utils::StringStream<char>()                               \
+          << std::setw(50) << std::right                                     \
+          << (std::string(__FILENAME__) + ": " + std::string(__FUNCTION__) + \
+              "(" + std::to_string(__LINE__) + ")")                          \
+                 .c_str()                                                    \
           << std::setw(0) << " : "
 
-} // namespace tizenclaw
+}  // namespace tizenclaw
 
-#endif // LOGGING_HH_
+#endif  // LOGGING_HH

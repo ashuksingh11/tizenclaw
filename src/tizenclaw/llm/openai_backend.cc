@@ -14,28 +14,26 @@
  * limitations under the License.
  */
 #include "openai_backend.hh"
-#include "../infra/http_client.hh"
+
+#include <sstream>
 
 #include "../../common/logging.hh"
-#include <sstream>
+#include "../infra/http_client.hh"
 
 namespace tizenclaw {
 
-
-bool OpenAiBackend::Initialize(
-    const nlohmann::json& config) {
+bool OpenAiBackend::Initialize(const nlohmann::json& config) {
   api_key_ = config.value("api_key", "");
   model_ = config.value("model", "gpt-4o");
-  endpoint_ = config.value("endpoint",
-      "https://api.openai.com/v1");
+  endpoint_ = config.value("endpoint", "https://api.openai.com/v1");
   name_ = config.value("provider_name", "openai");
 
   if (api_key_.empty()) {
     LOG(ERROR) << name_ << " API key is empty";
     return false;
   }
-  LOG(INFO) << name_ << " backend initialized (model: "
-            << model_ << ", endpoint: " << endpoint_ << ")";
+  LOG(INFO) << name_ << " backend initialized (model: " << model_
+            << ", endpoint: " << endpoint_ << ")";
   return true;
 }
 
@@ -46,21 +44,16 @@ nlohmann::json OpenAiBackend::ToOpenAiMessages(
     nlohmann::json entry;
 
     if (msg.role == "user") {
-      entry = {{"role", "user"},
-               {"content", msg.text}};
+      entry = {{"role", "user"}, {"content", msg.text}};
     } else if (msg.role == "assistant") {
       entry["role"] = "assistant";
       if (!msg.tool_calls.empty()) {
-        nlohmann::json tcs =
-            nlohmann::json::array();
+        nlohmann::json tcs = nlohmann::json::array();
         for (auto& tc : msg.tool_calls) {
-          tcs.push_back({
-              {"id", tc.id},
-              {"type", "function"},
-              {"function",
-               {{"name", tc.name},
-                {"arguments", tc.args.dump()}}}
-          });
+          tcs.push_back({{"id", tc.id},
+                         {"type", "function"},
+                         {"function",
+                          {{"name", tc.name}, {"arguments", tc.args.dump()}}}});
         }
         entry["tool_calls"] = tcs;
         // Content can be null when tool_calls
@@ -69,11 +62,9 @@ nlohmann::json OpenAiBackend::ToOpenAiMessages(
         entry["content"] = msg.text;
       }
     } else if (msg.role == "tool") {
-      entry = {
-          {"role", "tool"},
-          {"tool_call_id", msg.tool_call_id},
-          {"content", msg.tool_result.dump()}
-      };
+      entry = {{"role", "tool"},
+               {"tool_call_id", msg.tool_call_id},
+               {"content", msg.tool_result.dump()}};
     }
     msgs.push_back(entry);
   }
@@ -85,33 +76,27 @@ nlohmann::json OpenAiBackend::ToOpenAiTools(
   if (tools.empty()) return nullptr;
   nlohmann::json result = nlohmann::json::array();
   for (auto& t : tools) {
-    result.push_back({
-        {"type", "function"},
-        {"function",
-         {{"name", t.name},
-          {"description", t.description},
-          {"parameters", t.parameters}}}
-    });
+    result.push_back({{"type", "function"},
+                      {"function",
+                       {{"name", t.name},
+                        {"description", t.description},
+                        {"parameters", t.parameters}}}});
   }
   return result;
 }
 
-LlmResponse OpenAiBackend::ParseOpenAiResponse(
-    const std::string& body) const {
+LlmResponse OpenAiBackend::ParseOpenAiResponse(const std::string& body) const {
   LlmResponse resp;
   try {
     auto j = nlohmann::json::parse(body);
 
     if (j.contains("error")) {
       resp.success = false;
-      resp.error_message =
-          j["error"].value("message",
-                           "Unknown error");
+      resp.error_message = j["error"].value("message", "Unknown error");
       return resp;
     }
 
-    if (!j.contains("choices") ||
-        j["choices"].empty()) {
+    if (!j.contains("choices") || j["choices"].empty()) {
       resp.success = false;
       resp.error_message = "Empty choices";
       return resp;
@@ -120,45 +105,35 @@ LlmResponse OpenAiBackend::ParseOpenAiResponse(
     auto& msg = j["choices"][0]["message"];
     resp.success = true;
 
-    if (msg.contains("tool_calls") &&
-        !msg["tool_calls"].empty()) {
+    if (msg.contains("tool_calls") && !msg["tool_calls"].empty()) {
       for (auto& tc : msg["tool_calls"]) {
         LlmToolCall call;
         call.id = tc.value("id", "");
-        call.name =
-            tc["function"]["name"];
+        call.name = tc["function"]["name"];
         try {
           call.args = nlohmann::json::parse(
-              tc["function"]["arguments"]
-                  .get<std::string>());
+              tc["function"]["arguments"].get<std::string>());
         } catch (...) {
-          call.args =
-              tc["function"]["arguments"];
+          call.args = tc["function"]["arguments"];
         }
         resp.tool_calls.push_back(call);
       }
     }
 
-    if (msg.contains("content") &&
-        !msg["content"].is_null()) {
-      resp.text =
-          msg["content"].get<std::string>();
+    if (msg.contains("content") && !msg["content"].is_null()) {
+      resp.text = msg["content"].get<std::string>();
     }
 
     // Parse token usage
     if (j.contains("usage")) {
       auto& u = j["usage"];
-      resp.prompt_tokens =
-          u.value("prompt_tokens", 0);
-      resp.completion_tokens =
-          u.value("completion_tokens", 0);
-      resp.total_tokens =
-          u.value("total_tokens", 0);
+      resp.prompt_tokens = u.value("prompt_tokens", 0);
+      resp.completion_tokens = u.value("completion_tokens", 0);
+      resp.total_tokens = u.value("total_tokens", 0);
     }
   } catch (const std::exception& e) {
     resp.success = false;
-    resp.error_message =
-        std::string("Parse error: ") + e.what();
+    resp.error_message = std::string("Parse error: ") + e.what();
   }
   return resp;
 }
@@ -175,10 +150,7 @@ LlmResponse OpenAiBackend::Chat(
     sys_msg["content"] = system_prompt;
     oai_msgs.insert(oai_msgs.begin(), sys_msg);
   }
-  nlohmann::json payload = {
-      {"model", model_},
-      {"messages", oai_msgs}
-  };
+  nlohmann::json payload = {{"model", model_}, {"messages", oai_msgs}};
   auto oai_tools = ToOpenAiTools(tools);
   if (!oai_tools.is_null()) {
     payload["tools"] = oai_tools;
@@ -189,8 +161,7 @@ LlmResponse OpenAiBackend::Chat(
     payload["stream"] = true;
   }
 
-  std::string url =
-      endpoint_ + "/chat/completions";
+  std::string url = endpoint_ + "/chat/completions";
 
   // For streaming: SSE line-buffer parser
   std::string sse_buffer;
@@ -209,10 +180,8 @@ LlmResponse OpenAiBackend::Chat(
       sse_buffer += chunk;
       // Process complete lines
       size_t pos;
-      while ((pos = sse_buffer.find('\n')) !=
-             std::string::npos) {
-        std::string line =
-            sse_buffer.substr(0, pos);
+      while ((pos = sse_buffer.find('\n')) != std::string::npos) {
+        std::string line = sse_buffer.substr(0, pos);
         sse_buffer.erase(0, pos + 1);
         // Remove trailing \r
         if (!line.empty() && line.back() == '\r') {
@@ -227,42 +196,30 @@ LlmResponse OpenAiBackend::Chat(
 
         try {
           auto j = nlohmann::json::parse(data);
-          if (!j.contains("choices") ||
-              j["choices"].empty()) continue;
-          auto& delta =
-              j["choices"][0]["delta"];
+          if (!j.contains("choices") || j["choices"].empty()) continue;
+          auto& delta = j["choices"][0]["delta"];
 
           // Text content delta
-          if (delta.contains("content") &&
-              !delta["content"].is_null()) {
-            std::string text_delta =
-                delta["content"]
-                    .get<std::string>();
+          if (delta.contains("content") && !delta["content"].is_null()) {
+            std::string text_delta = delta["content"].get<std::string>();
             accumulated_text += text_delta;
             on_chunk(text_delta);
           }
 
           // Tool call delta accumulation
           if (delta.contains("tool_calls")) {
-            for (auto& tc_delta :
-                 delta["tool_calls"]) {
+            for (auto& tc_delta : delta["tool_calls"]) {
               int idx = tc_delta.value("index", 0);
               if (tc_delta.contains("id")) {
-                tc_accum[idx].id =
-                    tc_delta["id"]
-                        .get<std::string>();
+                tc_accum[idx].id = tc_delta["id"].get<std::string>();
               }
               if (tc_delta.contains("function")) {
                 auto& fn = tc_delta["function"];
                 if (fn.contains("name")) {
-                  tc_accum[idx].name =
-                      fn["name"]
-                          .get<std::string>();
+                  tc_accum[idx].name = fn["name"].get<std::string>();
                 }
                 if (fn.contains("arguments")) {
-                  tc_accum[idx].arguments +=
-                      fn["arguments"]
-                          .get<std::string>();
+                  tc_accum[idx].arguments += fn["arguments"].get<std::string>();
                 }
               }
             }
@@ -274,13 +231,10 @@ LlmResponse OpenAiBackend::Chat(
     };
   }
 
-  auto http_resp = HttpClient::Post(
-      url,
-      {{"Content-Type", "application/json"},
-       {"Authorization",
-        "Bearer " + api_key_}},
-      payload.dump(),
-      3, 10, 120, stream_cb);
+  auto http_resp = HttpClient::Post(url,
+                                    {{"Content-Type", "application/json"},
+                                     {"Authorization", "Bearer " + api_key_}},
+                                    payload.dump(), 3, 10, 120, stream_cb);
 
   if (!http_resp.success) {
     LlmResponse r;
@@ -288,21 +242,17 @@ LlmResponse OpenAiBackend::Chat(
     r.error_message = http_resp.error;
     if (!http_resp.body.empty()) {
       try {
-        auto ej =
-            nlohmann::json::parse(http_resp.body);
+        auto ej = nlohmann::json::parse(http_resp.body);
         if (ej.contains("error")) {
-          r.error_message += ": " +
-              ej["error"].value("message", "");
+          r.error_message += ": " + ej["error"].value("message", "");
         }
       } catch (...) {
-        r.error_message += ": " +
-            http_resp.body.substr(
-                0, std::min((size_t)200,
-                            http_resp.body.size()));
+        r.error_message +=
+            ": " + http_resp.body.substr(
+                       0, std::min((size_t)200, http_resp.body.size()));
       }
     }
-    LOG(ERROR) << "API error: "
-               << r.error_message;
+    LOG(ERROR) << "API error: " << r.error_message;
     return r;
   }
 
@@ -316,8 +266,7 @@ LlmResponse OpenAiBackend::Chat(
       call.id = tc.id;
       call.name = tc.name;
       try {
-        call.args =
-            nlohmann::json::parse(tc.arguments);
+        call.args = nlohmann::json::parse(tc.arguments);
       } catch (...) {
         call.args = tc.arguments;
       }
@@ -329,4 +278,4 @@ LlmResponse OpenAiBackend::Chat(
   return ParseOpenAiResponse(http_resp.body);
 }
 
-} // namespace tizenclaw
+}  // namespace tizenclaw

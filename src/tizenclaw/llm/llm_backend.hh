@@ -13,24 +13,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_LLM_LLM_BACKEND_HH_
-#define TIZENCLAW_LLM_LLM_BACKEND_HH_
+#ifndef LLM_BACKEND_HH
+#define LLM_BACKEND_HH
 
+#include <functional>
+#include <json.hpp>
 #include <memory>
 #include <string>
 #include <vector>
-#include <json.hpp>
-#include <functional>
 
 namespace tizenclaw {
-
 
 // --------------------------------------------------
 // Unified message structures (provider-agnostic)
 // --------------------------------------------------
 
 struct LlmToolCall {
-  std::string id;       // provider-assigned ID (e.g. "call_abc123")
+  std::string id;  // provider-assigned ID (e.g. "call_abc123")
   std::string name;
   nlohmann::json args;
 };
@@ -60,9 +59,7 @@ struct LlmResponse {
   // HTTP status for fallback decisions
   int http_status = 0;
 
-  [[nodiscard]] bool HasToolCalls() const {
-    return !tool_calls.empty();
-  }
+  [[nodiscard]] bool HasToolCalls() const { return !tool_calls.empty(); }
 };
 
 // Tool declaration for function calling
@@ -77,12 +74,11 @@ struct LlmToolDecl {
 // --------------------------------------------------
 
 class LlmBackend {
-public:
+ public:
   virtual ~LlmBackend() = default;
 
   // Initialize with provider-specific config
-  [[nodiscard]] virtual bool Initialize(
-      const nlohmann::json& config) = 0;
+  [[nodiscard]] virtual bool Initialize(const nlohmann::json& config) = 0;
 
   // Send a chat request. Returns unified response.
   [[nodiscard]] virtual LlmResponse Chat(
@@ -92,8 +88,7 @@ public:
       const std::string& system_prompt = "") = 0;
 
   // Provider name (e.g. "gemini", "openai")
-  [[nodiscard]] virtual std::string GetName()
-      const = 0;
+  [[nodiscard]] virtual std::string GetName() const = 0;
 
   // Cleanup
   virtual void Shutdown() {}
@@ -104,13 +99,13 @@ public:
 // --------------------------------------------------
 
 class LlmBackendFactory {
-public:
+ public:
   // Supported names: gemini, openai, anthropic,
   // xai, ollama
-  [[nodiscard]] static std::unique_ptr<LlmBackend>
-  Create(const std::string& name);
+  [[nodiscard]] static std::unique_ptr<LlmBackend> Create(
+      const std::string& name);
 };
 
-} // namespace tizenclaw
+}  // namespace tizenclaw
 
-#endif // TIZENCLAW_LLM_LLM_BACKEND_HH_
+#endif  // LLM_BACKEND_HH

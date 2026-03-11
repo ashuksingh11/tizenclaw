@@ -13,12 +13,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_INFRA_HEALTH_MONITOR_HH_
-#define TIZENCLAW_INFRA_HEALTH_MONITOR_HH_
+#ifndef HEALTH_MONITOR_HH
+#define HEALTH_MONITOR_HH
 
-#include <string>
 #include <atomic>
 #include <chrono>
+#include <string>
 
 namespace tizenclaw {
 
@@ -36,8 +36,7 @@ class HealthMonitor {
   void IncrementToolCallCount();
 
   // Get all metrics as JSON string
-  [[nodiscard]] std::string GetMetricsJson()
-      const;
+  [[nodiscard]] std::string GetMetricsJson() const;
 
   // Get individual metrics
   [[nodiscard]] uint64_t GetRequestCount() const;
@@ -48,13 +47,10 @@ class HealthMonitor {
 
  private:
   // Parse memory from /proc/self/status
-  void ParseMemoryInfo(
-      int& rss_kb, int& vm_kb) const;
+  void ParseMemoryInfo(int& rss_kb, int& vm_kb) const;
 
   // Parse CPU load from /proc/loadavg
-  void ParseCpuLoad(
-      double& l1, double& l5,
-      double& l15) const;
+  void ParseCpuLoad(double& l1, double& l5, double& l15) const;
 
   // Thread count from /proc/self/status
   int GetThreadCount() const;
@@ -66,10 +62,9 @@ class HealthMonitor {
   std::atomic<uint64_t> tool_call_count_{0};
 
   // Start time
-  std::chrono::steady_clock::time_point
-      start_time_;
+  std::chrono::steady_clock::time_point start_time_;
 };
 
 }  // namespace tizenclaw
 
-#endif // TIZENCLAW_INFRA_HEALTH_MONITOR_HH_
+#endif  // HEALTH_MONITOR_HH

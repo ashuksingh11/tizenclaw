@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-#ifndef TIZENCLAW_INFRA_PKGMGR_EVENT_ARGS_HH_
-#define TIZENCLAW_INFRA_PKGMGR_EVENT_ARGS_HH_
+#ifndef PKGMGR_EVENT_ARGS_HH
+#define PKGMGR_EVENT_ARGS_HH
 
 #include <sys/types.h>
+
 #include <string>
 
 namespace tizenclaw {
@@ -48,4 +49,4 @@ class PkgmgrEventArgs {
 
 }  // namespace tizenclaw
 
-#endif  // TIZENCLAW_INFRA_PKGMGR_EVENT_ARGS_HH_
+#endif  // PKGMGR_EVENT_ARGS_HH

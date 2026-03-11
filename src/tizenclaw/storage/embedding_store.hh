@@ -13,13 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_STORAGE_EMBEDDING_STORE_HH_
-#define TIZENCLAW_STORAGE_EMBEDDING_STORE_HH_
+#ifndef EMBEDDING_STORE_HH
+#define EMBEDDING_STORE_HH
 
+#include <sqlite3.h>
+
+#include <cstdint>
 #include <string>
 #include <vector>
-#include <cstdint>
-#include <sqlite3.h>
 
 namespace tizenclaw {
 
@@ -30,20 +31,18 @@ namespace tizenclaw {
 // Search is brute-force cosine similarity
 // (sufficient for embedded-scale corpora).
 class EmbeddingStore {
-public:
+ public:
   EmbeddingStore() = default;
   ~EmbeddingStore();
 
   // Open (or create) the SQLite database
-  [[nodiscard]] bool Initialize(
-      const std::string& db_path);
+  [[nodiscard]] bool Initialize(const std::string& db_path);
   void Close();
 
   // Store a document chunk with its embedding
-  [[nodiscard]] bool StoreChunk(
-      const std::string& source,
-      const std::string& chunk_text,
-      const std::vector<float>& embedding);
+  [[nodiscard]] bool StoreChunk(const std::string& source,
+                                const std::string& chunk_text,
+                                const std::vector<float>& embedding);
 
   // Semantic search: compare query_embedding
   // against all stored embeddings via cosine
@@ -54,17 +53,14 @@ public:
     float score;
   };
   [[nodiscard]] std::vector<SearchResult> Search(
-      const std::vector<float>& query_embedding,
-      int top_k = 5) const;
+      const std::vector<float>& query_embedding, int top_k = 5) const;
 
   // Attach a pre-built knowledge database
   // (read-only, for RAG from Tizen docs etc.)
-  [[nodiscard]] bool AttachKnowledgeDB(
-      const std::string& path);
+  [[nodiscard]] bool AttachKnowledgeDB(const std::string& path);
 
   // Delete all chunks from a given source
-  [[nodiscard]] bool DeleteSource(
-      const std::string& source);
+  [[nodiscard]] bool DeleteSource(const std::string& source);
 
   // Total number of stored chunks
   [[nodiscard]] int GetChunkCount() const;
@@ -76,25 +72,19 @@ public:
 
   // Split text into ~chunk_size character chunks
   // with ~overlap overlap.
-  [[nodiscard]] static std::vector<std::string>
-  ChunkText(
-      const std::string& text,
-      size_t chunk_size = 500,
-      size_t overlap = 50);
+  [[nodiscard]] static std::vector<std::string> ChunkText(
+      const std::string& text, size_t chunk_size = 500, size_t overlap = 50);
 
   // Cosine similarity between two vectors
-  [[nodiscard]] static float CosineSimilarity(
-      const std::vector<float>& a,
-      const std::vector<float>& b);
+  [[nodiscard]] static float CosineSimilarity(const std::vector<float>& a,
+                                              const std::vector<float>& b);
 
-private:
+ private:
   bool CreateTable();
 
   // BLOB <-> float vector conversion
-  static std::vector<uint8_t> FloatsToBlob(
-      const std::vector<float>& v);
-  static std::vector<float> BlobToFloats(
-      const void* data, int size);
+  static std::vector<uint8_t> FloatsToBlob(const std::vector<float>& v);
+  static std::vector<float> BlobToFloats(const void* data, int size);
 
   sqlite3* db_ = nullptr;
   bool knowledge_attached_ = false;
@@ -102,4 +92,4 @@ private:
 
 }  // namespace tizenclaw
 
-#endif // TIZENCLAW_STORAGE_EMBEDDING_STORE_HH_
+#endif  // EMBEDDING_STORE_HH

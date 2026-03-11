@@ -13,18 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_INFRA_TUNNEL_MANAGER_HH_
-#define TIZENCLAW_INFRA_TUNNEL_MANAGER_HH_
+#ifndef TUNNEL_MANAGER_HH
+#define TUNNEL_MANAGER_HH
 
-#include <string>
 #include <atomic>
-#include <thread>
 #include <nlohmann/json.hpp>
+#include <string>
+#include <thread>
 
 namespace tizenclaw {
 
 class TunnelManager {
-public:
+ public:
   TunnelManager(const std::string& config_file);
   ~TunnelManager();
 
@@ -34,7 +34,7 @@ public:
   std::string GetPublicUrl() const;
   bool IsRunning() const { return running_; }
 
-private:
+ private:
   void MonitorTunnel();
   std::string FetchNgrokUrl() const;
 
@@ -45,7 +45,7 @@ private:
 
   int local_port_ = 9090;
   std::string public_url_;
-  
+
   std::atomic<bool> running_{false};
   pid_t tunnel_pid_ = -1;
   std::thread monitor_thread_;
@@ -53,4 +53,4 @@ private:
 
 }  // namespace tizenclaw
 
-#endif // TIZENCLAW_INFRA_TUNNEL_MANAGER_HH_
+#endif  // TUNNEL_MANAGER_HH

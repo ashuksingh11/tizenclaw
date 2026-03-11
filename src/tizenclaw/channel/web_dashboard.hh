@@ -13,22 +13,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#ifndef TIZENCLAW_CHANNEL_WEB_DASHBOARD_HH_
-#define TIZENCLAW_CHANNEL_WEB_DASHBOARD_HH_
+#ifndef WEB_DASHBOARD_HH
+#define WEB_DASHBOARD_HH
 
-#include <string>
-#include <thread>
-#include <atomic>
-#include <set>
-#include <vector>
-#include <mutex>
 #include <libsoup/soup.h>
 
-#include "channel.hh"
-#include "a2a_handler.hh"
+#include <atomic>
+#include <mutex>
+#include <set>
+#include <string>
+#include <thread>
+#include <vector>
+
 #include "../infra/health_monitor.hh"
 #include "../infra/ota_updater.hh"
 #include "../infra/tunnel_manager.hh"
+#include "a2a_handler.hh"
+#include "channel.hh"
 
 namespace tizenclaw {
 
@@ -40,53 +41,36 @@ class TaskScheduler;
 // libsoup HTTP server for monitoring and
 // interacting with TizenClaw.
 class WebDashboard : public Channel {
-public:
-  WebDashboard(AgentCore* agent,
-               TaskScheduler* scheduler);
+ public:
+  WebDashboard(AgentCore* agent, TaskScheduler* scheduler);
   ~WebDashboard();
 
   // Channel interface
-  std::string GetName() const override {
-    return "web_dashboard";
-  }
+  std::string GetName() const override { return "web_dashboard"; }
   bool Start() override;
   void Stop() override;
-  bool IsRunning() const override {
-    return running_;
-  }
+  bool IsRunning() const override { return running_; }
 
-private:
+ private:
   // Load dashboard config
   bool LoadConfig();
 
   // libsoup request handler
-  static void HandleRequest(
-      SoupServer* server,
-      SoupMessage* msg,
-      const char* path,
-      GHashTable* query,
-      SoupClientContext* client,
-      gpointer user_data);
+  static void HandleRequest(SoupServer* server, SoupMessage* msg,
+                            const char* path, GHashTable* query,
+                            SoupClientContext* client, gpointer user_data);
 
   // Route API requests
-  void HandleApi(
-      SoupMessage* msg,
-      const std::string& path) const;
+  void HandleApi(SoupMessage* msg, const std::string& path) const;
 
   // Serve static files (HTML/CSS/JS)
-  void ServeStaticFile(
-      SoupMessage* msg,
-      const std::string& path) const;
+  void ServeStaticFile(SoupMessage* msg, const std::string& path) const;
 
   // API endpoint handlers
   void ApiSessions(SoupMessage* msg) const;
-  void ApiSessionDetail(
-      SoupMessage* msg,
-      const std::string& id) const;
+  void ApiSessionDetail(SoupMessage* msg, const std::string& id) const;
   void ApiTasks(SoupMessage* msg) const;
-  void ApiTaskDetail(
-      SoupMessage* msg,
-      const std::string& file) const;
+  void ApiTaskDetail(SoupMessage* msg, const std::string& file) const;
   void ApiLogs(SoupMessage* msg) const;
   void ApiChat(SoupMessage* msg) const;
   void ApiStatus(SoupMessage* msg) const;
@@ -106,28 +90,19 @@ private:
   // Auth endpoints
   void ApiAuthLogin(SoupMessage* msg);
   void ApiAuthChangePassword(SoupMessage* msg);
-  bool ValidateToken(
-      SoupMessage* msg) const;
-  std::string HashPassword(
-      const std::string& pw) const;
+  bool ValidateToken(SoupMessage* msg) const;
+  std::string HashPassword(const std::string& pw) const;
   std::string GenerateToken() const;
   void LoadAdminPassword();
   void SaveAdminPassword();
 
   // Config endpoints
   void ApiConfigList(SoupMessage* msg) const;
-  void ApiConfigGet(
-      SoupMessage* msg,
-      const std::string& name) const;
-  void ApiConfigSet(
-      SoupMessage* msg,
-      const std::string& name);
-  bool IsAllowedConfig(
-      const std::string& name) const;
-  std::string ConfigFilePath(
-      const std::string& name) const;
-  std::string SampleFilePath(
-      const std::string& name) const;
+  void ApiConfigGet(SoupMessage* msg, const std::string& name) const;
+  void ApiConfigSet(SoupMessage* msg, const std::string& name);
+  bool IsAllowedConfig(const std::string& name) const;
+  std::string ConfigFilePath(const std::string& name) const;
+  std::string SampleFilePath(const std::string& name) const;
 
   AgentCore* agent_;
   TaskScheduler* scheduler_;
@@ -148,25 +123,21 @@ private:
   std::set<std::string> active_tokens_;
 
   // Allowed config names
-  static const std::vector<std::string>
-      kAllowedConfigs;
+  static const std::vector<std::string> kAllowedConfigs;
 
   // A2A handler
   std::unique_ptr<A2AHandler> a2a_handler_;
 
   // Health monitor
-  std::unique_ptr<HealthMonitor>
-      health_monitor_;
+  std::unique_ptr<HealthMonitor> health_monitor_;
 
   // OTA updater
-  std::unique_ptr<OtaUpdater>
-      ota_updater_;
+  std::unique_ptr<OtaUpdater> ota_updater_;
 
   // Tunnel manager
-  std::unique_ptr<TunnelManager>
-      tunnel_manager_;
+  std::unique_ptr<TunnelManager> tunnel_manager_;
 };
 
 }  // namespace tizenclaw
 
-#endif // TIZENCLAW_CHANNEL_WEB_DASHBOARD_HH_
+#endif  // WEB_DASHBOARD_HH

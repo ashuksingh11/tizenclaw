@@ -15,9 +15,10 @@
  */
 
 #include "pkgmgr_client.hh"
-#include "../../common/logging.hh"
 
 #include <algorithm>
+
+#include "../../common/logging.hh"
 
 namespace tizenclaw {
 
@@ -35,7 +36,7 @@ void PkgmgrClient::AddListener(IListener* listener) {
   if (std::find(listeners_.begin(), listeners_.end(), listener) ==
       listeners_.end()) {
     listeners_.push_back(listener);
-    
+
     // First listener being added, start the actual pkgmgr client
     if (listeners_.size() == 1) {
       StartListening();
@@ -48,7 +49,7 @@ void PkgmgrClient::RemoveListener(IListener* listener) {
   auto it = std::find(listeners_.begin(), listeners_.end(), listener);
   if (it != listeners_.end()) {
     listeners_.erase(it);
-    
+
     // Last listener removed, we can stop the client
     if (listeners_.empty()) {
       StopListening();
@@ -92,11 +93,12 @@ int PkgmgrClient::PkgmgrHandler(uid_t target_uid, int req_id,
   if (!pkg_type || !pkgid || !key || !val) return 0;
 
   auto* self = static_cast<PkgmgrClient*>(user_data);
-  
+
   std::string s_pkg_type = pkg_type;
   std::string s_pkgid = pkgid;
-  std::string s_event_status = key; // key is the status (start, end, error)
-  std::string s_event_name = val;   // val is the event (install, upgrade, uninstall, etc.)
+  std::string s_event_status = key;  // key is the status (start, end, error)
+  std::string s_event_name =
+      val;  // val is the event (install, upgrade, uninstall, etc.)
 
   std::lock_guard<std::mutex> lock(self->listeners_mutex_);
   for (auto* listener : self->listeners_) {
