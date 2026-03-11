@@ -114,7 +114,9 @@ bool PluginLlmBackend::Initialize() {
   // by the plugin itself per singleton dlopen anyway.
   is_initialized_ = true;
 
-  LOG(INFO) << "Plugin backend loaded and initialized: " << pkgid_;
+  std::string model_name = config_.value("model", "unknown_model");
+  LOG(INFO) << "Plugin backend loaded and initialized: " << pkgid_
+            << " (Model: " << model_name << ")";
   return true;
 }
 
