@@ -55,6 +55,22 @@ TizenClaw is part of the **Claw** family of AI agent runtimes, each targeting di
 
 ## Quick Start
 
+### Installing Tizen Build Tools (GBS & MIC)
+
+To build TizenClaw, you need the Git Build System (GBS) and MIC. For Ubuntu, you can set up the apt repository and install the tools with the following commands:
+
+```bash
+echo "deb [trusted=yes] http://download.tizen.org/tools/latest-release/Ubuntu_$(lsb_release -rs)/ /" | \
+sudo tee /etc/apt/sources.list.d/tizen.list > /dev/null
+
+sudo apt update
+sudo apt install gbs mic
+```
+
+For detailed installation guides, refer to the [official Tizen documentation](https://docs.tizen.org/platform/developing/installing/).
+
+### Automated Deployment
+
 The recommended way to build and deploy TizenClaw is using the included `deploy.sh` script. This script automatically handles building the core daemon, the RAG knowledge base, and deploying them to your connected device.
 
 ```bash
@@ -233,7 +249,6 @@ Agents communicate via `create_session` / `send_to_session` and are defined in `
 
 ## Prerequisites
 
-- **Tizen SDK / GBS** (Git Build System) for cross-compilation
 - **Tizen 10.0** or later target device / emulator
 - **crun** OCI runtime (built from source during RPM packaging)
 - Required Tizen packages: `tizen-core`, `glib-2.0`, `dlog`, `libcurl`, `libsoup-3.0`, `libwebsockets`, `sqlite3`, `capi-appfw-tizen-action`
@@ -395,6 +410,13 @@ tizenclaw/
 ├── LICENSE                        # Apache License 2.0
 └── CMakeLists.txt
 ```
+
+---
+
+## Related Projects
+
+- [tizenclaw-webview](https://github.com/hjhun/tizenclaw-webview): A companion Tizen web application that provides an on-device Web Admin Dashboard for TizenClaw.
+- [tizenclaw-llm-plugin-sample](https://github.com/hjhun/tizenclaw-llm-plugin-sample): A sample project demonstrating how to build an RPM to RPK (Resource Package) plugin to dynamically inject new customized LLM backends into TizenClaw at runtime.
 
 ---
 
