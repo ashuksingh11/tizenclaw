@@ -107,8 +107,6 @@ typedef bool (*tizenclaw_llm_tool_cb)(tizenclaw_llm_tool_h tool,
  * @return @c 0 on success, otherwise a negative error value.
  * @retval #TIZENCLAW_ERROR_NONE Successful
  * @retval #TIZENCLAW_ERROR_INVALID_PARAMETER Invalid parameter
- * @retval #TIZENCLAW_ERROR_NONE Successful
- * @retval #TIZENCLAW_ERROR_INVALID_PARAMETER Invalid parameter
  */
 int tizenclaw_llm_tool_call_create(tizenclaw_llm_tool_call_h* tool_call);
 
@@ -117,8 +115,6 @@ int tizenclaw_llm_tool_call_create(tizenclaw_llm_tool_call_h* tool_call);
  * @since_tizen 10.0
  * @param[in] tool_call The tool call handle.
  * @return @c 0 on success, otherwise a negative error value.
- * @retval #TIZENCLAW_ERROR_NONE Successful
- * @retval #TIZENCLAW_ERROR_INVALID_PARAMETER Invalid parameter
  * @retval #TIZENCLAW_ERROR_NONE Successful
  * @retval #TIZENCLAW_ERROR_INVALID_PARAMETER Invalid parameter
  */
