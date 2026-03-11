@@ -107,10 +107,6 @@
                 (m.cpu && m.cpu.load_1m != null)
                     ? m.cpu.load_1m.toFixed(2)
                     : '—';
-            s('stat-requests').textContent =
-                (m.counters &&
-                    m.counters.requests != null)
-                    ? m.counters.requests : '—';
             s('stat-errors').textContent =
                 (m.counters &&
                     m.counters.errors != null)
