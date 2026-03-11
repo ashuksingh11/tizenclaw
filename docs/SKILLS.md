@@ -96,32 +96,42 @@ TizenClaw provides **35 container skills** (Python, sandboxed via OCI) and **10+
 
 ---
 
-## Runtime Custom Skills
+## RPK Tool Distribution & Extensibility
 
-The LLM can create new skills at runtime using the `manage_custom_skill` tool. Custom skills are stored at `/opt/usr/share/tizenclaw/tools/custom_skills/` and are **immediately available** after creation (no restart needed).
+TizenClaw's capability ecosystem extends beyond built-in tools via **Tizen Resource Packages (RPKs)**. This approach supersedes the legacy `manage_custom_skill` method by providing a structural delivery mechanism for enterprise environments.
 
-| Operation | Description |
-|-----------|-------------|
-| `create` | Generate `manifest.json` + Python script from LLM-generated code |
-| `update` | Modify existing skill code or description |
-| `delete` | Remove a custom skill |
-| `list` | List all custom skills |
+An RPK tool package can contain:
+1. **Sandboxed Python Skills**: New tools executed safely inside the OCI container.
+2. **Host/Container CLI Tools**: Binary utilities or scripts to be invoked via `execute_action` or `execute_code`.
 
-Custom skills follow the same structure as built-in skills: `manifest.json` (tool schema) + `<name>.py` (Python script using `CLAW_ARGS` env and `ctypes` FFI).
+### Capability Registry
+All dynamic RPK plugins, along with CLI tools and built-in skills, must register against TizenClaw's unified **Capability Registry**. This ensures:
+- Clear **Function Contracts** (Input/Output JSON Schemas).
+- Defined side effects and retry policies.
+- Required Sandbox and Tizen (SMACK) permissions.
+
+Once an RPK is installed via the system package manager (e.g. `pkgcmd`), TizenClaw automatically discovers and registers its capabilities, making them immediately available to the Planning Agent without daemon recompilation.
 
 ---
 
-## Multi-Agent System
+## Multi-Agent Ecosystem
 
-TizenClaw supports a multi-agent architecture with specialized agents:
+TizenClaw utilizes a highly decentralized **11 MVP Agent Set** to manage requests and device states reliably:
 
-| Agent | Type | Role |
-|-------|------|------|
-| **Orchestrator** | supervisor | Analyzes requests, decomposes goals, delegates to specialized agents |
-| **Skill Manager** | worker | Creates/updates/deletes custom skills at runtime via `manage_custom_skill` |
-| **Device Monitor** | worker | Monitors battery, temperature, memory, storage, network health |
+| Category | Agent | Primary Responsibility |
+|----------|-------|------------------------|
+| **Understanding** | `Input Understanding Agent` | Standardizes user input across all 7 channels into a unified intent structure. |
+| **Perception** | `Environment Perception Agent` | Subscribes to the Event Bus to maintain the Common State Schema. |
+| **Memory** | `Session / Context Agent` | Manages working, long-term, and episodic memory Retrieval |
+| **Planning** | `Planning Agent` | Decomposes goals into logical steps based on the Capability Registry. |
+| **Execution** | `Action Execution Agent` | Invokes the actual OCI Container Skills and Action Framework commands. |
+| **Protection** | `Policy / Safety Agent` | Intercepts plans prior to execution to enforce restrictions (e.g. constraints). |
+| **Utility** | `Knowledge Retrieval Agent` | Interfaces with the SQLite RAG store for semantic lookups. |
+| **Monitoring** | `Health Monitoring Agent` | Monitors memory pressure (PSS constraints) and container health. |
+| | `Recovery Agent` | Analyzes structured failures and attempts error correction via the LLM. |
+| | `Logging / Trace Agent` | Centralizes context for debugging and audit logs. |
 
-Agents are defined in `config/agent_roles.json` and communicate via `create_session` / `send_to_session` tools. The orchestrator is the default entry point when multi-agent mode is enabled.
+Agents coordinate using the shared `Event Bus` and communicate via internal message passing. The *Planning Agent* serves as the primary gateway for translating user intents into executed actions based on real-time perception state.
 
 ---
 

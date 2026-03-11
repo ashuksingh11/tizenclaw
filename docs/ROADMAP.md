@@ -134,6 +134,8 @@ timeline
                        : Remote Skill Registry
                        : Developer Portal
                        : Enterprise Fleet Management
+                       : 🧠 [MVP Agent Set & Perception Architecture](ROADMAP_MULTI_AGENT.md)
+                       : 📦 RPK-based Skills & CLI Tool Distribution
         Phase 21       : Framework Stabilization & SDK Export
                        : Modular CAPI extraction (`src/libtizenclaw`)
                        : System-level AI SDK usage
@@ -801,6 +803,27 @@ timeline
 > **Ref**: ZeroClaw — <5MB RAM, Rust binary · OpenClaw — Tailscale Serve/Funnel
 
 ### 19.1 Secure Tunnel Integration
+
+---
+
+## Phase 20: Ecosystem Expansion (Planned)
+
+> **Goal**: Scale TizenClaw into a robust, dynamic, and distributed AI ecosystem.
+> **See Also**: [TizenClaw Multi-Agent & Perception Roadmap](ROADMAP_MULTI_AGENT.md)
+
+### 20.1 MVP Agent Set Formulation
+- Transition from basic supervisor pattern to a highly decentralized **11-Agent MVP Set**.
+- Build specialized roles: Perception, Memory, Understanding, Planning, Execution, Policy, and Monitoring.
+
+### 20.2 Perception Layer Implementation
+- Establish Event-Driven Bus for immediate context updates (`sensor.changed`, `app.started`).
+- Introduce structured JSON schemas (`DeviceState`, `TaskState`).
+- Mandate Capability Registry for strict function contracts.
+
+### 20.3 RPK-based Skills & CLI Tool Management
+- Wrap Python Skills into Tizen Resource Packages (RPKs).
+- Distribute CLI-based binary tools dynamically without daemon recompilation.
+- Integrate RPK metadata into the Capability Registry.
 | Item | Details |
 |------|---------|
 | **Gap** | Dashboard (port 9090) only accessible on local network |

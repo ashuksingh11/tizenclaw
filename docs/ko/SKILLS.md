@@ -96,32 +96,42 @@ TizenClaw는 **35개 컨테이너 스킬** (Python, OCI 샌드박스)과 **10개
 
 ---
 
-## 런타임 커스텀 스킬
+## RPK 도구 배포 및 확장성 (RPK Tool Distribution)
 
-LLM이 `manage_custom_skill` 도구를 사용하여 런타임에 새로운 스킬을 생성할 수 있습니다. 커스텀 스킬은 `/opt/usr/share/tizenclaw/tools/custom_skills/`에 저장되며 생성 즉시 사용 가능합니다 (재시작 불필요).
+TizenClaw의 기능 생태계는 내장 도구를 넘어 **Tizen Resource Packages (RPK)** 를 통해 확장됩니다. 이는 기업 환경에서의 구조화된 배포 메커니즘을 제공함으로써 기존의 `manage_custom_skill` 방식을 대체/승계합니다.
 
-| 작업 | 설명 |
-|------|------|
-| `create` | LLM이 생성한 코드로 `manifest.json` + Python 스크립트 자동 생성 |
-| `update` | 기존 스킬 코드 또는 설명 수정 |
-| `delete` | 커스텀 스킬 삭제 |
-| `list` | 모든 커스텀 스킬 조회 |
+RPK 도구 패키지는 다음을 포함할 수 있습니다:
+1. **샌드박스 처리된 Python 스킬 (Sandboxed Python Skills)**: OCI 컨테이너 내부에서 안전하게 실행되는 신규 도구.
+2. **호스트/컨테이너 CLI 도구 (Host/Container CLI Tools)**: `execute_action`이나 `execute_code`를 통하여 호출되는 바이너리 유틸리티 및 스크립트.
 
-커스텀 스킬은 내장 스킬과 동일한 구조: `manifest.json` (도구 스키마) + `<name>.py` (`CLAW_ARGS` 환경변수 + `ctypes` FFI 사용).
+### Capability Registry
+모든 동적 RPK 플러그인, CLI 툴 및 내장 스킬은 TizenClaw의 단일화된 **Capability Registry**에 의무적으로 등록되어야 합니다. 이것은 다음을 보장합니다:
+- 명확한 **함수 계약 (Function Contracts)** (입력/출력 JSON 스키마 보장).
+- 정의된 부작용(Side effects) 및 재시도 정책 수립.
+- 필수적인 샌드박스 및 Tizen 시스템 보안(SMACK) 권한 규정.
+
+시스템 패키지 관리자(예: `pkgcmd`)를 통해 RPK가 설치되면 TizenClaw는 즉시 이를 감지하고 등록 기능을 Planning Agent가 이용할 수 있도록 노출합니다. 별도의 데몬 재컴파일은 필요하지 않습니다.
 
 ---
 
-## 멀티 에이전트 시스템
+## 멀티 에이전트 생태계 (Multi-Agent Ecosystem)
 
-TizenClaw는 전문화된 에이전트를 활용한 멀티 에이전트 아키텍처를 지원합니다:
+TizenClaw는 분산된 **11개의 MVP 에이전트 환경**을 통해 신뢰할 수 있게 요청을 수행하고 디바이스 상태를 관리합니다:
 
-| 에이전트 | 타입 | 역할 |
-|---------|------|------|
-| **Orchestrator** | supervisor | 요청 분석, 목표 분해, 전문 에이전트에 위임 |
-| **Skill Manager** | worker | `manage_custom_skill`을 통한 런타임 스킬 CRUD |
-| **Device Monitor** | worker | 배터리, 온도, 메모리, 저장소, 네트워크 상태 모니터링 |
+| 카테고리 | 에이전트 | 주요 책임 |
+|----------|----------|-----------|
+| **이해** | `Input Understanding Agent` | 모든 채널의 사용자 입력을 단일한 인텐트(Intent) 구조로 표준화. |
+| **인식** | `Environment Perception Agent` | 이벤트 버스를 구독하여 공통 상태 스키마(Common State Schema) 유지. |
+| **기억** | `Session / Context Agent` | 단기 기억(현재 작업), 장기 기억(사용자 선호), 에피소드 기억 관리. |
+| **판단** | `Planning Agent` | 퍼셉션과 Capability Registry 기반 목표를 논리적 단계로 분해. |
+| **실행** | `Action Execution Agent` | 실제 OCI 컨테이너 스킬 및 Action Framework 명령 호출 수행. |
+| **보호** | `Policy / Safety Agent` | 실행 전 계획을 가로채어 정책(샌드박스 제한 등) 시행. |
+| **유틸리티** | `Knowledge Retrieval Agent` | 시맨틱 검색용 SQLite RAG 저장소 인터페이스. |
+| **모니터링** | `Health Monitoring Agent` | 메모리 압박(PSS) 및 컨테이너 건전성 등 모니터링 관리. |
+| | `Recovery Agent` | 구조적 실패 분석 및 LLM 기반의 폴백 또는 오류 교정 시도. |
+| | `Logging / Trace Agent` | 디버깅 및 감사 기록을 위한 컨텍스트 중앙화 수행. |
 
-에이전트는 `config/agent_roles.json`에 정의되며 `create_session` / `send_to_session` 도구를 통해 통신합니다.
+에이전트들은 공유된 `이벤트 버스(Event Bus)`를 활용해 상호작용하며 내부 통신을 이룹니다. 이 중 *Planning Agent*가 중심이 되어 실시간 Perception 상태 기반으로 사용자 의도를 동작 단계로 번역합니다.
 
 ---
 

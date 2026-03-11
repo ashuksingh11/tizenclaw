@@ -265,14 +265,28 @@ LLM tool discovery through Markdown schema files:
 
 ---
 
-## 4. Multi-Agent Orchestration Design
+## 4. Multi-Agent Orchestration & Perception Design
 
-TizenClaw currently supports **multi-session agent-to-agent messaging** (Phase 14.3). This section outlines the design direction for more advanced multi-agent patterns.
+TizenClaw currently supports **multi-session agent-to-agent messaging**. This section outlines the ongoing architectural shift toward a highly decentralized, robust multi-agent model driven by an advanced perception layer tailored for Embedded Linux.
 
-### 4.1 Current State: Session-Based Agents
+### 4.1 11-Agent MVP Set
 
-```mermaid
-graph LR
+To achieve operational stability on embedded devices, the monolithic agent topology is being fractured into an 11-Agent MVP Set, categorized logically:
+
+| Category | Agent | Primary Responsibility |
+|----------|-------|------------------------|
+| **Understanding** | `Input Understanding Agent` | Standardizes user input across all 7 channels into a unified intent structure. |
+| **Perception** | `Environment Perception Agent` | Subscribes to the Event Bus to maintain the Common State Schema. |
+| **Memory** | `Session / Context Agent` | Manages working memory (current task), long-term memory (user preferences), and episodic memory (success/failure of past executions). |
+| **Planning** | `Planning Agent` (Orchestrator) | Decomposes goals into logical steps based on the Capability Registry. |
+| **Execution** | `Action Execution Agent` | Invokes the actual OCI Container Skills and Action Framework commands based on strict Function Contracts. |
+| **Protection** | `Policy / Safety Agent` | Intercepts plans prior to execution to enforce restrictions (e.g. night-time bans, sandbox limits) at the perception stage. |
+| **Utility** | `Knowledge Retrieval Agent` | Interfaces with the SQLite RAG store for semantic lookups. |
+| **Monitoring** | `Health Monitoring Agent` | Monitors memory pressure (PSS constraints), daemon uptime, and container health. |
+| | `Recovery Agent` | Analyzes structured failures (e.g. DNS timeout) and attempts fallback logic or error correction via the LLM. |
+| | `Logging / Trace Agent` | Centralizes context for debugging and audit logs without bloating the main context window. |
+
+*(The legacy `Skill Manager` agent will be phased out or absorbed into the Execution/Recovery layers as RPK-based tool delivery matures.)*
     User["User Prompt"]
     MainAgent["Main Agent<br/>(default session)"]
     SubAgent1["Research Agent<br/>(session: research)"]
@@ -289,27 +303,32 @@ graph LR
 - `create_session`, `list_sessions`, `send_to_session` built-in tools
 - Sessions are isolated but can communicate via message passing
 
-### 4.2 Future: Supervisor Pattern
+### 4.2 Perception Architecture (Embedded Linux Focus)
 
-A **Supervisor Agent** decomposes complex goals into sub-tasks and delegates to specialized role agents:
+A robust multi-agent system relies on high-quality perception. For embedded environments, sending raw logs or unstructured context to the LLM is inefficient. TizenClaw's perception layer is designed around the following pillars:
 
-```mermaid
-graph TD
-    Supervisor["Supervisor Agent<br/>(Goal Decomposition)"]
-    Planner["Planner Agent<br/>(Task Breakdown)"]
-    Executor["Executor Agent<br/>(Skill Dispatch)"]
-    Reviewer["Reviewer Agent<br/>(Result Validation)"]
+**1. Common State Schema**
+Rather than passing raw `/proc` data or disjointed logs, the Environment Perception Agent provides normalized JSON schemas:
+- `DeviceState`: Active capabilities (Display, BT, WiFi), Model, Name.
+- `RuntimeState`: Network status, memory pressure, power mode.
+- `UserState`: Locale, preferences, role.
+- `TaskState`: Current goal, active step, missing intent slots.
 
-    Supervisor --> Planner
-    Planner --> Executor
-    Executor --> Reviewer
-    Reviewer -->|"retry / approve"| Supervisor
-```
+**2. Capability Registry & Function Contracts**
+To ensure the Planning Agent makes realistic plans, all dynamic RPK plugins, CLI tools, and built-in skills must register against a structured Capability Registry with a clear Function Contract (Input/Output Schemas, Side Effects, Retry Policies, Required Permissions).
 
-**Implementation Direction**:
-- `AgentRole` struct: role name, system prompt, allowed tools
-- `SupervisorLoop`: goal → plan → delegate → collect → validate → report
-- Configurable via `agent_roles.json`
+**3. Event Bus (Event-Driven Updates)**
+Instead of polling, the system reacts to granular events (e.g. `sensor.changed`, `network.disconnected`, `user.command.received`, `action.failed`) to maintain state freshness without CPU taxation.
+
+**4. Memory Structure**
+- *Short-term*: Current dialog, recent commands, immediate fail reasons.
+- *Long-term*: User preferences, typical usage profiles.
+- *Episodic*: Historical records of which skill executions succeeded/failed under specific conditions.
+
+**5. Embedded Design Principles**
+- **Selective Context Injection**: Only provide the necessary state to the LLM (interpreted state rather than raw data—e.g., `[network: disconnected, reason: dns_timeout]` is better than 1,000 lines of `dlog`).
+- **Separation of Perception and Execution**: The Perception Agent reads the state, the Execution Agent alters it.
+- **Confidence Scoring**: Intent and Object detection yield confidence scores (e.g. `confidence: 0.82`), permitting the system to ask clarifying questions when certainty is low.
 
 ### 4.3 Future: A2A (Agent-to-Agent) Protocol
 

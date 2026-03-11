@@ -131,6 +131,8 @@ timeline
                        : 원격 스킬 원격 저장소 (Registry)
                        : 개발자 포털
                        : 기업용 디바이스 관리 (Fleet Management)
+                       : 🧠 [MVP Agent 세트 및 퍼셉션 아키텍처](ROADMAP_MULTI_AGENT.md)
+                       : 📦 RPK 기반 스킬 및 CLI 도구 배포
         Phase 21       : 프레임워크 안정화 및 SDK 익스포트
                        : 모듈형 CAPI 분리 (`src/libtizenclaw`)
                        : 시스템 레벨 AI SDK 지원
@@ -798,6 +800,27 @@ timeline
 > **참고**: ZeroClaw — <5MB RAM, Rust 바이너리 · OpenClaw — Tailscale Serve/Funnel
 
 ### 19.1 보안 터널 통합
+
+---
+
+## Phase 20: 생태계 확장 (계획)
+
+> **목표**: TizenClaw를 견고하고 동적이며 분산된 AI 생태계로 확장합니다.
+> **참고**: [TizenClaw 멀티 에이전트 및 퍼셉션 로드맵](ROADMAP_MULTI_AGENT.md)
+
+### 20.1 MVP 에이전트 세트 구축
+- 기존 기본 슈퍼바이저 방식을 고도로 분산된 **11개의 MVP 에이전트 환경**으로 전환합니다.
+- 전문 역할 부여: Perception, Memory, Understanding, Planning, Execution, Policy, Monitoring 에이전트 구축.
+
+### 20.2 퍼셉션(Perception) 계층 구현
+- 실시간 상황 파악을 위해 이벤트 기반 버스(`sensor.changed`, `app.started`)를 통신 기반으로 수립합니다.
+- 상태 확인에 구조화된 JSON 스키마(`DeviceState`, `TaskState`)를 적용합니다.
+- 모든 기능이 엄격한 함수 계약을 가지도록 `Capability Registry`를 의무화합니다.
+
+### 20.3 RPK 기반 스킬 및 CLI 도구 분해 배포 관리
+- Python 스킬들을 고립시킨 Tizen 리소스 패키지(RPK) 형태로 포장합니다.
+- CLI 기반 바이너리 도구를 데몬의 재구성(Recompilation) 없이 동적으로 제공 및 배포합니다.
+- RPK 메타데이터 정보를 Capability Registry에 병합시킵니다.
 | 항목 | 내용 |
 |------|------|
 | **갭** | 대시보드 (포트 9090)가 로컬 네트워크에서만 접근 가능 |

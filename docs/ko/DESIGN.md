@@ -263,14 +263,28 @@ Markdown 스키마 파일을 통한 LLM 도구 발견:
 
 ---
 
-## 4. 멀티 에이전트 오케스트레이션 설계
+## 4. 멀티 에이전트 오케스트레이션 및 퍼셉션 설계
 
-TizenClaw는 현재 **멀티 세션 에이전트 간 메시징** (Phase 14.3)을 지원합니다. 이 섹션은 보다 고급 멀티 에이전트 패턴의 설계 방향을 기술합니다.
+TizenClaw는 현재 **멀티 세션 에이전트 간 메시징**을 지원합니다. 이 섹션은 임베디드 리눅스에 최적화된 고급 퍼셉션(Perception) 계층을 기반으로, 고도로 분산되고 안정적인 멀티 에이전트 모델로 전환하기 위한 구조적 방향을 기술합니다.
 
-### 4.1 현재 상태: 세션 기반 에이전트
+### 4.1 11-Agent MVP 세트
 
-```mermaid
-graph LR
+임베디드 디바이스에서의 운영 안정성을 달성하기 위해, 단일 에이전트 토폴로지를 논리적으로 분류된 11개의 MVP 에이전트 세트로 분할합니다:
+
+| 카테고리 | 에이전트 | 주요 책임 |
+|----------|----------|-----------|
+| **이해** | `Input Understanding Agent` | 7개 채널의 원시 사용자 입력을 통합된 인텐트(Intent) 구조로 표준화합니다. |
+| **인식** | `Environment Perception Agent` | 이벤트 버스를 구독하여 공통 상태 스키마(Common State Schema)를 유지합니다. |
+| **기억** | `Session / Context Agent` | 단기 기억(현재 작업), 장기 기억(사용자 선호), 에피소드 기억(과거 실행의 성공/실패)을 관리합니다. |
+| **판단** | `Planning Agent` (오케스트레이터) | 퍼셉션과 Capability Registry를 기반으로 목표를 논리적 단계로 분해합니다. |
+| **실행** | `Action Execution Agent` | 명확한 함수 계약에 따라 실제 OCI 컨테이너 스킬 및 Action Framework 명령을 호출합니다. |
+| **보호** | `Policy / Safety Agent` | 실행 전 계획을 가로채어 정책(야간 제한, 샌드박스 권한 등)을 반영합니다. |
+| **유틸리티** | `Knowledge Retrieval Agent` | 시맨틱 검색을 위해 SQLite RAG 저장소와 인터페이스합니다. |
+| **유지 (모니터링)** | `Health Monitoring Agent` | 메모리 압박(PSS 제약), 데몬 업타임, 컨텍스트 용량 등을 모니터링합니다. |
+| | `Recovery Agent` | 구조화된 실패(예: DNS 타임아웃)를 분석하고 폴백(Fallback) 또는 오류 수정을 시도합니다. |
+| | `Logging / Trace Agent` | 디버깅 및 감사 기록을 메인 컨텍스트를 비대화시키지 않도록 분리하여 저장합니다. |
+
+*(기존의 `Skill Manager` 에이전트는 RPK 기반 도구 생태계가 성숙해짐에 따라 실행/복구 레이어로 흡수되거나 대체될 예정입니다.)*
     User["사용자 프롬프트"]
     MainAgent["메인 에이전트<br/>(기본 세션)"]
     SubAgent1["리서치 에이전트<br/>(세션: research)"]
@@ -287,27 +301,32 @@ graph LR
 - `create_session`, `list_sessions`, `send_to_session` 내장 도구
 - 세션은 격리되지만 메시지 전달을 통해 통신 가능
 
-### 4.2 향후: 슈퍼바이저 패턴
+### 4.2 퍼셉션 아키텍처 (임베디드 리눅스 최적화)
 
-**슈퍼바이저 에이전트**가 복잡한 목표를 하위 태스크로 분해하여 전문 역할 에이전트에 위임:
+강력한 멀티 에이전트 시스템은 고품질의 퍼셉션(Perception)에 의존합니다. 임베디드 환경에서는 원시 로그 전체를 LLM에 전달하는 것이 비효율적이므로, 다음 원칙을 기반으로 설계됩니다:
 
-```mermaid
-graph TD
-    Supervisor["슈퍼바이저 에이전트<br/>(목표 분해)"]
-    Planner["플래너 에이전트<br/>(태스크 분해)"]
-    Executor["실행 에이전트<br/>(스킬 디스패치)"]
-    Reviewer["검증 에이전트<br/>(결과 검증)"]
+**1. 공통 상태 스키마 (Common State Schema)**
+원시 데이터 대신 정규화된 JSON 스키마를 제공합니다:
+- `DeviceState`: 활성화 기능 (디스플레이, BT, WiFi), 모델명 등
+- `RuntimeState`: 네트워크 상태, 전원 모드, 메모리 압박 수준
+- `UserState`: 로캘, 선호설정, 사용자 권한
+- `TaskState`: 현재 목표, 활성 단계, 누락된 인텐트 변수
 
-    Supervisor --> Planner
-    Planner --> Executor
-    Executor --> Reviewer
-    Reviewer -->|"재시도 / 승인"| Supervisor
-```
+**2. Capability Registry 및 Function Contract**
+Planning Agent가 현실적인 계획을 세우려면, 동적으로 로드된 RPK 플러그인과 내장 스킬들이 입력/출력 스키마, 권한, 부작용(Side effects) 등을 명확히 기술해야 합니다.
 
-**구현 방향**:
-- `AgentRole` 구조체: 역할명, 시스템 프롬프트, 허용 도구
-- `SupervisorLoop`: 목표 → 계획 → 위임 → 수집 → 검증 → 보고
-- `agent_roles.json`으로 설정 가능
+**3. 이벤트 버스 (Event-Driven Updates)**
+지속적인 폴링 대신 `sensor.changed`, `network.disconnected`, `action.failed` 같은 세분화된 이벤트에 반응하여 CPU 소모 없이 상태를 최신화합니다.
+
+**4. 메모리 구조의 분리**
+- *단기 (Short-term)*: 현재 대화, 직전 에러 사유
+- *장기 (Long-term)*: 사용자 프로파일, 장치 사용 패턴
+- *에피소드 (Episodic)*: 특정 조건에서의 성공 및 실패 액션 기록
+
+**5. 임베디드 설계 원칙 반영**
+- **선택적 컨텍스트 주입 (Selective Context Injection)**: `[network: disconnected, reason: dns_timeout]` 처럼 정제되고 해석된 상태값만 LLM에 전달.
+- **인식과 실행의 분리**: Perception Agent가 상태를 인식하고 Action Agent는 실행만 전담.
+- **확신도(Confidence) 제공**: 인텐트 판별 결과에 `confidence: 0.82` 등을 부여해 불확실 시 사용자에게 되묻도록 처리.
 
 ### 4.3 향후: A2A (Agent-to-Agent) 프로토콜
 

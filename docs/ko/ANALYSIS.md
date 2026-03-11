@@ -24,13 +24,43 @@ graph LR
 
     subgraph Daemon["TizenClaw Daemon (C++)"]
         IPC["IPC Server<br/>(JSON-RPC 2.0 over UDS)"]
-        Agent["AgentCore<br/>(Agentic Loop)"]
+        
+        subgraph Perception["퍼셉션 계층 (Perception Layer)"]
+            EventBus["이벤트 버스<br/>(sensor.changed)"]
+            EnvAgent["Environment Perception Agent"]
+            InputAgent["Input Understanding Agent"]
+        end
+
+        subgraph Planner["플래닝 & 기억 (Planning & Memory)"]
+            Agent["Planning Agent (Orchestrator)"]
+            ContextAgent["Session / Context Agent"]
+            KnowledgeAgent["Knowledge Retrieval Agent"]
+        end
+
+        subgraph Execution["실행 & 보호 (Execution & Protection)"]
+            ActionAgent["Action Execution Agent"]
+            PolicyAgent["Policy / Safety Agent"]
+        end
+
+        subgraph Monitoring["모니터링 (Maintenance)"]
+            HealthAgent["Health Monitoring Agent"]
+            RecoveryAgent["Recovery Agent"]
+            TraceAgent["Logging / Trace Agent"]
+        end
+
         Factory["LlmBackendFactory"]
         Http["HttpClient<br/>(libcurl + retry)"]
         Container["ContainerEngine<br/>(crun OCI)"]
         Scheduler["TaskScheduler"]
         RAG["EmbeddingStore<br/>(SQLite)"]
         Dashboard["WebDashboard<br/>(libsoup)"]
+
+        IPC --> InputAgent
+        EventBus --> EnvAgent
+        InputAgent & EnvAgent --> Agent
+        Agent <--> ContextAgent & KnowledgeAgent
+        Agent --> PolicyAgent --> ActionAgent
+        ActionAgent --> Container
     end
 
     subgraph Backends["LLM 백엔드"]
@@ -48,13 +78,12 @@ graph LR
     Telegram & Slack & Discord & Voice --> IPC
     MCP --> IPC
     Webhook & WebUI --> Dashboard
-    IPC --> Agent
-    Agent --> Factory
+    ActionAgent --> ActionFW
     Factory --> Gemini & OpenAI & Claude & Ollama
     Gemini & OpenAI & Claude & Ollama --> Http
-    Agent --> Container
-    Agent --> Scheduler
-    Agent --> RAG
+    Agent --> Factory
+    ContextAgent --> Scheduler
+    KnowledgeAgent --> RAG
     Container -->|"crun exec"| Skills
 
     subgraph ActionFW["Tizen Action Framework"]
@@ -62,8 +91,6 @@ graph LR
         ActionList["디바이스별 액션"]
         ActionSvc --- ActionList
     end
-
-    Agent -->|"action C API"| ActionFW
 ```
 
 ---
@@ -371,6 +398,8 @@ Phase 6-19를 통해 원래 분석에서 식별된 대부분의 Gap이 해소되
 
 | 항목 | 현재 상태 | 개선 방향 |
 |------|----------|----------|
+| **모놀리식 루프** | AgentCore 단일 개체로 처리 | **분산된 11개의 MVP 에이전트 환경으로 전환 (진행 중)** |
+| **퍼셉션** | LLM에게 Raw log 직접 전달 | **이벤트 버스 및 구조화된 상태 스키마 정립 (진행 중)** |
 | RAG 인덱스 | 순차 코사인 검색 | 대규모 문서셋을 위한 ANN 인덱스 (HNSW) |
 | 토큰 예산 | 응답 후 카운팅 | 사전 추정으로 오버플로 방지 |
 | 동시 태스크 | 순차 실행 | 의존성 그래프 기반 병렬 실행 |

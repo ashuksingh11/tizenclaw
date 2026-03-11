@@ -45,7 +45,8 @@ TizenClaw is part of the **Claw** family of AI agent runtimes, each targeting di
 - 🔒 **OCI Container Isolation** — crun-based seccomp + namespace, finer syscall control than app-level sandboxing
 - 📱 **Direct Tizen C-API** — ctypes wrappers for device hardware (battery, Wi-Fi, BT, display, volume, sensors, notifications, alarm, app management)
 - 🎯 **Tizen Action Framework** — Native integration with per-action LLM tools, MD schema caching, event-driven updates
-- 🤖 **Dynamic LLM Backends** — Built-in support for Gemini, OpenAI, Anthropic, xAI, Ollama with unified priority-based switching, seamlessly cascading between active, fallbacks, and dynamically loaded RPK Plugins.
+- 🤖 **Dynamic LLM Backends** — Built-in support for Gemini, OpenAI, Anthropic, xAI, Ollama with unified priority-based switching, seamlessly cascading between active, fallbacks, and dynamically loaded built-in/RPK Plugins.
+- 🧩 **RPK Tool Distribution** — Extend the skill ecosystem dynamically using Tizen Resource Packages (RPKs) bundling Python skills and CLI tools without daemon recompilation.
 - 📦 **Lightweight Deployment** — systemd + RPM, standalone device execution without Node.js/Docker
 - 🔧 **Native MCP Server** — C++ MCP server integrated into daemon, Claude Desktop controls Tizen via sdb
 - 📊 **Health Monitoring** — Built-in Prometheus-style metrics endpoint + live dashboard panel
@@ -235,15 +236,29 @@ Actions registered via the Tizen Action Framework are automatically discovered a
 
 ### Multi-Agent System
 
-TizenClaw includes a default multi-agent system with specialized agents:
+TizenClaw includes a default multi-agent system designed to transition from a single monolithic agent toward a highly decentralized **11 MVP Agent Set** for robust device operation:
 
-| Agent | Role |
-|-------|------|
-| **Orchestrator** | Analyzes requests, decomposes goals, delegates to specialized agents |
-| **Skill Manager** | Creates/updates/deletes custom Python skills at runtime |
-| **Device Monitor** | Monitors battery, temperature, memory, storage, network health |
+| Category | MVP Agent | Role |
+|----------|-------|------|
+| **Understanding** | **Input Understanding** | Parses raw user input across channels to determine intent |
+| **Perception** | **Environment Perception** | Consolidates device/system/sensor schemas via event bus |
+| **Memory** | **Session / Context** | Manages short, long-term, and episodic memory Retrieval |
+| **Planning** | **Planning / Decision** | **Orchestrator**: Analyzes requests, decomposes goals, plans steps |
+| **Execution** | **Action Execution** | Executes planned skills via ContainerEngine & Action Framework |
+| **Protection** | **Policy / Safety** | Enforces tool policy, risk levels, and system safeguards |
+| **Monitoring** | **Health Monitoring** | Tracks metrics (CPU, Memory, uptime, RPK states) |
+|          | **Recovery** | Recovers from failures, missing context, and rate limits |
+|          | **Logging / Trace** | Manages structured audit logs and execution traces |
+| **Utility** | **Knowledge Retrieval** | Manages RAG embeddings and semantic document search |
+|          | **Skill Manager** | **(Legacy)** Creates/updates custom Python skills at runtime |
 
-Agents communicate via `create_session` / `send_to_session` and are defined in `config/agent_roles.json`. The `manage_custom_skill` tool enables runtime skill creation — the LLM generates Python code with Tizen C-API bindings that becomes immediately available as a new tool.
+Agents communicate via `create_session` / `send_to_session` and are defined in `config/agent_roles.json`. 
+
+#### Perception Architecture
+To transition towards this robust multi-agent ecosystem, TizenClaw utilizes a dedicated perception layer focusing on:
+- **Common State Schemas**: Strict JSON structures (`DeviceState`, `UserState`, `TaskState`, etc.)
+- **Capability Registries**: Defined boundaries of what loaded RPK tools and built-in skills can achieve.
+- **Event-Driven Bus**: Overcoming polling limits by reacting to `sensor.changed`, `app.started`, etc.
 
 ---
 

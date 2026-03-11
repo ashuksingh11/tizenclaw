@@ -24,13 +24,43 @@ graph LR
 
     subgraph Daemon["TizenClaw Daemon (C++)"]
         IPC["IPC Server<br/>(JSON-RPC 2.0 over UDS)"]
-        Agent["AgentCore<br/>(Agentic Loop)"]
+        
+        subgraph Perception["Perception Layer"]
+            EventBus["Event Bus<br/>(sensor.changed)"]
+            EnvAgent["Environment Perception Agent"]
+            InputAgent["Input Understanding Agent"]
+        end
+
+        subgraph Planner["Planning & Memory"]
+            Agent["Planning Agent (Orchestrator)"]
+            ContextAgent["Session / Context Agent"]
+            KnowledgeAgent["Knowledge Retrieval Agent"]
+        end
+
+        subgraph Execution["Execution & Protection"]
+            ActionAgent["Action Execution Agent"]
+            PolicyAgent["Policy / Safety Agent"]
+        end
+
+        subgraph Monitoring["Maintenance"]
+            HealthAgent["Health Monitoring Agent"]
+            RecoveryAgent["Recovery Agent"]
+            TraceAgent["Logging / Trace Agent"]
+        end
+
         Factory["LlmBackendFactory"]
         Http["HttpClient<br/>(libcurl + retry)"]
         Container["ContainerEngine<br/>(crun OCI)"]
         Scheduler["TaskScheduler"]
         RAG["EmbeddingStore<br/>(SQLite)"]
         Dashboard["WebDashboard<br/>(libsoup)"]
+
+        IPC --> InputAgent
+        EventBus --> EnvAgent
+        InputAgent & EnvAgent --> Agent
+        Agent <--> ContextAgent & KnowledgeAgent
+        Agent --> PolicyAgent --> ActionAgent
+        ActionAgent --> Container
     end
 
     subgraph Backends["LLM Backends"]
@@ -48,13 +78,12 @@ graph LR
     Telegram & Slack & Discord & Voice --> IPC
     MCP --> IPC
     Webhook & WebUI --> Dashboard
-    IPC --> Agent
-    Agent --> Factory
+    ActionAgent --> ActionFW
     Factory --> Gemini & OpenAI & Claude & Ollama
     Gemini & OpenAI & Claude & Ollama --> Http
-    Agent --> Container
-    Agent --> Scheduler
-    Agent --> RAG
+    Agent --> Factory
+    ContextAgent --> Scheduler
+    KnowledgeAgent --> RAG
     Container -->|"crun exec"| Skills
 
     subgraph ActionFW["Tizen Action Framework"]
@@ -62,8 +91,6 @@ graph LR
         ActionList["Device-specific actions"]
         ActionSvc --- ActionList
     end
-
-    Agent -->|"action C API"| ActionFW
 ```
 
 ---
@@ -371,6 +398,8 @@ Most gaps identified in the original analysis have been resolved through Phases 
 
 | Item | Current State | Improvement Direction |
 |------|-------------|----------------------|
+| **Monolithic Loop** | Single AgentCore processing | **Shift to highly decentralized 11-Agent MVP Set (Ongoing)** |
+| **Perception** | Raw logs to LLM | **Establish Event Bus and structured schemas (Ongoing)** |
 | RAG index | Brute-force cosine search | ANN index (HNSW) for large doc sets |
 | Token budgeting | Post-response counting | Pre-request estimation to prevent overflow |
 | Concurrent tasks | Sequential execution | Parallel with dependency graph |
