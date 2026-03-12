@@ -1,5 +1,6 @@
 {
     "name": "get_media_content",
+    "category": "Media",
     "risk_level": "low",
     "description": "Search and list media files (images, videos, audio, documents) stored on the device. Can filter by media type.",
     "parameters": {
@@ -8,7 +9,13 @@
             "media_type": {
                 "type": "string",
                 "description": "Filter by type: 'image', 'video', 'sound', 'music', or 'all' (default: 'all')",
-                "enum": ["all", "image", "video", "sound", "music"]
+                "enum": [
+                    "all",
+                    "image",
+                    "video",
+                    "sound",
+                    "music"
+                ]
             },
             "max_count": {
                 "type": "integer",

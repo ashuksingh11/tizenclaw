@@ -1,5 +1,6 @@
 {
     "name": "web_search",
+    "category": "System Actions",
     "version": "2.0",
     "description": "Search the web using Naver (default) or Google. Returns top search results with titles, snippets, and URLs. Daily usage is rate-limited.",
     "entrypoint": "python3 web_search.py",

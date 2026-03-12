@@ -1,5 +1,6 @@
 {
     "name": "download_file",
+    "category": "System Actions",
     "risk_level": "medium",
     "description": "Download a file from a URL to the device. Returns download status, file path, and content info.",
     "parameters": {
@@ -18,6 +19,8 @@
                 "description": "Optional file name for the downloaded file"
             }
         },
-        "required": ["url"]
+        "required": [
+            "url"
+        ]
     }
 }

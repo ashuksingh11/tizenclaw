@@ -1,5 +1,6 @@
 {
     "name": "control_haptic",
+    "category": "Hardware Control",
     "risk_level": "medium",
     "description": "Vibrate the device for a specified duration in milliseconds. Useful for alerts or notifications.",
     "parameters": {

@@ -1,5 +1,6 @@
 {
     "name": "list_apps",
+    "category": "App Management",
     "version": "1.0",
     "description": "A skill to list installed applications with GUI. Use this when you need to find an app_id for launching an app.",
     "entrypoint": "python3 list_apps.py",

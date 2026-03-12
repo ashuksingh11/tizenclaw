@@ -1,5 +1,6 @@
 {
     "name": "scan_bluetooth_devices",
+    "category": "Network",
     "risk_level": "low",
     "description": "Scan for nearby Bluetooth devices or list bonded (paired) devices. Returns device name, address, and type.",
     "parameters": {
@@ -8,7 +9,10 @@
             "action": {
                 "type": "string",
                 "description": "'scan' to discover nearby devices (takes ~12s), 'bonded' to list paired devices (instant)",
-                "enum": ["scan", "bonded"]
+                "enum": [
+                    "scan",
+                    "bonded"
+                ]
             }
         },
         "required": []

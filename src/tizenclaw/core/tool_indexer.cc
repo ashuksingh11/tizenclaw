@@ -17,6 +17,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <vector>
 
@@ -103,7 +104,10 @@ void WriteFile(const std::string& path,
 }
 
 // Scan manifest.json files in skill subdirectories
-// and build a markdown table.
+// and build a category-grouped markdown document.
+// Categories are read from the "category" field
+// in manifest.json (data-driven, no hardcoded
+// category lists).
 std::string BuildManifestTable(
     const std::string& dir,
     const std::string& title) {
@@ -112,6 +116,7 @@ std::string BuildManifestTable(
 
   struct SkillEntry {
     std::string name;
+    std::string category;
     std::string description;
     std::string risk;
   };
@@ -120,7 +125,8 @@ std::string BuildManifestTable(
   for (const auto& entry :
        fs::directory_iterator(dir, ec)) {
     if (!entry.is_directory()) continue;
-    auto dirname = entry.path().filename().string();
+    auto dirname =
+        entry.path().filename().string();
     if (dirname[0] == '.') continue;
 
     std::string manifest =
@@ -133,10 +139,12 @@ std::string BuildManifestTable(
       mf >> j;
       SkillEntry e;
       e.name = j.value("name", dirname);
-      e.description = j.value("description", "");
+      e.category =
+          j.value("category", "Uncategorized");
+      e.description =
+          j.value("description", "");
       e.risk = j.value("risk_level", "low");
 
-      // Truncate long descriptions
       if (e.description.size() > 80)
         e.description =
             e.description.substr(0, 77) + "...";
@@ -147,35 +155,67 @@ std::string BuildManifestTable(
     }
   }
 
-  // Sort by name for consistent output
-  std::sort(entries.begin(), entries.end(),
-            [](const SkillEntry& a,
-               const SkillEntry& b) {
-              return a.name < b.name;
-            });
+  // Group by category (sorted alphabetically)
+  std::map<std::string,
+           std::vector<const SkillEntry*>>
+      groups;
+  for (const auto& e : entries)
+    groups[e.category].push_back(&e);
+
+  // Sort entries within each group by name
+  for (auto& [cat, vec] : groups) {
+    std::sort(vec.begin(), vec.end(),
+              [](const SkillEntry* a,
+                 const SkillEntry* b) {
+                return a->name < b->name;
+              });
+  }
 
   std::ostringstream md;
   md << "# " << title << "\n\n";
 
   if (entries.empty()) {
     md << "_No tools registered._\n";
-  } else {
-    md << "| Name | Description | Risk |\n";
-    md << "|------|-------------|------|\n";
-    for (const auto& e : entries) {
-      md << "| " << e.name << " | "
-         << e.description << " | " << e.risk
-         << " |\n";
-    }
-    md << "\nTotal: " << entries.size()
-       << " tools\n";
+    return md.str();
   }
 
+  int total = 0;
+  for (const auto& [cat, vec] : groups) {
+    md << "### " << cat << "\n";
+    md << "| Name | Description | Risk |\n";
+    md << "|------|-------------|------|\n";
+    for (const auto* e : vec) {
+      md << "| " << e->name << " | "
+         << e->description << " | "
+         << e->risk << " |\n";
+      total++;
+    }
+    md << "\n";
+  }
+
+  md << "Total: " << total << " tools\n";
   return md.str();
 }
 
-// Scan .md files in a directory and build a
-// summary table from their H1 titles.
+// Extract category from **Category**: xxx line
+// in markdown content.
+std::string ExtractCategory(
+    const std::string& content) {
+  std::istringstream stream(content);
+  std::string line;
+  while (std::getline(stream, line)) {
+    constexpr auto kPrefix = "**Category**: ";
+    constexpr size_t kLen = 14;  // strlen above
+    if (line.size() >= kLen &&
+        line.substr(0, kLen) == kPrefix)
+      return line.substr(kLen);
+  }
+  return "Uncategorized";
+}
+
+// Scan .md files and build a category-grouped
+// summary table. Categories are extracted from
+// **Category**: lines in each .md file.
 std::string BuildMdSummaryTable(
     const std::string& dir,
     const std::string& title) {
@@ -184,6 +224,7 @@ std::string BuildMdSummaryTable(
 
   struct MdEntry {
     std::string name;
+    std::string category;
     std::string description;
   };
   std::vector<MdEntry> entries;
@@ -191,9 +232,10 @@ std::string BuildMdSummaryTable(
   for (const auto& entry :
        fs::directory_iterator(dir, ec)) {
     if (!entry.is_regular_file()) continue;
-    if (entry.path().extension() != ".md") continue;
-    // Skip index.md itself
-    if (entry.path().filename() == "index.md") continue;
+    if (entry.path().extension() != ".md")
+      continue;
+    if (entry.path().filename() == "index.md")
+      continue;
 
     std::string content =
         ReadFile(entry.path().string());
@@ -203,34 +245,50 @@ std::string BuildMdSummaryTable(
     e.name = ExtractTitle(content);
     if (e.name.empty())
       e.name = entry.path().stem().string();
-    e.description = ExtractFirstParagraph(content);
+    e.category = ExtractCategory(content);
+    e.description =
+        ExtractFirstParagraph(content);
 
     entries.push_back(std::move(e));
   }
 
-  // Sort by name
-  std::sort(entries.begin(), entries.end(),
-            [](const MdEntry& a,
-               const MdEntry& b) {
-              return a.name < b.name;
-            });
+  // Group by category
+  std::map<std::string,
+           std::vector<const MdEntry*>>
+      groups;
+  for (const auto& e : entries)
+    groups[e.category].push_back(&e);
+
+  for (auto& [cat, vec] : groups) {
+    std::sort(vec.begin(), vec.end(),
+              [](const MdEntry* a,
+                 const MdEntry* b) {
+                return a->name < b->name;
+              });
+  }
 
   std::ostringstream md;
   md << "# " << title << "\n\n";
 
   if (entries.empty()) {
     md << "_No tools registered._\n";
-  } else {
-    md << "| Name | Description |\n";
-    md << "|------|-------------|\n";
-    for (const auto& e : entries) {
-      md << "| " << e.name << " | "
-         << e.description << " |\n";
-    }
-    md << "\nTotal: " << entries.size()
-       << " tools\n";
+    return md.str();
   }
 
+  int total = 0;
+  for (const auto& [cat, vec] : groups) {
+    md << "### " << cat << "\n";
+    md << "| Name | Description |\n";
+    md << "|------|-------------|\n";
+    for (const auto* e : vec) {
+      md << "| " << e->name << " | "
+         << e->description << " |\n";
+      total++;
+    }
+    md << "\n";
+  }
+
+  md << "Total: " << total << " tools\n";
   return md.str();
 }
 

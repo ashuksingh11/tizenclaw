@@ -1017,7 +1017,13 @@ std::vector<LlmToolDecl> AgentCore::LoadSkillDeclarations() {
         {"risk_level",
          {{"type", "string"},
           {"enum", nlohmann::json::array({"low", "medium", "high"})},
-          {"description", "Risk level (default: low)"}}}}},
+          {"description", "Risk level (default: low)"}}},
+        {"category",
+         {{"type", "string"},
+          {"description",
+           "Category of the skill "
+           "(e.g. App Management, "
+           "Device Info, Network)"}}}}},
       {"required", nlohmann::json::array({"operation"})}};
   tools.push_back(custom_skill_tool);
 
@@ -2418,8 +2424,11 @@ std::string AgentCore::ExecuteCustomSkillOp(const nlohmann::json& args) {
   std::string desc = args.value("description", "");
   std::string code = args.value("python_code", "");
   std::string risk = args.value("risk_level", "low");
+  std::string category =
+      args.value("category", "Uncategorized");
   nlohmann::json params_schema =
-      args.value("parameters_schema", nlohmann::json::object());
+      args.value("parameters_schema",
+                 nlohmann::json::object());
 
   const std::string base_dir =
       "/opt/usr/share/tizenclaw/tools/"
@@ -2441,9 +2450,16 @@ std::string AgentCore::ExecuteCustomSkillOp(const nlohmann::json& args) {
           try {
             nlohmann::json j;
             mf >> j;
-            skills.push_back({{"name", j.value("name", dirname)},
-                              {"description", j.value("description", "")},
-                              {"risk_level", j.value("risk_level", "low")}});
+            skills.push_back(
+                {{"name", j.value("name", dirname)},
+                 {"category",
+                  j.value("category",
+                          "Uncategorized")},
+                 {"description",
+                  j.value("description", "")},
+                 {"risk_level",
+                  j.value("risk_level",
+                          "low")}});
           } catch (...) {
             skills.push_back(
                 {{"name", dirname}, {"error", "Failed to parse manifest"}});
@@ -2497,9 +2513,11 @@ std::string AgentCore::ExecuteCustomSkillOp(const nlohmann::json& args) {
 
     // Write manifest.json
     nlohmann::json manifest = {{"name", name},
+                               {"category", category},
                                {"risk_level", risk},
                                {"description", desc},
-                               {"parameters", params_schema}};
+                               {"parameters",
+                                params_schema}};
 
     std::string manifest_path = skill_dir + "/manifest.json";
     std::ofstream mf(manifest_path);

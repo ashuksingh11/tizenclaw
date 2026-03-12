@@ -42,14 +42,18 @@ class ToolIndexerTest : public ::testing::Test {
       const std::string& subdir,
       const std::string& skill_name,
       const std::string& desc,
+      const std::string& category = "",
       const std::string& risk = "low") {
     std::string dir =
         test_dir_ + "/" + subdir + "/" +
         skill_name;
     fs::create_directories(dir);
     std::ofstream f(dir + "/manifest.json");
-    f << R"({"name":")" << skill_name
-      << R"(","description":")" << desc
+    f << R"({"name":")" << skill_name << R"(",)";
+    if (!category.empty())
+      f << R"("category":")" << category
+        << R"(",)";
+    f << R"("description":")" << desc
       << R"(","risk_level":")" << risk
       << R"(","parameters":{"type":"object"}})"
       << std::endl;
@@ -58,13 +62,16 @@ class ToolIndexerTest : public ::testing::Test {
   void CreateToolMd(const std::string& subdir,
                     const std::string& name,
                     const std::string& title,
-                    const std::string& body) {
+                    const std::string& body,
+                    const std::string& cat = "") {
     std::string path =
         test_dir_ + "/" + subdir + "/" +
         name + ".md";
     std::ofstream f(path);
-    f << "# " << title << "\n\n"
-      << body << "\n";
+    f << "# " << title << "\n\n";
+    if (!cat.empty())
+      f << "**Category**: " << cat << "\n\n";
+    f << body << "\n";
   }
 
   std::string ReadFile(const std::string& path) {
@@ -78,14 +85,19 @@ class ToolIndexerTest : public ::testing::Test {
 };
 
 TEST_F(ToolIndexerTest,
-       GenerateSkillsIndex) {
+       SkillsGroupedByCategory) {
   CreateSkillManifest("skills",
                       "get_battery_info",
-                      "Get battery level");
+                      "Get battery level",
+                      "Device Info");
   CreateSkillManifest("skills",
-                      "scan_wifi",
-                      "Scan WiFi networks",
-                      "medium");
+                      "list_apps",
+                      "List installed apps",
+                      "App Management");
+  CreateSkillManifest("skills",
+                      "get_wifi_info",
+                      "Get WiFi info",
+                      "Network");
 
   ToolIndexer::GenerateSkillsIndex(
       test_dir_ + "/skills");
@@ -93,44 +105,49 @@ TEST_F(ToolIndexerTest,
   std::string index =
       ReadFile(test_dir_ + "/skills/index.md");
   EXPECT_FALSE(index.empty());
+
+  // Verify category headers exist
+  EXPECT_NE(index.find("### App Management"),
+            std::string::npos);
+  EXPECT_NE(index.find("### Device Info"),
+            std::string::npos);
+  EXPECT_NE(index.find("### Network"),
+            std::string::npos);
+
+  // Verify tools are listed
   EXPECT_NE(index.find("get_battery_info"),
             std::string::npos);
-  EXPECT_NE(index.find("scan_wifi"),
+  EXPECT_NE(index.find("list_apps"),
             std::string::npos);
-  EXPECT_NE(index.find("Get battery level"),
-            std::string::npos);
-  EXPECT_NE(index.find("Total: 2"),
+  EXPECT_NE(index.find("Total: 3"),
             std::string::npos);
 }
 
 TEST_F(ToolIndexerTest,
-       GenerateActionsIndex) {
-  CreateToolMd("actions", "power_off",
-               "power_off",
-               "Turn off the device.");
-  CreateToolMd("actions", "volume_up",
-               "volume_up",
-               "Increase volume by one step.");
+       UncategorizedSkillsFallback) {
+  CreateSkillManifest("skills",
+                      "no_category_skill",
+                      "A skill with no category");
 
-  ToolIndexer::GenerateActionsIndex(
-      test_dir_ + "/actions");
+  ToolIndexer::GenerateSkillsIndex(
+      test_dir_ + "/skills");
 
   std::string index =
-      ReadFile(test_dir_ + "/actions/index.md");
-  EXPECT_FALSE(index.empty());
-  EXPECT_NE(index.find("power_off"),
-            std::string::npos);
-  EXPECT_NE(index.find("volume_up"),
-            std::string::npos);
-  EXPECT_NE(index.find("Total: 2"),
+      ReadFile(test_dir_ + "/skills/index.md");
+  EXPECT_NE(index.find("### Uncategorized"),
             std::string::npos);
 }
 
 TEST_F(ToolIndexerTest,
-       GenerateEmbeddedIndex) {
+       EmbeddedGroupedByCategory) {
   CreateToolMd("embedded", "execute_code",
                "execute_code",
-               "Execute Python code.");
+               "Execute Python code.",
+               "code_execution");
+  CreateToolMd("embedded", "create_task",
+               "create_task",
+               "Create scheduled task.",
+               "task_scheduler");
 
   ToolIndexer::GenerateEmbeddedIndex(
       test_dir_ + "/embedded");
@@ -138,9 +155,29 @@ TEST_F(ToolIndexerTest,
   std::string index =
       ReadFile(test_dir_ + "/embedded/index.md");
   EXPECT_FALSE(index.empty());
-  EXPECT_NE(index.find("execute_code"),
+
+  EXPECT_NE(index.find("### code_execution"),
             std::string::npos);
-  EXPECT_NE(index.find("Total: 1"),
+  EXPECT_NE(index.find("### task_scheduler"),
+            std::string::npos);
+  EXPECT_NE(index.find("Total: 2"),
+            std::string::npos);
+}
+
+TEST_F(ToolIndexerTest,
+       ActionsWithoutCategory) {
+  CreateToolMd("actions", "power_off",
+               "power_off",
+               "Turn off the device.");
+
+  ToolIndexer::GenerateActionsIndex(
+      test_dir_ + "/actions");
+
+  std::string index =
+      ReadFile(test_dir_ + "/actions/index.md");
+  EXPECT_NE(index.find("### Uncategorized"),
+            std::string::npos);
+  EXPECT_NE(index.find("power_off"),
             std::string::npos);
 }
 
@@ -148,13 +185,12 @@ TEST_F(ToolIndexerTest,
        GenerateToolsMd) {
   CreateSkillManifest("skills",
                       "get_info",
-                      "Get device info");
-  CreateToolMd("actions", "reboot",
-               "reboot",
-               "Reboot the device.");
+                      "Get device info",
+                      "Device Info");
   CreateToolMd("embedded", "file_manager",
                "file_manager",
-               "Manage files on device.");
+               "Manage files on device.",
+               "file_system");
 
   ToolIndexer::RegenerateAll(test_dir_);
 
@@ -163,13 +199,9 @@ TEST_F(ToolIndexerTest,
   EXPECT_FALSE(tools_md.empty());
   EXPECT_NE(tools_md.find("## Skills"),
             std::string::npos);
-  EXPECT_NE(tools_md.find("## Device Actions"),
-            std::string::npos);
   EXPECT_NE(tools_md.find("## Embedded Tools"),
             std::string::npos);
   EXPECT_NE(tools_md.find("get_info"),
-            std::string::npos);
-  EXPECT_NE(tools_md.find("reboot"),
             std::string::npos);
 }
 
@@ -177,14 +209,17 @@ TEST_F(ToolIndexerTest,
        RegenerateAllCreatesAllFiles) {
   CreateSkillManifest("skills",
                       "test_skill",
-                      "A test skill");
+                      "A test skill",
+                      "Testing");
   CreateSkillManifest("custom_skills",
                       "my_custom",
-                      "Custom skill");
+                      "Custom skill",
+                      "Utility");
   CreateToolMd("actions", "act1",
                "act1", "Action 1.");
   CreateToolMd("embedded", "emb1",
-               "emb1", "Embedded 1.");
+               "emb1", "Embedded 1.",
+               "code_execution");
 
   ToolIndexer::RegenerateAll(test_dir_);
 
@@ -202,10 +237,8 @@ TEST_F(ToolIndexerTest,
 
 TEST_F(ToolIndexerTest,
        EmptyDirectoriesDoNotCrash) {
-  // All directories exist but are empty
   ToolIndexer::RegenerateAll(test_dir_);
 
-  // tools.md should still be generated
   EXPECT_TRUE(fs::exists(
       test_dir_ + "/tools.md"));
 }

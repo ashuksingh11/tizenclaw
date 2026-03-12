@@ -1,5 +1,6 @@
 {
     "name": "schedule_alarm",
+    "category": "System Actions",
     "version": "2.0",
     "description": "Schedules an alarm to launch a specific application at a given time using Tizen Alarm API with app_control.",
     "entrypoint": "python3 schedule_alarm.py",

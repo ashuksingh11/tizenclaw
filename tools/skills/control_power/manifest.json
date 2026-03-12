@@ -1,5 +1,6 @@
 {
     "name": "control_power",
+    "category": "Hardware Control",
     "risk_level": "high",
     "description": "Control device power state. Request CPU or display lock to prevent the device from going to sleep, or release the lock.",
     "parameters": {
@@ -8,14 +9,23 @@
             "action": {
                 "type": "string",
                 "description": "'lock' to keep display/CPU on, 'unlock' to release lock",
-                "enum": ["lock", "unlock"]
+                "enum": [
+                    "lock",
+                    "unlock"
+                ]
             },
             "resource": {
                 "type": "string",
                 "description": "'display' to keep display on, 'cpu' to keep CPU awake",
-                "enum": ["display", "cpu"]
+                "enum": [
+                    "display",
+                    "cpu"
+                ]
             }
         },
-        "required": ["action", "resource"]
+        "required": [
+            "action",
+            "resource"
+        ]
     }
 }

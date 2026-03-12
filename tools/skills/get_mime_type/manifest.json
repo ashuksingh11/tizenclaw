@@ -1,5 +1,6 @@
 {
     "name": "get_mime_type",
+    "category": "Media",
     "risk_level": "low",
     "description": "Get MIME type from a file extension or file path, or get file extensions for a given MIME type.",
     "parameters": {

@@ -1,5 +1,6 @@
 {
     "name": "send_notification",
+    "category": "System Actions",
     "risk_level": "medium",
     "description": "Post a notification to the device notification bar. Provide a title and body text.",
     "parameters": {
@@ -14,6 +15,9 @@
                 "description": "Notification body text"
             }
         },
-        "required": ["title", "body"]
+        "required": [
+            "title",
+            "body"
+        ]
     }
 }

@@ -1,5 +1,6 @@
 {
     "name": "get_metadata",
+    "category": "Media",
     "risk_level": "low",
     "description": "Extract metadata from a media file (audio/video). Returns title, artist, album, genre, duration, bitrate, sample rate, and more.",
     "parameters": {
@@ -10,6 +11,8 @@
                 "description": "Absolute path to the media file"
             }
         },
-        "required": ["file_path"]
+        "required": [
+            "file_path"
+        ]
     }
 }

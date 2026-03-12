@@ -1,5 +1,6 @@
 {
     "name": "get_storage_info",
+    "category": "Device Info",
     "risk_level": "low",
     "description": "Get storage space information including total, available, and used space for internal storage.",
     "parameters": {
