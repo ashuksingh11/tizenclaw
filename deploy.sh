@@ -3,11 +3,12 @@
 # Automates: gbs build → sdb push → rpm install → service restart
 #
 # Usage:
-#   ./scripts/deploy.sh                    # Full pipeline (build + deploy)
-#   ./scripts/deploy.sh -s                 # Skip build, deploy only
-#   ./scripts/deploy.sh -n                 # Use --noinit for faster rebuild
-#   ./scripts/deploy.sh --dry-run          # Print commands without executing
-#   ./scripts/deploy.sh -d <serial>        # Target a specific sdb device
+#   ./deploy.sh                    # Full pipeline (build + deploy)
+#   ./deploy.sh -s                 # Skip build, deploy only
+#   ./deploy.sh -n                 # Use --noinit for faster rebuild
+#   ./deploy.sh --dry-run          # Print commands without executing
+#   ./deploy.sh -d <serial>        # Target a specific sdb device
+#   ./deploy.sh --test             # Build + deploy + run E2E smoke tests
 #
 # See ./scripts/deploy.sh --help for all options.
 
@@ -39,6 +40,7 @@ SKIP_BUILD=false
 DRY_RUN=false
 DEVICE_SERIAL=""
 WITH_NGROK=false
+RUN_TESTS=false
 
 # ─────────────────────────────────────────────
 # Logging helpers
@@ -125,6 +127,7 @@ ${CYAN}Options:${NC}
   -n, --noinit          Skip build-env init (faster rebuild)
   -i, --incremental     Use --incremental and --skip-srcrpm for fast iterative build
   -s, --skip-build      Skip GBS build, deploy existing RPM
+  -t, --test            Run E2E smoke tests after deployment
   -w, --with-ngrok      Auto-download and push ngrok binary to the device
   -d, --device <serial> Target a specific sdb device
       --dry-run         Print commands without executing
@@ -135,6 +138,7 @@ ${CYAN}Examples:${NC}
   $(basename "$0") -n                  # Quick rebuild + deploy + run
   $(basename "$0") -i -n               # Fastest iterative rebuild + deploy + run
   $(basename "$0") -s                  # Deploy existing RPM + run
+  $(basename "$0") -t                  # Build + deploy + run E2E tests
   $(basename "$0") -w                  # Deploy and install ngrok binary
   $(basename "$0") --dry-run           # Preview all steps
   $(basename "$0") -a aarch64          # Build for ARM64 target
@@ -153,6 +157,7 @@ parse_args() {
       -n|--noinit)     NOINIT=true; shift ;;
       -i|--incremental) INCREMENTAL=true; shift ;;
       -s|--skip-build) SKIP_BUILD=true; shift ;;
+      -t|--test)      RUN_TESTS=true; shift ;;
       -w|--with-ngrok) WITH_NGROK=true; shift ;;
       -d|--device)     DEVICE_SERIAL="$2"; shift 2 ;;
       --dry-run)       DRY_RUN=true; shift ;;
@@ -451,6 +456,41 @@ do_restart_and_run() {
 }
 
 # ─────────────────────────────────────────────
+# Step 5 (optional): E2E Smoke Test
+# ─────────────────────────────────────────────
+do_e2e_tests() {
+  if [ "${RUN_TESTS}" = false ]; then
+    return 0
+  fi
+
+  header "Step 5/5: E2E Smoke Test"
+
+  local test_script="${PROJECT_DIR}/test/e2e/test_smoke.sh"
+  if [ ! -f "${test_script}" ]; then
+    warn "E2E test script not found: ${test_script}"
+    return 1
+  fi
+
+  local test_args=()
+  if [ -n "${DEVICE_SERIAL}" ]; then
+    test_args+=("-d" "${DEVICE_SERIAL}")
+  fi
+
+  log "Running: ${test_script} ${test_args[*]:-}"
+
+  if [ "${DRY_RUN}" = true ]; then
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} bash ${test_script} ${test_args[*]:-}"
+    return 0
+  fi
+
+  if bash "${test_script}" "${test_args[@]+"${test_args[@]}"}"; then
+    ok "E2E smoke tests passed!"
+  else
+    fail "E2E smoke tests failed. See output above."
+  fi
+}
+
+# ─────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────
 show_summary() {
@@ -477,6 +517,7 @@ main() {
   find_rpm
   do_deploy
   do_restart_and_run
+  do_e2e_tests
   show_summary
 }
 

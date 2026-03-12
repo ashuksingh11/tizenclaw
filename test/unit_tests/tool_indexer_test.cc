@@ -242,3 +242,113 @@ TEST_F(ToolIndexerTest,
   EXPECT_TRUE(fs::exists(
       test_dir_ + "/tools.md"));
 }
+
+// ─── manifest.json v2 schema tests ───
+
+TEST_F(ToolIndexerTest,
+       V1ManifestBackwardCompat) {
+  // v1 manifest WITHOUT execution/output
+  // sections must still parse correctly
+  CreateSkillManifest("skills",
+                      "v1_legacy_skill",
+                      "A legacy v1 skill",
+                      "Device Info", "low");
+
+  ToolIndexer::GenerateSkillsIndex(
+      test_dir_ + "/skills");
+
+  std::string index =
+      ReadFile(test_dir_ + "/skills/index.md");
+  EXPECT_NE(index.find("v1_legacy_skill"),
+            std::string::npos);
+  EXPECT_NE(index.find("A legacy v1 skill"),
+            std::string::npos);
+}
+
+TEST_F(ToolIndexerTest,
+       V2ManifestWithExecutionAndOutput) {
+  // v2 manifest WITH execution.mode and
+  // output.streaming — should parse without
+  // error and include the skill in the index
+  std::string dir =
+      test_dir_ + "/skills/streaming_skill";
+  fs::create_directories(dir);
+  std::ofstream f(dir + "/manifest.json");
+  f << R"({
+    "name": "streaming_skill",
+    "category": "System Actions",
+    "description": "A skill that streams output",
+    "risk_level": "medium",
+    "execution": {
+      "mode": "streaming",
+      "timeout_ms": 30000,
+      "entrypoint": "python3 streaming_skill.py"
+    },
+    "output": {
+      "streaming": true,
+      "progress_events": ["download_progress"],
+      "content_types": ["application/json"]
+    },
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "URL to download"
+        }
+      },
+      "required": ["url"]
+    }
+  })";
+  f.close();
+
+  ToolIndexer::GenerateSkillsIndex(
+      test_dir_ + "/skills");
+
+  std::string index =
+      ReadFile(test_dir_ + "/skills/index.md");
+  EXPECT_NE(index.find("streaming_skill"),
+            std::string::npos);
+  EXPECT_NE(index.find("System Actions"),
+            std::string::npos);
+  EXPECT_NE(index.find("medium"),
+            std::string::npos);
+}
+
+TEST_F(ToolIndexerTest,
+       V2ManifestMixedWithV1) {
+  // Mix of v1 and v2 manifests in the same
+  // directory — both should appear in the index
+  CreateSkillManifest("skills",
+                      "old_skill",
+                      "A v1 skill",
+                      "Network", "low");
+
+  std::string dir =
+      test_dir_ + "/skills/new_skill";
+  fs::create_directories(dir);
+  std::ofstream f(dir + "/manifest.json");
+  f << R"({
+    "name": "new_skill",
+    "category": "Network",
+    "description": "A v2 streaming skill",
+    "risk_level": "low",
+    "execution": {"mode": "streaming"},
+    "output": {"streaming": true},
+    "parameters": {"type": "object"}
+  })";
+  f.close();
+
+  ToolIndexer::GenerateSkillsIndex(
+      test_dir_ + "/skills");
+
+  std::string index =
+      ReadFile(test_dir_ + "/skills/index.md");
+  EXPECT_NE(index.find("old_skill"),
+            std::string::npos);
+  EXPECT_NE(index.find("new_skill"),
+            std::string::npos);
+  EXPECT_NE(index.find("Total: 2"),
+            std::string::npos);
+}
+
