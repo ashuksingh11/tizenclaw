@@ -54,11 +54,12 @@ bool EmbeddingStore::Initialize(const std::string& db_path) {
 
 void EmbeddingStore::Close() {
   if (db_) {
-    if (knowledge_attached_) {
-      sqlite3_exec(db_, "DETACH DATABASE knowledge;", nullptr, nullptr,
+    for (const auto& alias : knowledge_aliases_) {
+      std::string sql = "DETACH DATABASE " + alias + ";";
+      sqlite3_exec(db_, sql.c_str(), nullptr, nullptr,
                    nullptr);
-      knowledge_attached_ = false;
     }
+    knowledge_aliases_.clear();
     sqlite3_close(db_);
     db_ = nullptr;
   }
@@ -161,11 +162,12 @@ std::vector<EmbeddingStore::SearchResult> EmbeddingStore::Search(
       "SELECT source, chunk_text, embedding "
       "FROM documents;");
 
-  // Scan attached knowledge DB if available
-  if (knowledge_attached_) {
-    scan_table(
+  // Scan attached knowledge DBs if available
+  for (const auto& alias : knowledge_aliases_) {
+    std::string sql =
         "SELECT source, chunk_text, embedding "
-        "FROM knowledge.documents;");
+        "FROM " + alias + ".documents;";
+    scan_table(sql.c_str());
   }
 
   // Sort by descending score
@@ -224,37 +226,45 @@ bool EmbeddingStore::AttachKnowledgeDB(const std::string& path) {
   }
   fclose(f);
 
-  std::string sql = "ATTACH DATABASE '" + path + "' AS knowledge;";
+  // Generate unique alias
+  std::string alias = "knowledge_" +
+      std::to_string(knowledge_aliases_.size());
+
+  std::string sql = "ATTACH DATABASE '" + path +
+      "' AS " + alias + ";";
   char* err = nullptr;
   int rc = sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, &err);
   if (rc != SQLITE_OK) {
-    LOG(ERROR) << "Failed to attach knowledge " << "DB: " << (err ? err : "?");
+    LOG(ERROR) << "Failed to attach knowledge "
+               << "DB: " << (err ? err : "?");
     sqlite3_free(err);
     return false;
   }
 
-  knowledge_attached_ = true;
-  LOG(INFO) << "Knowledge DB attached: " << path << " ("
-            << GetKnowledgeChunkCount() << " chunks)";
+  knowledge_aliases_.push_back(alias);
+  LOG(INFO) << "Knowledge DB attached as " << alias
+            << ": " << path;
   return true;
 }
 
 int EmbeddingStore::GetKnowledgeChunkCount() const {
-  if (!db_ || !knowledge_attached_) return 0;
+  if (!db_ || knowledge_aliases_.empty()) return 0;
 
-  const char* sql =
-      "SELECT COUNT(*) FROM "
-      "knowledge.documents;";
-  sqlite3_stmt* stmt = nullptr;
-  int rc = sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr);
-  if (rc != SQLITE_OK) return 0;
+  int total = 0;
+  for (const auto& alias : knowledge_aliases_) {
+    std::string sql =
+        "SELECT COUNT(*) FROM " + alias + ".documents;";
+    sqlite3_stmt* stmt = nullptr;
+    int rc = sqlite3_prepare_v2(db_, sql.c_str(), -1,
+                                &stmt, nullptr);
+    if (rc != SQLITE_OK) continue;
 
-  int count = 0;
-  if (sqlite3_step(stmt) == SQLITE_ROW) {
-    count = sqlite3_column_int(stmt, 0);
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+      total += sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
   }
-  sqlite3_finalize(stmt);
-  return count;
+  return total;
 }
 
 // --- Text chunking ---

@@ -75,10 +75,8 @@ ADD_SUBDIRECTORY(third_party/crun)
 ENABLE_TESTING()
 ADD_SUBDIRECTORY(test/unit_tests)
 
-## Install optional RAG Database
-INSTALL(FILES "${CMAKE_CURRENT_SOURCE_DIR}/data/rag/tizen_knowledge.db"
-        DESTINATION "${APP_DATA_DIR}/rag"
-        OPTIONAL)
+## RAG databases, models, and ONNX Runtime are in the
+## separate tizenclaw-rag project (../tizenclaw-rag).
 
 INSTALL(FILES "${CMAKE_CURRENT_SOURCE_DIR}/data/sample/tunnel_config.json.sample"
         DESTINATION "${APP_DATA_DIR}/config"

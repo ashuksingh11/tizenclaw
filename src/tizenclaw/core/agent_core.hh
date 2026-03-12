@@ -38,6 +38,7 @@
 
 #include "../scheduler/task_scheduler.hh"
 #include "../storage/embedding_store.hh"
+#include "../embedding/on_device_embedding.hh"
 #include "pipeline_executor.hh"
 #include "workflow_engine.hh"
 
@@ -224,6 +225,9 @@ class AgentCore {
 
   // Embedding store for RAG
   EmbeddingStore embedding_store_;
+
+  // On-device embedding (LLM-backend-independent)
+  OnDeviceEmbedding on_device_embedding_;
 
   // Memory store for persistent memory
   MemoryStore memory_store_;

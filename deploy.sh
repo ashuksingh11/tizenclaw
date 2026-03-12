@@ -41,6 +41,8 @@ DRY_RUN=false
 DEVICE_SERIAL=""
 WITH_NGROK=false
 RUN_TESTS=false
+SKIP_RAG=false
+RAG_PROJECT_DIR=""
 
 # ─────────────────────────────────────────────
 # Logging helpers
@@ -139,6 +141,7 @@ ${CYAN}Examples:${NC}
   $(basename "$0") -i -n               # Fastest iterative rebuild + deploy + run
   $(basename "$0") -s                  # Deploy existing RPM + run
   $(basename "$0") -t                  # Build + deploy + run E2E tests
+  $(basename "$0") --skip-rag           # Skip tizenclaw-rag sub-project build
   $(basename "$0") -w                  # Deploy and install ngrok binary
   $(basename "$0") --dry-run           # Preview all steps
   $(basename "$0") -a aarch64          # Build for ARM64 target
@@ -158,6 +161,7 @@ parse_args() {
       -i|--incremental) INCREMENTAL=true; shift ;;
       -s|--skip-build) SKIP_BUILD=true; shift ;;
       -t|--test)      RUN_TESTS=true; shift ;;
+      --skip-rag)    SKIP_RAG=true; shift ;;
       -w|--with-ngrok) WITH_NGROK=true; shift ;;
       -d|--device)     DEVICE_SERIAL="$2"; shift 2 ;;
       --dry-run)       DRY_RUN=true; shift ;;
@@ -253,6 +257,71 @@ do_build() {
     ok "RPMS directory: ${RPMS_DIR}"
   else
     warn "Could not parse RPMS path from build output"
+  fi
+}
+
+# ─────────────────────────────────────────────
+# Step 1.5: Build tizenclaw-rag (if present)
+# ─────────────────────────────────────────────
+RAG_RPM_FILES=()
+
+do_build_rag() {
+  if [ "${SKIP_BUILD}" = true ] || [ "${SKIP_RAG}" = true ]; then
+    return 0
+  fi
+
+  # Auto-detect tizenclaw-rag project
+  if [ -z "${RAG_PROJECT_DIR}" ]; then
+    RAG_PROJECT_DIR="${PROJECT_DIR}/../tizenclaw-rag"
+  fi
+
+  if [ ! -f "${RAG_PROJECT_DIR}/CMakeLists.txt" ]; then
+    log "tizenclaw-rag project not found at ${RAG_PROJECT_DIR} (skipping)"
+    return 0
+  fi
+
+  header "Step 1.5: Build tizenclaw-rag"
+
+  local rag_abs_dir
+  rag_abs_dir=$(cd "${RAG_PROJECT_DIR}" && pwd)
+  log "RAG project: ${rag_abs_dir}"
+
+  local gbs_args=("-A" "${ARCH}" "--include-all")
+  if [ "${NOINIT}" = true ]; then
+    gbs_args+=("--noinit")
+  fi
+
+  log "Running: gbs build ${gbs_args[*]} (tizenclaw-rag)"
+
+  if [ "${DRY_RUN}" = true ]; then
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} cd ${rag_abs_dir} && gbs build ${gbs_args[*]}"
+    ok "tizenclaw-rag build (dry-run)"
+    return 0
+  fi
+
+  local rag_log="/tmp/gbs_rag_build_output.log"
+  if (cd "${rag_abs_dir}" && gbs build "${gbs_args[@]}" 2>&1 | tee "${rag_log}"); then
+    ok "tizenclaw-rag build succeeded"
+  else
+    warn "tizenclaw-rag build failed (non-fatal, continuing without RAG)"
+    return 0
+  fi
+
+  # Find RAG RPMs
+  local rag_rpms_dir
+  rag_rpms_dir=$(grep -A1 'generated RPM packages can be found from local repo:' "${rag_log}" \
+    | tail -1 | sed 's/^[[:space:]]*//')
+
+  if [ -n "${rag_rpms_dir}" ] && [ -d "${rag_rpms_dir}" ]; then
+    mapfile -t RAG_RPM_FILES < <(find "${rag_rpms_dir}" -maxdepth 1 \
+      -name "tizenclaw-rag*.rpm" \
+      ! -name "*-debuginfo-*" \
+      ! -name "*-debugsource-*" \
+      2>/dev/null | sort)
+
+    for rpm in "${RAG_RPM_FILES[@]}"; do
+      ok "RAG RPM: $(basename "${rpm}")"
+    done
   fi
 }
 
@@ -376,6 +445,22 @@ do_deploy() {
       ok "App registered to registry"
     fi
   done
+
+  # Deploy RAG RPMs (if built)
+  for rpm in "${RAG_RPM_FILES[@]}"; do
+    local rpm_basename=$(basename "${rpm}")
+    log "Pushing ${rpm_basename} to device:/tmp/"
+    run sdb_cmd push "${rpm}" /tmp/
+    ok "RAG RPM transferred: ${rpm_basename}"
+
+    log "Installing ${rpm_basename}..."
+    run sdb_shell rpm -Uvh --force "/tmp/${rpm_basename}"
+    ok "RAG RPM installed: ${rpm_basename}"
+
+    log "Cleaning up /tmp/${rpm_basename}..."
+    run sdb_shell rm -f "/tmp/${rpm_basename}"
+  done
+
   ok "All RPMs processed"
 
   # 3-5. Auto-download and install ngrok if requested
@@ -514,6 +599,7 @@ main() {
   detect_arch
   check_prerequisites
   do_build
+  do_build_rag
   find_rpm
   do_deploy
   do_restart_and_run

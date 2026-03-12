@@ -189,14 +189,40 @@ bool AgentCore::Initialize() {
   if (embedding_store_.Initialize(rag_db)) {
     LOG(INFO) << "RAG embedding store ready";
 
-    // Attach pre-built knowledge DB if available
-    std::string knowledge_db =
-        std::string(APP_DATA_DIR) + "/rag/tizen_knowledge.db";
-    if (embedding_store_.AttachKnowledgeDB(knowledge_db)) {
-      LOG(INFO) << "Tizen knowledge DB loaded";
+    // Scan rag/ directory for all .db files
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (fs::is_directory(rag_dir, ec)) {
+      for (const auto& entry :
+           fs::directory_iterator(rag_dir, ec)) {
+        if (!entry.is_regular_file()) continue;
+        auto fname = entry.path().filename().string();
+        if (entry.path().extension() != ".db") continue;
+        if (fname == "embeddings.db") continue;
+        if (embedding_store_.AttachKnowledgeDB(
+                entry.path().string())) {
+          LOG(INFO) << "Knowledge DB loaded: " << fname;
+        }
+      }
     }
+    LOG(INFO) << "Total knowledge chunks: "
+              << embedding_store_.GetKnowledgeChunkCount();
   } else {
-    LOG(WARNING) << "RAG embedding store " << "init failed (non-fatal)";
+    LOG(WARNING) << "RAG embedding store "
+                 << "init failed (non-fatal)";
+  }
+
+  // Initialize on-device embedding model
+  std::string model_dir =
+      std::string(APP_DATA_DIR) + "/models/all-MiniLM-L6-v2";
+  std::string ort_lib =
+      std::string(APP_DATA_DIR) + "/lib/libonnxruntime.so";
+  if (on_device_embedding_.Initialize(model_dir, ort_lib)) {
+    LOG(INFO) << "On-device embedding ready "
+              << "(LLM-independent)";
+  } else {
+    LOG(WARNING) << "On-device embedding not available "
+                 << "(will use LLM backend)";
   }
 
   // Initialize supervisor engine
@@ -2055,6 +2081,11 @@ std::string AgentCore::ExecuteRagOp(const std::string& operation,
 }
 
 std::vector<float> AgentCore::GenerateEmbedding(const std::string& text) {
+  // Prefer on-device embedding (LLM-independent)
+  if (on_device_embedding_.IsAvailable()) {
+    return on_device_embedding_.Encode(text);
+  }
+
   if (!backend_ || text.empty()) return {};
 
   std::string backend_name = backend_->GetName();

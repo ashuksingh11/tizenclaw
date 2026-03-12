@@ -65,7 +65,7 @@ class EmbeddingStore {
   // Total number of stored chunks
   [[nodiscard]] int GetChunkCount() const;
 
-  // Chunk count from attached knowledge DB
+  // Chunk count from all attached knowledge DBs
   [[nodiscard]] int GetKnowledgeChunkCount() const;
 
   // --- Utility (public for testing) ---
@@ -87,7 +87,7 @@ class EmbeddingStore {
   static std::vector<float> BlobToFloats(const void* data, int size);
 
   sqlite3* db_ = nullptr;
-  bool knowledge_attached_ = false;
+  std::vector<std::string> knowledge_aliases_;
 };
 
 }  // namespace tizenclaw

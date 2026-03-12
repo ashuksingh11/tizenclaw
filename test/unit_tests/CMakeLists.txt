@@ -8,6 +8,7 @@ AUX_SOURCE_DIRECTORY(${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/channel CHA
 AUX_SOURCE_DIRECTORY(${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/storage STORAGE_SRCS)
 AUX_SOURCE_DIRECTORY(${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/infra INFRA_SRCS)
 AUX_SOURCE_DIRECTORY(${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/scheduler SCHEDULER_SRCS)
+AUX_SOURCE_DIRECTORY(${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/embedding EMBEDDING_SRCS)
 AUX_SOURCE_DIRECTORY(${CMAKE_CURRENT_SOURCE_DIR}/../../src/common COMMON_SRCS)
 
 # Exclude daemon main (tizenclaw.cc) from test build
@@ -22,6 +23,7 @@ ADD_EXECUTABLE(tizenclaw-unittests
   ${STORAGE_SRCS}
   ${INFRA_SRCS}
   ${SCHEDULER_SRCS}
+  ${EMBEDDING_SRCS}
 )
 
 TARGET_INCLUDE_DIRECTORIES(tizenclaw-unittests PUBLIC
@@ -36,6 +38,7 @@ TARGET_INCLUDE_DIRECTORIES(tizenclaw-unittests PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/storage"
   "${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/infra"
   "${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/scheduler"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../src/tizenclaw/embedding"
 )
 
 APPLY_PKG_CONFIG(tizenclaw-unittests PUBLIC
@@ -54,7 +57,7 @@ APPLY_PKG_CONFIG(tizenclaw-unittests PUBLIC
   PKGMGR_PARSER_DEPS
 )
 
-TARGET_LINK_LIBRARIES(tizenclaw-unittests PUBLIC pthread tizenclaw-core)
+TARGET_LINK_LIBRARIES(tizenclaw-unittests PUBLIC pthread tizenclaw-core dl)
 
 TARGET_COMPILE_DEFINITIONS(tizenclaw-unittests PUBLIC
   APP_DATA_DIR="${APP_DATA_DIR}"
