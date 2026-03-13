@@ -89,10 +89,10 @@ Once deployed, the `deploy.sh` script will automatically fetch the secure public
 The build process generates the core RPM package:
 1. **`tizenclaw`**: The core AI daemon, Action Framework bridge, and built-in skills.
 
-A companion project, [tizenclaw-rag](https://github.com/hjhun/tizenclaw-rag), produces a separate RPM:
-2. **`tizenclaw-rag`**: Pre-built SQLite vector databases, ONNX Runtime, and the `all-MiniLM-L6-v2` embedding model for LLM-independent on-device RAG. **Highly recommended** for accurate skill generation.
+A companion project, [tizenclaw-assets](https://github.com/hjhun/tizenclaw-assets), produces a separate RPM:
+2. **`tizenclaw-assets`**: Consolidated ML/AI asset package — ONNX Runtime, pre-built RAG knowledge databases, embedding model (`all-MiniLM-L6-v2`), PaddleOCR PP-OCRv3 on-device OCR engine with CLI tool. **Highly recommended** for full AI capabilities.
 
-> **Note**: `deploy.sh` automatically detects and builds `tizenclaw-rag` if it exists at `../tizenclaw-rag`.
+> **Note**: `deploy.sh` automatically detects and builds `tizenclaw-assets` if it exists at `../tizenclaw-assets`.
 
 #### On-Device Dashboard ([tizenclaw-webview](https://github.com/hjhun/tizenclaw-webview))
 TizenClaw also includes a companion Tizen web app (`tizenclaw-webview`) that provides direct on-device access to the Web Admin Dashboard. 
@@ -121,8 +121,8 @@ gbs build -A x86_64 --include-all
 # Manual deployment to device
 sdb root on && sdb shell mount -o remount,rw /
 sdb push ~/GBS-ROOT/local/repos/tizen/x86_64/RPMS/tizenclaw-1.0.0-1.x86_64.rpm /tmp/
-sdb push ~/GBS-ROOT/local/repos/tizen/x86_64/RPMS/tizenclaw-rag-1.0.0-1.x86_64.rpm /tmp/
-sdb shell rpm -Uvh --force /tmp/tizenclaw-1.0.0-1.x86_64.rpm /tmp/tizenclaw-rag-1.0.0-1.x86_64.rpm
+sdb push ~/GBS-ROOT/local/repos/tizen/x86_64/RPMS/tizenclaw-assets-1.0.0-1.x86_64.rpm /tmp/
+sdb shell rpm -Uvh --force /tmp/tizenclaw-1.0.0-1.x86_64.rpm /tmp/tizenclaw-assets-1.0.0-1.x86_64.rpm
 
 # Start daemon
 sdb shell systemctl daemon-reload
@@ -140,7 +140,8 @@ sdb shell systemctl restart tizenclaw
 - **Function Calling / Tool Use** — The LLM autonomously invokes device skills through an iterative Agentic Loop with streaming responses.
 - **Tizen Action Framework** — Native device actions via `ActionBridge` with per-action typed LLM tools, MD schema caching, and live updates via `action_event_cb`.
 - **OCI Container Isolation** — Skills run inside a `crun` container with namespace isolation, limiting access to host resources.
-- **Semantic Search (RAG)** — On-device embedding (all-MiniLM-L6-v2 via ONNX Runtime) with SQLite vector store for LLM-independent knowledge retrieval. See [RAG System](docs/RAG.md).
+- **Semantic Search (RAG)** — On-device embedding (all-MiniLM-L6-v2 via ONNX Runtime) with SQLite vector store for LLM-independent knowledge retrieval. See [ML/AI Assets](docs/ASSETS.md).
+- **On-Device OCR** — PaddleOCR PP-OCRv3 text detection and recognition via ONNX Runtime. Korean+English (lite, ~13MB) or CJK (full, ~84MB) model selectable at build time.
 - **Task Scheduler** — Cron/interval/one-shot/weekly scheduled tasks with LLM integration and retry logic.
 - **Security** — Encrypted API keys, tool execution policies with risk levels, structured audit logging, HMAC-SHA256 webhook auth.
 - **Web Admin Dashboard** — Dark glassmorphism SPA on port 9090 with session monitoring, chat interface, config editor, and admin authentication.
@@ -359,12 +360,15 @@ RPM output:
 ~/GBS-ROOT/local/repos/tizen/<arch>/RPMS/tizenclaw-1.0.0-1.<arch>.rpm
 ```
 
-For the RAG companion package, build separately from `../tizenclaw-rag`:
+For the ML/AI assets companion package, build separately from `../tizenclaw-assets`:
 ```bash
-cd ../tizenclaw-rag && gbs build -A x86_64 --include-all
+cd ../tizenclaw-assets && gbs build -A x86_64 --include-all
+
+# For CJK full OCR model (default is lite Korean+English):
+cd ../tizenclaw-assets && gbs build -A x86_64 --include-all --define "ocr_model full"
 ```
 ```
-~/GBS-ROOT/local/repos/tizen/<arch>/RPMS/tizenclaw-rag-1.0.0-1.<arch>.rpm
+~/GBS-ROOT/local/repos/tizen/<arch>/RPMS/tizenclaw-assets-1.0.0-1.<arch>.rpm
 ```
 
 Unit tests are automatically executed during the build via `%check`.
@@ -385,9 +389,9 @@ sdb shell mount -o remount,rw /
 sdb push ~/GBS-ROOT/local/repos/tizen/x86_64/RPMS/tizenclaw-1.0.0-1.x86_64.rpm /tmp/
 sdb shell rpm -Uvh --force /tmp/tizenclaw-1.0.0-1.x86_64.rpm
 
-# Push and install RAG (built from tizenclaw-rag project)
-sdb push ~/GBS-ROOT/local/repos/tizen/x86_64/RPMS/tizenclaw-rag-1.0.0-1.x86_64.rpm /tmp/
-sdb shell rpm -Uvh --force /tmp/tizenclaw-rag-1.0.0-1.x86_64.rpm
+# Push and install Assets (built from tizenclaw-assets project)
+sdb push ~/GBS-ROOT/local/repos/tizen/x86_64/RPMS/tizenclaw-assets-1.0.0-1.x86_64.rpm /tmp/
+sdb shell rpm -Uvh --force /tmp/tizenclaw-assets-1.0.0-1.x86_64.rpm
 
 # Restart the daemon
 sdb shell systemctl daemon-reload
@@ -506,7 +510,7 @@ tizenclaw/
 
 ## Related Projects
 
-- [tizenclaw-rag](https://github.com/hjhun/tizenclaw-rag): Companion RAG package — pre-built Tizen documentation knowledge databases, ONNX Runtime, and the all-MiniLM-L6-v2 embedding model for LLM-independent on-device semantic search.
+- [tizenclaw-assets](https://github.com/hjhun/tizenclaw-assets): Consolidated ML/AI asset package — ONNX Runtime, pre-built RAG knowledge databases, embedding model, PaddleOCR PP-OCRv3 on-device OCR engine with CLI tool for Korean+English/CJK text recognition.
 - [tizenclaw-webview](https://github.com/hjhun/tizenclaw-webview): A companion Tizen web application that provides an on-device Web Admin Dashboard for TizenClaw.
 - [tizenclaw-llm-plugin-sample](https://github.com/hjhun/tizenclaw-llm-plugin-sample): A sample project demonstrating how to build an RPM to RPK (Resource Package) plugin to dynamically inject new customized LLM backends into TizenClaw at runtime.
 - [tizenclaw-skill-plugin-sample](https://github.com/hjhun/tizenclaw-skill-plugin-sample): A sample project demonstrating how to build an RPK skill plugin to dynamically inject Python skills into TizenClaw via platform-signed packages.
@@ -518,7 +522,7 @@ tizenclaw/
 
 - [System Design](docs/DESIGN.md)
 - [Project Analysis](docs/ANALYSIS.md)
-- [RAG System](docs/RAG.md)
+- [ML/AI Assets (RAG, OCR, ONNX Runtime)](docs/ASSETS.md)
 - [Development Roadmap](docs/ROADMAP.md)
 
 ---

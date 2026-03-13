@@ -1,4 +1,4 @@
-# RAG System (Retrieval-Augmented Generation)
+# ML/AI Assets (RAG, OCR, ONNX Runtime)
 
 TizenClaw uses an **on-device embedding** system for RAG that is fully independent of the LLM backend. This ensures consistent semantic search results regardless of which LLM (Gemini, OpenAI, Ollama, etc.) is active.
 
@@ -18,9 +18,9 @@ TizenClaw uses an **on-device embedding** system for RAG that is fully independe
 └─────────────────────────────────┘    └─────────────────────────────────┘
 ```
 
-## Companion Project: tizenclaw-rag
+## Companion Project: tizenclaw-assets
 
-RAG assets are maintained in a **separate project**: [tizenclaw-rag](https://github.com/hjhun/tizenclaw-rag)
+RAG assets are part of the consolidated **[tizenclaw-assets](https://github.com/hjhun/tizenclaw-assets)** package, which also includes ONNX Runtime, the OCR engine, and the embedding model.
 
 The project produces an independent RPM containing:
 
@@ -29,6 +29,8 @@ The project produces an independent RPM containing:
 | Knowledge Databases | `/opt/usr/share/tizenclaw/rag/` | ~62 MB |
 | ONNX Runtime | `/opt/usr/share/tizenclaw/lib/` | ~16 MB |
 | Embedding Model | `/opt/usr/share/tizenclaw/models/all-MiniLM-L6-v2/` | ~90 MB |
+| OCR Models (PP-OCRv3) | `/opt/usr/share/tizenclaw/models/ppocr/` | ~15 MB (lite) / ~86 MB (full) |
+| OCR CLI Tool | `/opt/usr/share/tizenclaw/tools/cli/tizenclaw-ocr/` | ~130 KB |
 
 ### Knowledge Databases
 
@@ -41,12 +43,16 @@ The project produces an independent RPM containing:
 
 ```bash
 # Option A: Automatic (via deploy.sh)
-# deploy.sh auto-detects ../tizenclaw-rag and builds it alongside tizenclaw
+# deploy.sh auto-detects ../tizenclaw-assets and builds it alongside tizenclaw
 ./deploy.sh
 
 # Option B: Manual
-cd ../tizenclaw-rag
+cd ../tizenclaw-assets
 gbs build -A x86_64 --include-all
+
+# Option C: With full CJK OCR model (default is lite Korean+English)
+cd ../tizenclaw-assets
+gbs build -A x86_64 --include-all --define "ocr_model full"
 ```
 
 ### Regenerating RAG Databases
@@ -54,7 +60,7 @@ gbs build -A x86_64 --include-all
 If you need to rebuild the knowledge databases from source documentation:
 
 ```bash
-cd ../tizenclaw-rag
+cd ../tizenclaw-assets
 
 # Auto-download tizen-docs from GitHub (if not present)
 ./scripts/setup_docs.sh
@@ -106,6 +112,6 @@ Queries search across all attached databases and return the top-k most similar r
 
 The armv7l library is cross-compiled from source using `arm-linux-gnueabihf-gcc`. To rebuild:
 ```bash
-cd ../tizenclaw-rag
+cd ../tizenclaw-assets
 bash scripts/build_ort_armv7l.sh ~/path/to/onnxruntime
 ```

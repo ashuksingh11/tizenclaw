@@ -141,7 +141,7 @@ ${CYAN}Examples:${NC}
   $(basename "$0") -i -n               # Fastest iterative rebuild + deploy + run
   $(basename "$0") -s                  # Deploy existing RPM + run
   $(basename "$0") -t                  # Build + deploy + run E2E tests
-  $(basename "$0") --skip-rag           # Skip tizenclaw-rag sub-project build
+  $(basename "$0") --skip-rag           # Skip tizenclaw-assets sub-project build
   $(basename "$0") -w                  # Deploy and install ngrok binary
   $(basename "$0") --dry-run           # Preview all steps
   $(basename "$0") -a aarch64          # Build for ARM64 target
@@ -261,7 +261,7 @@ do_build() {
 }
 
 # ─────────────────────────────────────────────
-# Step 1.5: Build tizenclaw-rag (if present)
+# Step 1.5: Build tizenclaw-assets (if present)
 # ─────────────────────────────────────────────
 RAG_RPM_FILES=()
 
@@ -270,17 +270,17 @@ do_build_rag() {
     return 0
   fi
 
-  # Auto-detect tizenclaw-rag project
+  # Auto-detect tizenclaw-assets project
   if [ -z "${RAG_PROJECT_DIR}" ]; then
-    RAG_PROJECT_DIR="${PROJECT_DIR}/../tizenclaw-rag"
+    RAG_PROJECT_DIR="${PROJECT_DIR}/../tizenclaw-assets"
   fi
 
   if [ ! -f "${RAG_PROJECT_DIR}/CMakeLists.txt" ]; then
-    log "tizenclaw-rag project not found at ${RAG_PROJECT_DIR} (skipping)"
+    log "tizenclaw-assets project not found at ${RAG_PROJECT_DIR} (skipping)"
     return 0
   fi
 
-  header "Step 1.5: Build tizenclaw-rag"
+  header "Step 1.5: Build tizenclaw-assets"
 
   local rag_abs_dir
   rag_abs_dir=$(cd "${RAG_PROJECT_DIR}" && pwd)
@@ -291,19 +291,19 @@ do_build_rag() {
     gbs_args+=("--noinit")
   fi
 
-  log "Running: gbs build ${gbs_args[*]} (tizenclaw-rag)"
+  log "Running: gbs build ${gbs_args[*]} (tizenclaw-assets)"
 
   if [ "${DRY_RUN}" = true ]; then
     echo -e "  ${YELLOW}[DRY-RUN]${NC} cd ${rag_abs_dir} && gbs build ${gbs_args[*]}"
-    ok "tizenclaw-rag build (dry-run)"
+    ok "tizenclaw-assets build (dry-run)"
     return 0
   fi
 
-  local rag_log="/tmp/gbs_rag_build_output.log"
+  local rag_log="/tmp/gbs_assets_build_output.log"
   if (cd "${rag_abs_dir}" && gbs build "${gbs_args[@]}" 2>&1 | tee "${rag_log}"); then
-    ok "tizenclaw-rag build succeeded"
+    ok "tizenclaw-assets build succeeded"
   else
-    warn "tizenclaw-rag build failed (non-fatal, continuing without RAG)"
+    warn "tizenclaw-assets build failed (non-fatal, continuing without RAG)"
     return 0
   fi
 
@@ -314,7 +314,7 @@ do_build_rag() {
 
   if [ -n "${rag_rpms_dir}" ] && [ -d "${rag_rpms_dir}" ]; then
     mapfile -t RAG_RPM_FILES < <(find "${rag_rpms_dir}" -maxdepth 1 \
-      -name "tizenclaw-rag*.rpm" \
+      -name "tizenclaw-assets*.rpm" \
       ! -name "*-debuginfo-*" \
       ! -name "*-debugsource-*" \
       2>/dev/null | sort)

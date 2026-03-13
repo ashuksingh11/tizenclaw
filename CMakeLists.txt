@@ -79,8 +79,8 @@ ADD_SUBDIRECTORY(tools/cli/aurum-cli)
 ENABLE_TESTING()
 ADD_SUBDIRECTORY(test/unit_tests)
 
-## RAG databases, models, and ONNX Runtime are in the
-## separate tizenclaw-rag project (../tizenclaw-rag).
+## ONNX Runtime, RAG databases, OCR models, and embedding model
+## are provided by the tizenclaw-assets package.
 
 INSTALL(FILES "${CMAKE_CURRENT_SOURCE_DIR}/data/sample/tunnel_config.json.sample"
         DESTINATION "${APP_DATA_DIR}/config"
