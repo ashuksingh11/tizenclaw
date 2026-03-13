@@ -33,6 +33,7 @@
 #include "agent_role.hh"
 #include "tool_policy.hh"
 #include "action_bridge.hh"
+#include "system_context_provider.hh"
 #include <functional>
 #include <mutex>
 
@@ -274,6 +275,9 @@ class AgentCore {
 
   // Tizen Action Framework bridge
   std::unique_ptr<ActionBridge> action_bridge_;
+
+  // System context provider (EventBus subscriber)
+  std::unique_ptr<SystemContextProvider> system_context_;
 
   // Get session-specific system prompt
   // (falls back to global system_prompt_)

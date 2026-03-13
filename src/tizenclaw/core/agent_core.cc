@@ -253,6 +253,11 @@ bool AgentCore::Initialize() {
     LOG(WARNING) << "Supervisor engine: no roles " << "configured (non-fatal)";
   }
 
+  // Initialize system context provider
+  system_context_ = std::make_unique<SystemContextProvider>();
+  system_context_->Start();
+  LOG(INFO) << "SystemContextProvider ready";
+
   // Initialize pipeline executor
   pipeline_executor_ = std::make_unique<PipelineExecutor>(this);
   pipeline_executor_->LoadPipelines();
@@ -1707,6 +1712,22 @@ std::string AgentCore::BuildSystemPrompt(
   if (mem_pos != std::string::npos) {
     prompt.replace(mem_pos, mem_ph.size(),
                    memory_store_.LoadSummary());
+  }
+
+  // Replace {{SYSTEM_CONTEXT}} placeholder
+  {
+    const std::string sys_ph = "{{SYSTEM_CONTEXT}}";
+    size_t sys_pos = prompt.find(sys_ph);
+    std::string sys_ctx;
+    if (system_context_) {
+      sys_ctx = system_context_->GetContextString();
+    }
+    if (sys_pos != std::string::npos) {
+      prompt.replace(sys_pos, sys_ph.size(), sys_ctx);
+    } else if (!sys_ctx.empty()) {
+      // If no placeholder, append system context
+      prompt += "\n\n## Current System Context\n" + sys_ctx;
+    }
   }
 
   // Replace {{AVAILABLE_TOOLS}} placeholder

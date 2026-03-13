@@ -132,6 +132,14 @@ void TizenClawDaemon::OnCreate() {
     LOG(ERROR) << "Failed to initialize AgentCore";
   }
 
+  // Start EventBus and SystemEventCollector
+  EventBus::GetInstance().Start();
+  std::string events_dir =
+      std::string(APP_DATA_DIR) + "/tools/events";
+  EventBus::GetInstance().LoadPlugins(events_dir);
+  event_collector_ = std::make_unique<SystemEventCollector>();
+  event_collector_->Start();
+
   // Initialize Task Scheduler
   scheduler_ = std::make_unique<TaskScheduler>();
   agent_->SetScheduler(scheduler_.get());
@@ -179,6 +187,10 @@ void TizenClawDaemon::OnDestroy() {
 
   // Stop Plugin Manager
   PluginManager::GetInstance().Shutdown();
+
+  // Stop EventBus and SystemEventCollector
+  if (event_collector_) event_collector_->Stop();
+  EventBus::GetInstance().Stop();
 
   // Stop Skill Watcher
   skill_watcher_.Stop();

@@ -37,6 +37,8 @@
 #include "../channel/webhook_channel.hh"
 #include "../scheduler/task_scheduler.hh"
 #include "agent_core.hh"
+#include "event_bus.hh"
+#include "system_event_collector.hh"
 #include "skill_watcher.hh"
 
 namespace tizenclaw {
@@ -67,6 +69,7 @@ class TizenClawDaemon {
   std::unique_ptr<TaskScheduler> scheduler_;
   ChannelRegistry channel_registry_;
   SkillWatcher skill_watcher_;
+  std::unique_ptr<SystemEventCollector> event_collector_;
 
   // Concurrency control
   std::atomic<int> active_clients_{0};
