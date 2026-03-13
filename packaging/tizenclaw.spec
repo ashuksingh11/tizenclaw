@@ -70,6 +70,7 @@ mkdir -p %{buildroot}/opt/usr/share/tizenclaw/img
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/skills
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/config
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/embedded
+mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/cli
 
 ln -sf ../tizenclaw.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw.service
 ln -sf ../tizenclaw-skills-secure.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw-skills-secure.service
@@ -95,6 +96,7 @@ ln -sf ../tizenclaw-skills-secure.service %{buildroot}%{_unitdir}/multi-user.tar
 /opt/usr/share/tizenclaw/tools/routing_guide.md
 /opt/usr/share/tizenclaw/web/
 /opt/usr/share/tizenclaw/tools/embedded/
+/opt/usr/share/tizenclaw/tools/cli/
 %dir /opt/usr/share/tizenclaw/tools/
 %dir /opt/usr/share/tizenclaw/config/
 %dir /opt/usr/share/tizenclaw/

@@ -47,6 +47,8 @@ std::string ExtractTitle(const std::string& content) {
 
 // Extract the first non-empty paragraph after the
 // H1 title from an MD file content.
+// Skips blank lines, sub-headers, fences, tables,
+// and **Category**: metadata lines.
 std::string ExtractFirstParagraph(
     const std::string& content) {
   std::istringstream stream(content);
@@ -71,6 +73,10 @@ std::string ExtractFirstParagraph(
         line[0] == '|') {
       break;
     }
+
+    // Skip **Category**: metadata lines
+    if (line.rfind("**Category**: ", 0) == 0)
+      continue;
 
     // Truncate long paragraphs
     if (line.size() > 120)
@@ -340,41 +346,76 @@ void ToolIndexer::GenerateCliIndex(
   std::error_code ec;
   if (!fs::is_directory(cli_dir, ec)) return;
 
-  std::ostringstream md;
-  md << "# CLI Tools\n\n";
+  struct CliEntry {
+    std::string name;
+    std::string category;
+    std::string description;
+  };
+  std::vector<CliEntry> entries;
 
-  int count = 0;
   for (const auto& entry :
        fs::directory_iterator(cli_dir, ec)) {
     if (!entry.is_directory()) continue;
     auto dirname = entry.path().filename().string();
     if (dirname[0] == '.') continue;
 
-    // Extract CLI name
+    // Extract CLI name from {pkgid}__{cli_name}
     std::string cli_name = dirname;
     auto sep = dirname.find("__");
     if (sep != std::string::npos) {
       cli_name = dirname.substr(sep + 2);
     }
 
-    // Read tool.md for description
+    // Read tool.md for metadata
     std::string tool_md =
         entry.path().string() + "/tool.md";
     std::string content = ReadFile(tool_md);
-    std::string title =
-        content.empty() ? cli_name
-                        : ExtractTitle(content);
-    std::string desc = ExtractFirstParagraph(content);
-    if (title.empty()) title = cli_name;
 
-    md << "- **" << title << "**: " << desc << "\n";
-    count++;
+    CliEntry e;
+    e.name = content.empty() ? cli_name
+                             : ExtractTitle(content);
+    if (e.name.empty()) e.name = cli_name;
+    e.category = ExtractCategory(content);
+    e.description =
+        ExtractFirstParagraph(content);
+
+    entries.push_back(std::move(e));
   }
 
-  if (count == 0) {
+  // Group by category
+  std::map<std::string,
+           std::vector<const CliEntry*>>
+      groups;
+  for (const auto& e : entries)
+    groups[e.category].push_back(&e);
+
+  for (auto& [cat, vec] : groups) {
+    std::sort(vec.begin(), vec.end(),
+              [](const CliEntry* a,
+                 const CliEntry* b) {
+                return a->name < b->name;
+              });
+  }
+
+  std::ostringstream md;
+  md << "# CLI Tools\n\n";
+
+  if (entries.empty()) {
     md << "_No CLI tools registered._\n";
   } else {
-    md << "\nTotal: " << count << " CLI tools\n";
+    int total = 0;
+    for (const auto& [cat, vec] : groups) {
+      md << "### " << cat << "\n";
+      md << "| Name | Description |\n";
+      md << "|------|-------------|\n";
+      for (const auto* e : vec) {
+        md << "| " << e->name << " | "
+           << e->description << " |\n";
+        total++;
+      }
+      md << "\n";
+    }
+    md << "Total: " << total << " CLI tools\n";
   }
 
   WriteFile(cli_dir + "/index.md", md.str());
