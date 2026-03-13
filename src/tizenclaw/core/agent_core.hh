@@ -74,6 +74,9 @@ class AgentCore {
   // (called by WebDashboard)
   void SetHealthMonitor(HealthMonitor* monitor) { health_monitor_ = monitor; }
 
+  // Get SystemContextProvider reference
+  SystemContextProvider* GetSystemContext() { return system_context_.get(); }
+
   // Access session store (for IPC usage queries)
   const SessionStore& GetSessionStore() const { return session_store_; }
 

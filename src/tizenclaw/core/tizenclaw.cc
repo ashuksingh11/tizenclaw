@@ -140,6 +140,15 @@ void TizenClawDaemon::OnCreate() {
   event_collector_ = std::make_unique<SystemEventCollector>();
   event_collector_->Start();
 
+  // Initialize AutonomousTrigger
+  auto_trigger_ = std::make_unique<AutonomousTrigger>(
+      agent_.get(), agent_->GetSystemContext());
+  std::string trigger_config =
+      std::string(APP_DATA_DIR)
+      + "/config/autonomous_trigger.json";
+  auto_trigger_->LoadRules(trigger_config);
+  auto_trigger_->Start();
+
   // Initialize Task Scheduler
   scheduler_ = std::make_unique<TaskScheduler>();
   agent_->SetScheduler(scheduler_.get());
@@ -188,7 +197,8 @@ void TizenClawDaemon::OnDestroy() {
   // Stop Plugin Manager
   PluginManager::GetInstance().Shutdown();
 
-  // Stop EventBus and SystemEventCollector
+  // Stop AutonomousTrigger, EventBus and Collector
+  if (auto_trigger_) auto_trigger_->Stop();
   if (event_collector_) event_collector_->Stop();
   EventBus::GetInstance().Stop();
 

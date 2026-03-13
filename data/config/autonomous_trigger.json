@@ -1,0 +1,38 @@
+{
+  "enabled": true,
+  "evaluation_session": "autonomous",
+  "max_evaluations_per_hour": 10,
+  "notification_channel": "telegram",
+  "trigger_rules": [
+    {
+      "name": "low_battery_alert",
+      "event_type": "battery.level_changed",
+      "condition": {"level": {"$lt": 15}},
+      "cooldown_minutes": 30,
+      "action": "evaluate"
+    },
+    {
+      "name": "battery_critical",
+      "event_type": "battery.level_changed",
+      "condition": {"level": {"$lt": 5}},
+      "cooldown_minutes": 10,
+      "action": "direct",
+      "direct_prompt": "배터리가 5% 미만입니다. 즉시 충전이 필요합니다. 사용자에게 경고하고 불필요한 프로세스를 종료할 방법을 제안해주세요."
+    },
+    {
+      "name": "network_lost",
+      "event_type": "network.disconnected",
+      "condition": {},
+      "cooldown_minutes": 5,
+      "action": "evaluate"
+    },
+    {
+      "name": "memory_critical",
+      "event_type": "memory.critical",
+      "condition": {"level": {"$eq": "critical"}},
+      "cooldown_minutes": 10,
+      "action": "direct",
+      "direct_prompt": "시스템 메모리가 위험 수준입니다. 메모리 사용량을 분석하고 불필요한 프로세스를 종료하는 방법을 제안해주세요."
+    }
+  ]
+}

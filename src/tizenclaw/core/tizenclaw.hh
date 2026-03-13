@@ -39,6 +39,7 @@
 #include "agent_core.hh"
 #include "event_bus.hh"
 #include "system_event_collector.hh"
+#include "autonomous_trigger.hh"
 #include "skill_watcher.hh"
 
 namespace tizenclaw {
@@ -70,6 +71,7 @@ class TizenClawDaemon {
   ChannelRegistry channel_registry_;
   SkillWatcher skill_watcher_;
   std::unique_ptr<SystemEventCollector> event_collector_;
+  std::unique_ptr<AutonomousTrigger> auto_trigger_;
 
   // Concurrency control
   std::atomic<int> active_clients_{0};
