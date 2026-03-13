@@ -35,6 +35,7 @@
 #include "../llm/plugin_llm_backend.hh"
 #include "../llm/plugin_manager.hh"
 #include "../storage/audit_logger.hh"
+#include "skill_plugin_manager.hh"
 #include "tool_indexer.hh"
 
 namespace tizenclaw {
@@ -180,6 +181,13 @@ bool AgentCore::Initialize() {
 
   // React to plugin install/uninstall
   PluginManager::GetInstance().SetChangeCallback([this]() { ReloadBackend(); });
+
+  // React to skill RPK install/uninstall
+  SkillPluginManager::GetInstance().SetChangeCallback([this]() {
+    LOG(INFO) << "Skill RPK change detected, invalidating tool cache";
+    cached_tools_loaded_.store(false);
+  });
+  SkillPluginManager::GetInstance().Initialize();
 
   // Initialize embedding store for RAG
   std::string rag_db = std::string(APP_DATA_DIR) + "/rag/embeddings.db";

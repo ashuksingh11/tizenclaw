@@ -46,7 +46,7 @@ TizenClaw is part of the **Claw** family of AI agent runtimes, each targeting di
 - 📱 **Direct Tizen C-API** — ctypes wrappers for device hardware (battery, Wi-Fi, BT, display, volume, sensors, notifications, alarm, app management)
 - 🎯 **Tizen Action Framework** — Native integration with per-action LLM tools, MD schema caching, event-driven updates
 - 🤖 **Dynamic LLM Backends** — Built-in support for Gemini, OpenAI, Anthropic, xAI, Ollama with unified priority-based switching, seamlessly cascading between active, fallbacks, and dynamically loaded built-in/RPK Plugins.
-- 🧩 **RPK Tool Distribution** (TBD) — Extend the skill ecosystem dynamically using Tizen Resource Packages (RPKs) bundling Python skills and CLI tools without daemon recompilation.
+- 🧩 **RPK Tool Distribution** — Extend the skill ecosystem dynamically using Tizen Resource Packages (RPKs) bundling Python skills and CLI tools without daemon recompilation. Platform-signed RPK packages are automatically discovered and symlinked into the skills directory.
 - 📦 **Lightweight Deployment** — systemd + RPM, standalone device execution without Node.js/Docker
 - 🔧 **Native MCP Server** — C++ MCP server integrated into daemon, Claude Desktop controls Tizen via sdb
 - 📊 **Health Monitoring** — Built-in Prometheus-style metrics endpoint + live dashboard panel
@@ -451,6 +451,7 @@ tizenclaw/
 - [tizenclaw-rag](https://github.com/hjhun/tizenclaw-rag): Companion RAG package — pre-built Tizen documentation knowledge databases, ONNX Runtime, and the all-MiniLM-L6-v2 embedding model for LLM-independent on-device semantic search.
 - [tizenclaw-webview](https://github.com/hjhun/tizenclaw-webview): A companion Tizen web application that provides an on-device Web Admin Dashboard for TizenClaw.
 - [tizenclaw-llm-plugin-sample](https://github.com/hjhun/tizenclaw-llm-plugin-sample): A sample project demonstrating how to build an RPM to RPK (Resource Package) plugin to dynamically inject new customized LLM backends into TizenClaw at runtime.
+- [tizenclaw-skill-plugin-sample](https://github.com/hjhun/tizenclaw-skill-plugin-sample): A sample project demonstrating how to build an RPK skill plugin to dynamically inject Python skills into TizenClaw via platform-signed packages.
 
 ---
 
