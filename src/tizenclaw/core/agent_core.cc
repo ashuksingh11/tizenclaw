@@ -1189,6 +1189,20 @@ std::vector<LlmToolDecl> AgentCore::LoadSkillDeclarations() {
                                 {"required", nlohmann::json::array()}};
   tools.push_back(list_roles_tool);
 
+  // Built-in tool: get_agent_status
+  LlmToolDecl agent_status_tool;
+  agent_status_tool.name = "get_agent_status";
+  agent_status_tool.description =
+      "Get current agent system status: "
+      "configured agents count, active "
+      "delegations in progress, and recent "
+      "delegation history with stats.";
+  agent_status_tool.parameters = {
+      {"type", "object"},
+      {"properties", nlohmann::json::object()},
+      {"required", nlohmann::json::array()}};
+  tools.push_back(agent_status_tool);
+
   // Built-in tool: spawn_agent
   LlmToolDecl spawn_agent_tool;
   spawn_agent_tool.name = "spawn_agent";
@@ -2436,6 +2450,13 @@ std::string AgentCore::ExecuteSupervisorOp(const std::string& operation,
   } else if (operation == "list_agent_roles") {
     auto roles = supervisor_->ListRoles();
     result = {{"status", "ok"}, {"roles", roles}, {"count", (int)roles.size()}};
+  } else if (operation == "get_agent_status") {
+    auto status = supervisor_->GetAgentStatus();
+    auto delegations =
+        supervisor_->ListActiveDelegations();
+    result = {{"status", "ok"},
+              {"agent_status", status},
+              {"delegations", delegations}};
   } else {
     result = {{"error", "Unknown supervisor operation: " + operation}};
   }
@@ -3050,7 +3071,8 @@ void AgentCore::InitializeToolDispatcher() {
 
   for (const auto& n :
        {"run_supervisor",
-        "list_agent_roles"}) {
+        "list_agent_roles",
+        "get_agent_status"}) {
     tool_dispatch_[n] =
         [this](const nlohmann::json& args,
                const std::string& name,

@@ -144,6 +144,88 @@ void SupervisorEngine::UnregisterRole(
   }
 }
 
+nlohmann::json SupervisorEngine::GetAgentStatus() const {
+  std::lock_guard<std::mutex> lock(delegation_mutex_);
+
+  size_t total_roles;
+  {
+    std::lock_guard<std::mutex> rlock(roles_mutex_);
+    total_roles = roles_.size();
+  }
+
+  auto active = nlohmann::json::array();
+  for (const auto& ad : active_delegations_) {
+    int64_t now =
+        std::chrono::duration_cast<
+            std::chrono::milliseconds>(
+            std::chrono::system_clock::now()
+                .time_since_epoch())
+            .count();
+    int elapsed_sec =
+        static_cast<int>((now - ad.start_time_ms) / 1000);
+
+    active.push_back({
+        {"role", ad.role_name},
+        {"task", ad.sub_task},
+        {"elapsed_sec", elapsed_sec}});
+  }
+
+  return {
+      {"configured_agents", total_roles},
+      {"active_delegations", active.size()},
+      {"active", active},
+      {"stats",
+       {{"total_delegations", total_delegations_},
+        {"successful", successful_delegations_},
+        {"failed",
+         total_delegations_ - successful_delegations_}}}};
+}
+
+nlohmann::json
+SupervisorEngine::ListActiveDelegations() const {
+  std::lock_guard<std::mutex> lock(delegation_mutex_);
+
+  auto active = nlohmann::json::array();
+  for (const auto& ad : active_delegations_) {
+    int64_t now =
+        std::chrono::duration_cast<
+            std::chrono::milliseconds>(
+            std::chrono::system_clock::now()
+                .time_since_epoch())
+            .count();
+
+    active.push_back({
+        {"role", ad.role_name},
+        {"task", ad.sub_task},
+        {"session_id", ad.session_id},
+        {"elapsed_sec",
+         static_cast<int>(
+             (now - ad.start_time_ms) / 1000)},
+        {"status", "running"}});
+  }
+
+  auto history = nlohmann::json::array();
+  // Show last 5 completed
+  size_t start = delegation_history_.size() > 5
+                     ? delegation_history_.size() - 5
+                     : 0;
+  for (size_t i = start;
+       i < delegation_history_.size(); ++i) {
+    const auto& h = delegation_history_[i];
+    int duration_sec = static_cast<int>(
+        (h.end_time_ms - h.start_time_ms) / 1000);
+    history.push_back({
+        {"role", h.role_name},
+        {"task", h.sub_task},
+        {"duration_sec", duration_sec},
+        {"status",
+         h.success ? "completed" : "failed"}});
+  }
+
+  return {{"active", active},
+          {"recent_history", history}};
+}
+
 std::string SupervisorEngine::RunSupervisor(const std::string& goal,
                                             const std::string& strategy,
                                             const std::string& session_id) {
@@ -313,6 +395,26 @@ DelegationResult SupervisorEngine::DelegateToRole(
   LOG(INFO) << "Supervisor: delegating to role '" << role.name
             << "': " << sub_task;
 
+  // Track active delegation
+  ActiveDelegation ad;
+  ad.role_name = role.name;
+  ad.sub_task = sub_task.substr(
+      0, std::min(sub_task.size(), size_t(100)));
+  ad.start_time_ms =
+      std::chrono::duration_cast<
+          std::chrono::milliseconds>(
+          std::chrono::system_clock::now()
+              .time_since_epoch())
+          .count();
+  size_t tracking_idx;
+  {
+    std::lock_guard<std::mutex> lock(
+        delegation_mutex_);
+    tracking_idx = active_delegations_.size();
+    active_delegations_.push_back(ad);
+    total_delegations_++;
+  }
+
   // Create role agent session
   nlohmann::json create_args = {{"name", std::string(kRolePrefix) + role.name},
                                 {"system_prompt", role.system_prompt}};
@@ -356,6 +458,37 @@ DelegationResult SupervisorEngine::DelegateToRole(
 
   LOG(INFO) << "Supervisor: role '" << role.name
             << "' completed (success=" << dr.success << ")";
+
+  // Update tracking
+  {
+    std::lock_guard<std::mutex> lock(
+        delegation_mutex_);
+    if (tracking_idx < active_delegations_.size()) {
+      auto& tracked =
+          active_delegations_[tracking_idx];
+      tracked.completed = true;
+      tracked.success = dr.success;
+      tracked.end_time_ms =
+          std::chrono::duration_cast<
+              std::chrono::milliseconds>(
+              std::chrono::system_clock::now()
+                  .time_since_epoch())
+              .count();
+      tracked.session_id = dr.session_id;
+      if (dr.success) successful_delegations_++;
+
+      // Move to history
+      delegation_history_.push_back(tracked);
+      if (delegation_history_.size() > kMaxHistory)
+        delegation_history_.erase(
+            delegation_history_.begin());
+
+      // Remove from active
+      active_delegations_.erase(
+          active_delegations_.begin() +
+          static_cast<long>(tracking_idx));
+    }
+  }
 
   return dr;
 }

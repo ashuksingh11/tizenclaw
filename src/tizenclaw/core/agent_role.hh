@@ -44,6 +44,17 @@ struct DelegationResult {
   bool success = false;
 };
 
+// Active delegation entry for tracking
+struct ActiveDelegation {
+  std::string role_name;
+  std::string sub_task;
+  std::string session_id;
+  int64_t start_time_ms = 0;   // epoch ms
+  bool completed = false;
+  int64_t end_time_ms = 0;
+  bool success = false;
+};
+
 // Supervisor engine for multi-agent
 // orchestration
 class SupervisorEngine {
@@ -72,6 +83,10 @@ class SupervisorEngine {
   void RegisterRole(const AgentRole& role);
   void UnregisterRole(const std::string& name);
 
+  // Active delegation tracking
+  [[nodiscard]] nlohmann::json GetAgentStatus() const;
+  [[nodiscard]] nlohmann::json ListActiveDelegations() const;
+
  private:
   // Decompose goal into (role, sub_task) pairs
   // via LLM
@@ -91,6 +106,14 @@ class SupervisorEngine {
   AgentCore* agent_;
   std::map<std::string, AgentRole> roles_;
   mutable std::mutex roles_mutex_;
+
+  // Active delegation tracking
+  std::vector<ActiveDelegation> active_delegations_;
+  std::vector<ActiveDelegation> delegation_history_;
+  mutable std::mutex delegation_mutex_;
+  static constexpr size_t kMaxHistory = 20;
+  int total_delegations_ = 0;
+  int successful_delegations_ = 0;
 
   // Session prefix for role agents
   static constexpr const char* kRolePrefix = "role_";
