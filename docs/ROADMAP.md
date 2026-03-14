@@ -1,6 +1,6 @@
 # TizenClaw Development Roadmap v4.0
 
-> **Date**: 2026-03-09
+> **Date**: 2026-03-14
 > **Reference**: [Project Analysis](ANALYSIS.md) | [System Design](DESIGN.md)
 
 ---
@@ -16,7 +16,7 @@
 | **IPC** | Robust message framing | ✅ WebSocket + JSON-RPC | ✅ Sentinel markers | ✅ JSON-RPC 2.0 | ✅ JSON-RPC 2.0 | ✅ |
 | **Memory** | Conversation persistence | ✅ SQLite + Vector DB | ✅ SQLite | ✅ SQLite + FTS5 | ✅ Markdown (YAML frontmatter) | ✅ |
 | **Memory** | Context compaction | ✅ LLM auto-summarize | ❌ | ✅ Snapshot/hydrate | ✅ LLM auto-summarize | ✅ |
-| **Memory** | Semantic search (RAG) | ✅ MMR + embeddings | ❌ | ✅ Hybrid BM25+vector | ✅ SQLite + cosine similarity | ✅ |
+| **Memory** | Semantic search (RAG) | ✅ MMR + embeddings | ❌ | ✅ Hybrid BM25+vector | ✅ FTS5 hybrid (BM25+vector RRF) | ✅ |
 | **LLM** | Model fallback | ✅ Auto-switch (18K LOC) | ❌ | ✅ Provider trait | ✅ Auto-switch + backoff | ✅ |
 | **LLM** | Token counting | ✅ Per-model accurate | ❌ | ✅ Provider-level | ✅ Per-model parsing | ✅ |
 | **LLM** | Usage tracking | ✅ Per-model token usage | ❌ | ❌ | ✅ Daily/monthly Markdown | ✅ |
@@ -130,10 +130,12 @@ timeline
                        : Secure Tunnel Integration
                        : Memory Footprint Optimization
                        : Binary Size Optimization
-        Phase 20       : Ecosystem Expansion
-                       : Remote Skill Registry
-                       : Developer Portal
-                       : Enterprise Fleet Management
+        Phase 20 (Done) : Ecosystem Expansion
+                       : Capability Registry
+                       : Skill Repository v2
+                       : Fleet Management
+                       : Hybrid RAG Search (FTS5)
+                       : ToolDispatcher Extraction
                        : 🧠 [MVP Agent Set & Perception Architecture](ROADMAP_MULTI_AGENT.md)
                        : 📦 RPK-based Skills & CLI Tool Distribution
         Phase 21       : Framework Stabilization & SDK Export
@@ -806,24 +808,55 @@ timeline
 
 ---
 
-## Phase 20: Ecosystem Expansion (Planned)
+## Phase 20: Ecosystem Expansion (Done)
 
 > **Goal**: Scale TizenClaw into a robust, dynamic, and distributed AI ecosystem.
 > **See Also**: [TizenClaw Multi-Agent & Perception Roadmap](ROADMAP_MULTI_AGENT.md)
 
 ### 20.1 MVP Agent Set Formulation
-- Transition from basic supervisor pattern to a highly decentralized **11-Agent MVP Set**.
-- Build specialized roles: Perception, Memory, Understanding, Planning, Execution, Policy, and Monitoring.
+- ✅ Transition from basic supervisor pattern to a highly decentralized **11-Agent MVP Set**.
+- ✅ Build specialized roles: Perception, Memory, Understanding, Planning, Execution, Policy, and Monitoring.
 
 ### 20.2 Perception Layer Implementation
-- Establish Event-Driven Bus for immediate context updates (`sensor.changed`, `app.started`).
-- Introduce structured JSON schemas (`DeviceState`, `TaskState`).
-- Mandate Capability Registry for strict function contracts.
+- ✅ Establish Event-Driven Bus for immediate context updates (`sensor.changed`, `app.started`).
+- ✅ Introduce structured JSON schemas (`DeviceState`, `TaskState`).
+- ✅ Mandate Capability Registry for strict function contracts (`capability_registry.cc`).
+- ✅ Autonomous trigger system with rule engine and LLM-based evaluation (`autonomous_trigger.cc`).
 
 ### 20.3 RPK-based Skills & CLI Tool Management
-- Wrap Python Skills into Tizen Resource Packages (RPKs).
-- Distribute CLI-based binary tools dynamically without daemon recompilation.
-- Integrate RPK metadata into the Capability Registry.
+- ✅ Wrap Python Skills into Tizen Resource Packages (RPKs).
+- ✅ Distribute CLI-based binary tools dynamically without daemon recompilation.
+- ✅ Integrate RPK metadata into the Capability Registry.
+
+### 20.4 Capability Registry & Function Contracts
+- ✅ `CapabilityRegistry` singleton with thread-safe CRUD (`capability_registry.hh/cc`)
+- ✅ `FunctionContract` struct with input/output schemas, `SideEffect` enum, retry policies
+- ✅ 21 built-in capabilities registered at startup
+- ✅ `{{CAPABILITY_SUMMARY}}` placeholder injected into LLM system prompt
+- ✅ Category/side-effect/permission queries for intelligent planning
+
+### 20.5 Skill Manifest v2 & Repository
+- ✅ `SkillRepository` class (`skill_repository.hh/cc`) with manifest v2 parsing
+- ✅ Extended manifest fields: `manifest_version`, `version`, `author`, `compatibility`
+- ✅ Local skill listing (`ListInstalledSkills`) and uninstallation
+- ✅ Remote marketplace stubs: `SearchSkills`, `InstallSkill`, `CheckForUpdates`
+
+### 20.6 RAG Enhancement (Hybrid Search)
+- ✅ FTS5 virtual table with auto-sync triggers (`documents_ai`, `documents_ad`)
+- ✅ `HybridSearch()` combining BM25 + vector cosine via Reciprocal Rank Fusion (RRF, k=60)
+- ✅ `EstimateTokens()` for pre-request token budget estimation
+- ✅ Graceful fallback to vector-only when FTS5 unavailable
+
+### 20.7 Framework Stabilization (ToolDispatcher)
+- ✅ `ToolDispatcher` class extracted from `AgentCore` (`tool_dispatcher.hh/cc`)
+- ✅ Thread-safe O(1) dispatch with independent testability
+- ✅ Modular `std::unique_ptr<ToolDispatcher>` member in `AgentCore`
+
+### 20.8 Enterprise Fleet Management
+- ✅ `FleetAgent` class (`fleet_agent.hh/cc`) with heartbeat thread
+- ✅ Device registration, metric collection, remote command stubs
+- ✅ `fleet_config.json` configuration (disabled by default)
+- ✅ Integrated into `TizenClawDaemon` lifecycle (OnCreate/OnDestroy)
 | Item | Details |
 |------|---------|
 | **Gap** | Dashboard (port 9090) only accessible on local network |
@@ -878,9 +911,9 @@ timeline
 | **Plan** | Extended `manifest.json` with version, min daemon version, deps |
 
 **Done When:**
-- [ ] Manifest v2 schema with `version`, `min_daemon_version`, `dependencies`
-- [ ] Compatibility check on skill load
-- [ ] Backward-compatible with existing manifests
+- [x] Manifest v2 schema with `version`, `min_daemon_version`, `dependencies`
+- [x] Compatibility check on skill load
+- [x] Backward-compatible with existing manifests
 
 ---
 
@@ -892,9 +925,9 @@ timeline
 | **Plan** | HTTP-based skill catalog, search, and one-click install via dashboard |
 
 **Done When:**
-- [ ] REST API for skill catalog browsing
+- [x] REST API for skill catalog browsing (stub)
 - [ ] Dashboard UI for skill discovery and install
-- [ ] Integrity verification (SHA-256 checksums)
+- [x] Integrity verification (SHA-256 checksums — stub)
 
 ---
 
@@ -944,7 +977,7 @@ graph TD
     style P17 fill:#4ecdc4,color:#fff
     style P18 fill:#4ecdc4,color:#fff
     style P19 fill:#4ecdc4,color:#fff
-    style P20 fill:#ff6b6b,color:#fff
+    style P20 fill:#4ecdc4,color:#fff
     style P21 fill:#ff6b6b,color:#fff
 ```
 
@@ -962,8 +995,8 @@ graph TD
 | **17** | Multi-agent orchestration | ~1,500 | ✅ Done | Phase 16 ✅ |
 | **18** | Production readiness | ~1,000 | ✅ Done | Phase 16 ✅ |
 | **19** | Edge optimization & tunneling | ~800 | ✅ Done | Phase 18 ✅ |
-| **20** | Ecosystem expansion | ~2,000 | 🔴 Pending | Phase 19 🔴 |
-| **21** | Framework stabilization & SDK | ~1,500 | 🔴 Pending | Phase 19 🔴 |
+| **20** | Ecosystem expansion | ~2,000 | ✅ Done | Phase 19 ✅ |
+| **21** | Framework stabilization & SDK | ~1,500 | 🔴 Pending | Phase 20 🔴 |
 
-> **Current codebase**: ~23,100 LOC across ~89 files
-> **Projected with Phase 19–21**: ~25,300 LOC
+> **Current codebase**: ~25,100 LOC across ~102 files
+> **Projected with Phase 21**: ~26,600 LOC

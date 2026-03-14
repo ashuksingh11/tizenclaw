@@ -140,12 +140,18 @@ sdb shell systemctl restart tizenclaw
 - **Function Calling / Tool Use** — The LLM autonomously invokes device skills through an iterative Agentic Loop with streaming responses.
 - **Tizen Action Framework** — Native device actions via `ActionBridge` with per-action typed LLM tools, MD schema caching, and live updates via `action_event_cb`.
 - **OCI Container Isolation** — Skills run inside a `crun` container with namespace isolation, limiting access to host resources.
+- **Capability Registry** — Unified registry for all tools with `FunctionContract` (input/output schemas, side effects, retry policies, required permissions). LLM receives `{{CAPABILITY_SUMMARY}}` with category-grouped tool descriptions for intelligent planning.
+- **Hybrid RAG Search** — FTS5-based BM25 keyword search fused with vector cosine similarity via Reciprocal Rank Fusion (RRF). Falls back to vector-only if FTS5 unavailable. Token budget estimation for context-aware retrieval.
+- **Modular Tool Dispatcher** — Extracted `ToolDispatcher` class with thread-safe O(1) dispatch, testable in isolation from `AgentCore`.
+- **Skill Repository** — Manifest v2 support with `version`, `author`, `compatibility` fields. Stub for remote skill marketplace (search, install, update).
+- **Fleet Management** — Enterprise `FleetAgent` for multi-device management with heartbeat, device registration, and remote command support (stub, opt-in via `fleet_config.json`).
 - **Semantic Search (RAG)** — On-device embedding (all-MiniLM-L6-v2 via ONNX Runtime) with SQLite vector store for LLM-independent knowledge retrieval. See [ML/AI Assets](docs/ASSETS.md).
 - **On-Device OCR** — PaddleOCR PP-OCRv3 text detection and recognition via ONNX Runtime. Korean+English (lite, ~13MB) or CJK (full, ~84MB) model selectable at build time.
 - **Task Scheduler** — Cron/interval/one-shot/weekly scheduled tasks with LLM integration and retry logic.
 - **Security** — Encrypted API keys, tool execution policies with risk levels, structured audit logging, HMAC-SHA256 webhook auth.
 - **Web Admin Dashboard** — Dark glassmorphism SPA on port 9090 with session monitoring, chat interface, config editor, and admin authentication.
 - **Multi-Agent** — Supervisor agent pattern, skill pipelines, A2A protocol for cross-device agent collaboration.
+- **Autonomous Triggers** — Event-driven rule engine with LLM-based evaluation for context-aware autonomous actions. Subscribes to `EventBus` for system events.
 - **Session Persistence** — Conversation history stored as Markdown with YAML frontmatter, surviving daemon restarts.
 - **Persistent Memory** — Long-term, episodic, and session-scoped short-term memory with LLM tools (`remember`, `recall`, `forget`). Configurable retention via `memory_config.json`, idle-time summary regeneration, and automatic skill execution tracking.
 - **Tool Schema Discovery** — Embedded tool and Action Framework schemas stored as Markdown files under `/opt/usr/share/tizenclaw/tools/`, automatically loaded into the LLM system prompt for precise tool invocation.
@@ -235,7 +241,7 @@ TizenClaw ships with **35 container skills** (Python, OCI sandbox) and **10+ bui
 > ⚡ = Async skill using tizen-core event loop
 
 - **Built-in Tools**: `execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (per-action tools), `remember`, `recall`, `forget` (persistent memory), `execute_cli` (CLI tool plugins)
-- **Tool Dispatch**: `std::unordered_map<string, ToolHandler>` for O(1) dispatch with `starts_with` fallback for dynamically named tools (e.g., `action_*`)
+- **Tool Dispatch**: Modular `ToolDispatcher` class with thread-safe O(1) dispatch and `starts_with` fallback for dynamically named tools (e.g., `action_*`). All tools registered in `CapabilityRegistry` with function contracts.
 
 📖 **Full reference**: [Tools Reference](docs/TOOLS.md)
 
@@ -415,6 +421,8 @@ TizenClaw reads its configuration from `/opt/usr/share/tizenclaw/` on the device
 | `tool_policy.json` | Tool execution policy (max iterations, blocked skills, risk overrides) |
 | `agent_roles.json` | Agent roles and specialized system prompts |
 | `memory_config.json` | Memory retention periods, size limits, and summary parameters |
+| `autonomous_trigger.json` | Autonomous trigger rules, cooldown, and LLM evaluation settings |
+| `fleet_config.json` | Fleet management endpoint, heartbeat interval (disabled by default) |
 
 ### Example: LLM Backend (`llm_config.json`)
 
@@ -460,6 +468,11 @@ tizenclaw/
 │       │   ├── agent_core.cc      #   Agentic Loop, streaming
 │       │   ├── action_bridge.cc   #   Tizen Action Framework bridge
 │       │   ├── tool_policy.cc     #   Risk-level tool policy
+│       │   ├── tool_dispatcher.cc #   Modular tool dispatch (O(1) lookup)
+│       │   ├── capability_registry.cc # Unified tool capability registry
+│       │   ├── skill_repository.cc#   Skill manifest v2 & marketplace
+│       │   ├── autonomous_trigger.cc # Event-driven autonomous actions
+│       │   ├── event_bus.cc       #   Pub/sub event bus
 │       │   └── skill_watcher.cc   #   inotify skill hot-reload
 │       ├── llm/                   # LLM backend providers
 │       │   ├── llm_backend.hh     #   Unified LLM interface
@@ -480,13 +493,14 @@ tizenclaw/
 │       ├── storage/               # Data persistence
 │       │   ├── session_store.cc   #   Markdown sessions
 │       │   ├── memory_store.cc    #   Persistent memory (long-term, episodic, short-term)
-│       │   ├── embedding_store.cc #   SQLite RAG vectors
+│       │   ├── embedding_store.cc #   SQLite RAG vectors + FTS5 hybrid search
 │       │   └── audit_logger.cc    #   Audit logging
 │       ├── infra/                 # Infrastructure
 │       │   ├── http_client.cc     #   libcurl HTTP wrapper
 │       │   ├── key_store.cc       #   Encrypted API keys
 │       │   ├── container_engine.cc#   OCI container (crun)
 │       │   ├── health_monitor.cc  #   Prometheus-style metrics
+│       │   ├── fleet_agent.cc     #   Enterprise fleet management
 │       │   └── ota_updater.cc     #   OTA skill updates
 │       ├── orchestrator/          # Multi-agent orchestration
 │       │   ├── supervisor_engine.cc # Supervisor agent pattern

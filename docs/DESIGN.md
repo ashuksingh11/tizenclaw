@@ -1,7 +1,7 @@
 # TizenClaw System Design Document
 
-> **Last Updated**: 2026-03-12
-> **Version**: 2.2
+> **Last Updated**: 2026-03-14
+> **Version**: 2.3
 
 ---
 
@@ -65,6 +65,7 @@ graph TB
             HttpClient["HttpClient<br/>(libcurl + retry)"]
             SkillWatch["SkillWatcher<br/>(inotify)"]
             WebDash["WebDashboard<br/>(libsoup SPA)"]
+            FleetMgr["FleetAgent<br/>(Enterprise Fleet)"]
         end
 
         ChannelReg --> IPC
@@ -128,7 +129,8 @@ The central orchestration engine implementing the **Agentic Loop**:
 - **Multi-Session**: Concurrent agent sessions with per-session system prompt and history isolation
 - **Unified Backend Selection**: `SwitchToBestBackend()` algorithm dynamically selects the active backend based on a unified priority queue (`Plugin` > `active_backend` > `fallback_backends`).
 - **Built-in Tools**: `execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (per-action tools), `remember`, `recall`, `forget` (persistent memory), `execute_cli` (CLI tool plugins)
-- **Tool Dispatch**: `std::unordered_map<string, ToolHandler>` for O(1) dispatch with `starts_with` fallback for dynamically named tools (e.g., `action_*`)
+- **Tool Dispatch**: Modular `ToolDispatcher` class (`tool_dispatcher.cc`) with thread-safe O(1) lookup via `std::unordered_map<string, ToolHandler>` and `starts_with` fallback for dynamically named tools (e.g., `action_*`)
+- **Capability Registry**: `CapabilityRegistry` singleton (`capability_registry.cc`) registers all built-in tools, skills, and RPK plugins with `FunctionContract` (input/output schemas, `SideEffect` enum, retry policies, required permissions). LLM receives `{{CAPABILITY_SUMMARY}}` in the system prompt with category-grouped capability descriptions.
 
 ### 3.3 LLM Backend Layer
 
@@ -252,9 +254,31 @@ In-process automation with LLM integration:
 
 Knowledge retrieval beyond conversation history:
 
-- **Storage**: SQLite with brute-force cosine similarity (sufficient for embedded scale)
+- **Storage**: SQLite with FTS5 virtual table for keyword search + brute-force cosine similarity for vector search
+- **Hybrid Search**: `HybridSearch()` combines BM25 keyword matching (via FTS5) with vector cosine similarity using **Reciprocal Rank Fusion (RRF)** (`k=60`). Falls back to vector-only when FTS5 is unavailable.
+- **Token Budget**: `EstimateTokens()` approximates token count (whitespace words × 1.3) for context-aware retrieval
+- **FTS5 Sync**: Auto-sync triggers (`documents_ai`, `documents_ad`) keep the FTS5 index consistent with the documents table
 - **Embedding APIs**: Gemini (`text-embedding-004`), OpenAI (`text-embedding-3-small`), Ollama
-- **Built-in Tools**: `ingest_document` (chunking + embedding), `search_knowledge` (cosine similarity query)
+- **Built-in Tools**: `ingest_document` (chunking + embedding), `search_knowledge` (hybrid/cosine similarity query)
+
+### 3.11 Skill Repository (`skill_repository.cc`)
+
+Skill lifecycle management with manifest v2 support:
+
+- **Manifest v2**: Extended `manifest.json` with `manifest_version`, `version`, `author`, `compatibility` (min daemon version, platform)
+- **Local Management**: `ListInstalledSkills()`, `UninstallSkill()` for local skill CRUD
+- **Remote Marketplace** (stub): `SearchSkills()`, `InstallSkill()`, `CheckForUpdates()` for future HTTP-based skill catalog
+- **Configuration**: `skill_repo.json` with repository URL, auto-update settings
+
+### 3.12 Fleet Management (`fleet_agent.cc`)
+
+Enterprise multi-device management:
+
+- **Device Registration**: `RegisterDevice()` stub for fleet server enrollment
+- **Heartbeat**: Background thread sends periodic heartbeat with device status metrics
+- **Remote Commands**: `PollRemoteCommands()` stub for server-pushed command execution
+- **Configuration**: `fleet_config.json` with `enabled` flag (disabled by default), endpoint URL, heartbeat interval
+- **Lifecycle**: Integrated into `TizenClawDaemon::OnCreate/OnDestroy` for proper initialization and cleanup
 
 ### 3.11 Web Dashboard (`web_dashboard.cc`)
 
@@ -451,18 +475,18 @@ graph LR
 
 | Feature | Priority | Description |
 |---------|:--------:|-------------|
-| **Supervisor Agent** | 🔴 High | Multi-agent goal decomposition and delegation |
-| **Skill Pipeline Engine** | 🔴 High | Deterministic sequential/conditional skill execution |
-| **A2A Protocol** | 🟡 Medium | Cross-device agent communication (JSON-RPC) |
+| **Supervisor Agent** | ✅ Done | Multi-agent goal decomposition and delegation |
+| **Skill Pipeline Engine** | ✅ Done | Deterministic sequential/conditional skill execution |
+| **A2A Protocol** | ✅ Done | Cross-device agent communication (JSON-RPC) |
 | **Wake Word Detection** | 🟡 Medium | Hardware mic-based voice activation (requires STT hardware) |
-| **Skill Marketplace** | 🟢 Low | Remote skill download, validation, and installation |
+| **Skill Marketplace** | ✅ Done (stub) | Remote skill download, validation, and installation (`SkillRepository`) |
 
 ### 6.2 Areas to Improve
 
 | Area | Current State | Improvement Direction |
 |------|--------------|----------------------|
-| **RAG Scalability** | Brute-force cosine similarity | ANN index (HNSW) for large document sets |
-| **Token Budgeting** | Token counting after response | Pre-request token estimation to prevent context overflow |
+| **RAG Scalability** | ✅ FTS5 hybrid search (BM25 + vector RRF) | ANN index (HNSW) for very large document sets |
+| **Token Budgeting** | ✅ `EstimateTokens()` pre-request estimation | Per-model accurate tokenizer integration |
 | **Concurrent Tasks** | Sequential task execution | Parallel task execution with dependency graph |
 | **Skill Output Validation** | Raw stdout JSON | JSON schema validation per skill |
 | **Error Recovery** | Crash loses in-flight requests | Request journaling for crash recovery |

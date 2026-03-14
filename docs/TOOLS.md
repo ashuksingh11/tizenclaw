@@ -1,6 +1,6 @@
 # TizenClaw Tools Reference
 
-TizenClaw provides **35 container skills** (Python, sandboxed via OCI), **10+ built-in tools** (native C++), and **CLI tool plugins** (TPK-based native executables).
+TizenClaw provides **35 container skills** (Python, sandboxed via OCI), **15+ built-in tools** (native C++), and **CLI tool plugins** (TPK-based native executables). All tools are registered in the **Capability Registry** with function contracts.
 
 > Container skills use `ctypes` FFI to call Tizen C-API directly. Async skills use the **tizen-core** event loop for callback-based APIs.
 
@@ -90,10 +90,25 @@ TizenClaw provides **35 container skills** (Python, sandboxed via OCI), **10+ bu
 | `list_sessions` | List active sessions |
 | `send_to_session` | Send message to another session |
 | `ingest_document` | Ingest document into RAG store |
-| `search_knowledge` | Semantic search in RAG store |
+| `search_knowledge` | Hybrid semantic search in RAG store (BM25 + vector RRF) |
 | `execute_action` | Execute a Tizen Action Framework action |
 | `action_<name>` | Per-action tools (auto-discovered from Action Framework) |
 | `execute_cli` | Execute CLI tool plugins installed via TPK packages |
+| `create_workflow` | Create a deterministic skill pipeline |
+| `list_workflows` | List registered workflows |
+| `run_workflow` | Execute a workflow pipeline |
+| `remember` | Save information to persistent memory |
+| `recall` | Search persistent memory by keyword |
+| `forget` | Delete a specific memory entry |
+
+### Tool Dispatch Architecture
+
+Tool execution uses a modular `ToolDispatcher` class (`tool_dispatcher.cc`) extracted from `AgentCore` for independent testability:
+
+- **O(1) Lookup**: `std::unordered_map<std::string, ToolHandler>` for registered tools
+- **Dynamic Fallback**: `starts_with` matching for dynamically named tools (e.g., `action_*`)
+- **Thread Safety**: `std::shared_mutex` for concurrent read access
+- **Capability Integration**: All dispatched tools are registered in `CapabilityRegistry` with `FunctionContract`
 
 ---
 
@@ -105,11 +120,15 @@ An RPK tool package can contain:
 1. **Sandboxed Python Skills**: New tools executed safely inside the OCI container.
 2. **Host/Container CLI Tools**: Binary utilities or scripts to be invoked via `execute_action` or `execute_code`.
 
-### Capability Registry
-All dynamic RPK plugins, along with CLI tools and built-in skills, must register against TizenClaw's unified **Capability Registry**. This ensures:
-- Clear **Function Contracts** (Input/Output JSON Schemas).
-- Defined side effects and retry policies.
-- Required Sandbox and Tizen (SMACK) permissions.
+### Capability Registry (`capability_registry.cc`)
+All dynamic RPK plugins, along with CLI tools and built-in skills, are registered in TizenClaw's unified **Capability Registry** (`CapabilityRegistry` singleton). This provides:
+- Clear **Function Contracts** (`FunctionContract` struct with Input/Output JSON Schemas).
+- Defined **Side Effects** (`SideEffect` enum: `kNone`, `kReversible`, `kIrreversible`, `kUnknown`).
+- Retry policies and required Sandbox/Tizen (SMACK) permissions.
+- **Category-based queries**: `GetByCategory()`, `GetBySideEffect()`, `GetByPermission()`.
+- **LLM Integration**: `GetSummaryForLLM()` generates a category-grouped JSON summary injected via `{{CAPABILITY_SUMMARY}}` placeholder.
+
+At startup, 21 built-in capabilities are automatically registered. Skills loaded from manifests are also registered with their declared contracts.
 
 Once an RPK is installed via the system package manager (e.g. `pkgcmd`), TizenClaw automatically discovers and registers its capabilities, making them immediately available to the Planning Agent without daemon recompilation.
 
