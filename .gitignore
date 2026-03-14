@@ -27,3 +27,6 @@ __pycache__/
 .gemini/
 data/devel/
 dlog_dump.txt
+
+# Plans (local only)
+plan/
