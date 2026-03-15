@@ -36,6 +36,11 @@ enum class EventType {
   kDisplayChanged,   // on, off, dim
   kPackageChanged,   // installed, uninstalled, updated
   kMemoryWarning,    // low memory warning
+  kSystemSetting,    // language, timezone, silent mode
+  kUsbChanged,       // USB connection state
+  kBluetoothChanged, // Bluetooth state
+  kLocationChanged,  // GPS/NPS/location enable state
+  kRecentApp,        // recently used app history
   kCustom            // user-defined / plugin events
 };
 

@@ -51,6 +51,7 @@ class SystemContextProvider {
   // Update state based on event type
   void UpdateDeviceState(const SystemEvent& event);
   void UpdateRuntimeState(const SystemEvent& event);
+  void UpdateAppState(const SystemEvent& event);
   void AddRecentEvent(const SystemEvent& event);
 
   // Current state (normalized, interpreted)

@@ -25,6 +25,11 @@ BuildRequires:  pkgconfig(capi-appfw-tizen-action)
 BuildRequires:  pkgconfig(libaurum)
 BuildRequires:  pkgconfig(grpc++)
 BuildRequires:  pkgconfig(protobuf)
+BuildRequires:  pkgconfig(capi-appfw-event)
+BuildRequires:  pkgconfig(capi-appfw-app-manager)
+BuildRequires:  pkgconfig(capi-appfw-package-manager)
+BuildRequires:  pkgconfig(aul)
+BuildRequires:  pkgconfig(rua)
 
 %description
 TizenClaw Native Agent running as a System Service, utilizing LXC for skills execution.

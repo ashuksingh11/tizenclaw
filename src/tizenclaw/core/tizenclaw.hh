@@ -33,6 +33,7 @@
 #include "../scheduler/task_scheduler.hh"
 #include "agent_core.hh"
 #include "event_bus.hh"
+#include "event_adapter_manager.hh"
 #include "system_event_collector.hh"
 #include "autonomous_trigger.hh"
 #include "skill_repository.hh"
@@ -68,6 +69,7 @@ class TizenClawDaemon {
   ChannelRegistry channel_registry_;
   SkillWatcher skill_watcher_;
   std::unique_ptr<SystemEventCollector> event_collector_;
+  EventAdapterManager adapter_manager_;
   std::unique_ptr<AutonomousTrigger> auto_trigger_;
   std::unique_ptr<SkillRepository> skill_repo_;
   std::unique_ptr<FleetAgent> fleet_agent_;

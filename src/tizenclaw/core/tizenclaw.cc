@@ -34,6 +34,10 @@
 #include "../channel/channel_factory.hh"
 #include "../llm/plugin_manager.hh"
 #include "../storage/audit_logger.hh"
+#include "../infra/tizen_system_event_adapter.hh"
+#include "../infra/package_event_adapter.hh"
+#include "../infra/app_lifecycle_adapter.hh"
+#include "../infra/recent_app_adapter.hh"
 
 namespace tizenclaw {
 
@@ -110,6 +114,17 @@ void TizenClawDaemon::OnCreate() {
   EventBus::GetInstance().LoadPlugins(events_dir);
   event_collector_ = std::make_unique<SystemEventCollector>();
   event_collector_->Start();
+
+  // Register Tizen native event adapters
+  adapter_manager_.RegisterAdapter(
+      std::make_unique<TizenSystemEventAdapter>());
+  adapter_manager_.RegisterAdapter(
+      std::make_unique<PackageEventAdapter>());
+  adapter_manager_.RegisterAdapter(
+      std::make_unique<AppLifecycleAdapter>());
+  adapter_manager_.RegisterAdapter(
+      std::make_unique<RecentAppAdapter>());
+  adapter_manager_.StartAll();
 
   // Initialize AutonomousTrigger
   auto_trigger_ = std::make_unique<AutonomousTrigger>(
@@ -194,6 +209,7 @@ void TizenClawDaemon::OnDestroy() {
 
   // Stop AutonomousTrigger, EventBus and Collector
   if (auto_trigger_) auto_trigger_->Stop();
+  adapter_manager_.StopAll();
   if (event_collector_) event_collector_->Stop();
   EventBus::GetInstance().Stop();
 

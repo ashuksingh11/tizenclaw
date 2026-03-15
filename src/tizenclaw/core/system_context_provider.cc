@@ -30,7 +30,11 @@ SystemContextProvider::SystemContextProvider() {
       {"model", "unknown"},
       {"display", "unknown"},
       {"wifi", "unknown"},
-      {"bluetooth", "unknown"}};
+      {"bluetooth", "unknown"},
+      {"usb", "unknown"},
+      {"location", "unknown"},
+      {"language", "unknown"},
+      {"silent_mode", "unknown"}};
   runtime_state_ = {
       {"network", "unknown"},
       {"battery", {{"level", -1}, {"charging", false}}},
@@ -74,12 +78,19 @@ void SystemContextProvider::OnEvent(
   switch (event.type) {
     case EventType::kDisplayChanged:
     case EventType::kAppLifecycle:
+    case EventType::kBluetoothChanged:
+    case EventType::kUsbChanged:
+    case EventType::kLocationChanged:
+    case EventType::kSystemSetting:
       UpdateDeviceState(event);
       break;
     case EventType::kNetworkChanged:
     case EventType::kBatteryChanged:
     case EventType::kMemoryWarning:
       UpdateRuntimeState(event);
+      break;
+    case EventType::kRecentApp:
+      UpdateAppState(event);
       break;
     default:
       break;
@@ -94,11 +105,57 @@ void SystemContextProvider::UpdateDeviceState(
   std::lock_guard<std::mutex> lock(state_mutex_);
 
   if (event.type == EventType::kDisplayChanged) {
-    if (event.data.contains("state")) {
+    if (event.data.contains("value")) {
       device_state_["display"] =
-          event.data["state"].get<std::string>();
+          event.data["value"];
+    } else if (event.data.contains("state")) {
+      device_state_["display"] =
+          event.data["state"];
+    }
+  } else if (event.type ==
+             EventType::kBluetoothChanged) {
+    if (event.data.contains("value"))
+      device_state_["bluetooth"] =
+          event.data["value"];
+  } else if (event.type ==
+             EventType::kUsbChanged) {
+    if (event.data.contains("value"))
+      device_state_["usb"] =
+          event.data["value"];
+  } else if (event.type ==
+             EventType::kLocationChanged) {
+    if (event.data.contains("value"))
+      device_state_["location"] =
+          event.data["value"];
+  } else if (event.type ==
+             EventType::kSystemSetting) {
+    if (event.name == "system.language" &&
+        event.data.contains("value"))
+      device_state_["language"] =
+          event.data["value"];
+    if (event.name == "system.silent_mode" &&
+        event.data.contains("value"))
+      device_state_["silent_mode"] =
+          event.data["value"];
+  } else if (event.type ==
+             EventType::kAppLifecycle) {
+    if (event.data.contains("app_id") &&
+        event.data.contains("state")) {
+      app_state_["foreground_app"] =
+          event.data["app_id"];
+      app_state_["foreground_state"] =
+          event.data["state"];
     }
   }
+}
+
+void SystemContextProvider::UpdateAppState(
+    const SystemEvent& event) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+
+  if (event.data.contains("recent_apps"))
+    app_state_["recent_apps"] =
+        event.data["recent_apps"];
 }
 
 void SystemContextProvider::UpdateRuntimeState(
@@ -178,6 +235,8 @@ nlohmann::json SystemContextProvider::GetContextJson() const {
   nlohmann::json ctx;
   ctx["device"] = device_state_;
   ctx["runtime"] = runtime_state_;
+  if (!app_state_.empty())
+    ctx["apps"] = app_state_;
 
   // Recent events
   auto events = nlohmann::json::array();
