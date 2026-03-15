@@ -43,6 +43,7 @@ __pycache__/
 
 # Gemini agent
 .gemini/
+.agents/
 data/devel/
 dlog_dump.txt
 
