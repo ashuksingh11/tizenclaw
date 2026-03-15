@@ -1,7 +1,7 @@
 # TizenClaw System Design Document
 
-> **Last Updated**: 2026-03-14
-> **Version**: 2.3
+> **Last Updated**: 2026-03-15
+> **Version**: 2.4
 
 ---
 
@@ -112,10 +112,10 @@ graph TB
 The main daemon process manages the overall lifecycle:
 
 - **systemd integration**: Runs as `Type=simple` service, handles `SIGINT`/`SIGTERM` for graceful shutdown
-- **IPC Server**: Abstract Unix Domain Socket (`\0tizenclaw.sock`) with standard `JSON-RPC 2.0` and length-prefix framing (`[4-byte len][JSON]`)
+- **IPC Server**: Abstract Unix Domain Socket (`\0tizenclaw.sock`) with standard `JSON-RPC 2.0` and length-prefix framing (`[4-byte len][JSON]`). Methods: `prompt`, `get_usage`, `send_to`
 - **UID Authentication**: `SO_PEERCRED`-based sender validation (root, app_fw, system, developer)
 - **Thread Pool**: `kMaxConcurrentClients = 4` concurrent request handling
-- **Channel Lifecycle**: Initializes and manages all channels via `ChannelRegistry`
+- **Channel Lifecycle**: Initializes all channels via `ChannelFactory` reading `channels.json`, managed through `ChannelRegistry`
 - **Modular CAPI (`src/libtizenclaw`)**: The internal logic is fully decoupled from the external CAPI layer (`tizenclaw.h`), facilitating distribution as an SDK.
 
 ### 3.2 Agent Core (`agent_core.cc`)
@@ -162,7 +162,7 @@ OCI-compliant skill execution environment:
 
 ### 3.5 Channel Abstraction Layer
 
-Unified `Channel` interface for all communication endpoints:
+Unified `Channel` interface for all communication endpoints with **pluggable architecture** and **outbound messaging**:
 
 ```cpp
 class Channel {
@@ -171,20 +171,55 @@ class Channel {
   virtual bool Start() = 0;
   virtual void Stop() = 0;
   virtual bool IsRunning() const = 0;
+
+  // Outbound messaging (opt-in)
+  virtual bool SendMessage(
+      const std::string& text) {
+    return false;  // default: not supported
+  }
 };
 ```
 
-| Channel | Implementation | Protocol |
-|---------|---------------|----------|
-| Telegram | `telegram_client.cc` | Bot API Long-Polling |
-| Slack | `slack_channel.cc` | Socket Mode (libwebsockets) |
-| Discord | `discord_channel.cc` | Gateway WebSocket (libwebsockets) |
-| MCP | `mcp_server.cc` | stdio JSON-RPC 2.0 |
-| Webhook | `webhook_channel.cc` | HTTP inbound (libsoup) |
-| Voice | `voice_channel.cc` | Tizen STT/TTS C-API (conditional compilation) |
-| Web Dashboard | `web_dashboard.cc` | libsoup SPA (port 9090) |
+#### Channel Implementations
 
-`ChannelRegistry` manages lifecycle (register, start/stop all, lookup by name).
+| Channel | Implementation | Protocol | Outbound |
+|---------|---------------|----------|:--------:|
+| Telegram | `telegram_client.cc` | Bot API Long-Polling | ✅ |
+| Slack | `slack_channel.cc` | Socket Mode (libwebsockets) | ✅ |
+| Discord | `discord_channel.cc` | Gateway WebSocket (libwebsockets) | ✅ |
+| MCP | `mcp_server.cc` | stdio JSON-RPC 2.0 | ❌ |
+| Webhook | `webhook_channel.cc` | HTTP inbound (libsoup) | ❌ |
+| Voice | `voice_channel.cc` | Tizen STT/TTS C-API (conditional) | ✅ |
+| Web Dashboard | `web_dashboard.cc` | libsoup SPA (port 9090) | ❌ |
+| Plugin (SO) | `plugin_channel.cc` | C API (`tizenclaw_channel.h`) | Optional |
+
+#### Pluggable Channel System
+
+Channel activation is config-driven via `channels.json`:
+
+```json
+{
+  "channels": [
+    {"name": "mcp", "enabled": true},
+    {"name": "telegram", "enabled": true},
+    {"name": "web_dashboard", "enabled": true},
+    {"name": "voice", "enabled": true}
+  ]
+}
+```
+
+- **`ChannelFactory`** (`channel_factory.cc`): Reads `channels.json`, creates built-in channels, skips channels whose per-channel config is missing
+- **`PluginChannel`** (`plugin_channel.cc`): Wraps dynamically loaded `.so` plugins via `dlopen`/`dlsym`, mapping the `tizenclaw_channel.h` C API to the `Channel` interface
+- **`ChannelRegistry`**: Lifecycle management (register, start/stop all, lookup by name) + outbound dispatch (`SendTo`, `Broadcast`)
+
+#### Outbound Messaging
+
+LLM-initiated proactive messages flow through `ChannelRegistry`:
+
+- **`SendTo(channel_name, text)`**: Sends to a specific channel by name
+- **`Broadcast(text)`**: Sends to all running channels that support outbound
+- **IPC method `send_to`**: Daemon exposes a `send_to` JSON-RPC method for external triggering (e.g., via `tizenclaw-cli --send-to telegram "message"`)
+- **`AutonomousTrigger::Notify()`**: Uses `ChannelRegistry::SendTo()` with broadcast fallback for event-driven autonomous notifications
 
 ### 3.6 Security Subsystem
 

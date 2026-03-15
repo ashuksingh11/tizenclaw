@@ -1,7 +1,7 @@
 # TizenClaw 설계 문서
 
-> **최종 업데이트**: 2026-03-12
-> **버전**: 2.2
+> **최종 업데이트**: 2026-03-15
+> **버전**: 2.4
 
 ---
 
@@ -111,10 +111,10 @@ graph TB
 메인 데몬 프로세스가 전체 생명주기를 관리합니다:
 
 - **systemd 통합**: `Type=simple` 서비스로 실행, `SIGINT`/`SIGTERM`으로 안전한 종료
-- **IPC 서버**: Abstract Unix Domain Socket (`\0tizenclaw.sock`), 표준 `JSON-RPC 2.0` 및 길이-프리픽스 프레이밍 (`[4바이트 길이][JSON]`)
+- **IPC 서버**: Abstract Unix Domain Socket (`\0tizenclaw.sock`), 표준 `JSON-RPC 2.0` 및 길이-프리픽스 프레이밍 (`[4바이트 길이][JSON]`). 메서드: `prompt`, `get_usage`, `send_to`
 - **UID 인증**: `SO_PEERCRED` 기반 발신자 검증 (root, app_fw, system, developer)
 - **스레드 풀**: `kMaxConcurrentClients = 4` 동시 요청 처리
-- **채널 생명주기**: `ChannelRegistry`를 통한 모든 채널 초기화 및 관리
+- **채널 생명주기**: `ChannelFactory`가 `channels.json`으로 채널 생성, `ChannelRegistry`가 관리
 - **모듈형 CAPI (`src/libtizenclaw`)**: 내부 로직이 외부 CAPI 계층(`tizenclaw.h`)과 완전히 분리되어, SDK로서의 배포가 용이합니다.
 
 ### 3.2 Agent Core (`agent_core.cc`)
@@ -160,7 +160,7 @@ OCI 호환 스킬 실행 환경:
 
 ### 3.5 채널 추상화 계층
 
-모든 통신 엔드포인트를 위한 통합 `Channel` 인터페이스:
+**플러그인 아키텍처**와 **아웃바운드 메시징**을 지원하는 통합 `Channel` 인터페이스:
 
 ```cpp
 class Channel {
@@ -169,20 +169,55 @@ class Channel {
   virtual bool Start() = 0;
   virtual void Stop() = 0;
   virtual bool IsRunning() const = 0;
+
+  // 아웃바운드 메시징 (opt-in)
+  virtual bool SendMessage(
+      const std::string& text) {
+    return false;  // 기본값: 미지원
+  }
 };
 ```
 
-| 채널 | 구현 | 프로토콜 |
-|------|------|---------|
-| Telegram | `telegram_client.cc` | Bot API Long-Polling |
-| Slack | `slack_channel.cc` | Socket Mode (libwebsockets) |
-| Discord | `discord_channel.cc` | Gateway WebSocket (libwebsockets) |
-| MCP | `mcp_server.cc` | stdio JSON-RPC 2.0 |
-| Webhook | `webhook_channel.cc` | HTTP 인바운드 (libsoup) |
-| Voice | `voice_channel.cc` | Tizen STT/TTS C-API (조건부 컴파일) |
-| Web Dashboard | `web_dashboard.cc` | libsoup SPA (port 9090) |
+#### 채널 구현
 
-`ChannelRegistry`가 생명주기 관리 (등록, 전체 시작/정지, 이름별 검색).
+| 채널 | 구현 | 프로토콜 | 아웃바운드 |
+|------|------|---------|:--------:|
+| Telegram | `telegram_client.cc` | Bot API Long-Polling | ✅ |
+| Slack | `slack_channel.cc` | Socket Mode (libwebsockets) | ✅ |
+| Discord | `discord_channel.cc` | Gateway WebSocket (libwebsockets) | ✅ |
+| MCP | `mcp_server.cc` | stdio JSON-RPC 2.0 | ❌ |
+| Webhook | `webhook_channel.cc` | HTTP 인바운드 (libsoup) | ❌ |
+| Voice | `voice_channel.cc` | Tizen STT/TTS C-API (조건부 컴파일) | ✅ |
+| Web Dashboard | `web_dashboard.cc` | libsoup SPA (port 9090) | ❌ |
+| Plugin (SO) | `plugin_channel.cc` | C API (`tizenclaw_channel.h`) | 선택 |
+
+#### 플러그인 기반 채널 시스템
+
+채널 활성화는 `channels.json`으로 설정 기반 제어:
+
+```json
+{
+  "channels": [
+    {"name": "mcp", "enabled": true},
+    {"name": "telegram", "enabled": true},
+    {"name": "web_dashboard", "enabled": true},
+    {"name": "voice", "enabled": true}
+  ]
+}
+```
+
+- **`ChannelFactory`** (`channel_factory.cc`): `channels.json` 읽어 내장 채널 생성, 채널별 설정파일 미존재 시 건너뜀
+- **`PluginChannel`** (`plugin_channel.cc`): `dlopen`/`dlsym`으로 동적 로드된 `.so` 플러그인을 `Channel` 인터페이스에 매핑
+- **`ChannelRegistry`**: 생명주기 관리 (등록, 전체 시작/정지, 이름별 검색) + 아웃바운드 디스패치 (`SendTo`, `Broadcast`)
+
+#### 아웃바운드 메시징
+
+LLM이 능동적으로 메시지를 전송하는 경로:
+
+- **`SendTo(channel_name, text)`**: 특정 채널로 전송
+- **`Broadcast(text)`**: 아웃바운드를 지원하는 모든 실행 중 채널에 전송
+- **IPC 메서드 `send_to`**: 외부 트리거를 위한 JSON-RPC 메서드 (예: `tizenclaw-cli --send-to telegram "메시지"`)
+- **`AutonomousTrigger::Notify()`**: `ChannelRegistry::SendTo()`를 사용하며, 실패 시 브로드캐스트로 폴백
 
 ### 3.6 보안 서브시스템
 

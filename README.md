@@ -21,7 +21,7 @@
 
 ## Overview
 
-TizenClaw is a native C++ system daemon that brings LLM-based AI agent capabilities to [Tizen](https://www.tizen.org/) devices. It receives natural language commands via multiple communication channels, interprets them through configurable LLM backends, and executes device-level actions using sandboxed Python skills inside OCI containers and the **Tizen Action Framework**.
+TizenClaw is a native C++ system daemon that brings LLM-based AI agent capabilities to [Tizen](https://www.tizen.org/) devices. It receives natural language commands via multiple communication channels, interprets them through configurable LLM backends, and executes device-level actions using sandboxed Python skills inside OCI containers and the **Tizen Action Framework**. The LLM can also proactively send outbound messages through channels (e.g., autonomous notifications via Telegram).
 
 ---
 
@@ -110,6 +110,18 @@ sdb forward tcp:9090 tcp:9090
 open http://localhost:9090
 ```
 
+### Testing Outbound Messaging
+
+Once deployed, you can test LLM-initiated outbound messaging via the CLI:
+
+```bash
+# Send a message via a specific channel
+sdb shell tizenclaw-cli --send-to telegram "Hello from TizenClaw!"
+
+# Broadcast to all outbound-capable channels
+sdb shell tizenclaw-cli --send-to all "System alert: disk usage 90%"
+```
+
 ### Manual Build and Deployment
 
 If you prefer to build and deploy manually, use the following commands:
@@ -133,10 +145,11 @@ sdb shell systemctl restart tizenclaw
 
 ### Key Features
 
-- **Standardized IPC (JSON-RPC 2.0)** — Communicates with the `tizenclaw-cli` and external clients over Unix Domain Sockets using standard JSON-RPC 2.0.
+- **Standardized IPC (JSON-RPC 2.0)** — Communicates with the `tizenclaw-cli` and external clients over Unix Domain Sockets using standard JSON-RPC 2.0. Supports `prompt`, `get_usage`, and `send_to` methods.
 - **Aggressive Edge Memory Management** — Monitors daemon idle states locally and dynamically flushes SQLite caches (`sqlite3_release_memory(50MB)`) while aggressively reclaiming heap space back to Tizen OS (`malloc_trim(0)`) utilizing PSS profiling.
 - **Unified LLM Priority Routing** — Supports Gemini, OpenAI, Anthropic, xAI, Ollama, and runtime RPK Plugins via a unified queue, automatically falling back based strictly on assigned priority values (`1` baseline).
-- **7 Communication Channels** — Telegram, Slack, Discord, MCP (Claude Desktop), Webhook, Voice (TTS/STT), and Web Dashboard — all managed through a `Channel` abstraction.
+- **7 Communication Channels** — Telegram, Slack, Discord, MCP (Claude Desktop), Webhook, Voice (TTS/STT), and Web Dashboard — all managed through a pluggable `Channel` abstraction with config-driven factory and runtime SO plugin support.
+- **Outbound Messaging** — LLM-initiated proactive notifications via `ChannelRegistry::SendTo()` / `Broadcast()`. Channels that support outbound (Telegram, Slack, Discord, Voice) implement `Channel::SendMessage()`. Testable via `tizenclaw-cli --send-to <channel> <text>`.
 - **Function Calling / Tool Use** — The LLM autonomously invokes device skills through an iterative Agentic Loop with streaming responses.
 - **Tizen Action Framework** — Native device actions via `ActionBridge` with per-action typed LLM tools, MD schema caching, and live updates via `action_event_cb`.
 - **OCI Container Isolation** — Skills run inside a `crun` container with namespace isolation, limiting access to host resources.
@@ -303,6 +316,21 @@ res/
 
 📦 **Sample project**: [tizenclaw-cli-plugin-sample](https://github.com/hjhun/tizenclaw-cli-plugin-sample)
 
+### Channel Plugins
+
+TizenClaw supports dynamically loaded **channel plugins** via shared objects (`.so`). Channel activation is controlled through `channels.json`, and plugins are loaded at runtime through `ChannelFactory` + `PluginChannel` using the `tizenclaw_channel.h` C API.
+
+**Plugin C API** (`tizenclaw_channel.h`):
+```c
+void TIZENCLAW_CHANNEL_INITIALIZE(tizenclaw_channel_context_h ctx);
+const char* TIZENCLAW_CHANNEL_GET_NAME(void);
+bool TIZENCLAW_CHANNEL_START(void);
+void TIZENCLAW_CHANNEL_STOP(void);
+bool TIZENCLAW_CHANNEL_SEND_MESSAGE(const char* text);  // optional
+```
+
+The `SEND_MESSAGE` export is optional — plugins that omit it simply don't support outbound messaging.
+
 ### Multi-Agent System
 
 TizenClaw includes a default multi-agent system designed to transition from a single monolithic agent toward a highly decentralized **11 MVP Agent Set** for robust device operation:
@@ -414,10 +442,12 @@ TizenClaw reads its configuration from `/opt/usr/share/tizenclaw/` on the device
 | Config File | Purpose |
 |---|---|
 | `llm_config.json` | LLM backend selection, API keys, model settings, fallback order |
+| `channels.json` | Channel activation and plugin paths |
 | `telegram_config.json` | Telegram bot token and allowed chat IDs |
 | `slack_config.json` | Slack app/bot tokens and channel lists |
 | `discord_config.json` | Discord bot token and guild/channel allowlists |
 | `webhook_config.json` | Webhook route mapping and HMAC secrets |
+| `web_search_config.json` | Web search engine keys (Naver, Google, Brave, Gemini, Grok) |
 | `tool_policy.json` | Tool execution policy (max iterations, blocked skills, risk overrides) |
 | `agent_roles.json` | Agent roles and specialized system prompts |
 | `memory_config.json` | Memory retention periods, size limits, and summary parameters |
@@ -481,8 +511,10 @@ tizenclaw/
 │       │   ├── anthropic_backend.cc  # Anthropic
 │       │   └── ollama_backend.cc  #   Ollama (local)
 │       ├── channel/               # Communication channels
-│       │   ├── channel.hh         #   Channel interface
-│       │   ├── channel_registry.cc#   Lifecycle management
+│       │   ├── channel.hh         #   Channel interface (+ SendMessage)
+│       │   ├── channel_registry.cc#   Lifecycle + SendTo/Broadcast
+│       │   ├── channel_factory.cc #   Config-driven channel creation
+│       │   ├── plugin_channel.cc  #   Dynamic SO plugin wrapper
 │       │   ├── telegram_client.cc #   Telegram Bot API
 │       │   ├── slack_channel.cc   #   Slack (WebSocket)
 │       │   ├── discord_channel.cc #   Discord (WebSocket)
