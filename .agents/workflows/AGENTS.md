@@ -10,7 +10,7 @@ This workflow defines the core development process (Plan -> Develop -> Verify) f
 - Accurately understand the objectives and requirements.
 - Analyze existing code and check applicable workflows (e.g., `/coding_rules`, `/commit_guidelines`). See `README.md` for the full workflow index. **CRITICAL**: The Agent MUST strictly adhere to the project's coding style as defined in `coding_rules.md` (e.g., Google C++ Style, 2-space indentation, trailing underscore `_` for members). Do not introduce or mimic inconsistent styles found in older legacy parts of the codebase.
 - **CRITICAL BRANCH POLICY**: Do not create or switch to new branches for development or feature work. Always apply patches, make commits, and push changes directly to the **current branch** you are currently on. Maintain this single-branch development policy at all times.
-- **WORKFLOW DOC POLICY**: Workflow 문서(.md)는 해당 기능이 실제 디바이스에서 빌드·배포·동작 검증이 완료된 후에만 작성 또는 수정합니다. 검증되지 않은 기능에 대한 워크플로우 문서 작성은 금지합니다. 새 워크플로우 추가 시 `README.md` 인덱스도 반드시 업데이트하세요.
+- **WORKFLOW DOC POLICY**: Workflow documents (.md) must only be created or modified after the corresponding feature has been fully verified (build, deploy, and runtime validation) on an actual device. Writing workflow documents for unverified features is prohibited. When adding a new workflow, you must also update the `README.md` index.
 - Write a work unit (`task.md`) and establish a detailed plan before implementation.
 
 ## 2. Develop & Deploy
@@ -29,7 +29,7 @@ Once `deploy.sh` successfully finishes:
   - With session ID: `sdb shell tizenclaw-cli -s <session_id> "your prompt here"`
   - Streaming: `sdb shell tizenclaw-cli --stream "your prompt here"`
   - Interactive mode: `sdb shell tizenclaw-cli` (type prompts, Ctrl+D to exit)
-  - Example (workflow tools): `sdb shell tizenclaw-cli "list_workflows 도구로 워크플로우 목록을 보여주세요"`
+  - Example (workflow tools): `sdb shell tizenclaw-cli "Use the list_workflows tool to show the workflow list"`
 - Verify the Web Dashboard is accessible:
   - Dashboard Port: `9090` (e.g., `http://<device-ip>:9090`)
 - If you need a more advanced component test, refer to `/gtest_integration.md`.

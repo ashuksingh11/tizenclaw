@@ -43,14 +43,14 @@ sdb shell tizenclaw-cli
 ### Tool Invocation Test
 Verify that the LLM correctly invokes a built-in tool:
 ```bash
-sdb shell tizenclaw-cli "list_workflows 도구를 사용해서 등록된 워크플로우 목록을 보여주세요"
+sdb shell tizenclaw-cli "Use the list_workflows tool to show the list of registered workflows"
 ```
 
 ### Workflow CRUD Test
 Create, list, and delete a workflow end-to-end:
 ```bash
 # Create
-sdb shell tizenclaw-cli -s wf_test "create_workflow 도구로 다음 워크플로우를 만들어주세요:
+sdb shell tizenclaw-cli -s wf_test "Use the create_workflow tool to create the following workflow:
 ---
 name: Test Workflow
 description: Simple test
@@ -62,10 +62,10 @@ trigger: manual
 - output_var: greeting"
 
 # List
-sdb shell tizenclaw-cli -s wf_test "워크플로우 목록을 보여주세요"
+sdb shell tizenclaw-cli -s wf_test "Show the workflow list"
 
 # Delete
-sdb shell tizenclaw-cli -s wf_test "방금 만든 워크플로우를 삭제해주세요"
+sdb shell tizenclaw-cli -s wf_test "Delete the workflow that was just created"
 ```
 
 ### Log Cross-Check
