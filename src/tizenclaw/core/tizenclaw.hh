@@ -36,6 +36,7 @@
 #include "event_adapter_manager.hh"
 #include "system_event_collector.hh"
 #include "autonomous_trigger.hh"
+#include "perception_engine.hh"
 #include "skill_repository.hh"
 #include "skill_watcher.hh"
 #include "../infra/fleet_agent.hh"
@@ -71,6 +72,7 @@ class TizenClawDaemon {
   std::unique_ptr<SystemEventCollector> event_collector_;
   EventAdapterManager adapter_manager_;
   std::unique_ptr<AutonomousTrigger> auto_trigger_;
+  std::unique_ptr<PerceptionEngine> perception_engine_;
   std::unique_ptr<SkillRepository> skill_repo_;
   std::unique_ptr<FleetAgent> fleet_agent_;
 

@@ -259,7 +259,16 @@ nlohmann::json SystemContextProvider::GetContextJson() const {
   }
   ctx["active_plugins"] = plugins;
 
+  if (!perception_insight_.empty())
+    ctx["perception"] = perception_insight_;
+
   return ctx;
+}
+
+void SystemContextProvider::SetPerceptionInsight(
+    const nlohmann::json& insight) {
+  std::lock_guard<std::mutex> lock(state_mutex_);
+  perception_insight_ = insight;
 }
 
 std::string SystemContextProvider::GetContextString() const {

@@ -33,6 +33,21 @@
       "cooldown_minutes": 10,
       "action": "direct",
       "direct_prompt": "시스템 메모리가 위험 수준입니다. 메모리 사용량을 분석하고 불필요한 프로세스를 종료하는 방법을 제안해주세요."
+    },
+    {
+      "name": "perception_warning",
+      "event_type": "perception.situation_changed",
+      "condition": {"level": {"$gte": 2}},
+      "cooldown_minutes": 15,
+      "action": "evaluate"
+    },
+    {
+      "name": "perception_critical",
+      "event_type": "perception.situation_changed",
+      "condition": {"level": {"$gte": 3}},
+      "cooldown_minutes": 5,
+      "action": "direct",
+      "direct_prompt": "Perception Engine이 디바이스 위험 상태를 감지했습니다. 현재 복합적 위험 요인을 분석하고, 사용자에게 구체적인 해결 방법을 제안해주세요."
     }
   ]
 }

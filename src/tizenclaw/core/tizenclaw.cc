@@ -136,6 +136,14 @@ void TizenClawDaemon::OnCreate() {
   auto_trigger_->LoadRules(trigger_config);
   auto_trigger_->Start();
 
+  // Initialize Perception Engine
+  perception_engine_ =
+      std::make_unique<PerceptionEngine>(
+          agent_.get(),
+          agent_->GetSystemContext(),
+          &channel_registry_);
+  perception_engine_->Start();
+
   // Initialize Task Scheduler
   scheduler_ = std::make_unique<TaskScheduler>();
   agent_->SetScheduler(scheduler_.get());
@@ -207,8 +215,10 @@ void TizenClawDaemon::OnDestroy() {
   // Stop Fleet Agent
   if (fleet_agent_) fleet_agent_->Stop();
 
-  // Stop AutonomousTrigger, EventBus and Collector
+  // Stop AutonomousTrigger, PerceptionEngine,
+  // EventBus and Collector
   if (auto_trigger_) auto_trigger_->Stop();
+  if (perception_engine_) perception_engine_->Stop();
   adapter_manager_.StopAll();
   if (event_collector_) event_collector_->Stop();
   EventBus::GetInstance().Stop();
@@ -557,6 +567,18 @@ void TizenClawDaemon::HandleIpcClient(int client_sock) {
                 {"id", req_id},
                 {"result", {{"text", result_str}}}};
           }
+        } else if (method == "get_perception_status") {
+          nlohmann::json result;
+          if (perception_engine_) {
+            result = perception_engine_->GetStatus();
+          } else {
+            result = {{"error",
+                       "PerceptionEngine not initialized"}};
+          }
+          response_json = {
+              {"jsonrpc", "2.0"},
+              {"id", req_id},
+              {"result", result}};
         } else {
           response_json = {
               {"jsonrpc", "2.0"},

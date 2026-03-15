@@ -122,6 +122,7 @@ void PrintUsage() {
             << "  --send-to <channel> <text>\n"
             << "                Send outbound message via channel\n"
             << "  --list-agents List all running agents\n"
+            << "  --perception  Show perception engine status\n"
             << "  -h, --help    Show this help\n\n"
             << "If no prompt given, interactive mode.\n";
 }
@@ -330,6 +331,201 @@ int ListAgents() {
   return 0;
 }
 
+// Direct IPC for perception status
+int GetPerceptionStatus() {
+  int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (sock < 0) {
+    std::cerr << "Failed to create socket\n";
+    return 1;
+  }
+
+  struct sockaddr_un addr = {};
+  addr.sun_family = AF_UNIX;
+  const char kName[] = "tizenclaw.sock";
+  for (size_t i = 0; i < sizeof(kName) - 1; ++i)
+    addr.sun_path[1 + i] = kName[i];
+  socklen_t addr_len =
+      offsetof(struct sockaddr_un, sun_path)
+      + 1 + sizeof(kName) - 1;
+
+  if (connect(sock,
+              reinterpret_cast<struct sockaddr*>(
+                  &addr),
+              addr_len) < 0) {
+    close(sock);
+    std::cerr << "Failed to connect to daemon\n";
+    return 1;
+  }
+
+  std::string req =
+      "{\"jsonrpc\":\"2.0\",\"method\":"
+      "\"get_perception_status\","
+      "\"id\":1,\"params\":{}}";
+
+  uint32_t net_len = htonl(req.size());
+  write(sock, &net_len, 4);
+  write(sock, req.data(), req.size());
+
+  // Read response
+  uint32_t resp_len = 0;
+  if (read(sock, &resp_len, 4) != 4) {
+    close(sock);
+    std::cerr << "Failed to read response\n";
+    return 1;
+  }
+  resp_len = ntohl(resp_len);
+  std::vector<char> buf(resp_len);
+  size_t got = 0;
+  while (got < resp_len) {
+    auto r = read(sock, buf.data() + got,
+                  resp_len - got);
+    if (r <= 0) break;
+    got += r;
+  }
+  close(sock);
+
+  std::string body(buf.data(), got);
+
+  // Parse and pretty-print
+  try {
+    auto j = nlohmann::json::parse(body);
+    auto res = j.value("result",
+                       nlohmann::json::object());
+
+    // Engine status
+    if (res.contains("engine")) {
+      auto& e = res["engine"];
+      std::cout << "=== Perception Engine ==="
+                << "\n  Running: "
+                << (e.value("running", false)
+                        ? "yes" : "no")
+                << "\n  Analysis interval: "
+                << e.value(
+                       "analysis_interval_sec", 0)
+                << "s"
+                << "\n  Events recorded: "
+                << e.value("event_count", 0)
+                << "\n";
+    }
+
+    // Situation assessment
+    if (res.contains("situation")) {
+      auto& s = res["situation"];
+      std::string level =
+          s.value("level", "unknown");
+      std::string emoji = "✅";
+      if (level == "advisory") emoji = "ℹ️ ";
+      else if (level == "warning") emoji = "⚠️ ";
+      else if (level == "critical") emoji = "🔴";
+
+      std::cout << "\n=== Situation Assessment ==="
+                << "\n  " << emoji << " Level: "
+                << level
+                << "\n  Risk Score: ";
+
+      // Risk bar
+      double risk = s.value("risk_score", 0.0);
+      int pct = static_cast<int>(risk * 100);
+      int filled = pct / 5;
+      std::cout << "[";
+      for (int i = 0; i < 20; i++) {
+        std::cout << (i < filled ? "█" : "░");
+      }
+      std::cout << "] " << pct << "%\n";
+
+      std::cout << "  Summary: "
+                << s.value("summary", "") << "\n";
+
+      if (s.contains("factors") &&
+          !s["factors"].empty()) {
+        std::cout << "\n  Risk Factors:\n";
+        for (auto& f : s["factors"]) {
+          std::cout << "    • " << f << "\n";
+        }
+      }
+      if (s.contains("suggestions") &&
+          !s["suggestions"].empty()) {
+        std::cout << "\n  Suggestions:\n";
+        for (auto& sg : s["suggestions"]) {
+          std::cout << "    💡 " << sg << "\n";
+        }
+      }
+    }
+
+    // Device profile
+    if (res.contains("profile")) {
+      auto& p = res["profile"];
+      std::cout << "\n=== Device Profile ==="
+                << "\n  🔋 Battery: "
+                << p.value("battery_level", -1)
+                << "% ("
+                << p.value("battery_health",
+                           "unknown")
+                << ")";
+      if (p.value("charging", false)) {
+        std::cout << " ⚡";
+      }
+      double drain = p.value(
+          "battery_drain_rate", 0.0);
+      if (drain > 0) {
+        std::cout << "\n  📉 Drain rate: "
+                  << drain << " %/min";
+      }
+      std::cout << "\n  🧠 Memory: "
+                << p.value("memory_trend",
+                           "unknown")
+                << " ("
+                << p.value(
+                       "memory_warning_count", 0)
+                << " warnings)"
+                << "\n  🌐 Network: "
+                << p.value("network_status",
+                           "unknown")
+                << " ("
+                << p.value(
+                       "network_drop_count", 0)
+                << " drops)";
+
+      auto fg = p.value("foreground_app", "");
+      if (!fg.empty()) {
+        std::cout << "\n  📱 Foreground: " << fg;
+      }
+      if (p.contains("top_apps") &&
+          !p["top_apps"].empty()) {
+        std::cout << "\n  📊 Top apps: ";
+        bool first = true;
+        for (auto& a : p["top_apps"]) {
+          if (!first) std::cout << ", ";
+          std::cout << a;
+          first = false;
+        }
+      }
+      std::cout << "\n";
+    }
+
+    // Anomalies
+    if (res.contains("anomalies") &&
+        !res["anomalies"].empty()) {
+      std::cout << "\n=== Anomalies ===";
+      for (auto& a : res["anomalies"]) {
+        std::cout << "\n  ⚡ ["
+                  << a.value("severity", "?")
+                  << "] "
+                  << a.value("type", "unknown")
+                  << ": "
+                  << a.value("detail", "");
+      }
+      std::cout << "\n";
+    }
+
+  } catch (...) {
+    // Fallback: raw JSON
+    std::cout << body << "\n";
+  }
+
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -352,6 +548,8 @@ int main(int argc, char* argv[]) {
       return SendToChannel(channel, text);
     } else if (arg == "--list-agents") {
       return ListAgents();
+    } else if (arg == "--perception") {
+      return GetPerceptionStatus();
     } else if (arg == "-s" && i + 1 < argc) {
       session_id = argv[++i];
     } else if (arg == "--stream") {

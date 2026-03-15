@@ -44,6 +44,10 @@ class SystemContextProvider {
   // Get current context as JSON
   [[nodiscard]] nlohmann::json GetContextJson() const;
 
+  // Set perception insight from PerceptionEngine
+  void SetPerceptionInsight(
+      const nlohmann::json& insight);
+
  private:
   // EventBus callback
   void OnEvent(const SystemEvent& event);
@@ -59,6 +63,7 @@ class SystemContextProvider {
   nlohmann::json device_state_;     // display, BT, WiFi, model
   nlohmann::json runtime_state_;    // network, memory, power, battery
   nlohmann::json app_state_;        // recent app events
+  nlohmann::json perception_insight_;  // from PerceptionEngine
 
   // Recent events (ring buffer, max 10)
   struct RecentEvent {
