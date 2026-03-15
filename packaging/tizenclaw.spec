@@ -105,6 +105,7 @@ ln -sf ../tizenclaw-skills-secure.service %{buildroot}%{_unitdir}/multi-user.tar
 /opt/usr/share/tizenclaw/web/
 /opt/usr/share/tizenclaw/tools/embedded/
 /opt/usr/share/tizenclaw/tools/cli/
+/opt/usr/share/tizenclaw/tools/system_cli/
 %dir /opt/usr/share/tizenclaw/tools/
 %dir /opt/usr/share/tizenclaw/config/
 %dir /opt/usr/share/tizenclaw/

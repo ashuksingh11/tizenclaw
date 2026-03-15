@@ -51,7 +51,8 @@ enum class CapabilitySource {
   kSkill,     // Python container skills
   kAction,    // Tizen Action Framework
   kRpk,       // RPK plugin skills
-  kCli,       // CLI tool plugins
+  kCli,       // CLI tool plugins (TPK)
+  kSystemCli, // System CLI tools (/usr/bin)
 };
 
 // Full capability descriptor for a tool

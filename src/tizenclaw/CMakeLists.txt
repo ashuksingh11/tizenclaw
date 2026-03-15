@@ -109,3 +109,10 @@ INSTALL(FILES ${CMAKE_SOURCE_DIR}/tools/routing_guide.md DESTINATION /opt/usr/sh
 INSTALL(DIRECTORY ${CMAKE_SOURCE_DIR}/tools/skills/ DESTINATION /opt/usr/share/tizenclaw/tools/skills/)
 INSTALL(DIRECTORY ${CMAKE_SOURCE_DIR}/tools/embedded/ DESTINATION /opt/usr/share/tizenclaw/tools/embedded/)
 INSTALL(DIRECTORY ${CMAKE_SOURCE_DIR}/data/web/ DESTINATION /opt/usr/share/tizenclaw/web/)
+
+# System CLI tools config + descriptors
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/data/sample/system_cli_config.json.sample"
+        DESTINATION "${APP_DATA_DIR}/config"
+        RENAME "system_cli_config.json")
+INSTALL(DIRECTORY ${CMAKE_SOURCE_DIR}/data/system_cli/
+        DESTINATION /opt/usr/share/tizenclaw/tools/system_cli/)

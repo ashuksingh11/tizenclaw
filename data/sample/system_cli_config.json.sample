@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "tools_dir": "/opt/usr/share/tizenclaw/tools/system_cli",
+  "tools": {
+    "aul_test": {
+      "path": "/usr/bin/aul_test",
+      "timeout_seconds": 10,
+      "side_effect": "reversible",
+      "blocked_args": ["kill_pid_for_oom", "term_pid_without_restart"],
+      "description": "Tizen AUL (Application Utility Library) test tool for app lifecycle management"
+    },
+    "winfo": {
+      "path": "/usr/bin/winfo",
+      "timeout_seconds": 10,
+      "side_effect": "reversible",
+      "blocked_args": ["-kill -all", "-shutdown"],
+      "description": "Tizen window compositor information and control tool"
+    }
+  }
+}

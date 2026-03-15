@@ -22,6 +22,12 @@ Pre-defined Python scripts for specific functionalities (e.g., `web_search`, `ge
 User-defined or AI-generated scripts added at runtime.
 - **Usage**: Use when standard tools/skills are insufficient for a specific, newly defined requirement.
 
+### E. System CLI Tools (`system_cli`) - Medium Priority
+System-level CLI tools from `/usr/bin` whitelisted via `system_cli_config.json`.
+- **Available tools**: `aul_test` (app lifecycle management), `winfo` (window compositor info/control).
+- **Usage**: Use for app listing/launching/termination (`aul_test`) and window/display diagnostics (`winfo`).
+- **Priority**: Use after Tizen Actions but before Python skills for system-level queries.
+
 ## 2. Selection Strategy & Logic
 
 1. **Prefer Native**: If `action_brightness` and `control_display` are both available, you MUST use `action_brightness`.

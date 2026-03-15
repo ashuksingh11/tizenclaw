@@ -37,6 +37,7 @@
 #include "../storage/audit_logger.hh"
 #include "cli_plugin_manager.hh"
 #include "skill_plugin_manager.hh"
+#include "system_cli_adapter.hh"
 #include "capability_registry.hh"
 #include "skill_verifier.hh"
 #include "tool_indexer.hh"
@@ -198,6 +199,10 @@ bool AgentCore::Initialize() {
     cached_tools_loaded_.store(false);
   });
   CliPluginManager::GetInstance().Initialize();
+
+  // Initialize system CLI adapter (/usr/bin tools whitelist)
+  SystemCliAdapter::GetInstance().Initialize(
+      std::string(APP_DATA_DIR) + "/config/system_cli_config.json");
 
   // Initialize embedding store for RAG
   std::string rag_db = std::string(APP_DATA_DIR) + "/rag/embeddings.db";
@@ -1837,6 +1842,19 @@ std::string AgentCore::BuildSystemPrompt(
     }
   }
 
+  // Inject system CLI tool documentation into prompt
+  {
+    auto sys_docs = SystemCliAdapter::GetInstance().GetToolDocs();
+    if (!sys_docs.empty()) {
+      tool_list += "\n## System CLI Tools\n";
+      tool_list += "Use the `execute_cli` tool to ";
+      tool_list += "invoke these system tools installed on the device.\n\n";
+      for (const auto& [name, doc] : sys_docs) {
+        tool_list += doc + "\n\n---\n\n";
+      }
+    }
+  }
+
   // Replace {{MEMORY_CONTEXT}} placeholder
   const std::string mem_ph = "{{MEMORY_CONTEXT}}";
   size_t mem_pos = prompt.find(mem_ph);
@@ -3037,7 +3055,58 @@ std::string AgentCore::ExecuteCli(const std::string& tool_name,
     return "{\"error\": \"tool_name is required\"}";
   }
 
-  // Resolve tool directory
+  // Check system CLI tools first (/usr/bin whitelist)
+  auto& sys_cli = SystemCliAdapter::GetInstance();
+  if (sys_cli.HasTool(tool_name)) {
+    std::string validation = sys_cli.ValidateArguments(tool_name, arguments);
+    if (!validation.empty()) {
+      LOG(WARNING) << "SystemCli argument blocked: " << validation;
+      return nlohmann::json({{"error", validation}}).dump();
+    }
+
+    std::string bin_path = sys_cli.Resolve(tool_name);
+    std::string cmd = bin_path + " " + arguments + " 2>&1";
+
+    LOG(INFO) << "Executing system CLI: " << cmd;
+
+    // Execute with timeout awareness
+    std::string output;
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) {
+      LOG(ERROR) << "Failed to execute system CLI: " << tool_name;
+      return "{\"error\": \"Failed to execute system CLI tool\"}";
+    }
+
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+      output += buffer;
+    }
+    int status = pclose(pipe);
+
+    while (!output.empty() && output.back() == '\n') {
+      output.pop_back();
+    }
+
+    if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+      LOG(WARNING) << "System CLI " << tool_name
+                   << " exited with code " << WEXITSTATUS(status);
+    }
+
+    try {
+      auto j = nlohmann::json::parse(output);
+      return j.dump();
+    } catch (...) {
+      return nlohmann::json(
+                 {{"tool", tool_name},
+                  {"source", "system_cli"},
+                  {"exit_code", WIFEXITED(status)
+                                    ? WEXITSTATUS(status) : -1},
+                  {"output", output}})
+          .dump();
+    }
+  }
+
+  // Resolve tool directory (TPK CLI plugins)
   std::string dir_name;
   {
     std::lock_guard<std::mutex> lock(tools_mutex_);
