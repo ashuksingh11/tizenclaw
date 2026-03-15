@@ -498,6 +498,32 @@ void TizenClawDaemon::HandleIpcClient(int client_sock) {
                              {"id", req_id},
                              {"result", {{"text", result}}}};
           }
+        } else if (method == "send_to") {
+          std::string channel =
+              params.value("channel", "");
+          std::string text =
+              params.value("text", "");
+          if (channel.empty() || text.empty()) {
+            response_json = {
+                {"jsonrpc", "2.0"},
+                {"error",
+                 {{"code", -32602},
+                  {"message",
+                   "channel and text required"}}},
+                {"id", req_id}};
+          } else {
+            bool sent = channel == "all"
+                ? (channel_registry_.Broadcast(text),
+                   true)
+                : channel_registry_.SendTo(
+                      channel, text);
+            response_json = {
+                {"jsonrpc", "2.0"},
+                {"id", req_id},
+                {"result",
+                 {{"sent", sent},
+                  {"channel", channel}}}};
+          }
         } else {
           response_json = {
               {"jsonrpc", "2.0"},

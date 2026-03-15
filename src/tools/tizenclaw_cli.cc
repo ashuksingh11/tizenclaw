@@ -24,6 +24,11 @@
  *   tizenclaw-cli   (interactive mode)
  */
 
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
 #include <future>
 #include <iostream>
 #include <mutex>
@@ -112,8 +117,76 @@ void PrintUsage() {
             << "Options:\n"
             << "  -s <id>       Session ID (default: cli_test)\n"
             << "  --stream      Enable streaming\n"
+            << "  --send-to <channel> <text>\n"
+            << "                Send outbound message via channel\n"
             << "  -h, --help    Show this help\n\n"
             << "If no prompt given, interactive mode.\n";
+}
+
+// Direct IPC for send_to (bypasses CAPI)
+int SendToChannel(const std::string& channel,
+                  const std::string& text) {
+  int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (sock < 0) {
+    std::cerr << "Failed to create socket\n";
+    return 1;
+  }
+
+  struct sockaddr_un addr = {};
+  addr.sun_family = AF_UNIX;
+  const char kName[] = "tizenclaw.sock";
+  for (size_t i = 0; i < sizeof(kName) - 1; ++i)
+    addr.sun_path[1 + i] = kName[i];
+  socklen_t addr_len =
+      offsetof(struct sockaddr_un, sun_path)
+      + 1 + sizeof(kName) - 1;
+
+  if (connect(sock,
+              reinterpret_cast<struct sockaddr*>(
+                  &addr),
+              addr_len) < 0) {
+    close(sock);
+    std::cerr << "Failed to connect to daemon\n";
+    return 1;
+  }
+
+  // Build JSON-RPC request
+  std::string req =
+      "{\"jsonrpc\":\"2.0\",\"method\":"
+      "\"send_to\",\"id\":1,\"params\":{"
+      "\"channel\":\"" + channel + "\","
+      "\"text\":\"";
+  // Simple JSON escape
+  for (char c : text) {
+    if (c == '"') req += "\\\"";
+    else if (c == '\\') req += "\\\\";
+    else if (c == '\n') req += "\\n";
+    else req += c;
+  }
+  req += "\"}}";
+
+  uint32_t net_len = htonl(req.size());
+  write(sock, &net_len, 4);
+  write(sock, req.data(), req.size());
+
+  // Read response
+  uint32_t resp_len = 0;
+  if (read(sock, &resp_len, 4) == 4) {
+    resp_len = ntohl(resp_len);
+    std::vector<char> buf(resp_len);
+    size_t got = 0;
+    while (got < resp_len) {
+      auto r = read(sock, buf.data() + got,
+                    resp_len - got);
+      if (r <= 0) break;
+      got += r;
+    }
+    std::cout << std::string(buf.data(), got)
+              << "\n";
+  }
+
+  close(sock);
+  return 0;
 }
 
 }  // namespace
@@ -128,6 +201,14 @@ int main(int argc, char* argv[]) {
     if (arg == "-h" || arg == "--help") {
       PrintUsage();
       return 0;
+    } else if (arg == "--send-to" && i + 2 < argc) {
+      std::string channel = argv[++i];
+      std::string text;
+      for (int j = ++i; j < argc; ++j) {
+        if (!text.empty()) text += " ";
+        text += argv[j];
+      }
+      return SendToChannel(channel, text);
     } else if (arg == "-s" && i + 1 < argc) {
       session_id = argv[++i];
     } else if (arg == "--stream") {
