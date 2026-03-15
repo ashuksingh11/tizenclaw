@@ -347,7 +347,7 @@ To achieve operational stability on embedded devices, the monolithic agent topol
 
 | Category | Agent | Primary Responsibility |
 |----------|-------|------------------------|
-| **Understanding** | `Input Understanding Agent` | Standardizes user input across all 7 channels into a unified intent structure. |
+| **Understanding** | `Input Understanding Agent` | Standardizes user input across all channels into a unified intent structure. |
 | **Perception** | `Environment Perception Agent` | Subscribes to the Event Bus to maintain the Common State Schema. |
 | **Memory** | `Session / Context Agent` | Manages working memory (current task), long-term memory (user preferences), and episodic memory (success/failure of past executions). |
 | **Planning** | `Planning Agent` (Orchestrator) | Decomposes goals into logical steps based on the Capability Registry. |
@@ -535,7 +535,7 @@ graph LR
 
 - **Agent Core**: Native C++ daemon with multi-LLM Agentic Loop, streaming, context compaction
 - **Skills Execution**: OCI container-isolated Python skills with inotify hot-reload
-- **Communication**: 7 channels (Telegram, Slack, Discord, MCP, Webhook, Voice, Web)
+- **Communication**: 7+ extensible channels (Telegram, Slack, Discord, MCP, Webhook, Voice, Web + SO plugins)
 - **Security**: Encrypted keys, tool policy, audit logging, UID/HMAC authentication
 - **Automation**: Cron/interval task scheduler with LLM integration
 - **Knowledge**: SQLite-backed RAG with embedding search

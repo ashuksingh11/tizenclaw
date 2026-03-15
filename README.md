@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/Language-C%2B%2B20-orange.svg" alt="Language">
   <img src="https://img.shields.io/badge/Platform-Tizen_10.0%2B-brightgreen.svg" alt="Platform">
   <img src="https://img.shields.io/badge/LLM_Backends-5%2B_Extensible-purple.svg" alt="LLM Backends">
-  <img src="https://img.shields.io/badge/Channels-7-blue.svg" alt="Channels">
+  <img src="https://img.shields.io/badge/Channels-7%2B_Extensible-blue.svg" alt="Channels">
 </p>
 
 ---
@@ -34,7 +34,7 @@ TizenClaw is part of the **Claw** family of AI agent runtimes, each targeting di
 | **Language** | C++20 | TypeScript | TypeScript | Rust |
 | **Target** | Tizen embedded | Cloud / Desktop | Container hosts | Edge hardware |
 | **Binary** | ~812KB binary | Node.js runtime | Node.js runtime | ~8.8MB single binary |
-| **Channels** | 7 | 22+ | 5 | 17 |
+| **Channels** | 7+ (extensible) | 22+ | 5 | 17 |
 | **LLM Backends** | 5+ (extensible) | 4+ | 1 (Claude) | 5+ |
 | **Sandboxing** | OCI (crun) | Docker | Docker | Docker |
 | **Unique** | Tizen C-API, MCP | Canvas/A2UI, ClawHub | SKILL.md, AI-native | <5MB RAM, traits |
@@ -148,7 +148,7 @@ sdb shell systemctl restart tizenclaw
 - **Standardized IPC (JSON-RPC 2.0)** — Communicates with the `tizenclaw-cli` and external clients over Unix Domain Sockets using standard JSON-RPC 2.0. Supports `prompt`, `get_usage`, and `send_to` methods.
 - **Aggressive Edge Memory Management** — Monitors daemon idle states locally and dynamically flushes SQLite caches (`sqlite3_release_memory(50MB)`) while aggressively reclaiming heap space back to Tizen OS (`malloc_trim(0)`) utilizing PSS profiling.
 - **Unified LLM Priority Routing** — Supports Gemini, OpenAI, Anthropic, xAI, Ollama, and runtime RPK Plugins via a unified queue, automatically falling back based strictly on assigned priority values (`1` baseline).
-- **7 Communication Channels** — Telegram, Slack, Discord, MCP (Claude Desktop), Webhook, Voice (TTS/STT), and Web Dashboard — all managed through a pluggable `Channel` abstraction with config-driven factory and runtime SO plugin support.
+- **7+ Communication Channels** — Telegram, Slack, Discord, MCP (Claude Desktop), Webhook, Voice (TTS/STT), and Web Dashboard built-in — all managed through a pluggable `Channel` abstraction with config-driven factory and runtime SO plugin support. Extend with unlimited additional channels via shared object plugins — no daemon recompilation required.
 - **Outbound Messaging** — LLM-initiated proactive notifications via `ChannelRegistry::SendTo()` / `Broadcast()`. Channels that support outbound (Telegram, Slack, Discord, Voice) implement `Channel::SendMessage()`. Testable via `tizenclaw-cli --send-to <channel> <text>`.
 - **Function Calling / Tool Use** — The LLM autonomously invokes device skills through an iterative Agentic Loop with streaming responses.
 - **Tizen Action Framework** — Native device actions via `ActionBridge` with per-action typed LLM tools, MD schema caching, and live updates via `action_event_cb`.

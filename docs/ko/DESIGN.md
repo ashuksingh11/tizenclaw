@@ -321,7 +321,7 @@ TizenClaw는 현재 **멀티 세션 에이전트 간 메시징**을 지원합니
 
 | 카테고리 | 에이전트 | 주요 책임 |
 |----------|----------|-----------|
-| **이해** | `Input Understanding Agent` | 7개 채널의 원시 사용자 입력을 통합된 인텐트(Intent) 구조로 표준화합니다. |
+| **이해** | `Input Understanding Agent` | 모든 채널의 원시 사용자 입력을 통합된 인텐트(Intent) 구조로 표준화합니다. |
 | **인식** | `Environment Perception Agent` | 이벤트 버스를 구독하여 공통 상태 스키마(Common State Schema)를 유지합니다. |
 | **기억** | `Session / Context Agent` | 단기 기억(현재 작업), 장기 기억(사용자 선호), 에피소드 기억(과거 실행의 성공/실패)을 관리합니다. |
 | **판단** | `Planning Agent` (오케스트레이터) | 퍼셉션과 Capability Registry를 기반으로 목표를 논리적 단계로 분해합니다. |
@@ -509,7 +509,7 @@ graph LR
 
 - **Agent Core**: 멀티 LLM Agentic Loop, 스트리밍, 컨텍스트 압축을 갖춘 네이티브 C++ 데몬
 - **스킬 실행**: inotify 핫리로드를 갖춘 OCI 컨테이너 격리 Python 스킬
-- **통신**: 7개 채널 (Telegram, Slack, Discord, MCP, Webhook, Voice, Web)
+- **통신**: 7+ 확장 가능 채널 (Telegram, Slack, Discord, MCP, Webhook, Voice, Web + SO 플러그인)
 - **보안**: 암호화된 키, 도구 실행 정책, 감사 로깅, UID/HMAC 인증
 - **자동화**: LLM 연동 Cron/interval 태스크 스케줄러
 - **지식**: SQLite 기반 RAG 및 임베딩 검색
