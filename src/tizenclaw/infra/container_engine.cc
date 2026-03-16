@@ -642,6 +642,9 @@ bool ContainerEngine::PrepareSkillsBundle() {
     return false;
   }
 
+  // Ensure /host_lib directory exists in rootfs for bind mount
+  RunCommand("mkdir -p " + EscapeShellArg(rootfs_dir + "/host_lib"));
+
   if (!WriteSkillsConfig()) {
     return false;
   }
@@ -963,15 +966,21 @@ std::string ContainerEngine::FindPython3() const {
   // 2nd: rootfs python3 via musl dynamic linker.
   // Alpine (musl) python3 can be executed on any Linux kernel by
   // invoking musl's ld directly as the ELF interpreter.
+  namespace fs = std::filesystem;
+
+  // Resolve python3 symlink (Alpine: python3 -> python3.12)
+  // musl ld requires the actual ELF binary path, not a symlink.
   std::string rootfs_python = bundle_dir_ + "/rootfs/usr/bin/python3";
-  if (access(rootfs_python.c_str(), R_OK) != 0) {
+  std::error_code ec;
+  fs::path resolved = fs::canonical(rootfs_python, ec);
+  if (ec || !fs::exists(resolved, ec)) {
+    LOG(WARNING) << "rootfs python3 not found: " << rootfs_python;
     return "";
   }
+  std::string real_python = resolved.string();
 
   // Find ld-musl-*.so.1 in rootfs /lib
-  namespace fs = std::filesystem;
   std::string rootfs_lib = bundle_dir_ + "/rootfs/lib";
-  std::error_code ec;
   for (const auto& entry : fs::directory_iterator(rootfs_lib, ec)) {
     std::string name = entry.path().filename().string();
     if (name.find("ld-musl-") == 0 &&
@@ -982,7 +991,7 @@ std::string ContainerEngine::FindPython3() const {
       LOG(INFO) << "Using rootfs python3 via " << "musl ld: " << musl_ld;
       return musl_ld + " --library-path " +
              EscapeShellArg(rootfs_usr_lib + ":/usr/lib:/lib") +
-             " " + rootfs_python;
+             " " + real_python;
     }
   }
 
