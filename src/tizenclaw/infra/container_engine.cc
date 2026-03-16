@@ -52,8 +52,23 @@ std::pair<std::string, std::string> DetectSkillRuntime(
       nlohmann::json j;
       mf >> j;
       runtime = j.value("runtime", "python");
-      entry_point = j.value("entry_point", "");
-      if (entry_point.empty()) {
+      // Support both "entry_point" (new) and
+      // "entrypoint" (legacy) keys.
+      std::string ep;
+      if (j.contains("entry_point"))
+        ep = j["entry_point"].get<std::string>();
+      else if (j.contains("entrypoint"))
+        ep = j["entrypoint"].get<std::string>();
+
+      if (!ep.empty()) {
+        // Legacy format: "python3 foo.py" — strip
+        // runtime prefix, keep only filename.
+        auto pos = ep.rfind(' ');
+        if (pos != std::string::npos)
+          entry_point = ep.substr(pos + 1);
+        else
+          entry_point = ep;
+      } else {
         if (runtime == "python") entry_point = skill_name + ".py";
         else if (runtime == "node") entry_point = skill_name + ".js";
         else entry_point = skill_name;  // native
@@ -176,9 +191,44 @@ bool ContainerEngine::Initialize() {
   if (!runtime_bin_.empty()) {
     RunCommand(CrunCmd("delete -f " + container_id_));
   }
+
+  // Also kill any stale skill_executor process left from
+  // chroot/unshare fallback (it survives daemon restarts
+  // because it runs in its own PID namespace).
+  auto [fuser_out, fuser_rc] =
+      RunCommand("fuser " +
+                 EscapeShellArg(std::string(kSkillSocketPath)) +
+                 " 2>/dev/null");
+  if (fuser_rc == 0 && !fuser_out.empty()) {
+    LOG(INFO) << "Killing stale skill_executor "
+              << "on " << kSkillSocketPath
+              << ": " << fuser_out;
+    RunCommand("fuser -k " +
+               EscapeShellArg(std::string(kSkillSocketPath)) +
+               " 2>/dev/null");
+  }
+
+  // Remove stale socket file so the new container
+  // starts with a clean socket.
+  RunCommand("rm -f " +
+             EscapeShellArg(std::string(kSkillSocketPath)));
+
   CleanupOverlayUsr();
 
   initialized_ = true;
+
+  // Eagerly start the secure container so skill execution
+  // is immediately available (don't wait for first request).
+  if (!runtime_bin_.empty()) {
+    if (EnsureSkillsContainerRunning()) {
+      LOG(INFO) << "Secure skills container "
+                << "started during init";
+    } else {
+      LOG(WARNING) << "Could not start secure "
+                   << "container during init";
+    }
+  }
+
   return true;
 }
 
@@ -245,7 +295,7 @@ std::string ContainerEngine::ExecuteSkill(const std::string& skill_name,
       return err.dump();
     }
     run_cmd = "CLAW_ARGS=" + EscapeShellArg(arg_str) +
-              " LD_LIBRARY_PATH=/usr/lib:/lib " +
+              " LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/lib:/lib64 " +
               python_bin + " " + EscapeShellArg(host_skill_path);
   } else if (rt == "node") {
     run_cmd = "CLAW_ARGS=" + EscapeShellArg(arg_str) +
@@ -666,43 +716,84 @@ bool ContainerEngine::IsContainerRunning() const {
 }
 
 bool ContainerEngine::StartSkillsContainer() {
-  std::string delete_cmd = CrunCmd("delete -f " + container_id_);
-  auto [del_out, delete_ret] = RunCommand(delete_cmd);
-  if (delete_ret != 0) {
-    LOG(WARNING) << "Pre-delete secure container returned: " << delete_ret;
+  // Use the shell script which implements all fallbacks:
+  // crun run → runc run → chroot/unshare.
+  // Fork a background process so skill_executor.py runs
+  // as a daemon; we poll for the UDS socket to appear.
+  std::string script =
+      "/usr/libexec/tizenclaw/skills_secure_container.sh";
+
+  if (access(script.c_str(), X_OK) != 0) {
+    LOG(ERROR) << "Container start script "
+               << "not found: " << script;
+    return false;
   }
 
-  // Workaround for Tizen emulator: disable cgroup manager if crun supports it
-  std::string cgroup_arg = "";
-  if (runtime_bin_.find("crun") != std::string::npos) {
-    auto [help_out, help_rc] = RunCommand(runtime_bin_ + " run --help");
-    if (help_rc == 0 &&
-        help_out.find("--cgroup-manager") != std::string::npos) {
-      cgroup_arg = " --cgroup-manager=disabled";
+  pid_t pid = fork();
+  if (pid == -1) {
+    LOG(ERROR) << "fork() failed for container "
+               << "script: " << strerror(errno);
+    return false;
+  }
+
+  if (pid == 0) {
+    // Child: detach and exec the container script.
+    setsid();
+    // Redirect stdout/stderr to /dev/null so the daemon
+    // doesn't hold file descriptors.
+    int devnull = open("/dev/null", O_WRONLY);
+    if (devnull >= 0) {
+      dup2(devnull, STDOUT_FILENO);
+      dup2(devnull, STDERR_FILENO);
+      close(devnull);
+    }
+    execl("/usr/bin/bash", "bash", script.c_str(),
+          "start", nullptr);
+    _exit(127);
+  }
+
+  // Parent: don't waitpid — let the child run as daemon.
+  LOG(INFO) << "Launched container script "
+            << "pid=" << pid;
+
+  // Wait for the skill_executor UDS socket to appear
+  // (up to 10 seconds).
+  for (int i = 0; i < 20; ++i) {
+    usleep(500000);  // 500ms
+    if (access(kSkillSocketPath, F_OK) == 0) {
+      LOG(INFO) << "Skill executor socket "
+                << "ready after " << (i + 1) * 500
+                << "ms";
+      return true;
     }
   }
 
-  std::string run_cmd = "cd " + EscapeShellArg(bundle_dir_) + " && " +
-                        CrunCmd("run" + cgroup_arg + " -d " + container_id_);
-  auto [run_out, ret] = RunCommand(run_cmd);
-  if (ret != 0) {
-    LOG(ERROR) << "Failed to start secure skills container. Return: " << ret
-               << " output: " << run_out;
-    return false;
-  }
-  return true;
+  LOG(WARNING) << "Skill executor socket did "
+               << "not appear within 10s";
+  return false;
 }
 
 void ContainerEngine::StopSkillsContainer() {
-  if (!initialized_ || runtime_bin_.empty()) {
+  if (!initialized_) {
     return;
   }
 
-  std::string stop_cmd = CrunCmd("delete -f " + container_id_);
-  auto [output, stop_ret] = RunCommand(stop_cmd);
-  if (stop_ret != 0) {
-    LOG(WARNING) << "Delete secure container returned: " << stop_ret;
+  // Call the shell script to stop the container
+  // (handles crun delete + overlay cleanup).
+  std::string script =
+      "/usr/libexec/tizenclaw/skills_secure_container.sh";
+  if (access(script.c_str(), X_OK) == 0) {
+    RunCommand(EscapeShellArg(script) + " stop");
   }
+
+  // Also kill any remaining skill_executor process
+  // on the socket (chroot/unshare fallback processes).
+  RunCommand("fuser -k " +
+             EscapeShellArg(std::string(kSkillSocketPath)) +
+             " 2>/dev/null");
+  RunCommand("rm -f " +
+             EscapeShellArg(std::string(kSkillSocketPath)));
+
   CleanupOverlayUsr();
 }
 
@@ -775,7 +866,7 @@ bool ContainerEngine::WriteSkillsConfig() const {
              "/skills/skill_executor.py"],
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      "LD_LIBRARY_PATH=/usr/lib:/host_lib"
+      "LD_LIBRARY_PATH=/lib64:/usr/lib64:/host_lib:/usr/lib"
     ],
     "cwd": "/",
     "noNewPrivileges": true,

@@ -22,6 +22,8 @@ import threading
 
 SOCKET_PATH = "/tmp/tizenclaw_skill.sock"
 SKILLS_DIR = "/skills"
+
+
 def _find_python3():
     """Find a working Python3 binary.
 
@@ -38,6 +40,16 @@ def _find_python3():
 
 PYTHON_BIN = _find_python3()
 NODE_BIN = "/usr/bin/node"
+
+
+def _log_startup_info():
+    """Log which Python binary was selected at startup."""
+    log(f"Python binary: {PYTHON_BIN}")
+    log(f"sys.executable: {sys.executable}")
+    log(f"sys.version: {sys.version}")
+    log(f"PATH: {os.environ.get('PATH', '')}")
+    log(f"LD_LIBRARY_PATH: {os.environ.get('LD_LIBRARY_PATH', '')}")
+
 MAX_PAYLOAD = 10 * 1024 * 1024  # 10 MB
 EXEC_TIMEOUT = 30  # seconds
 CODE_EXEC_TIMEOUT = 15  # seconds for dynamic code
@@ -95,8 +107,16 @@ def detect_runtime(skill_name):
             with open(manifest_path) as f:
                 manifest = json.load(f)
             runtime = manifest.get("runtime", "python")
-            entry_point = manifest.get("entry_point", None)
-            if not entry_point:
+            # Support both "entry_point" (new) and
+            # "entrypoint" (legacy) keys.
+            ep = (manifest.get("entry_point")
+                  or manifest.get("entrypoint"))
+            if ep:
+                # Legacy format: "python3 foo.py" —
+                # strip runtime prefix.
+                parts = ep.strip().split()
+                entry_point = parts[-1] if parts else ep
+            else:
                 ext_map = {
                     "python": ".py",
                     "node": ".js",
@@ -412,7 +432,9 @@ def handle_client(conn):
 
             # Route by command type
             command = req.get("command", "")
-            if command == "execute_code":
+            if command == "diag":
+                resp = handle_diag()
+            elif command == "execute_code":
                 code = req.get("code", "")
                 timeout = req.get("timeout",
                                   CODE_EXEC_TIMEOUT)
@@ -441,8 +463,49 @@ def handle_client(conn):
         conn.close()
 
 
+def handle_diag():
+    """Return container environment diagnostics."""
+    import importlib
+    diag = {
+        "python_version": sys.version,
+        "sys_executable": sys.executable,
+        "python_bin": PYTHON_BIN,
+        "cwd": os.getcwd(),
+        "pid": os.getpid(),
+        "env_PATH": os.environ.get("PATH", ""),
+        "env_LD_LIBRARY_PATH": os.environ.get(
+            "LD_LIBRARY_PATH", ""),
+    }
+    # Check key paths
+    key_paths = [
+        "/usr/bin/python3", "/skills/skill_executor.py",
+        "/skills/common/tizen_capi_utils.py",
+        "/host_lib/libc.so.6", "/usr/lib/libffi.so.8",
+    ]
+    diag["path_exists"] = {
+        p: os.path.exists(p) for p in key_paths
+    }
+    # Check ctypes import
+    try:
+        importlib.import_module("ctypes")
+        diag["ctypes_ok"] = True
+    except ImportError as e:
+        diag["ctypes_error"] = str(e)
+    # List skills
+    try:
+        entries = os.listdir(SKILLS_DIR)
+        diag["skills"] = sorted(entries)
+    except Exception as e:
+        diag["skills_error"] = str(e)
+    return {
+        "status": "ok",
+        "output": json.dumps(diag),
+    }
+
+
 def main():
     log("Starting...")
+    _log_startup_info()
 
     # Clean up stale socket
     try:

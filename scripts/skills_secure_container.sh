@@ -35,7 +35,7 @@ write_config() {
     "args": ["python3", "/skills/skill_executor.py"],
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      "LD_LIBRARY_PATH=/usr/lib:/host_lib"
+      "LD_LIBRARY_PATH=/lib64:/usr/lib64:/host_lib:/usr/lib"
     ],
     "cwd": "/",
     "noNewPrivileges": true,
@@ -269,7 +269,7 @@ run_without_container() {
     mount --rbind \"${APP_DATA_DIR}/tools/cli\" \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw/tools/cli\" || true
     mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw/tools/cli\" || true
 
-    exec chroot \"${BUNDLE_DIR}/rootfs\" /bin/sh -c 'LD_LIBRARY_PATH=/usr/lib:/host_lib exec python3 /skills/skill_executor.py'
+    exec chroot \"${BUNDLE_DIR}/rootfs\" /bin/sh -c 'LD_LIBRARY_PATH=/lib64:/usr/lib64:/host_lib:/usr/lib exec python3 /skills/skill_executor.py'
   "
 }
 

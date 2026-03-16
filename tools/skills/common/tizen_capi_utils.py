@@ -22,10 +22,9 @@ _glibc_preloaded = False
 def _preload_glibc():
     """Preload glibc libc.so.6 to make glibc-only symbols available.
 
-    In Alpine (musl) containers, Tizen CAPI libraries are glibc-linked
-    and need symbols like __snprintf_chk that don't exist in musl.
-    Loading glibc's libc.so.6 with RTLD_GLOBAL exposes those symbols
-    to all subsequently loaded shared objects.
+    When running on glibc Python, RTLD_GLOBAL correctly exposes
+    symbols like __isoc23_sscanf to subsequently loaded CAPI libs.
+    On musl Python this is a no-op (musl ignores RTLD_GLOBAL).
     """
     global _glibc_preloaded
     if _glibc_preloaded:
@@ -35,7 +34,9 @@ def _preload_glibc():
     search_paths = [
         "/host_lib/libc.so.6",  # container: host /lib mounted
         "/lib/libc.so.6",       # usrmerge or host-direct
+        "/lib64/libc.so.6",     # x86_64 multilib convention
         "/usr/lib/libc.so.6",   # usrmerge systems
+        "/usr/lib64/libc.so.6", # x86_64 Tizen emulator
     ]
     for path in search_paths:
         if os.path.exists(path):
