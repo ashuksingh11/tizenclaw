@@ -246,27 +246,35 @@ void SystemContextProvider::AddRecentEvent(
 }
 
 nlohmann::json SystemContextProvider::GetContextJson() const {
-  std::lock_guard<std::mutex> lock(state_mutex_);
-
   nlohmann::json ctx;
-  ctx["device"] = device_state_;
-  ctx["runtime"] = runtime_state_;
-  if (!app_state_.empty())
-    ctx["apps"] = app_state_;
 
-  // Recent events
-  auto events = nlohmann::json::array();
-  for (const auto& re : recent_events_) {
-    events.push_back({
-        {"time", re.time},
-        {"source", re.source},
-        {"event", re.event_name},
-        {"detail", re.detail}});
+  // Collect internal state under state_mutex_
+  {
+    std::lock_guard<std::mutex> lock(state_mutex_);
+    ctx["device"] = device_state_;
+    ctx["runtime"] = runtime_state_;
+    if (!app_state_.empty())
+      ctx["apps"] = app_state_;
+
+    // Recent events
+    auto events = nlohmann::json::array();
+    for (const auto& re : recent_events_) {
+      events.push_back({
+          {"time", re.time},
+          {"source", re.source},
+          {"event", re.event_name},
+          {"detail", re.detail}});
+    }
+    ctx["recent_events"] = events;
+
+    if (!perception_insight_.empty())
+      ctx["perception"] = perception_insight_;
   }
-  ctx["recent_events"] = events;
 
-  // Active plugins
-  auto sources = EventBus::GetInstance().ListEventSources();
+  // Query EventBus OUTSIDE state_mutex_ to avoid
+  // nested lock ordering issues (Issue #5).
+  auto sources =
+      EventBus::GetInstance().ListEventSources();
   auto plugins = nlohmann::json::array();
   for (const auto& s : sources) {
     if (s.plugin_id != "builtin") {
@@ -274,9 +282,6 @@ nlohmann::json SystemContextProvider::GetContextJson() const {
     }
   }
   ctx["active_plugins"] = plugins;
-
-  if (!perception_insight_.empty())
-    ctx["perception"] = perception_insight_;
 
   return ctx;
 }

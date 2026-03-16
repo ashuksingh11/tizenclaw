@@ -49,6 +49,16 @@ ProactiveAdvisor::ProactiveAdvisor(
     ChannelRegistry* channels)
     : agent_(agent), channels_(channels) {}
 
+ProactiveAdvisor::~ProactiveAdvisor() {
+  JoinEvalThread();
+}
+
+void ProactiveAdvisor::JoinEvalThread() {
+  eval_running_.store(false);
+  if (eval_thread_.joinable())
+    eval_thread_.join();
+}
+
 Advisory ProactiveAdvisor::Evaluate(
     const SituationAssessment& assessment) {
   Advisory advisory;
@@ -194,14 +204,19 @@ void ProactiveAdvisor::Execute(
             "구체적인 해결 방법을 제안해주세요. "
             "가능한 도구가 있다면 직접 실행해주세요.";
 
-        // Execute in detached thread to avoid
-        // blocking the analysis tick
-        std::thread(
+        // Join any previous eval thread before
+        // starting a new one
+        JoinEvalThread();
+
+        eval_running_.store(true);
+        eval_thread_ = std::thread(
             [this, eval_prompt]() {
               try {
+                if (!eval_running_.load()) return;
                 auto result =
                     agent_->ProcessPrompt(
                         "perception", eval_prompt);
+                if (!eval_running_.load()) return;
                 if (!result.empty() && channels_) {
                   std::string msg =
                       "🧠 [Perception Engine 분석"
@@ -215,8 +230,8 @@ void ProactiveAdvisor::Execute(
                     << "evaluation failed: "
                     << e.what();
               }
-            })
-            .detach();
+              eval_running_.store(false);
+            });
       }
       break;
   }

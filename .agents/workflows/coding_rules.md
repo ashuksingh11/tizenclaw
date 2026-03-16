@@ -50,6 +50,6 @@ When implementing TizenClaw in this repository, the Agent (AI) must **strictly**
 - Written targeting the Tizen GBS (Gerrit Build System) environment, `gbs build` must always succeed via CMake.
 - When adding new C++ source files, you must update the `SOURCES` list in `CMakeLists.txt`.
 
-## 3. Tizen-Specific Rules
+## 4. Tizen-Specific Rules
 - Features requiring privileges (Network, LXC execution, AppManager, etc.) must be explicitly stated in the `<privileges>` block of `tizen-manifest.xml`.
 - Make full use of the dlog interface (`dlog_print`) to leave comprehensive system logs, and prioritize error handling via return codes or boolean returns over C++ exceptions whenever possible.

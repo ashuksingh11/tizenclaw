@@ -193,7 +193,30 @@ void VconfEventAdapter::OnVconfChanged(
   ev.name = mapping->event_name;
   ev.plugin_id = "builtin";
   ev.data["key"] = key_name;
-  ev.data["value"] = ExtractValue(node);
+  auto value = ExtractValue(node);
+  ev.data["value"] = value;
+
+  // Normalize canonical keys so downstream
+  // consumers (PerceptionEngine, DeviceProfiler)
+  // can match on standard field names.
+  if (std::strcmp(mapping->event_name,
+                 "vconf.battery.capacity") == 0) {
+    if (value.is_number_integer())
+      ev.data["level"] = value.get<int>();
+  } else if (std::strcmp(
+                 mapping->event_name,
+                 "vconf.battery.charger_status") ==
+             0) {
+    if (value.is_number_integer())
+      ev.data["charging"] =
+          (value.get<int>() > 0);
+  } else if (std::strcmp(
+                 mapping->event_name,
+                 "vconf.battery.status_low") ==
+             0) {
+    if (value.is_number_integer())
+      ev.data["level"] = value.get<int>();
+  }
 
   LOG(INFO) << "VconfEventAdapter: "
             << mapping->event_name

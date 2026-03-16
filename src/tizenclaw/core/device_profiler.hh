@@ -16,6 +16,7 @@
 #ifndef DEVICE_PROFILER_HH
 #define DEVICE_PROFILER_HH
 
+#include <deque>
 #include <json.hpp>
 #include <mutex>
 #include <string>
@@ -73,6 +74,7 @@ class DeviceProfiler {
   struct BatterySample {
     int64_t timestamp;
     int level;
+    bool charging;  // Track per-sample charging state
   };
 
   // Compute battery drain rate (%/min)
@@ -88,11 +90,11 @@ class DeviceProfiler {
   mutable std::mutex mutex_;
 
   // Ring buffer of recent events
-  std::vector<EventRecord> events_;
+  std::deque<EventRecord> events_;
   static constexpr size_t kMaxEvents = 200;
 
   // Battery samples for drain rate
-  std::vector<BatterySample> battery_samples_;
+  std::deque<BatterySample> battery_samples_;
   static constexpr size_t kMaxBatterySamples = 30;
 
   // Latest state tracking

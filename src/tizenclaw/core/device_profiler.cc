@@ -53,7 +53,7 @@ void DeviceProfiler::RecordEvent(
 
   events_.push_back(std::move(record));
   if (events_.size() > kMaxEvents) {
-    events_.erase(events_.begin());
+    events_.pop_front();
   }
 
   // Update latest state tracking
@@ -65,11 +65,11 @@ void DeviceProfiler::RecordEvent(
       BatterySample sample;
       sample.timestamp = record.timestamp;
       sample.level = latest_battery_level_;
+      sample.charging = latest_charging_;
       battery_samples_.push_back(sample);
       if (battery_samples_.size() >
           kMaxBatterySamples) {
-        battery_samples_.erase(
-            battery_samples_.begin());
+        battery_samples_.pop_front();
       }
     }
     if (event.data.contains("charging")) {
@@ -215,16 +215,16 @@ double DeviceProfiler::ComputeDrainRate() const {
   // Need at least 2 samples while not charging
   if (battery_samples_.size() < 2) return 0.0;
 
-  // Find samples where not charging
-  // and compute average drain rate
+  // Filter to only non-charging samples
   std::vector<BatterySample> discharge_samples;
   for (const auto& s : battery_samples_) {
-    discharge_samples.push_back(s);
+    if (!s.charging)
+      discharge_samples.push_back(s);
   }
 
   if (discharge_samples.size() < 2) return 0.0;
 
-  // Use first and last samples
+  // Use first and last discharge samples
   const auto& first = discharge_samples.front();
   const auto& last = discharge_samples.back();
 

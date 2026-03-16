@@ -16,10 +16,12 @@
 #ifndef PROACTIVE_ADVISOR_HH
 #define PROACTIVE_ADVISOR_HH
 
+#include <atomic>
 #include <json.hpp>
 #include <map>
 #include <mutex>
 #include <string>
+#include <thread>
 
 #include "../channel/channel_registry.hh"
 #include "context_fusion_engine.hh"
@@ -53,7 +55,8 @@ class ProactiveAdvisor {
  public:
   ProactiveAdvisor(AgentCore* agent,
                    ChannelRegistry* channels);
-  ~ProactiveAdvisor() = default;
+  ~ProactiveAdvisor();
+
 
   // Evaluate a situation and produce an advisory
   [[nodiscard]] Advisory Evaluate(
@@ -101,6 +104,12 @@ class ProactiveAdvisor {
 
   // Notification channel preference
   std::string notification_channel_ = "all";
+
+  // LLM evaluation thread (joinable, replaces
+  // detached thread to prevent UAF)
+  std::thread eval_thread_;
+  std::atomic<bool> eval_running_{false};
+  void JoinEvalThread();
 };
 
 }  // namespace tizenclaw

@@ -100,6 +100,9 @@ void PerceptionEngine::OnEvent(
                    .count();
     auto last = last_event_driven_tick_.load();
     if ((now - last) >= kEventDrivenDebounceMs) {
+      // Update debounce timestamp at point of
+      // wake to prevent multiple rapid wakes
+      last_event_driven_tick_.store(now);
       LOG(INFO) << "PerceptionEngine: significant "
                 << "event '" << event.name
                 << "' — triggering analysis";
