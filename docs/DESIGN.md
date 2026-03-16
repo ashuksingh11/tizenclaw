@@ -16,7 +16,7 @@ The system establishes a safe and extensible Agent-Skill interaction environment
 - **OS**: Tizen Embedded Linux (Tizen 10.0)
 - **Runtime**: systemd daemon (`tizenclaw.service`)
 - **Security**: SMACK + DAC enforced, kUEP (Kernel Unprivileged Execution Protection) enabled
-- **Language**: C++17, Python 3.x (skills)
+- **Language**: C++20, Python 3.x (skills)
 
 ---
 
@@ -128,7 +128,7 @@ The central orchestration engine implementing the **Agentic Loop**:
 - **Edge Memory Management**: The `MaintenanceLoop` aggressively monitors idle time, calling `malloc_trim(0)` and `sqlite3_release_memory` after 5 minutes of inactivity to reclaim PSS memory.
 - **Multi-Session**: Concurrent agent sessions with per-session system prompt and history isolation
 - **Unified Backend Selection**: `SwitchToBestBackend()` algorithm dynamically selects the active backend based on a unified priority queue (`Plugin` > `active_backend` > `fallback_backends`).
-- **Built-in Tools**: `execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (per-action tools), `remember`, `recall`, `forget` (persistent memory), `execute_cli` (CLI tool plugins)
+- **Built-in Tools**: `execute_code`, `file_manager`, `manage_custom_skill`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (per-action tools), `execute_cli` (CLI tool plugins), `create_workflow`, `list_workflows`, `run_workflow`, `delete_workflow`, `create_pipeline`, `list_pipelines`, `run_pipeline`, `delete_pipeline`, `run_supervisor`, `remember`, `recall`, `forget` (persistent memory)
 - **Tool Dispatch**: Modular `ToolDispatcher` class (`tool_dispatcher.cc`) with thread-safe O(1) lookup via `std::unordered_map<string, ToolHandler>` and `starts_with` fallback for dynamically named tools (e.g., `action_*`)
 - **Capability Registry**: `CapabilityRegistry` singleton (`capability_registry.cc`) registers all built-in tools, skills, and RPK plugins with `FunctionContract` (input/output schemas, `SideEffect` enum, retry policies, required permissions). LLM receives `{{CAPABILITY_SUMMARY}}` in the system prompt with category-grouped capability descriptions.
 
@@ -315,7 +315,7 @@ Enterprise multi-device management:
 - **Configuration**: `fleet_config.json` with `enabled` flag (disabled by default), endpoint URL, heartbeat interval
 - **Lifecycle**: Integrated into `TizenClawDaemon::OnCreate/OnDestroy` for proper initialization and cleanup
 
-### 3.11 Web Dashboard (`web_dashboard.cc`)
+### 3.13 Web Dashboard (`web_dashboard.cc`)
 
 Built-in administrative dashboard:
 
@@ -325,11 +325,11 @@ Built-in administrative dashboard:
 - **Admin Auth**: Session-token mechanism with SHA-256 password hashing
 - **Config Editor**: In-browser editing of 7 configuration files with backup-on-write
 
-### 3.12 Tool Schema Discovery
+### 3.14 Tool Schema Discovery
 
 LLM tool discovery through Markdown schema files:
 
-- **Embedded Tools**: 13 MD files under `/opt/usr/share/tizenclaw/tools/embedded/` describe built-in tools (execute_code, file_manager, pipelines, tasks, RAG, etc.)
+- **Embedded Tools**: 17 MD files under `/opt/usr/share/tizenclaw/tools/embedded/` describe built-in tools (execute_code, file_manager, pipelines, workflows, tasks, RAG, etc.)
 - **Action Tools**: MD files describe Tizen Action Framework actions (auto-synced, device-specific)
 - **CLI Tools**: `.tool.md` descriptors under `/opt/usr/share/tizenclaw/tools/cli/` describe CLI tool plugins (commands, arguments, output format). `CliPluginManager` symlinks these from TPK packages and injects content into the system prompt.
 - **System Prompt Integration**: All directories are scanned at prompt build time, and full MD content is appended to the `{{AVAILABLE_TOOLS}}` section

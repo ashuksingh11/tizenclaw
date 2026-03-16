@@ -1,6 +1,6 @@
 # TizenClaw 프로젝트 분석
 
-> **최종 업데이트**: 2026-03-09
+> **최종 업데이트**: 2026-03-16
 
 ---
 
@@ -100,7 +100,7 @@ graph LR
 ```
 tizenclaw/
 ├── src/                             # 소스 및 헤더
-│   ├── tizenclaw/                   # 데몬 코어 (49개 파일)
+│   ├── tizenclaw/                   # 데몬 코어 (151개 파일, 7개 서브디렉토리)
 │   │   ├── tizenclaw.cc/hh          # 데몬 메인, IPC 서버, 시그널 핸들링
 │   │   ├── agent_core.cc/hh         # Agentic Loop, 스킬 디스패치, 세션 관리
 │   │   ├── container_engine.cc/hh   # OCI 컨테이너 생명주기 관리 (crun)
@@ -127,8 +127,8 @@ tizenclaw/
 │   │   ├── audit_logger.cc/hh       # Markdown 감사 로깅
 │   │   ├── skill_watcher.cc/hh      # inotify 스킬 핫리로드
 │   │   └── embedding_store.cc/hh    # SQLite RAG 벡터 스토어
-│   └── common/                      # 공통 유틸리티 (로깅 등)
-├── skills/                          # Python 스킬 (37개 디렉터리)
+│   └── common/                      # 공통 유틸리티 (로깅, nlohmann JSON)
+├── tools/skills/                    # Python 스킬 (35개 디렉터리)
 │   ├── common/tizen_capi_utils.py   # ctypes 기반 Tizen C-API 래퍼
 │   ├── skill_executor.py            # 컨테이너 측 IPC 스킬 실행기
 │   ├── list_apps/                   # 설치된 앱 목록 조회
@@ -172,12 +172,12 @@ tizenclaw/
 │   ├── pre-commit                   # Git pre-commit 훅
 │   ├── setup-hooks.sh               # 훅 설치기
 │   └── Dockerfile                   # RootFS 빌드 참고용
-├── tools/embedded/                  # 내장 도구 MD 스키마 (13개 파일)
+├── tools/embedded/                  # 내장 도구 MD 스키마 (17개 파일)
 │   ├── execute_code.md              # Python 코드 실행
 │   ├── file_manager.md              # 파일 시스템 작업
 │   ├── create_task.md               # 태스크 스케줄러
 │   ├── create_pipeline.md           # 파이프라인 생성
-│   └── ...                          # + 9개 추가 도구 스키마
+│   └── ...                          # + 12개 추가 도구 스키마
 ├── data/
 │   ├── sample/                      # 샘플 설정 파일 목록 (디바이스 미설치)
 │   │   ├── llm_config.json.sample
@@ -189,14 +189,16 @@ tizenclaw/
 │   ├── web/                         # 대시보드 SPA 파일
 │   └── img/                         # 컨테이너 rootfs (아키텍처별)
 │       └── <arch>/rootfs.tar.gz     # Alpine RootFS (49 MB)
-├── test/unit_tests/                 # gtest/gmock 단위 테스트
+├── test/
+│   ├── unit_tests/                  # gtest/gmock 단위 테스트 (42개 파일)
+│   └── e2e/                         # 종합 테스트 스크립트
 ├── packaging/                       # RPM 패키징 & systemd
 │   ├── tizenclaw.spec               # GBS RPM 빌드 스펙
 │   ├── tizenclaw.service            # 데몬 systemd 서비스
 │   ├── tizenclaw-skills-secure.service  # 스킬 컨테이너 서비스
 │   └── tizenclaw.manifest           # Tizen SMACK 매니페스트
 ├── docs/                            # 문서
-├── CMakeLists.txt                   # 빌드 시스템 (C++17)
+├── CMakeLists.txt                   # 빌드 시스템 (C++20)
 └── third_party/                     # crun 1.26 소스
 ```
 
@@ -290,7 +292,7 @@ tizenclaw/
 | `web_search` | `query` (string, required) | 없음 (Wikipedia API) | ✅ |
 
 AgentCore에 직접 구현된 내장 도구:
-`execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (Tizen Action Framework Per-action 도구)
+`execute_code`, `file_manager`, `manage_custom_skill`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (Tizen Action Framework Per-action 도구), `execute_cli` (CLI 도구 플러그인), `create_workflow`, `list_workflows`, `run_workflow`, `delete_workflow`, `create_pipeline`, `list_pipelines`, `run_pipeline`, `delete_pipeline`, `run_supervisor`, `remember`, `recall`, `forget` (영속 메모리)
 
 ### 3.5 보안
 
@@ -307,11 +309,11 @@ AgentCore에 직접 구현된 내장 도구:
 
 | 항목 | 세부 내용 |
 |------|----------|
-| **빌드 시스템** | CMake 3.0+, C++17, `pkg-config` (tizen-core, glib-2.0, dlog, libcurl, libsoup-3.0, libwebsockets, sqlite3) |
+| **빌드 시스템** | CMake 3.12+, C++20, `pkg-config` (tizen-core, glib-2.0, dlog, libcurl, libsoup-2.4, libwebsockets, sqlite3, capi-appfw-tizen-action, libaurum, capi-appfw-event, capi-appfw-app-manager, capi-appfw-package-manager, aul, rua, vconf) |
 | **패키징** | GBS RPM (`tizenclaw.spec`), crun 소스 빌드 포함 |
 | **아키텍처** | x86_64 (에뮬레이터), armv7l (32-bit ARM), aarch64 (64-bit ARM) — 아키텍처별 rootfs `data/img/<arch>/` |
 | **systemd** | `tizenclaw.service` (Type=simple), `tizenclaw-skills-secure.service` (Type=oneshot) |
-| **테스트** | gtest/gmock, `%check`에서 `ctest -V` 실행 |
+| **테스트** | gtest/gmock (42개 테스트 파일), `%check`에서 `ctest -V` 실행 |
 
 ---
 
@@ -414,11 +416,10 @@ Phase 6-19를 통해 원래 분석에서 식별된 대부분의 Gap이 해소되
 
 | 카테고리 | 파일 수 | LOC |
 |---------|--------|-----|
-| C++ 소스 (`src/tizenclaw/*.cc`) | 35 | ~14,500 |
-| C++ 헤더 (`src/tizenclaw/*.hh`) | 30 | ~3,200 |
-| C++ 공통 (`src/common/`) | 5 | ~40 |
-| Python 스킬 & 유틸 | 28 | ~2,700 |
+| C++ 소스 & 헤더 (`src/`) | 151 | ~34,200 |
+| Python 스킬 & 유틸 | 36 | ~4,700 |
 | Shell 스크립트 | 9 | ~950 |
-| Web 프론트엔드 (HTML/CSS/JS) | 3 | ~2,100 |
-| 단위 테스트 | 9 | ~1,010 |
-| **총계** | ~103 | ~23,100 |
+| Web 프론트엔드 (HTML/CSS/JS) | 3 | ~3,700 |
+| 단위 테스트 | 42 | ~7,800 |
+| 종합 테스트 | 2 | ~800 |
+| **총계** | ~243 | ~52,150 |

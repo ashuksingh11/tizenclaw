@@ -240,7 +240,7 @@ graph TB
 
 ## Skills
 
-TizenClaw ships with **35 container skills** (Python, OCI sandbox) and **10+ built-in tools** (native C++). Async skills use the **tizen-core** event loop for callback-based APIs.
+TizenClaw ships with **35 container skills** (Python, OCI sandbox) and **20+ built-in tools** (native C++). Async skills use the **tizen-core** event loop for callback-based APIs.
 
 | Category | Skills | Examples |
 |----------|:------:|---------|
@@ -253,7 +253,7 @@ TizenClaw ships with **35 container skills** (Python, OCI sandbox) and **10+ bui
 
 > ⚡ = Async skill using tizen-core event loop
 
-- **Built-in Tools**: `execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (per-action tools), `remember`, `recall`, `forget` (persistent memory), `execute_cli` (CLI tool plugins)
+- **Built-in Tools**: `execute_code`, `file_manager`, `manage_custom_skill`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (per-action tools), `execute_cli` (CLI tool plugins), `create_workflow`, `list_workflows`, `run_workflow`, `delete_workflow`, `create_pipeline`, `list_pipelines`, `run_pipeline`, `delete_pipeline`, `run_supervisor`, `remember`, `recall`, `forget` (persistent memory)
 - **Tool Dispatch**: Modular `ToolDispatcher` class with thread-safe O(1) dispatch and `starts_with` fallback for dynamically named tools (e.g., `action_*`). All tools registered in `CapabilityRegistry` with function contracts.
 
 📖 **Full reference**: [Tools Reference](docs/TOOLS.md)
@@ -363,7 +363,7 @@ To transition towards this robust multi-agent ecosystem, TizenClaw utilizes a de
 
 - **Tizen 10.0** or later target device / emulator
 - **crun** OCI runtime (built from source during RPM packaging)
-- Required Tizen packages: `tizen-core`, `glib-2.0`, `dlog`, `libcurl`, `libsoup-3.0`, `libwebsockets`, `sqlite3`, `capi-appfw-tizen-action`
+- Required Tizen packages: `tizen-core`, `glib-2.0`, `dlog`, `libcurl`, `libsoup-2.4`, `libwebsockets`, `sqlite3`, `capi-appfw-tizen-action`, `libaurum`, `capi-appfw-event`, `capi-appfw-app-manager`, `capi-appfw-package-manager`, `aul`, `rua`, `vconf`
 
 ---
 
@@ -491,65 +491,106 @@ Sample configuration files are included in `data/`.
 ```
 tizenclaw/
 ├── src/
-│   ├── common/                    # Logging, shared utilities
-│   └── tizenclaw/                 # Daemon core
-│       ├── core/                  # Main daemon, agent loop, tool policy
-│       │   ├── tizenclaw.cc       #   Daemon entry, IPC server
-│       │   ├── agent_core.cc      #   Agentic Loop, streaming
-│       │   ├── action_bridge.cc   #   Tizen Action Framework bridge
-│       │   ├── tool_policy.cc     #   Risk-level tool policy
-│       │   ├── tool_dispatcher.cc #   Modular tool dispatch (O(1) lookup)
-│       │   ├── capability_registry.cc # Unified tool capability registry
-│       │   ├── skill_repository.cc#   Skill manifest v2 & marketplace
-│       │   ├── autonomous_trigger.cc # Event-driven autonomous actions
-│       │   ├── event_bus.cc       #   Pub/sub event bus
-│       │   └── skill_watcher.cc   #   inotify skill hot-reload
-│       ├── llm/                   # LLM backend providers
-│       │   ├── llm_backend.hh     #   Unified LLM interface
-│       │   ├── gemini_backend.cc  #   Google Gemini
-│       │   ├── openai_backend.cc  #   OpenAI / xAI
-│       │   ├── anthropic_backend.cc  # Anthropic
-│       │   └── ollama_backend.cc  #   Ollama (local)
-│       ├── channel/               # Communication channels
-│       │   ├── channel.hh         #   Channel interface (+ SendMessage)
-│       │   ├── channel_registry.cc#   Lifecycle + SendTo/Broadcast
-│       │   ├── channel_factory.cc #   Config-driven channel creation
-│       │   ├── plugin_channel.cc  #   Dynamic SO plugin wrapper
-│       │   ├── telegram_client.cc #   Telegram Bot API
-│       │   ├── slack_channel.cc   #   Slack (WebSocket)
-│       │   ├── discord_channel.cc #   Discord (WebSocket)
-│       │   ├── mcp_server.cc      #   MCP (JSON-RPC 2.0)
-│       │   ├── webhook_channel.cc #   Webhook HTTP
-│       │   ├── voice_channel.cc   #   Tizen STT/TTS
-│       │   └── web_dashboard.cc   #   Admin SPA (port 9090)
-│       ├── storage/               # Data persistence
-│       │   ├── session_store.cc   #   Markdown sessions
-│       │   ├── memory_store.cc    #   Persistent memory (long-term, episodic, short-term)
-│       │   ├── embedding_store.cc #   SQLite RAG vectors + FTS5 hybrid search
-│       │   └── audit_logger.cc    #   Audit logging
-│       ├── infra/                 # Infrastructure
-│       │   ├── http_client.cc     #   libcurl HTTP wrapper
-│       │   ├── key_store.cc       #   Encrypted API keys
-│       │   ├── container_engine.cc#   OCI container (crun)
-│       │   ├── health_monitor.cc  #   Prometheus-style metrics
-│       │   ├── fleet_agent.cc     #   Enterprise fleet management
-│       │   └── ota_updater.cc     #   OTA skill updates
-│       ├── orchestrator/          # Multi-agent orchestration
-│       │   ├── supervisor_engine.cc # Supervisor agent pattern
-│       │   ├── pipeline_executor.cc # Skill pipeline engine
-│       │   └── a2a_handler.cc     #   A2A protocol
-│       └── scheduler/             # Task automation
-│           └── task_scheduler.cc  #   Cron/interval tasks
-├── tools/skills/                  # Python skill scripts
-├── tools/embedded/                # Embedded tool MD schemas (13 files)
+│   ├── common/                    # Logging, shared utilities, nlohmann JSON
+│   ├── tizenclaw/                 # Daemon core
+│   │   ├── core/                  # Main daemon, agent loop, tool policy (55 files)
+│   │   │   ├── tizenclaw.cc       #   Daemon entry, IPC server, signal handling
+│   │   │   ├── agent_core.cc      #   Agentic Loop, streaming, context compaction
+│   │   │   ├── agent_factory.cc   #   Agent creation factory
+│   │   │   ├── agent_role.cc      #   Agent role management
+│   │   │   ├── action_bridge.cc   #   Tizen Action Framework bridge
+│   │   │   ├── tool_policy.cc     #   Risk-level tool policy
+│   │   │   ├── tool_dispatcher.cc #   Modular tool dispatch (O(1) lookup)
+│   │   │   ├── tool_indexer.cc    #   Tool index generation
+│   │   │   ├── capability_registry.cc # Unified tool capability registry
+│   │   │   ├── skill_repository.cc#   Skill manifest v2 & marketplace
+│   │   │   ├── skill_plugin_manager.cc # RPK skill plugin management
+│   │   │   ├── skill_verifier.cc  #   Skill verification & validation
+│   │   │   ├── cli_plugin_manager.cc # CLI tool plugin management (TPK)
+│   │   │   ├── auto_skill_agent.cc#   LLM-driven auto skill generation
+│   │   │   ├── autonomous_trigger.cc # Event-driven autonomous actions
+│   │   │   ├── event_bus.cc       #   Pub/sub event bus
+│   │   │   ├── event_adapter_manager.cc # Event adapter lifecycle
+│   │   │   ├── perception_engine.cc  # Environment perception & analysis
+│   │   │   ├── context_fusion_engine.cc # Multi-source context fusion
+│   │   │   ├── device_profiler.cc #   Device state profiling
+│   │   │   ├── proactive_advisor.cc # Proactive device advisory
+│   │   │   ├── system_context_provider.cc # System context for LLM
+│   │   │   ├── system_event_collector.cc # System event collection
+│   │   │   ├── system_cli_adapter.cc  # System CLI tool adapter
+│   │   │   ├── workflow_engine.cc #   Deterministic workflow execution
+│   │   │   ├── pipeline_executor.cc # Skill pipeline engine
+│   │   │   ├── skill_watcher.cc   #   inotify skill hot-reload
+│   │   │   └── ...                #   + headers (.hh)
+│   │   ├── llm/                   # LLM backend providers (14 files)
+│   │   │   ├── llm_backend.hh     #   Unified LLM interface
+│   │   │   ├── llm_backend_factory.cc # Backend factory pattern
+│   │   │   ├── gemini_backend.cc  #   Google Gemini
+│   │   │   ├── openai_backend.cc  #   OpenAI / xAI
+│   │   │   ├── anthropic_backend.cc  # Anthropic
+│   │   │   ├── ollama_backend.cc  #   Ollama (local)
+│   │   │   ├── plugin_llm_backend.cc # RPK LLM plugin backend
+│   │   │   └── plugin_manager.cc  #   LLM plugin lifecycle management
+│   │   ├── channel/               # Communication channels (23 files)
+│   │   │   ├── channel.hh         #   Channel interface (+ SendMessage)
+│   │   │   ├── channel_registry.cc#   Lifecycle + SendTo/Broadcast
+│   │   │   ├── channel_factory.cc #   Config-driven channel creation
+│   │   │   ├── plugin_channel.cc  #   Dynamic SO plugin wrapper
+│   │   │   ├── telegram_client.cc #   Telegram Bot API
+│   │   │   ├── slack_channel.cc   #   Slack (WebSocket)
+│   │   │   ├── discord_channel.cc #   Discord (WebSocket)
+│   │   │   ├── mcp_server.cc      #   MCP (JSON-RPC 2.0)
+│   │   │   ├── webhook_channel.cc #   Webhook HTTP
+│   │   │   ├── voice_channel.cc   #   Tizen STT/TTS
+│   │   │   ├── web_dashboard.cc   #   Admin SPA (port 9090)
+│   │   │   └── a2a_handler.cc     #   A2A protocol handler
+│   │   ├── storage/               # Data persistence (8 files)
+│   │   │   ├── session_store.cc   #   Markdown sessions
+│   │   │   ├── memory_store.cc    #   Persistent memory (long-term, episodic, short-term)
+│   │   │   ├── embedding_store.cc #   SQLite RAG vectors + FTS5 hybrid search
+│   │   │   └── audit_logger.cc    #   Audit logging
+│   │   ├── infra/                 # Infrastructure (28 files)
+│   │   │   ├── http_client.cc     #   libcurl HTTP wrapper
+│   │   │   ├── key_store.cc       #   Encrypted API keys
+│   │   │   ├── container_engine.cc#   OCI container (crun)
+│   │   │   ├── health_monitor.cc  #   Prometheus-style metrics
+│   │   │   ├── fleet_agent.cc     #   Enterprise fleet management
+│   │   │   ├── ota_updater.cc     #   OTA skill updates
+│   │   │   ├── tunnel_manager.cc  #   Secure tunnel (ngrok)
+│   │   │   ├── app_lifecycle_adapter.cc  # App lifecycle event adapter
+│   │   │   ├── recent_app_adapter.cc     # Recent app event adapter
+│   │   │   ├── package_event_adapter.cc  # Package event adapter
+│   │   │   ├── tizen_system_event_adapter.cc # Tizen system event adapter
+│   │   │   ├── vconf_event_adapter.cc    # Vconf settings event adapter
+│   │   │   └── pkgmgr_client.cc   #   Package manager client
+│   │   ├── embedding/             # On-device ML embedding (5 files)
+│   │   │   ├── on_device_embedding.cc # ONNX Runtime inference
+│   │   │   └── wordpiece_tokenizer.cc # BERT WordPiece tokenizer
+│   │   └── scheduler/             # Task automation (2 files)
+│   │       └── task_scheduler.cc  #   Cron/interval tasks
+│   ├── libtizenclaw/              # C-API client library (SDK)
+│   ├── libtizenclaw-core/         # Core library (curl, LLM backend)
+│   ├── pkgmgr-metadata-plugin/    # Metadata parser plugins (skills, CLI, LLM backends)
+│   └── tools/                     # CLI tools source
+│       └── tizenclaw_cli.cc       #   tizenclaw-cli tool
+├── tools/skills/                  # Python skill scripts (35 skills)
+├── tools/embedded/                # Embedded tool MD schemas (17 files)
 ├── tools/cli/                     # CLI tools (aurum-cli + plugin symlinks from TPKs)
 ├── scripts/                       # Container setup, CI, hooks
-├── test/unit_tests/               # Google Test unit tests
-├── data/                          # Config samples, rootfs, web SPA
+├── test/
+│   ├── unit_tests/                # Google Test unit tests (42 test files)
+│   └── e2e/                       # End-to-end test scripts
+├── data/
+│   ├── config/                    # Active configuration files
+│   ├── devel/                     # Development configuration
+│   ├── sample/                    # Sample config templates
+│   ├── system_cli/                # System CLI tool descriptors
+│   ├── web/                       # Dashboard SPA (HTML/CSS/JS)
+│   └── img/                       # Container rootfs images (per-arch)
 ├── packaging/                     # RPM spec, systemd services
 ├── docs/                          # Design, Analysis, Roadmap
 ├── LICENSE                        # Apache License 2.0
-└── CMakeLists.txt
+└── CMakeLists.txt                 # Build system (C++20)
 ```
 
 ---

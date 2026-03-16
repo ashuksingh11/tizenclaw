@@ -713,7 +713,7 @@ timeline
 
 ---
 
-## Phase 18: Production Readiness (In Progress)
+## Phase 18: Production Readiness ✅ (Done)
 
 > **Goal**: Enterprise-grade reliability, monitoring, and deployment
 
@@ -898,7 +898,7 @@ timeline
 
 ---
 
-## Phase 20: Skill Registry & Marketplace (Proposed)
+## Phase 20 (Legacy): Skill Registry & Marketplace — Integrated into Phase 20 Above
 
 > **Goal**: Community skill ecosystem with discovery and versioning
 > **Ref**: OpenClaw — ClawHub skill registry · NanoClaw — Claude Code skills
@@ -998,5 +998,5 @@ graph TD
 | **20** | Ecosystem expansion | ~2,000 | ✅ Done | Phase 19 ✅ |
 | **21** | Framework stabilization & SDK | ~1,500 | 🔴 Pending | Phase 20 🔴 |
 
-> **Current codebase**: ~25,100 LOC across ~102 files
-> **Projected with Phase 21**: ~26,600 LOC
+> **Current codebase**: ~52,150 LOC across ~243 files
+> **Projected with Phase 21**: ~53,650 LOC

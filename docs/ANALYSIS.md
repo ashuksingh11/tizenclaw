@@ -1,6 +1,6 @@
 # TizenClaw Project Analysis
 
-> **Last Updated**: 2026-03-09
+> **Last Updated**: 2026-03-16
 
 ---
 
@@ -100,35 +100,98 @@ graph LR
 ```
 tizenclaw/
 ├── src/                             # Source and headers
-│   ├── tizenclaw/                   # Daemon core (49 files)
-│   │   ├── tizenclaw.cc/hh          # Daemon main, IPC server, signal handling
-│   │   ├── agent_core.cc/hh         # Agentic Loop, skill dispatch, session mgmt
-│   │   ├── container_engine.cc/hh   # OCI container lifecycle management (crun)
-│   │   ├── http_client.cc/hh        # libcurl HTTP Post (retry, timeout, SSL)
-│   │   ├── llm_backend.hh           # LlmBackend abstract interface
-│   │   ├── llm_backend_factory.cc   # Backend factory pattern
-│   │   ├── gemini_backend.cc/hh     # Google Gemini API
-│   │   ├── openai_backend.cc/hh     # OpenAI / xAI (Grok) API
-│   │   ├── anthropic_backend.cc/hh  # Anthropic Claude API
-│   │   ├── ollama_backend.cc/hh     # Ollama local LLM
-│   │   ├── telegram_client.cc/hh    # Telegram Bot client (native)
-│   │   ├── slack_channel.cc/hh      # Slack Bot (libwebsockets)
-│   │   ├── discord_channel.cc/hh    # Discord Bot (libwebsockets)
-│   │   ├── mcp_server.cc/hh         # Native MCP Server (JSON-RPC 2.0)
-│   │   ├── webhook_channel.cc/hh    # Webhook HTTP listener (libsoup)
-│   │   ├── voice_channel.cc/hh      # Tizen STT/TTS (conditional)
-│   │   ├── web_dashboard.cc/hh      # Admin dashboard SPA (libsoup)
-│   │   ├── channel.hh               # Channel abstract interface
-│   │   ├── channel_registry.cc/hh   # Channel lifecycle management
-│   │   ├── session_store.cc/hh      # Markdown conversation persistence
-│   │   ├── task_scheduler.cc/hh     # Cron/interval task automation
-│   │   ├── tool_policy.cc/hh        # Risk-level + loop detection
-│   │   ├── key_store.cc/hh          # Encrypted API key storage
-│   │   ├── audit_logger.cc/hh       # Markdown audit logging
-│   │   ├── skill_watcher.cc/hh      # inotify skill hot-reload
-│   │   └── embedding_store.cc/hh    # SQLite RAG vector store
-│   └── common/                      # Common utilities (logging, etc.)
-├── skills/                          # Python skills (37 directories)
+│   ├── tizenclaw/                   # Daemon core (151 files across 7 subdirectories)
+│   │   ├── core/                    # Main daemon, agent core, policies (55 files)
+│   │   │   ├── tizenclaw.cc/hh      # Daemon main, IPC server, signal handling
+│   │   │   ├── agent_core.cc/hh     # Agentic Loop, skill dispatch, session mgmt
+│   │   │   ├── agent_factory.cc/hh  # Agent creation factory
+│   │   │   ├── agent_role.cc/hh     # Agent role management
+│   │   │   ├── action_bridge.cc/hh  # Tizen Action Framework bridge
+│   │   │   ├── tool_policy.cc/hh    # Risk-level + loop detection
+│   │   │   ├── tool_dispatcher.cc/hh# Modular tool dispatch (O(1) lookup)
+│   │   │   ├── tool_indexer.cc/hh   # Tool index generation
+│   │   │   ├── capability_registry.cc/hh # Unified capability registry
+│   │   │   ├── event_bus.cc/hh      # Pub/sub event bus
+│   │   │   ├── event_adapter.hh     # Event adapter interface
+│   │   │   ├── event_adapter_manager.cc/hh # Event adapter lifecycle
+│   │   │   ├── perception_engine.cc/hh # Environment perception & analysis
+│   │   │   ├── context_fusion_engine.cc/hh # Multi-source context fusion
+│   │   │   ├── device_profiler.cc/hh# Device state profiling
+│   │   │   ├── proactive_advisor.cc/hh # Proactive device advisory
+│   │   │   ├── system_context_provider.cc/hh # System context for LLM
+│   │   │   ├── system_event_collector.cc/hh # System event collection
+│   │   │   ├── system_cli_adapter.cc/hh # System CLI tool adapter
+│   │   │   ├── autonomous_trigger.cc/hh # Event-driven autonomous actions
+│   │   │   ├── workflow_engine.cc/hh# Deterministic workflow execution
+│   │   │   ├── pipeline_executor.cc/hh # Skill pipeline engine
+│   │   │   ├── skill_repository.cc/hh # Skill manifest v2 & marketplace
+│   │   │   ├── skill_plugin_manager.cc/hh # RPK skill plugin management
+│   │   │   ├── skill_verifier.cc/hh # Skill verification & validation
+│   │   │   ├── skill_watcher.cc/hh  # inotify skill hot-reload
+│   │   │   ├── cli_plugin_manager.cc/hh # CLI tool plugin management
+│   │   │   └── auto_skill_agent.cc/hh # LLM-driven auto skill generation
+│   │   ├── llm/                     # LLM backend providers (14 files)
+│   │   │   ├── llm_backend.hh       # Unified LLM interface
+│   │   │   ├── llm_backend_factory.cc # Backend factory pattern
+│   │   │   ├── gemini_backend.cc/hh # Google Gemini API
+│   │   │   ├── openai_backend.cc/hh # OpenAI / xAI (Grok) API
+│   │   │   ├── anthropic_backend.cc/hh # Anthropic Claude API
+│   │   │   ├── ollama_backend.cc/hh # Ollama local LLM
+│   │   │   ├── plugin_llm_backend.cc/hh # RPK LLM plugin backend
+│   │   │   └── plugin_manager.cc/hh # LLM plugin lifecycle management
+│   │   ├── channel/                 # Communication channels (23 files)
+│   │   │   ├── channel.hh           # Channel abstract interface
+│   │   │   ├── channel_registry.cc/hh # Channel lifecycle management
+│   │   │   ├── channel_factory.cc/hh# Config-driven creation
+│   │   │   ├── plugin_channel.cc/hh # Dynamic SO plugin wrapper
+│   │   │   ├── telegram_client.cc/hh# Telegram Bot (native)
+│   │   │   ├── slack_channel.cc/hh  # Slack Bot (libwebsockets)
+│   │   │   ├── discord_channel.cc/hh# Discord Bot (libwebsockets)
+│   │   │   ├── mcp_server.cc/hh     # Native MCP Server (JSON-RPC 2.0)
+│   │   │   ├── webhook_channel.cc/hh# Webhook HTTP listener (libsoup)
+│   │   │   ├── voice_channel.cc/hh  # Tizen STT/TTS (conditional)
+│   │   │   ├── web_dashboard.cc/hh  # Admin dashboard SPA (libsoup)
+│   │   │   └── a2a_handler.cc/hh    # A2A protocol handler
+│   │   ├── storage/                 # Data persistence (8 files)
+│   │   │   ├── session_store.cc/hh  # Markdown conversation persistence
+│   │   │   ├── memory_store.cc/hh   # Persistent memory (long/episodic/short-term)
+│   │   │   ├── embedding_store.cc/hh# SQLite RAG vector store + FTS5
+│   │   │   └── audit_logger.cc/hh   # Markdown audit logging
+│   │   ├── infra/                   # Infrastructure (28 files)
+│   │   │   ├── container_engine.cc/hh # OCI container lifecycle (crun)
+│   │   │   ├── http_client.cc/hh    # libcurl HTTP Post (retry, timeout, SSL)
+│   │   │   ├── key_store.cc/hh      # Encrypted API key storage
+│   │   │   ├── health_monitor.cc/hh # Prometheus-style metrics
+│   │   │   ├── fleet_agent.cc/hh    # Enterprise fleet management
+│   │   │   ├── ota_updater.cc/hh    # OTA skill updates
+│   │   │   ├── tunnel_manager.cc/hh # Secure ngrok tunneling
+│   │   │   ├── app_lifecycle_adapter.cc/hh  # App lifecycle event adapter
+│   │   │   ├── recent_app_adapter.cc/hh     # Recent app event adapter
+│   │   │   ├── package_event_adapter.cc/hh  # Package event adapter
+│   │   │   ├── tizen_system_event_adapter.cc/hh # System event adapter
+│   │   │   ├── vconf_event_adapter.cc/hh    # Vconf settings event adapter
+│   │   │   ├── pkgmgr_client.cc/hh  # Package manager client
+│   │   │   └── pkgmgr_event_args.cc/hh # Package event argument types
+│   │   ├── embedding/               # On-device ML embedding (5 files)
+│   │   │   ├── on_device_embedding.cc/hh # ONNX Runtime inference
+│   │   │   ├── wordpiece_tokenizer.cc/hh # BERT WordPiece tokenizer
+│   │   │   └── onnxruntime_c_api.h  # ONNX Runtime C API header
+│   │   └── scheduler/               # Task automation (2 files)
+│   │       └── task_scheduler.cc/hh # Cron/interval/once/weekly tasks
+│   ├── libtizenclaw/                # C-API client library (SDK)
+│   │   ├── tizenclaw_client.cc      # Client implementation
+│   │   └── inc/                     # Public headers (tizenclaw.h)
+│   ├── libtizenclaw-core/           # Core library (curl, LLM backend)
+│   │   ├── tizenclaw_curl.cc        # Curl wrapper
+│   │   └── tizenclaw_llm_backend.cc # LLM backend C-API
+│   ├── pkgmgr-metadata-plugin/      # Metadata parser plugins
+│   │   ├── cli/                     # CLI tool plugin parser
+│   │   ├── llm-backend/             # LLM backend plugin parser
+│   │   └── skill/                   # Skill plugin parser
+│   └── tools/
+│       └── tizenclaw_cli.cc         # tizenclaw-cli tool
+│   └── common/                      # Common utilities (logging, nlohmann JSON)
+├── tools/skills/                    # Python skills (35 directories)
 │   ├── common/tizen_capi_utils.py   # ctypes-based Tizen C-API wrapper
 │   ├── skill_executor.py            # Container-side IPC skill executor
 │   ├── list_apps/                   # List installed apps
@@ -160,7 +223,10 @@ tizenclaw/
 │   ├── get_sound_devices/           # Audio device listing
 │   ├── get_media_content/           # Media file search
 │   ├── get_mime_type/               # MIME type lookup
+│   ├── get_metadata/                # Media file metadata
 │   ├── scan_wifi_networks/          # WiFi scan (async, tizen-core)
+│   ├── scan_bluetooth_devices/      # BT discovery (async, tizen-core)
+│   ├── download_file/               # URL download (async, tizen-core)
 │   └── web_search/                  # Web search (Wikipedia API)
 ├── scripts/                         # Container & infra scripts (9)
 │   ├── run_standard_container.sh    # Daemon OCI container
@@ -172,31 +238,34 @@ tizenclaw/
 │   ├── pre-commit                   # Git pre-commit hook
 │   ├── setup-hooks.sh               # Hook installer
 │   └── Dockerfile                   # RootFS build reference
-├── tools/embedded/                  # Embedded tool MD schemas (13 files)
+├── tools/embedded/                  # Embedded tool MD schemas (17 files)
 │   ├── execute_code.md              # Python code execution
 │   ├── file_manager.md              # File system operations
 │   ├── create_task.md               # Task scheduler
 │   ├── create_pipeline.md           # Pipeline creation
-│   └── ...                          # + 9 more tool schemas
+│   ├── create_workflow.md           # Workflow creation
+│   └── ...                          # + 12 more tool schemas
 ├── data/
+│   ├── config/                      # Active configuration files
+│   ├── devel/                       # Development configuration
 │   ├── sample/                      # Sample configs (not installed to device)
 │   │   ├── llm_config.json.sample
 │   │   ├── telegram_config.json.sample
 │   │   └── ...                      # Other sample configs
-│   ├── config/                      # Active configuration files
-│   │   ├── tool_policy.json         # Tool execution policy
-│   │   └── agent_roles.json         # Agent roles configuration
+│   ├── system_cli/                  # System CLI tool descriptors
 │   ├── web/                         # Dashboard SPA files
 │   └── img/                         # Container rootfs images (per-arch)
 │       └── <arch>/rootfs.tar.gz     # Alpine RootFS (49 MB)
-├── test/unit_tests/                 # gtest/gmock unit tests
+├── test/
+│   ├── unit_tests/                  # gtest/gmock unit tests (42 test files)
+│   └── e2e/                         # End-to-end test scripts
 ├── packaging/                       # RPM packaging & systemd
 │   ├── tizenclaw.spec               # GBS RPM build spec
 │   ├── tizenclaw.service            # Daemon systemd service
 │   ├── tizenclaw-skills-secure.service  # Skills container service
 │   └── tizenclaw.manifest           # Tizen SMACK manifest
 ├── docs/                            # Documentation
-├── CMakeLists.txt                   # Build system (C++17)
+├── CMakeLists.txt                   # Build system (C++20)
 └── third_party/                     # crun 1.26 source
 ```
 
@@ -218,6 +287,24 @@ tizenclaw/
 | **EmbeddingStore** | `embedding_store.cc/hh` | SQLite vector store | ✅ |
 | **WebDashboard** | `web_dashboard.cc/hh` | libsoup SPA, REST API, admin auth, config editor | ✅ |
 | **TunnelManager** | `infra/tunnel_manager.cc` | Secure ngrok tunneling abstraction | ✅ |
+| **EventBus** | `core/event_bus.cc` | Pub/sub event bus for system events | ✅ |
+| **EventAdapterManager** | `core/event_adapter_manager.cc` | Event adapter lifecycle management | ✅ |
+| **PerceptionEngine** | `core/perception_engine.cc` | Environment perception & analysis | ✅ |
+| **ContextFusionEngine** | `core/context_fusion_engine.cc` | Multi-source context fusion | ✅ |
+| **DeviceProfiler** | `core/device_profiler.cc` | Device state profiling | ✅ |
+| **ProactiveAdvisor** | `core/proactive_advisor.cc` | Proactive device advisory | ✅ |
+| **SystemContextProvider** | `core/system_context_provider.cc` | System context for LLM | ✅ |
+| **SystemEventCollector** | `core/system_event_collector.cc` | System event collection | ✅ |
+| **SystemCliAdapter** | `core/system_cli_adapter.cc` | System CLI tool adapter | ✅ |
+| **AutonomousTrigger** | `core/autonomous_trigger.cc` | Event-driven autonomous actions | ✅ |
+| **WorkflowEngine** | `core/workflow_engine.cc` | Deterministic workflow execution | ✅ |
+| **ToolIndexer** | `core/tool_indexer.cc` | Tool index generation for LLM | ✅ |
+| **SkillPluginManager** | `core/skill_plugin_manager.cc` | RPK skill plugin management | ✅ |
+| **CliPluginManager** | `core/cli_plugin_manager.cc` | CLI tool plugin management (TPK) | ✅ |
+| **SkillVerifier** | `core/skill_verifier.cc` | Skill verification & validation | ✅ |
+| **AutoSkillAgent** | `core/auto_skill_agent.cc` | LLM-driven auto skill generation | ✅ |
+| **AgentFactory** | `core/agent_factory.cc` | Agent creation factory | ✅ |
+| **AgentRole** | `core/agent_role.cc` | Agent role management | ✅ |
 
 ### 3.2 LLM Backend Layer
 
@@ -290,7 +377,7 @@ tizenclaw/
 | `web_search` | `query` (string, required) | None (Wikipedia API) | ✅ |
 
 Built-in tools (implemented in AgentCore directly):
-`execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (per-action tools from Tizen Action Framework)
+`execute_code`, `file_manager`, `manage_custom_skill`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (per-action tools from Tizen Action Framework), `execute_cli` (CLI tool plugins), `create_workflow`, `list_workflows`, `run_workflow`, `delete_workflow`, `create_pipeline`, `list_pipelines`, `run_pipeline`, `delete_pipeline`, `run_supervisor`, `remember`, `recall`, `forget` (persistent memory)
 
 ### 3.5 Security
 
@@ -307,11 +394,11 @@ Built-in tools (implemented in AgentCore directly):
 
 | Item | Details |
 |------|---------|
-| **Build System** | CMake 3.0+, C++17, `pkg-config` (tizen-core, glib-2.0, dlog, libcurl, libsoup-3.0, libwebsockets, sqlite3) |
+| **Build System** | CMake 3.12+, C++20, `pkg-config` (tizen-core, glib-2.0, dlog, libcurl, libsoup-2.4, libwebsockets, sqlite3, capi-appfw-tizen-action, libaurum, capi-appfw-event, capi-appfw-app-manager, capi-appfw-package-manager, aul, rua, vconf) |
 | **Packaging** | GBS RPM (`tizenclaw.spec`), includes crun source build |
 | **Architectures** | x86_64 (emulator), armv7l (32-bit ARM), aarch64 (64-bit ARM) — per-arch rootfs in `data/img/<arch>/` |
 | **systemd** | `tizenclaw.service` (Type=simple), `tizenclaw-skills-secure.service` (Type=oneshot) |
-| **Testing** | gtest/gmock, `ctest -V` run during `%check` |
+| **Testing** | gtest/gmock (42 test files), `ctest -V` run during `%check` |
 
 ---
 
@@ -414,11 +501,10 @@ Most gaps identified in the original analysis have been resolved through Phases 
 
 | Category | Files | LOC |
 |----------|-------|-----|
-| C++ Source (`src/tizenclaw/*.cc`) | 35 | ~14,500 |
-| C++ Headers (`src/tizenclaw/*.hh`) | 30 | ~3,200 |
-| C++ Common (`src/common/`) | 5 | ~40 |
-| Python Skills & Utils | 28 | ~2,700 |
+| C++ Source & Headers (`src/`) | 151 | ~34,200 |
+| Python Skills & Utils | 36 | ~4,700 |
 | Shell Scripts | 9 | ~950 |
-| Web Frontend (HTML/CSS/JS) | 3 | ~2,100 |
-| Unit Tests | 9 | ~1,010 |
-| **Total** | ~103 | ~23,100 |
+| Web Frontend (HTML/CSS/JS) | 3 | ~3,700 |
+| Unit Tests | 42 | ~7,800 |
+| E2E Tests | 2 | ~800 |
+| **Total** | ~243 | ~52,150 |

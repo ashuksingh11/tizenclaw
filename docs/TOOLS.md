@@ -1,6 +1,6 @@
 # TizenClaw Tools Reference
 
-TizenClaw provides **35 container skills** (Python, sandboxed via OCI), **15+ built-in tools** (native C++), and **CLI tool plugins** (TPK-based native executables). All tools are registered in the **Capability Registry** with function contracts.
+TizenClaw provides **35 container skills** (Python, sandboxed via OCI), **20+ built-in tools** (native C++), and **CLI tool plugins** (TPK-based native executables). All tools are registered in the **Capability Registry** with function contracts.
 
 > Container skills use `ctypes` FFI to call Tizen C-API directly. Async skills use the **tizen-core** event loop for callback-based APIs.
 
@@ -100,6 +100,8 @@ TizenClaw provides **35 container skills** (Python, sandboxed via OCI), **15+ bu
 | `remember` | Save information to persistent memory |
 | `recall` | Search persistent memory by keyword |
 | `forget` | Delete a specific memory entry |
+| `delete_pipeline` | Delete a registered pipeline |
+| `delete_workflow` | Delete a registered workflow |
 
 ### Tool Dispatch Architecture
 

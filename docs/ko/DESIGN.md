@@ -127,7 +127,7 @@ graph TB
 - **엣지 메모리 최적화**: `MaintenanceLoop`가 유휴 시간을 적극 모니터링하여, 5분 비활성 시 `malloc_trim(0)` 및 `sqlite3_release_memory`를 호출해 PSS 메모리를 회수합니다.
 - **멀티 세션**: 세션별 시스템 프롬프트와 히스토리 격리를 통한 동시 에이전트 세션
 - **통합 백엔드 선택**: `SwitchToBestBackend()` 알고리즘을 통해 단일 우선순위 큐(`Plugin` > `active_backend` > `fallback_backends`)를 기반으로 동적으로 활성 백엔드를 선택합니다.
-- **내장 도구**: `execute_code`, `file_manager`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (Per-action 도구), `remember`, `recall`, `forget` (영속 메모리), `execute_cli` (CLI 도구 플러그인)
+- **내장 도구**: `execute_code`, `file_manager`, `manage_custom_skill`, `create_task`, `list_tasks`, `cancel_task`, `create_session`, `list_sessions`, `send_to_session`, `ingest_document`, `search_knowledge`, `execute_action`, `action_<name>` (Per-action 도구), `execute_cli` (CLI 도구 플러그인), `create_workflow`, `list_workflows`, `run_workflow`, `delete_workflow`, `create_pipeline`, `list_pipelines`, `run_pipeline`, `delete_pipeline`, `run_supervisor`, `remember`, `recall`, `forget` (영속 메모리)
 - **도구 디스패치**: `std::unordered_map<string, ToolHandler>` O(1) 조회, 동적 이름 도구(예: `action_*`)는 `starts_with` 폴백 처리
 
 ### 3.3 LLM 백엔드 계층
@@ -299,11 +299,11 @@ LLM 연동 인프로세스 자동화:
 - **관리자 인증**: SHA-256 비밀번호 해싱을 사용한 세션 토큰 메커니즘
 - **설정 편집기**: 백업-온-라이트 기능의 7개 설정 파일 인브라우저 편집
 
-### 3.12 도구 스키마 디스커버리
+### 3.13 도구 스키마 디스커버리
 
 Markdown 스키마 파일을 통한 LLM 도구 발견:
 
-- **내장 도구**: `/opt/usr/share/tizenclaw/tools/embedded/` 아래 13개 MD 파일이 내장 도구를 기술 (execute_code, file_manager, 파이프라인, 태스크, RAG 등)
+- **내장 도구**: `/opt/usr/share/tizenclaw/tools/embedded/` 아래 17개 MD 파일이 내장 도구를 기술 (execute_code, file_manager, 파이프라인, 워크플로우, 태스크, RAG 등)
 - **Action 도구**: Action Framework MD 파일이 Tizen Action Framework 액션을 기술 (디바이스별, 자동 동기화)
 - **CLI 도구**: `/opt/usr/share/tizenclaw/tools/cli/` 아래 `.tool.md` 설명서가 CLI 도구 플러그인을 기술 (커맨드, 인자, 출력 형식). `CliPluginManager`가 TPK 패키지에서 symlink 생성 후 시스템 프롬프트에 주입.
 - **시스템 프롬프트 통합**: 프롬프트 빌드 시 모든 디렉터리를 스캔하여 전체 MD 내용을 `{{AVAILABLE_TOOLS}}` 섹션에 추가
