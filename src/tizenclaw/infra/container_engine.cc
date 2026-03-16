@@ -700,11 +700,14 @@ bool ContainerEngine::PrepareOverlayUsr() {
     return true;
   }
 
-  // Read-only overlay: host /usr (priority) + rootfs /usr (fallback)
+  // Read-only overlay: rootfs /usr (priority) + host /usr (fallback)
+  // Rootfs (Alpine/musl) libraries must take precedence to avoid
+  // glibc/musl symbol mismatches (e.g., libffi __isoc23_sscanf).
+  // Host-only libraries (e.g., Tizen CAPI .so) remain accessible.
   std::string overlay_cmd =
       "mount -t overlay overlay -o "
-      "lowerdir=/usr:" +
-      EscapeShellArg(rootfs_usr) + " " + EscapeShellArg(merged);
+      "lowerdir=" +
+      EscapeShellArg(rootfs_usr) + ":/usr " + EscapeShellArg(merged);
   auto [out, rc] = RunCommand(overlay_cmd);
   if (rc != 0) {
     LOG(WARNING) << "OverlayFS mount failed (rc=" << rc
@@ -822,12 +825,6 @@ bool ContainerEngine::WriteSkillsConfig() const {
       "destination": "/opt/etc",
       "type": "bind",
       "source": "/opt/etc",
-      "options": ["rbind", "ro"]
-    },
-    {
-      "destination": "/lib64",
-      "type": "bind",
-      "source": "/lib64",
       "options": ["rbind", "ro"]
     },
     {
