@@ -633,7 +633,10 @@ bool ContainerEngine::PrepareSkillsBundle() {
     return false;
   }
 
-  return WriteSkillsConfig();
+  if (!WriteSkillsConfig()) {
+    return false;
+  }
+  return PrepareOverlayUsr();
 }
 
 bool ContainerEngine::IsContainerRunning() const {
@@ -679,6 +682,56 @@ void ContainerEngine::StopSkillsContainer() {
   auto [output, stop_ret] = RunCommand(stop_cmd);
   if (stop_ret != 0) {
     LOG(WARNING) << "Delete secure container returned: " << stop_ret;
+  }
+  CleanupOverlayUsr();
+}
+
+bool ContainerEngine::PrepareOverlayUsr() {
+  std::string merged = bundle_dir_ + "/merged_usr";
+  std::string rootfs_usr = bundle_dir_ + "/rootfs/usr";
+
+  RunCommand("mkdir -p " + EscapeShellArg(merged));
+
+  // Check if already mounted
+  auto [mnt_out, mnt_rc] =
+      RunCommand("mountpoint -q " + EscapeShellArg(merged));
+  if (mnt_rc == 0) {
+    LOG(INFO) << "OverlayFS for /usr already mounted";
+    return true;
+  }
+
+  // Read-only overlay: host /usr (priority) + rootfs /usr (fallback)
+  std::string overlay_cmd =
+      "mount -t overlay overlay -o "
+      "lowerdir=/usr:" +
+      EscapeShellArg(rootfs_usr) + " " + EscapeShellArg(merged);
+  auto [out, rc] = RunCommand(overlay_cmd);
+  if (rc != 0) {
+    LOG(WARNING) << "OverlayFS mount failed (rc=" << rc
+                 << "), falling back to bind mount. "
+                 << "output: " << out;
+    // Fallback: bind mount host /usr directly
+    auto [bind_out, bind_rc] =
+        RunCommand("mount --rbind /usr " + EscapeShellArg(merged));
+    if (bind_rc != 0) {
+      LOG(ERROR) << "Bind mount fallback also failed: " << bind_out;
+      return false;
+    }
+  } else {
+    LOG(INFO) << "OverlayFS mounted: /usr + rootfs/usr -> merged_usr";
+  }
+  return true;
+}
+
+void ContainerEngine::CleanupOverlayUsr() {
+  std::string merged = bundle_dir_ + "/merged_usr";
+  auto [mnt_out, mnt_rc] =
+      RunCommand("mountpoint -q " + EscapeShellArg(merged));
+  if (mnt_rc == 0) {
+    auto [out, rc] = RunCommand("umount " + EscapeShellArg(merged));
+    if (rc != 0) {
+      LOG(WARNING) << "Failed to umount overlay merged_usr: " << out;
+    }
   }
 }
 
@@ -755,7 +808,8 @@ bool ContainerEngine::WriteSkillsConfig() const {
     {
       "destination": "/usr",
       "type": "bind",
-      "source": "/usr",
+      "source": ")" + bundle_dir_ +
+                            R"(/merged_usr",
       "options": ["rbind", "ro"]
     },
     {

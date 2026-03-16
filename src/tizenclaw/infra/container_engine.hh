@@ -56,6 +56,8 @@ class ContainerEngine {
 
   bool EnsureSkillsContainerRunning();
   bool PrepareSkillsBundle();
+  bool PrepareOverlayUsr();
+  void CleanupOverlayUsr();
   bool IsContainerRunning() const;
   bool StartSkillsContainer();
   void StopSkillsContainer();

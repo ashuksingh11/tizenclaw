@@ -5,6 +5,7 @@ APP_DATA_DIR="/opt/usr/share/tizenclaw"
 BUNDLE_DIR="${APP_DATA_DIR}/bundles/skills_secure"
 ROOTFS_TAR="${APP_DATA_DIR}/img/rootfs.tar.gz"
 CONTAINER_ID="tizenclaw_skills_secure"
+MERGED_USR="${BUNDLE_DIR}/merged_usr"
 
 detect_runtime() {
   if [ -x /usr/libexec/tizenclaw/crun ]; then
@@ -81,7 +82,7 @@ write_config() {
     {
       "destination": "/usr",
       "type": "bind",
-      "source": "/usr",
+      "source": "${MERGED_USR}",
       "options": ["rbind", "ro"]
     },
     {
@@ -196,6 +197,28 @@ prepare_bundle() {
   write_config
 }
 
+prepare_overlay_usr() {
+  mkdir -p "${MERGED_USR}"
+  if mountpoint -q "${MERGED_USR}" 2>/dev/null; then
+    return 0
+  fi
+  # Read-only overlay: host /usr (priority) + rootfs /usr (fallback)
+  if mount -t overlay overlay \
+       -o "lowerdir=/usr:${BUNDLE_DIR}/rootfs/usr" \
+       "${MERGED_USR}" 2>/dev/null; then
+    echo "OverlayFS mounted: /usr + rootfs/usr -> merged_usr"
+  else
+    echo "OverlayFS unavailable, falling back to bind mount /usr"
+    mount --rbind /usr "${MERGED_USR}"
+  fi
+}
+
+cleanup_overlay_usr() {
+  if mountpoint -q "${MERGED_USR}" 2>/dev/null; then
+    umount "${MERGED_USR}" 2>/dev/null || true
+  fi
+}
+
 run_without_container() {
   echo "Watchdog cgroup unavailable. Falling back to chroot with unshare."
 
@@ -216,7 +239,7 @@ run_without_container() {
 
     # Read-only mounts: host /usr, /etc, /lib64
     # Provides glibc Python3, CAPI/HAL libs, ld.so.cache, tizen-platform.conf
-    mount --rbind /usr \"${BUNDLE_DIR}/rootfs/usr\" || true
+    mount --rbind "${MERGED_USR}" \"${BUNDLE_DIR}/rootfs/usr\" || true
     mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/usr\" || true
     mount --rbind /etc \"${BUNDLE_DIR}/rootfs/etc\" || true
     mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/etc\" || true
@@ -243,6 +266,7 @@ start_container() {
     return 1
   fi
   prepare_bundle
+  prepare_overlay_usr
   "${RUNTIME_BIN}" delete -f "${CONTAINER_ID}" >/dev/null 2>&1 || true
 
   cd "${BUNDLE_DIR}"
@@ -272,9 +296,11 @@ start_container() {
 
 stop_container() {
   if [ -z "${RUNTIME_BIN}" ]; then
+    cleanup_overlay_usr
     return 0
   fi
   "${RUNTIME_BIN}" delete -f "${CONTAINER_ID}" >/dev/null 2>&1 || true
+  cleanup_overlay_usr
 }
 
 status_container() {
