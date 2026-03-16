@@ -177,13 +177,13 @@ std::vector<std::string> CliPluginManager::CollectCliMetadata(
     pkgmgrinfo_appinfo_usr_filter_foreach_appinfo(
         app_filter,
         [](pkgmgrinfo_appinfo_h handle, void* user_data) {
-          auto* ctx = static_cast<AppIterCtx*>(user_data);
+          auto* iter_ctx = static_cast<AppIterCtx*>(user_data);
           char* value = nullptr;
-          int ret = pkgmgrinfo_appinfo_get_metadata_value(
-              handle, ctx->metadata_key, &value);
-          if (ret == PMINFO_R_OK && value) {
+          int metadata_ret = pkgmgrinfo_appinfo_get_metadata_value(
+              handle, iter_ctx->metadata_key, &value);
+          if (metadata_ret == PMINFO_R_OK && value) {
             auto names = ParseCliNames(value);
-            ctx->names->insert(ctx->names->end(),
+            iter_ctx->names->insert(iter_ctx->names->end(),
                                names.begin(), names.end());
           }
           return 0;

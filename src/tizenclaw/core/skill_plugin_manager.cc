@@ -231,8 +231,8 @@ bool SkillPluginManager::LoadSkillsFromPkg(const std::string& pkgid) {
 
     if (LinkSkillDir(source, target)) {
       // Set +x permission for native entry points
-      std::string manifest = source + "/manifest.json";
-      std::ifstream mfin(manifest);
+      std::string manifest_path = source + "/manifest.json";
+      std::ifstream mfin(manifest_path);
       if (mfin.is_open()) {
         try {
           nlohmann::json mj;

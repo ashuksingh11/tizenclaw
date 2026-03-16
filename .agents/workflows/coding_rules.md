@@ -34,6 +34,11 @@ When implementing TizenClaw in this repository, the Agent (AI) must **strictly**
   - `map::contains()`: Use instead of `find() != end()`.
   - `std::ranges`: Prioritize range-based algorithms.
   - `using enum`: Apply for repeated enumeration use within scope.
+- **Variable Shadowing (`-Wshadow`)**:
+  - **NEVER** declare a variable with the same name as an existing variable in an outer scope. Some build environments treat `-Wshadow` as `-Werror=shadow`, causing build failures.
+  - This is especially critical inside **lambdas** and **nested blocks** (e.g., `if`/`for` bodies). When a lambda captures or receives a variable from its enclosing scope, the inner variable must use a distinct name.
+  - **Bad**: Reusing `ret`, `ctx`, `manifest` inside a lambda/inner block when the same name exists in the outer function scope.
+  - **Good**: Use descriptive, disambiguated names like `metadata_ret`, `iter_ctx`, `manifest_path` for inner variables.
 
 ## 2. Clean Code & Effective C++ Principles
 - **Effective C++ (Scott Meyers)**:
