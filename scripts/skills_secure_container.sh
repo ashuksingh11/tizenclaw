@@ -202,11 +202,14 @@ prepare_overlay_usr() {
   if mountpoint -q "${MERGED_USR}" 2>/dev/null; then
     return 0
   fi
-  # Read-only overlay: host /usr (priority) + rootfs /usr (fallback)
+  # Read-only overlay: rootfs /usr (priority) + host /usr (fallback)
+  # Rootfs (Alpine/musl) libraries must take precedence to avoid
+  # glibc/musl symbol mismatches (e.g., libffi __isoc23_sscanf).
+  # Host-only libraries (e.g., Tizen CAPI .so) remain accessible.
   if mount -t overlay overlay \
-       -o "lowerdir=/usr:${BUNDLE_DIR}/rootfs/usr" \
+       -o "lowerdir=${BUNDLE_DIR}/rootfs/usr:/usr" \
        "${MERGED_USR}" 2>/dev/null; then
-    echo "OverlayFS mounted: /usr + rootfs/usr -> merged_usr"
+    echo "OverlayFS mounted: rootfs/usr + /usr -> merged_usr"
   else
     echo "OverlayFS unavailable, falling back to bind mount /usr"
     mount --rbind /usr "${MERGED_USR}"
