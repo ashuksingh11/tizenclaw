@@ -207,19 +207,21 @@ prepare_bundle() {
 prepare_overlay_usr() {
   mkdir -p "${MERGED_USR}"
   if mountpoint -q "${MERGED_USR}" 2>/dev/null; then
+    OVERLAY_OK=true
     return 0
   fi
   # Read-only overlay: rootfs /usr (priority) + host /usr (fallback)
-  # Rootfs (Alpine/musl) libraries must take precedence to avoid
-  # glibc/musl symbol mismatches (e.g., libffi __isoc23_sscanf).
-  # Host-only libraries (e.g., Tizen CAPI .so) remain accessible.
+  # Rootfs Python 3.11 (Debian glibc) must take precedence over any
+  # host Python.  Host-only libraries (Tizen CAPI .so) are accessible
+  # from the host layer.
   if mount -t overlay overlay \
        -o "lowerdir=${BUNDLE_DIR}/rootfs/usr:/usr" \
        "${MERGED_USR}" 2>/dev/null; then
     echo "OverlayFS mounted: rootfs/usr + /usr -> merged_usr"
+    OVERLAY_OK=true
   else
-    echo "OverlayFS unavailable, falling back to bind mount /usr"
-    mount --rbind /usr "${MERGED_USR}"
+    echo "OverlayFS unavailable, rootfs /usr used as-is"
+    OVERLAY_OK=false
   fi
 }
 
@@ -239,6 +241,19 @@ run_without_container() {
            "${BUNDLE_DIR}/rootfs/host_lib" "${BUNDLE_DIR}/rootfs/run" \
            "${BUNDLE_DIR}/rootfs/data" "${APP_DATA_DIR}/data"
 
+  # Determine /usr mount strategy
+  USR_MOUNT_CMD=""
+  if [ "${OVERLAY_OK}" = "true" ]; then
+    USR_MOUNT_CMD="mount --rbind \\\"${MERGED_USR}\\\" \\\"${BUNDLE_DIR}/rootfs/usr\\\" || true
+    mount -o remount,bind,ro \\\"${BUNDLE_DIR}/rootfs/usr\\\" || true"
+  else
+    # No overlay: rootfs /usr is used directly (has python3.11).
+    # Bind-mount host /usr/lib64 and /usr/lib for CAPI access.
+    USR_MOUNT_CMD="mkdir -p \\\"${BUNDLE_DIR}/rootfs/usr/lib64\\\" 2>/dev/null || true
+    mount --rbind /usr/lib64 \\\"${BUNDLE_DIR}/rootfs/usr/lib64\\\" 2>/dev/null || true
+    mount --rbind /usr/lib \\\"${BUNDLE_DIR}/rootfs/usr/lib\\\" 2>/dev/null || true"
+  fi
+
   exec unshare -m /bin/sh -c "
     mount --make-rprivate / || true
     mount -t proc proc \"${BUNDLE_DIR}/rootfs/proc\" || true
@@ -247,10 +262,8 @@ run_without_container() {
     mount --rbind \"${APP_DATA_DIR}/data\" \"${BUNDLE_DIR}/rootfs/data\" || true
     mount --rbind /tmp \"${BUNDLE_DIR}/rootfs/tmp\" || true
 
-    # Read-only mounts: host /usr, /etc, /lib, /lib64
-    # Provides glibc Python3, CAPI/HAL libs, ld.so.cache, tizen-platform.conf
-    mount --rbind \"${MERGED_USR}\" \"${BUNDLE_DIR}/rootfs/usr\" || true
-    mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/usr\" || true
+    # Mount /usr (overlay or direct + host libs)
+    ${USR_MOUNT_CMD}
     mount --rbind /etc \"${BUNDLE_DIR}/rootfs/etc\" || true
     mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/etc\" || true
     mount --rbind /opt/etc \"${BUNDLE_DIR}/rootfs/opt/etc\" || true
