@@ -15,8 +15,7 @@
  */
 #include "package_event_adapter.hh"
 
-#include <app_info.h>
-#include <app_manager.h>
+#include <pkgmgr-info.h>
 
 #include <json.hpp>
 #include <string>
@@ -26,38 +25,14 @@
 
 namespace {
 
-const char* EventTypeToString(
-    package_manager_event_type_e type) {
-  switch (type) {
-    case PACKAGE_MANAGER_EVENT_TYPE_INSTALL:
-      return "install";
-    case PACKAGE_MANAGER_EVENT_TYPE_UNINSTALL:
-      return "uninstall";
-    case PACKAGE_MANAGER_EVENT_TYPE_UPDATE:
-      return "update";
-    case PACKAGE_MANAGER_EVENT_TYPE_MOVE:
-      return "move";
-    case PACKAGE_MANAGER_EVENT_TYPE_CLEAR:
-      return "clear";
-    default:
-      return "unknown";
-  }
-}
-
-const char* EventStateToString(
-    package_manager_event_state_e state) {
-  switch (state) {
-    case PACKAGE_MANAGER_EVENT_STATE_STARTED:
-      return "started";
-    case PACKAGE_MANAGER_EVENT_STATE_PROCESSING:
-      return "processing";
-    case PACKAGE_MANAGER_EVENT_STATE_COMPLETED:
-      return "completed";
-    case PACKAGE_MANAGER_EVENT_STATE_FAILED:
-      return "failed";
-    default:
-      return "unknown";
-  }
+const char* EventTypeFromString(const char* val) {
+  if (!val) return "unknown";
+  if (strcasecmp(val, "install") == 0) return "install";
+  if (strcasecmp(val, "uninstall") == 0) return "uninstall";
+  if (strcasecmp(val, "update") == 0) return "update";
+  if (strcasecmp(val, "move") == 0) return "move";
+  if (strcasecmp(val, "clear") == 0) return "clear";
+  return "unknown";
 }
 
 }  // namespace
@@ -71,30 +46,29 @@ PackageEventAdapter::~PackageEventAdapter() {
 void PackageEventAdapter::Start() {
   if (started_) return;
 
-  int ret = package_manager_create(&manager_);
-  if (ret != PACKAGE_MANAGER_ERROR_NONE) {
+  client_ = pkgmgr_client_new(PC_LISTENING);
+  if (!client_) {
     LOG(ERROR) << "PackageEventAdapter: "
-               << "package_manager_create failed="
-               << ret;
+               << "pkgmgr_client_new failed";
     return;
   }
 
-  ret = package_manager_set_event_status(
-      manager_,
-      PACKAGE_MANAGER_STATUS_TYPE_ALL);
-  if (ret != PACKAGE_MANAGER_ERROR_NONE) {
-    LOG(ERROR) << "PackageEventAdapter: "
-               << "set_event_status failed="
-               << ret;
+  int ret = pkgmgr_client_set_status_type(
+      client_, PKGMGR_CLIENT_STATUS_ALL);
+  if (ret < 0) {
+    LOG(WARNING) << "PackageEventAdapter: "
+                 << "set_status_type failed="
+                 << ret;
   }
 
-  ret = package_manager_set_event_cb(
-      manager_, OnPackageEvent, this);
-  if (ret != PACKAGE_MANAGER_ERROR_NONE) {
+  ret = pkgmgr_client_listen_status_v2(
+      client_, OnPackageSignal, this);
+  if (ret < 0) {
     LOG(ERROR) << "PackageEventAdapter: "
-               << "set_event_cb failed=" << ret;
-    package_manager_destroy(manager_);
-    manager_ = nullptr;
+               << "listen_status_v2 failed="
+               << ret;
+    pkgmgr_client_free(client_);
+    client_ = nullptr;
     return;
   }
 
@@ -105,10 +79,10 @@ void PackageEventAdapter::Start() {
 void PackageEventAdapter::Stop() {
   if (!started_) return;
 
-  if (manager_) {
-    package_manager_unset_event_cb(manager_);
-    package_manager_destroy(manager_);
-    manager_ = nullptr;
+  if (client_) {
+    pkgmgr_client_remove_listen_status(client_);
+    pkgmgr_client_free(client_);
+    client_ = nullptr;
   }
 
   started_ = false;
@@ -119,103 +93,115 @@ std::string PackageEventAdapter::GetName() const {
   return "PackageEventAdapter";
 }
 
-void PackageEventAdapter::OnPackageEvent(
-    const char* type,
-    const char* package,
-    package_manager_event_type_e event_type,
-    package_manager_event_state_e event_state,
-    int progress,
-    package_manager_error_e error,
-    void* user_data) {
-  if (!package) return;
+int PackageEventAdapter::OnPackageSignal(
+    uid_t target_uid, int req_id,
+    pkgmgr_signal_h signal, void* user_data) {
+  const char* pkg_type = nullptr;
+  const char* pkgid = nullptr;
+  const char* key = nullptr;
+  const char* val = nullptr;
+  const char* event_type_str = nullptr;
 
-  // Only publish on completed or failed state
-  // to avoid flooding with progress events
-  if (event_state !=
-          PACKAGE_MANAGER_EVENT_STATE_COMPLETED &&
-      event_state !=
-          PACKAGE_MANAGER_EVENT_STATE_FAILED)
-    return;
+  if (pkgmgr_signal_get_pkg_type(
+          signal, &pkg_type) != 0)
+    return 0;
+  if (pkgmgr_signal_get_pkgid(
+          signal, &pkgid) != 0)
+    return 0;
+  if (pkgmgr_signal_get_key(signal, &key) != 0)
+    return 0;
+  if (pkgmgr_signal_get_value(signal, &val) != 0)
+    return 0;
+  if (pkgmgr_signal_get_event_type(
+          signal, &event_type_str) != 0)
+    return 0;
+
+  if (!pkgid) return 0;
+
+  // Only publish on "end" (completed) or "error"
+  // (failed) to avoid flooding with progress events
+  bool is_end = (strcasecmp(key, "end") == 0);
+  bool is_error = (strcasecmp(key, "error") == 0);
+  if (!is_end && !is_error) return 0;
 
   SystemEvent ev;
   ev.type = EventType::kPackageChanged;
   ev.source = "package_manager";
   ev.plugin_id = "builtin";
 
-  std::string event_type_str =
-      EventTypeToString(event_type);
-  ev.name = "package." + event_type_str;
+  const char* evt_str =
+      EventTypeFromString(event_type_str);
+  ev.name = std::string("package.") + evt_str;
 
-  ev.data["event_type"] = event_type_str;
-  ev.data["package_id"] = package;
-  ev.data["package_type"] = type ? type : "unknown";
-  ev.data["state"] =
-      EventStateToString(event_state);
-  ev.data["progress"] = progress;
+  ev.data["event_type"] = evt_str;
+  ev.data["package_id"] = pkgid;
+  ev.data["package_type"] =
+      pkg_type ? pkg_type : "unknown";
 
-  if (error != PACKAGE_MANAGER_ERROR_NONE)
-    ev.data["error"] = static_cast<int>(error);
-
-  // On install/update completion, query app info
-  if (event_state ==
-          PACKAGE_MANAGER_EVENT_STATE_COMPLETED &&
-      event_type !=
-          PACKAGE_MANAGER_EVENT_TYPE_UNINSTALL) {
-    ev.data["apps"] = QueryAppInfo(package);
+  if (is_end) {
+    if (val && strcasecmp(val, "ok") == 0) {
+      ev.data["state"] = "completed";
+      // On install/update completion, query app info
+      if (strcasecmp(evt_str, "uninstall") != 0) {
+        ev.data["apps"] = QueryAppInfo(pkgid);
+      }
+    } else {
+      ev.data["state"] = "failed";
+    }
+  } else {
+    ev.data["state"] = "failed";
   }
 
   EventBus::GetInstance().Publish(std::move(ev));
+  return 0;
 }
 
 nlohmann::json PackageEventAdapter::QueryAppInfo(
     const char* package_id) {
   auto apps = nlohmann::json::array();
 
-  package_info_h pkg_info = nullptr;
-  int ret = package_manager_get_package_info(
+  pkgmgrinfo_pkginfo_h pkg_info = nullptr;
+  int ret = pkgmgrinfo_pkginfo_get_pkginfo(
       package_id, &pkg_info);
-  if (ret != PACKAGE_MANAGER_ERROR_NONE ||
-      !pkg_info)
+  if (ret != PMINFO_R_OK || !pkg_info)
     return apps;
 
-  // Iterate apps in the package
-  package_info_foreach_app_from_package(
-      pkg_info, PACKAGE_INFO_ALLAPP,
-      [](package_info_app_component_type_e comp_type,
-         const char* app_id,
-         void* user_data) -> bool {
+  pkgmgrinfo_appinfo_get_list(
+      pkg_info, PMINFO_ALL_APP,
+      [](pkgmgrinfo_appinfo_h info,
+         void* user_data) -> int {
         auto* app_list =
             static_cast<nlohmann::json*>(user_data);
-        if (!app_id) return true;
+
+        char* app_id = nullptr;
+        if (pkgmgrinfo_appinfo_get_appid(
+                info, &app_id) != PMINFO_R_OK ||
+            !app_id)
+          return 0;
 
         nlohmann::json app_entry;
         app_entry["app_id"] = app_id;
 
-        // Get app label and type
-        app_info_h info = nullptr;
-        if (app_info_create(app_id, &info) == 0 &&
-            info) {
-          char* label = nullptr;
-          if (app_info_get_label(info, &label) == 0
-              && label) {
-            app_entry["label"] = label;
-            free(label);
-          }
-          char* type = nullptr;
-          if (app_info_get_type(info, &type) == 0
-              && type) {
-            app_entry["type"] = type;
-            free(type);
-          }
-          app_info_destroy(info);
+        char* label = nullptr;
+        if (pkgmgrinfo_appinfo_get_label(
+                info, &label) == PMINFO_R_OK &&
+            label) {
+          app_entry["label"] = label;
+        }
+
+        char* type = nullptr;
+        if (pkgmgrinfo_appinfo_get_apptype(
+                info, &type) == PMINFO_R_OK &&
+            type) {
+          app_entry["type"] = type;
         }
 
         app_list->push_back(std::move(app_entry));
-        return true;
+        return 0;
       },
       &apps);
 
-  package_info_destroy(pkg_info);
+  pkgmgrinfo_pkginfo_destroy_pkginfo(pkg_info);
   return apps;
 }
 

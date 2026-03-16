@@ -16,7 +16,7 @@
 #ifndef PACKAGE_EVENT_ADAPTER_HH
 #define PACKAGE_EVENT_ADAPTER_HH
 
-#include <package_manager.h>
+#include <package-manager.h>
 
 #include <json.hpp>
 #include <string>
@@ -25,9 +25,10 @@
 
 namespace tizenclaw {
 
-// Wraps Tizen package_manager.h API.
 // Monitors package install/uninstall/update events
-// and queries app info via app_info.h.
+// using the lower-level pkgmgr_client API directly
+// to avoid cynara privilege checks that fail inside
+// the container environment.
 class PackageEventAdapter : public IEventAdapter {
  public:
   PackageEventAdapter() = default;
@@ -38,21 +39,16 @@ class PackageEventAdapter : public IEventAdapter {
   [[nodiscard]] std::string GetName() const override;
 
  private:
-  // Static callback from package_manager API
-  static void OnPackageEvent(
-      const char* type,
-      const char* package,
-      package_manager_event_type_e event_type,
-      package_manager_event_state_e event_state,
-      int progress,
-      package_manager_error_e error,
-      void* user_data);
+  // Callback from pkgmgr_client_listen_status_v2
+  static int OnPackageSignal(
+      uid_t target_uid, int req_id,
+      pkgmgr_signal_h signal, void* user_data);
 
   // Query app info for a given package
   static nlohmann::json QueryAppInfo(
       const char* package_id);
 
-  package_manager_h manager_ = nullptr;
+  pkgmgr_client* client_ = nullptr;
   bool started_ = false;
 };
 
