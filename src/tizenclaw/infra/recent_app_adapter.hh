@@ -32,6 +32,9 @@ class RecentAppAdapter : public IEventAdapter {
   void Start() override;
   void Stop() override;
   [[nodiscard]] std::string GetName() const override;
+  [[nodiscard]] bool UsesDBus() const override {
+    return true;
+  }
 
  private:
   // RUA update callback

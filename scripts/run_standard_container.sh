@@ -207,7 +207,6 @@ write_config() {
   "linux": {
     "namespaces": [
       {"type": "mount"},
-      {"type": "pid"},
       {"type": "ipc"},
       {"type": "uts"},
       {"type": "network"}

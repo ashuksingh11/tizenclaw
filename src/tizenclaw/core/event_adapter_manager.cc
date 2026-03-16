@@ -16,6 +16,7 @@
 #include "event_adapter_manager.hh"
 
 #include "../../common/logging.hh"
+#include "../infra/dbus_probe.hh"
 
 namespace tizenclaw {
 
@@ -37,15 +38,36 @@ void EventAdapterManager::StartAll() {
   std::lock_guard<std::mutex> lock(mutex_);
   if (started_) return;
 
+  bool dbus_ok = DbusProbe::IsAvailable();
+  if (!dbus_ok) {
+    LOG(WARNING) << "EventAdapterManager: D-Bus "
+                 << "unavailable, D-Bus dependent "
+                 << "adapters will be skipped";
+  }
+
   for (auto& adapter : adapters_) {
+    if (!dbus_ok && adapter->UsesDBus()) {
+      LOG(WARNING) << "EventAdapterManager: "
+                   << "skipping '"
+                   << adapter->GetName()
+                   << "' (D-Bus unavailable)";
+      continue;
+    }
     LOG(INFO) << "EventAdapterManager: starting '"
               << adapter->GetName() << "'";
-    adapter->Start();
+    try {
+      adapter->Start();
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "EventAdapterManager: '"
+                 << adapter->GetName()
+                 << "' failed to start: "
+                 << e.what();
+    }
   }
   started_ = true;
   LOG(INFO) << "EventAdapterManager: all "
             << adapters_.size()
-            << " adapters started";
+            << " adapters processed";
 }
 
 void EventAdapterManager::StopAll() {

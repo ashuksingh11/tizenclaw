@@ -35,6 +35,13 @@ class IEventAdapter {
 
   // Human-readable name for this adapter.
   [[nodiscard]] virtual std::string GetName() const = 0;
+
+  // Whether this adapter depends on D-Bus IPC.
+  // Adapters that return true will be skipped when
+  // the D-Bus system bus is not reachable.
+  [[nodiscard]] virtual bool UsesDBus() const {
+    return false;
+  }
 };
 
 }  // namespace tizenclaw
