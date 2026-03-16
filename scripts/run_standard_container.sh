@@ -54,6 +54,11 @@ run_without_container() {
              \"${BUNDLE_DIR}/rootfs/etc/dbus-1\" \"${BUNDLE_DIR}/rootfs/etc/dlog.conf.d\" \\
              \"${BUNDLE_DIR}/rootfs/opt/etc\" \\
              \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw\" \"${BUNDLE_DIR}/rootfs/run\" \"${BUNDLE_DIR}/rootfs/tmp\"
+
+    touch \"${BUNDLE_DIR}/rootfs/etc/resolv.conf\" 2>/dev/null || true
+    mount --bind /etc/resolv.conf \"${BUNDLE_DIR}/rootfs/etc/resolv.conf\" || true
+    touch \"${BUNDLE_DIR}/rootfs/etc/nsswitch.conf\" 2>/dev/null || true
+    mount --bind /etc/nsswitch.conf \"${BUNDLE_DIR}/rootfs/etc/nsswitch.conf\" || true
     
     mount --make-rslave / || true
     
@@ -201,6 +206,18 @@ write_config() {
       "options": ["rbind", "ro"]
     },
     {
+      "destination": "/etc/resolv.conf",
+      "type": "bind",
+      "source": "/etc/resolv.conf",
+      "options": ["bind", "ro"]
+    },
+    {
+      "destination": "/etc/nsswitch.conf",
+      "type": "bind",
+      "source": "/etc/nsswitch.conf",
+      "options": ["bind", "ro"]
+    },
+    {
       "destination": "/etc/passwd",
       "type": "bind",
       "source": "/etc/passwd",
@@ -217,8 +234,7 @@ write_config() {
     "namespaces": [
       {"type": "mount"},
       {"type": "ipc"},
-      {"type": "uts"},
-      {"type": "network"}
+      {"type": "uts"}
     ],
     "maskedPaths": [
       "/proc/acpi",
