@@ -102,11 +102,11 @@ write_config() {
     "cwd": "/",
     "noNewPrivileges": true,
     "capabilities": {
-      "bounding": ["CAP_MAC_ADMIN"],
-      "effective": ["CAP_MAC_ADMIN"],
-      "inheritable": ["CAP_MAC_ADMIN"],
-      "permitted": ["CAP_MAC_ADMIN"],
-      "ambient": ["CAP_MAC_ADMIN"]
+      "bounding": [],
+      "effective": [],
+      "inheritable": [],
+      "permitted": [],
+      "ambient": []
     }
   },
   "root": {
@@ -209,7 +209,8 @@ write_config() {
       {"type": "mount"},
       {"type": "pid"},
       {"type": "ipc"},
-      {"type": "uts"}
+      {"type": "uts"},
+      {"type": "network"}
     ],
     "maskedPaths": [
       "/proc/acpi",
