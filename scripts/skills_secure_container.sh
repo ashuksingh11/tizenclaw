@@ -32,10 +32,10 @@ write_config() {
   "process": {
     "terminal": false,
     "user": {"uid": 0, "gid": 0},
-    "args": ["python3", "/skills/skill_executor.py"],
+    "args": ["python3.11", "/skills/skill_executor.py"],
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      "LD_LIBRARY_PATH=/lib64:/usr/lib64:/host_lib:/usr/lib"
+      "LD_LIBRARY_PATH=/lib64:/usr/lib64:/lib:/host_lib:/usr/lib"
     ],
     "cwd": "/",
     "noNewPrivileges": true,
@@ -236,8 +236,7 @@ run_without_container() {
            "${BUNDLE_DIR}/rootfs/dev" "${BUNDLE_DIR}/rootfs/tmp" \
            "${BUNDLE_DIR}/rootfs/usr" "${BUNDLE_DIR}/rootfs/etc" \
            "${BUNDLE_DIR}/rootfs/opt/etc" \
-           "${BUNDLE_DIR}/rootfs/host_lib" \
-           "${BUNDLE_DIR}/rootfs/lib64" "${BUNDLE_DIR}/rootfs/run" \
+           "${BUNDLE_DIR}/rootfs/host_lib" "${BUNDLE_DIR}/rootfs/run" \
            "${BUNDLE_DIR}/rootfs/data" "${APP_DATA_DIR}/data"
 
   exec unshare -m /bin/sh -c "
@@ -258,8 +257,11 @@ run_without_container() {
     mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/opt/etc\" || true
     mount --rbind /lib \"${BUNDLE_DIR}/rootfs/host_lib\" || true
     mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/host_lib\" || true
-    mount --rbind /lib64 \"${BUNDLE_DIR}/rootfs/lib64\" || true
-    mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/lib64\" || true
+    if [ -d /lib64 ]; then
+      mkdir -p \"${BUNDLE_DIR}/rootfs/lib64\"
+      mount --rbind /lib64 \"${BUNDLE_DIR}/rootfs/lib64\" || true
+      mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/lib64\" || true
+    fi
 
     # Read-write mount: /run (D-Bus runtime sockets)
     mount --rbind /run \"${BUNDLE_DIR}/rootfs/run\" || true
@@ -269,7 +271,7 @@ run_without_container() {
     mount --rbind \"${APP_DATA_DIR}/tools/cli\" \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw/tools/cli\" || true
     mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw/tools/cli\" || true
 
-    exec chroot \"${BUNDLE_DIR}/rootfs\" /bin/sh -c 'LD_LIBRARY_PATH=/lib64:/usr/lib64:/host_lib:/usr/lib exec python3 /skills/skill_executor.py'
+    exec chroot \"${BUNDLE_DIR}/rootfs\" /bin/sh -c 'LD_LIBRARY_PATH=/lib64:/usr/lib64:/lib:/host_lib:/usr/lib exec python3.11 /skills/skill_executor.py'
   "
 }
 
