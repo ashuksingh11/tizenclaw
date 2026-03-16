@@ -39,10 +39,13 @@ class PackageEventAdapter : public IEventAdapter {
   [[nodiscard]] std::string GetName() const override;
 
  private:
-  // Callback from pkgmgr_client_listen_status_v2
-  static int OnPackageSignal(
+  // Callback from pkgmgr_client_listen_status
+  static int OnPackageEvent(
       uid_t target_uid, int req_id,
-      pkgmgr_signal_h signal, void* user_data);
+      const char* pkg_type,
+      const char* pkg_name,
+      const char* key, const char* val,
+      const void* pmsg, void* user_data);
 
   // Query app info for a given package
   static nlohmann::json QueryAppInfo(

@@ -23,20 +23,6 @@
 #include "../../common/logging.hh"
 #include "event_bus.hh"
 
-namespace {
-
-const char* EventTypeFromString(const char* val) {
-  if (!val) return "unknown";
-  if (strcasecmp(val, "install") == 0) return "install";
-  if (strcasecmp(val, "uninstall") == 0) return "uninstall";
-  if (strcasecmp(val, "update") == 0) return "update";
-  if (strcasecmp(val, "move") == 0) return "move";
-  if (strcasecmp(val, "clear") == 0) return "clear";
-  return "unknown";
-}
-
-}  // namespace
-
 namespace tizenclaw {
 
 PackageEventAdapter::~PackageEventAdapter() {
@@ -61,12 +47,11 @@ void PackageEventAdapter::Start() {
                  << ret;
   }
 
-  ret = pkgmgr_client_listen_status_v2(
-      client_, OnPackageSignal, this);
+  ret = pkgmgr_client_listen_status(
+      client_, OnPackageEvent, this);
   if (ret < 0) {
     LOG(ERROR) << "PackageEventAdapter: "
-               << "listen_status_v2 failed="
-               << ret;
+               << "listen_status failed=" << ret;
     pkgmgr_client_free(client_);
     client_ = nullptr;
     return;
@@ -93,30 +78,13 @@ std::string PackageEventAdapter::GetName() const {
   return "PackageEventAdapter";
 }
 
-int PackageEventAdapter::OnPackageSignal(
-    uid_t target_uid, int req_id,
-    pkgmgr_signal_h signal, void* user_data) {
-  const char* pkg_type = nullptr;
-  const char* pkgid = nullptr;
-  const char* key = nullptr;
-  const char* val = nullptr;
-  const char* event_type_str = nullptr;
-
-  if (pkgmgr_signal_get_pkg_type(
-          signal, &pkg_type) != 0)
-    return 0;
-  if (pkgmgr_signal_get_pkgid(
-          signal, &pkgid) != 0)
-    return 0;
-  if (pkgmgr_signal_get_key(signal, &key) != 0)
-    return 0;
-  if (pkgmgr_signal_get_value(signal, &val) != 0)
-    return 0;
-  if (pkgmgr_signal_get_event_type(
-          signal, &event_type_str) != 0)
-    return 0;
-
-  if (!pkgid) return 0;
+int PackageEventAdapter::OnPackageEvent(
+    uid_t /*target_uid*/, int /*req_id*/,
+    const char* pkg_type,
+    const char* pkg_name,
+    const char* key, const char* val,
+    const void* /*pmsg*/, void* /*user_data*/) {
+  if (!pkg_name || !key) return 0;
 
   // Only publish on "end" (completed) or "error"
   // (failed) to avoid flooding with progress events
@@ -129,22 +97,22 @@ int PackageEventAdapter::OnPackageSignal(
   ev.source = "package_manager";
   ev.plugin_id = "builtin";
 
-  const char* evt_str =
-      EventTypeFromString(event_type_str);
-  ev.name = std::string("package.") + evt_str;
+  // val on "start" contains the event type string
+  // (install/uninstall/update/move/clear).
+  // On "end", val is "ok" or an error string.
+  // We keep the event name generic here.
+  ev.name = "package.event";
 
-  ev.data["event_type"] = evt_str;
-  ev.data["package_id"] = pkgid;
+  ev.data["package_id"] = pkg_name;
   ev.data["package_type"] =
       pkg_type ? pkg_type : "unknown";
+  ev.data["key"] = key;
+  ev.data["value"] = val ? val : "";
 
   if (is_end) {
     if (val && strcasecmp(val, "ok") == 0) {
       ev.data["state"] = "completed";
-      // On install/update completion, query app info
-      if (strcasecmp(evt_str, "uninstall") != 0) {
-        ev.data["apps"] = QueryAppInfo(pkgid);
-      }
+      ev.data["apps"] = QueryAppInfo(pkg_name);
     } else {
       ev.data["state"] = "failed";
     }
