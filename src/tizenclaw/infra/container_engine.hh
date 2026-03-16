@@ -65,6 +65,7 @@ class ContainerEngine {
   std::string BuildPaths(const std::string& leaf) const;
   std::string EscapeShellArg(const std::string& input) const;
   std::string CrunCmd(const std::string& subcmd) const;
+  std::string FindPython3() const;
 
   // Extract last JSON-like line from raw output
   static std::string ExtractJsonResult(const std::string& raw);

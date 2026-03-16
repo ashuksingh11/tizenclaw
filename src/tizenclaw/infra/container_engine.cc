@@ -27,6 +27,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <json.hpp>
 #include <memory>
@@ -228,8 +229,16 @@ std::string ContainerEngine::ExecuteSkill(const std::string& skill_name,
 
   std::string run_cmd;
   if (rt == "python") {
+    std::string python_bin = FindPython3();
+    if (python_bin.empty()) {
+      LOG(ERROR) << "No python3 found for " << "host-direct fallback";
+      nlohmann::json err;
+      err["error"] = "python3 not found on host or rootfs";
+      return err.dump();
+    }
     run_cmd = "CLAW_ARGS=" + EscapeShellArg(arg_str) +
-              " /usr/bin/python3 " + EscapeShellArg(host_skill_path);
+              " LD_LIBRARY_PATH=/usr/lib:/lib " +
+              python_bin + " " + EscapeShellArg(host_skill_path);
   } else if (rt == "node") {
     run_cmd = "CLAW_ARGS=" + EscapeShellArg(arg_str) +
               " /usr/bin/node " + EscapeShellArg(host_skill_path);
@@ -754,7 +763,8 @@ bool ContainerEngine::WriteSkillsConfig() const {
     "args": ["python3",
              "/skills/skill_executor.py"],
     "env": [
-      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "LD_LIBRARY_PATH=/usr/lib:/host_lib"
     ],
     "cwd": "/",
     "noNewPrivileges": true,
@@ -838,6 +848,12 @@ bool ContainerEngine::WriteSkillsConfig() const {
       "type": "bind",
       "source": "/tmp",
       "options": ["rbind", "rw"]
+    },
+    {
+      "destination": "/host_lib",
+      "type": "bind",
+      "source": "/lib",
+      "options": ["rbind", "ro"]
     },
     {
       "destination": "/opt/usr/share/tizenclaw/tools/cli",
@@ -936,6 +952,41 @@ std::string ContainerEngine::EscapeShellArg(const std::string& input) const {
 
 std::string ContainerEngine::CrunCmd(const std::string& subcmd) const {
   return runtime_bin_ + " --root " + EscapeShellArg(crun_root_) + " " + subcmd;
+}
+
+std::string ContainerEngine::FindPython3() const {
+  // 1st: host system python3
+  if (access("/usr/bin/python3", X_OK) == 0) {
+    return "/usr/bin/python3";
+  }
+
+  // 2nd: rootfs python3 via musl dynamic linker.
+  // Alpine (musl) python3 can be executed on any Linux kernel by
+  // invoking musl's ld directly as the ELF interpreter.
+  std::string rootfs_python = bundle_dir_ + "/rootfs/usr/bin/python3";
+  if (access(rootfs_python.c_str(), R_OK) != 0) {
+    return "";
+  }
+
+  // Find ld-musl-*.so.1 in rootfs /lib
+  namespace fs = std::filesystem;
+  std::string rootfs_lib = bundle_dir_ + "/rootfs/lib";
+  std::error_code ec;
+  for (const auto& entry : fs::directory_iterator(rootfs_lib, ec)) {
+    std::string name = entry.path().filename().string();
+    if (name.find("ld-musl-") == 0 &&
+        name.find(".so.1") != std::string::npos) {
+      std::string musl_ld = entry.path().string();
+      std::string rootfs_usr_lib =
+          bundle_dir_ + "/rootfs/usr/lib";
+      LOG(INFO) << "Using rootfs python3 via " << "musl ld: " << musl_ld;
+      return musl_ld + " --library-path " +
+             EscapeShellArg(rootfs_usr_lib + ":/usr/lib:/lib") +
+             " " + rootfs_python;
+    }
+  }
+
+  return "";
 }
 
 std::string ContainerEngine::ExtractJsonResult(const std::string& raw) {

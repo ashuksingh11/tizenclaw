@@ -34,7 +34,8 @@ write_config() {
     "user": {"uid": 0, "gid": 0},
     "args": ["python3", "/skills/skill_executor.py"],
     "env": [
-      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "LD_LIBRARY_PATH=/usr/lib:/host_lib"
     ],
     "cwd": "/",
     "noNewPrivileges": true,
@@ -95,6 +96,12 @@ write_config() {
       "destination": "/opt/etc",
       "type": "bind",
       "source": "/opt/etc",
+      "options": ["rbind", "ro"]
+    },
+    {
+      "destination": "/host_lib",
+      "type": "bind",
+      "source": "/lib",
       "options": ["rbind", "ro"]
     },
     {
@@ -229,6 +236,7 @@ run_without_container() {
            "${BUNDLE_DIR}/rootfs/dev" "${BUNDLE_DIR}/rootfs/tmp" \
            "${BUNDLE_DIR}/rootfs/usr" "${BUNDLE_DIR}/rootfs/etc" \
            "${BUNDLE_DIR}/rootfs/opt/etc" \
+           "${BUNDLE_DIR}/rootfs/host_lib" \
            "${BUNDLE_DIR}/rootfs/lib64" "${BUNDLE_DIR}/rootfs/run" \
            "${BUNDLE_DIR}/rootfs/data" "${APP_DATA_DIR}/data"
 
@@ -240,14 +248,16 @@ run_without_container() {
     mount --rbind \"${APP_DATA_DIR}/data\" \"${BUNDLE_DIR}/rootfs/data\" || true
     mount --rbind /tmp \"${BUNDLE_DIR}/rootfs/tmp\" || true
 
-    # Read-only mounts: host /usr, /etc, /lib64
+    # Read-only mounts: host /usr, /etc, /lib, /lib64
     # Provides glibc Python3, CAPI/HAL libs, ld.so.cache, tizen-platform.conf
-    mount --rbind "${MERGED_USR}" \"${BUNDLE_DIR}/rootfs/usr\" || true
+    mount --rbind \"${MERGED_USR}\" \"${BUNDLE_DIR}/rootfs/usr\" || true
     mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/usr\" || true
     mount --rbind /etc \"${BUNDLE_DIR}/rootfs/etc\" || true
     mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/etc\" || true
     mount --rbind /opt/etc \"${BUNDLE_DIR}/rootfs/opt/etc\" || true
     mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/opt/etc\" || true
+    mount --rbind /lib \"${BUNDLE_DIR}/rootfs/host_lib\" || true
+    mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/host_lib\" || true
     mount --rbind /lib64 \"${BUNDLE_DIR}/rootfs/lib64\" || true
     mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/lib64\" || true
 
@@ -259,7 +269,7 @@ run_without_container() {
     mount --rbind \"${APP_DATA_DIR}/tools/cli\" \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw/tools/cli\" || true
     mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw/tools/cli\" || true
 
-    exec chroot \"${BUNDLE_DIR}/rootfs\" python3 /skills/skill_executor.py
+    exec chroot \"${BUNDLE_DIR}/rootfs\" /bin/sh -c 'LD_LIBRARY_PATH=/usr/lib:/host_lib exec python3 /skills/skill_executor.py'
   "
 }
 
