@@ -44,6 +44,13 @@ class ContainerEngine {
                                           const std::string& path,
                                           const std::string& content);
 
+  // Execute a system CLI tool via the tool-executor
+  // process (prevents running arbitrary binaries in
+  // the daemon process).
+  [[nodiscard]] std::string ExecuteCliTool(const std::string& tool_name,
+                                           const std::string& arguments,
+                                           int timeout_seconds);
+
  private:
   // Execute skill via Unix Domain Socket to the
   // skill_executor running in the secure container.

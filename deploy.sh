@@ -652,14 +652,23 @@ do_restart_and_run() {
   run sdb_shell systemctl daemon-reload
   ok "Daemon reloaded"
 
-  # 4-2. Restart services
-  log "Restarting tizenclaw-tool-executor service..."
-  run sdb_shell systemctl restart tizenclaw-tool-executor || true
-  ok "Tool executor restarted"
+  # 4-2. Enable and start socket units (on-demand activation)
+  log "Enabling socket units..."
+  run sdb_shell systemctl enable tizenclaw-tool-executor.socket 2>/dev/null || true
+  run sdb_shell systemctl enable tizenclaw-code-sandbox.socket 2>/dev/null || true
+  ok "Socket units enabled"
 
-  log "Restarting tizenclaw-code-sandbox service..."
-  run sdb_shell systemctl restart tizenclaw-code-sandbox || true
-  ok "Code sandbox restarted"
+  log "Restarting tizenclaw-tool-executor socket..."
+  run sdb_shell systemctl restart tizenclaw-tool-executor.socket || true
+  ok "Tool executor socket restarted"
+
+  log "Restarting tizenclaw-code-sandbox socket..."
+  run sdb_shell systemctl restart tizenclaw-code-sandbox.socket || true
+  ok "Code sandbox socket restarted"
+
+  # Stop existing service instances (will be socket-activated on demand)
+  run sdb_shell systemctl stop tizenclaw-tool-executor 2>/dev/null || true
+  run sdb_shell systemctl stop tizenclaw-code-sandbox 2>/dev/null || true
 
   log "Restarting tizenclaw service..."
   run sdb_shell systemctl restart tizenclaw
@@ -675,6 +684,10 @@ do_restart_and_run() {
   echo ""
   if [ "${DRY_RUN}" = false ]; then
     sdb_shell systemctl status tizenclaw -l --no-pager || true
+    echo ""
+    sdb_shell systemctl status tizenclaw-tool-executor.socket --no-pager || true
+    echo ""
+    sdb_shell systemctl status tizenclaw-code-sandbox.socket --no-pager || true
   else
     log "[DRY-RUN] sdb shell systemctl status tizenclaw -l"
   fi

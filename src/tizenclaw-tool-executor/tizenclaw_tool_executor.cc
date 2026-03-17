@@ -177,6 +177,55 @@ void HandleClient(
       } else {
         resp = sandbox_proxy.HandleInstallPackage(pkg_type, name);
       }
+    } else if (command == "execute_cli") {
+      std::string cli_tool = req.value("tool_name", "");
+      std::string cli_args = req.value("arguments", "");
+      int cli_timeout = req.value("timeout", 10);
+      if (cli_tool.empty()) {
+        resp = {{"status", "error"}, {"output", "No tool_name"}};
+      } else {
+        // Resolve to /usr/bin/<tool_name> and execute
+        std::string bin_path = "/usr/bin/" + cli_tool;
+        namespace fs = std::filesystem;
+        std::error_code fec;
+        if (!fs::exists(bin_path, fec)) {
+          resp = {{"status", "error"},
+                  {"output", "CLI binary not found: " + bin_path}};
+        } else {
+          std::string cmd = bin_path + " " + cli_args + " 2>&1";
+          LOG(INFO) << "execute_cli: " << cmd
+                    << " (timeout=" << cli_timeout << "s)";
+
+          std::string output;
+          FILE* pipe = popen(cmd.c_str(), "r");
+          if (!pipe) {
+            resp = {{"status", "error"},
+                    {"output", "popen failed for " + cli_tool}};
+          } else {
+            char read_buf[4096];
+            while (fgets(read_buf, sizeof(read_buf),
+                         pipe) != nullptr) {
+              output += read_buf;
+            }
+            int exit_status = pclose(pipe);
+            int exit_code = WIFEXITED(exit_status)
+                                ? WEXITSTATUS(exit_status)
+                                : -1;
+
+            // Trim trailing newlines
+            while (!output.empty() && output.back() == '\n') {
+              output.pop_back();
+            }
+
+            nlohmann::json result;
+            result["tool"] = cli_tool;
+            result["exit_code"] = exit_code;
+            result["output"] = output;
+            resp = {{"status", "ok"},
+                    {"output", result.dump()}};
+          }
+        }
+      }
     } else {
       // Default: tool execution (renamed from "skill")
       std::string tool = req.value("tool", "");
@@ -220,32 +269,48 @@ int main() {
                  << "will use fork/exec fallback";
   }
 
-  // Create abstract namespace socket
-  int srv = socket(AF_UNIX, SOCK_STREAM, 0);
-  if (srv < 0) {
-    LOG(ERROR) << "socket() failed: " << strerror(errno);
-    return 1;
-  }
+  // Check for systemd socket activation (LISTEN_FDS/LISTEN_PID)
+  int srv = -1;
+  const char* listen_fds_env = getenv("LISTEN_FDS");
+  const char* listen_pid_env = getenv("LISTEN_PID");
 
-  struct sockaddr_un addr;
-  std::memset(&addr, 0, sizeof(addr));
-  addr.sun_family = AF_UNIX;
-  addr.sun_path[0] = '\0';
-  std::memcpy(addr.sun_path + 1, kSocketName, kSocketNameLen - 1);
+  if (listen_fds_env && listen_pid_env &&
+      std::stoi(listen_pid_env) == getpid() &&
+      std::stoi(listen_fds_env) >= 1) {
+    // Socket-activated: fd 3 is SD_LISTEN_FDS_START
+    srv = 3;
+    LOG(INFO) << "Using systemd socket activation (fd=" << srv << ")";
+  } else {
+    // Manual start: create abstract namespace socket
+    srv = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (srv < 0) {
+      LOG(ERROR) << "socket() failed: " << strerror(errno);
+      return 1;
+    }
 
-  socklen_t addr_len = offsetof(struct sockaddr_un, sun_path)
-                       + 1 + kSocketNameLen - 1;
+    struct sockaddr_un addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    addr.sun_path[0] = '\0';
+    std::memcpy(addr.sun_path + 1, kSocketName,
+                kSocketNameLen - 1);
 
-  if (bind(srv, reinterpret_cast<struct sockaddr*>(&addr), addr_len) < 0) {
-    LOG(ERROR) << "bind() failed: " << strerror(errno);
-    close(srv);
-    return 1;
-  }
+    socklen_t addr_len = offsetof(struct sockaddr_un, sun_path)
+                         + 1 + kSocketNameLen - 1;
 
-  if (listen(srv, 128) < 0) {
-    LOG(ERROR) << "listen() failed: " << strerror(errno);
-    close(srv);
-    return 1;
+    if (bind(srv,
+             reinterpret_cast<struct sockaddr*>(&addr),
+             addr_len) < 0) {
+      LOG(ERROR) << "bind() failed: " << strerror(errno);
+      close(srv);
+      return 1;
+    }
+
+    if (listen(srv, 128) < 0) {
+      LOG(ERROR) << "listen() failed: " << strerror(errno);
+      close(srv);
+      return 1;
+    }
   }
 
   LOG(INFO) << "Listening on abstract socket: @" << kSocketName;

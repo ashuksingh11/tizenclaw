@@ -262,7 +262,6 @@ tizenclaw/
 ├── packaging/                       # RPM packaging & systemd
 │   ├── tizenclaw.spec               # GBS RPM build spec
 │   ├── tizenclaw.service            # Daemon systemd service
-│   ├── tizenclaw-skills-secure.service  # Skills container service
 │   └── tizenclaw.manifest           # Tizen SMACK manifest
 ├── docs/                            # Documentation
 ├── CMakeLists.txt                   # Build system (C++20)
@@ -397,7 +396,7 @@ Built-in tools (implemented in AgentCore directly):
 | **Build System** | CMake 3.12+, C++20, `pkg-config` (tizen-core, glib-2.0, dlog, libcurl, libsoup-2.4, libwebsockets, sqlite3, capi-appfw-tizen-action, libaurum, capi-appfw-event, capi-appfw-app-manager, capi-appfw-package-manager, aul, rua, vconf) |
 | **Packaging** | GBS RPM (`tizenclaw.spec`), includes crun source build |
 | **Architectures** | x86_64 (emulator), armv7l (32-bit ARM), aarch64 (64-bit ARM) — per-arch rootfs in `data/img/<arch>/` |
-| **systemd** | `tizenclaw.service` (Type=simple), `tizenclaw-skills-secure.service` (Type=oneshot) |
+| **systemd** | `tizenclaw.service` (Type=simple), `tizenclaw-tool-executor.service` (Type=simple) |
 | **Testing** | gtest/gmock (42 test files), `ctest -V` run during `%check` |
 
 ---

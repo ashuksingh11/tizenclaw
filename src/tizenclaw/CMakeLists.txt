@@ -70,11 +70,13 @@ TARGET_COMPILE_DEFINITIONS(${TARGET_TIZENCLAW} PUBLIC
 
 INSTALL(TARGETS ${TARGET_TIZENCLAW} DESTINATION ${BINDIR})
 
-# systemd services
+# systemd services and sockets
 INSTALL(FILES
   ${CMAKE_SOURCE_DIR}/packaging/tizenclaw.service
   ${CMAKE_SOURCE_DIR}/packaging/tizenclaw-tool-executor.service
+  ${CMAKE_SOURCE_DIR}/packaging/tizenclaw-tool-executor.socket
   ${CMAKE_SOURCE_DIR}/packaging/tizenclaw-code-sandbox.service
+  ${CMAKE_SOURCE_DIR}/packaging/tizenclaw-code-sandbox.socket
   DESTINATION /usr/lib/systemd/system/
 )
 

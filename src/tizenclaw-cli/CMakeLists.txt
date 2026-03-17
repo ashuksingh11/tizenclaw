@@ -1,5 +1,11 @@
 # CLI test tool utilizing the libtizenclaw CAPI
-ADD_EXECUTABLE(${TARGET_TIZENCLAW_CLI} tizenclaw_cli.cc)
+ADD_EXECUTABLE(${TARGET_TIZENCLAW_CLI}
+  main.cc
+  socket_client.cc
+  request_handler.cc
+  response_printer.cc
+  interactive_shell.cc
+)
 TARGET_INCLUDE_DIRECTORIES(${TARGET_TIZENCLAW_CLI} PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/../common"
 )

@@ -1,7 +1,6 @@
 [Unit]
 Description=TizenClaw Agent System Service
-After=network.target tizenclaw-skills-secure.service
-Requires=tizenclaw-skills-secure.service
+After=network.target
 
 [Service]
 Type=simple

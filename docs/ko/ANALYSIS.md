@@ -195,7 +195,6 @@ tizenclaw/
 ├── packaging/                       # RPM 패키징 & systemd
 │   ├── tizenclaw.spec               # GBS RPM 빌드 스펙
 │   ├── tizenclaw.service            # 데몬 systemd 서비스
-│   ├── tizenclaw-skills-secure.service  # 스킬 컨테이너 서비스
 │   └── tizenclaw.manifest           # Tizen SMACK 매니페스트
 ├── docs/                            # 문서
 ├── CMakeLists.txt                   # 빌드 시스템 (C++20)
@@ -312,7 +311,7 @@ AgentCore에 직접 구현된 내장 도구:
 | **빌드 시스템** | CMake 3.12+, C++20, `pkg-config` (tizen-core, glib-2.0, dlog, libcurl, libsoup-2.4, libwebsockets, sqlite3, capi-appfw-tizen-action, libaurum, capi-appfw-event, capi-appfw-app-manager, capi-appfw-package-manager, aul, rua, vconf) |
 | **패키징** | GBS RPM (`tizenclaw.spec`), crun 소스 빌드 포함 |
 | **아키텍처** | x86_64 (에뮬레이터), armv7l (32-bit ARM), aarch64 (64-bit ARM) — 아키텍처별 rootfs `data/img/<arch>/` |
-| **systemd** | `tizenclaw.service` (Type=simple), `tizenclaw-skills-secure.service` (Type=oneshot) |
+| **systemd** | `tizenclaw.service` (Type=simple), `tizenclaw-tool-executor.service` (Type=simple) |
 | **테스트** | gtest/gmock (42개 테스트 파일), `%check`에서 `ctest -V` 실행 |
 
 ---

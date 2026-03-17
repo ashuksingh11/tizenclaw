@@ -1,7 +1,7 @@
 [Unit]
 Description=TizenClaw Tool Executor
-After=network.target
-Before=tizenclaw.service
+Requires=tizenclaw-tool-executor.socket
+After=tizenclaw-tool-executor.socket
 
 [Service]
 Type=simple
@@ -10,6 +10,3 @@ User=root
 Group=root
 Restart=on-failure
 RestartSec=3
-
-[Install]
-WantedBy=multi-user.target

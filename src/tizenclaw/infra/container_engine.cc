@@ -594,6 +594,108 @@ std::string ContainerEngine::ExecuteFileOp(const std::string& operation,
   }
 }
 
+std::string ContainerEngine::ExecuteCliTool(
+    const std::string& tool_name,
+    const std::string& arguments,
+    int timeout_seconds) {
+  if (!initialized_) {
+    LOG(ERROR) << "Cannot execute CLI tool. "
+               << "Engine not initialized.";
+    return "{}";
+  }
+
+  LOG(INFO) << "ExecuteCliTool: tool=" << tool_name
+            << " args=" << arguments;
+
+  int sock = ConnectToToolExecutor();
+  if (sock < 0) {
+    LOG(WARNING) << "Tool executor connect failed "
+                 << "for execute_cli";
+    return "{}";
+  }
+
+  // Set receive timeout
+  struct timeval tv;
+  tv.tv_sec = timeout_seconds > 0 ? timeout_seconds : 10;
+  tv.tv_usec = 0;
+  setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+  // Build execute_cli request JSON
+  nlohmann::json req;
+  req["command"] = "execute_cli";
+  req["tool_name"] = tool_name;
+  req["arguments"] = arguments;
+  req["timeout"] = timeout_seconds;
+  std::string payload = req.dump();
+
+  // Send length-prefixed request
+  uint32_t net_len = htonl(payload.size());
+  if (::write(sock, &net_len, 4) != 4) {
+    LOG(ERROR) << "UDS write header failed";
+    close(sock);
+    return "{}";
+  }
+
+  ssize_t total = 0;
+  ssize_t len = static_cast<ssize_t>(payload.size());
+  while (total < len) {
+    ssize_t w = ::write(sock, payload.data() + total,
+                        len - total);
+    if (w <= 0) {
+      LOG(ERROR) << "UDS write body failed";
+      close(sock);
+      return "{}";
+    }
+    total += w;
+  }
+
+  // Read 4-byte response header
+  uint32_t resp_net_len = 0;
+  ssize_t hr = ::recv(sock, &resp_net_len, 4, MSG_WAITALL);
+  if (hr != 4) {
+    LOG(ERROR) << "UDS recv header failed";
+    close(sock);
+    return "{}";
+  }
+
+  uint32_t resp_len = ntohl(resp_net_len);
+  if (resp_len > 10 * 1024 * 1024) {
+    LOG(ERROR) << "UDS response too large: " << resp_len;
+    close(sock);
+    return "{}";
+  }
+
+  // Read response body
+  std::vector<char> resp_buf(resp_len);
+  ssize_t br = ::recv(sock, resp_buf.data(), resp_len, MSG_WAITALL);
+  close(sock);
+
+  if (br != static_cast<ssize_t>(resp_len)) {
+    LOG(ERROR) << "UDS recv body incomplete";
+    return "{}";
+  }
+
+  std::string resp_str(resp_buf.data(), resp_len);
+  LOG(INFO) << "ExecuteCliTool response ("
+            << resp_len << " bytes)";
+
+  try {
+    auto resp = nlohmann::json::parse(resp_str);
+    std::string status = resp.value("status", "error");
+    std::string output = resp.value("output", "");
+    if (status == "ok") {
+      return output;
+    }
+    LOG(ERROR) << "ExecuteCliTool error: " << output;
+    nlohmann::json err;
+    err["error"] = output;
+    return err.dump();
+  } catch (const std::exception& e) {
+    LOG(ERROR) << "UDS JSON parse error: " << e.what();
+    return "{}";
+  }
+}
+
 std::string ContainerEngine::ExecuteSkillViaCrun(const std::string& skill_name,
                                                  const std::string& arg_str) {
   if (runtime_bin_.empty()) {

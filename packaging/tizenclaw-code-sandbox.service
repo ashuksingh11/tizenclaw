@@ -1,7 +1,7 @@
 [Unit]
 Description=TizenClaw Code Execution Sandbox
-After=local-fs.target
-Before=tizenclaw.service
+Requires=tizenclaw-code-sandbox.socket
+After=tizenclaw-code-sandbox.socket
 
 [Service]
 Type=simple
@@ -10,6 +10,3 @@ ExecStop=/usr/libexec/tizenclaw/tizenclaw_secure_container.sh stop
 Restart=on-failure
 RestartSec=3
 User=root
-
-[Install]
-WantedBy=multi-user.target

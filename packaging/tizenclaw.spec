@@ -75,6 +75,7 @@ export LDFLAGS="$LDFLAGS -Wl,--as-needed -flto"
 mkdir -p %{buildroot}%{_bindir}
 mkdir -p %{buildroot}%{_unitdir}
 mkdir -p %{buildroot}%{_unitdir}/multi-user.target.wants
+mkdir -p %{buildroot}%{_unitdir}/sockets.target.wants
 mkdir -p %{buildroot}%{_includedir}/tizenclaw
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/img
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/skills
@@ -85,8 +86,8 @@ mkdir -p %{buildroot}/opt/usr/share/tizenclaw/sandbox/packages/pip
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/sandbox/packages/npm
 
 ln -sf ../tizenclaw.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw.service
-ln -sf ../tizenclaw-tool-executor.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw-tool-executor.service
-ln -sf ../tizenclaw-code-sandbox.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw-code-sandbox.service
+ln -sf ../tizenclaw-tool-executor.socket %{buildroot}%{_unitdir}/sockets.target.wants/tizenclaw-tool-executor.socket
+ln -sf ../tizenclaw-code-sandbox.socket %{buildroot}%{_unitdir}/sockets.target.wants/tizenclaw-code-sandbox.socket
 
 %files
 %defattr(-,root,root,-)
@@ -99,10 +100,12 @@ ln -sf ../tizenclaw-code-sandbox.service %{buildroot}%{_unitdir}/multi-user.targ
 %{_bindir}/tizenclaw-tool-executor
 %{_unitdir}/tizenclaw.service
 %{_unitdir}/tizenclaw-tool-executor.service
+%{_unitdir}/tizenclaw-tool-executor.socket
 %{_unitdir}/tizenclaw-code-sandbox.service
+%{_unitdir}/tizenclaw-code-sandbox.socket
 %{_unitdir}/multi-user.target.wants/tizenclaw.service
-%{_unitdir}/multi-user.target.wants/tizenclaw-tool-executor.service
-%{_unitdir}/multi-user.target.wants/tizenclaw-code-sandbox.service
+%{_unitdir}/sockets.target.wants/tizenclaw-tool-executor.socket
+%{_unitdir}/sockets.target.wants/tizenclaw-code-sandbox.socket
 /usr/libexec/tizenclaw/run_standard_container.sh
 /usr/libexec/tizenclaw/tizenclaw_secure_container.sh
 /usr/libexec/tizenclaw/tizenclaw_code_executor.py

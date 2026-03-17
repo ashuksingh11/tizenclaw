@@ -2320,46 +2320,46 @@ std::string AgentCore::ExecuteCli(const std::string& tool_name,
       return nlohmann::json({{"error", validation}}).dump();
     }
 
-    std::string bin_path = sys_cli.Resolve(tool_name);
-    std::string cmd = bin_path + " " + arguments + " 2>&1";
+    LOG(INFO) << "Routing system CLI via tool-executor: " << tool_name;
 
-    LOG(INFO) << "Executing system CLI: " << cmd;
+    int timeout = sys_cli.GetTimeout(tool_name);
+    std::string result = container_->ExecuteCliTool(
+        tool_name, arguments, timeout);
 
-    // Execute with timeout awareness
-    std::string output;
-    FILE* pipe = popen(cmd.c_str(), "r");
-    if (!pipe) {
-      LOG(ERROR) << "Failed to execute system CLI: " << tool_name;
-      return "{\"error\": \"Failed to execute system CLI tool\"}";
+    if (result.empty() || result == "{}") {
+      LOG(ERROR) << "Tool executor unreachable for execute_cli, "
+                 << "falling back to host popen";
+      // Fallback: direct popen (e.g., tool-executor not running)
+      std::string bin_path = sys_cli.Resolve(tool_name);
+      std::string cmd = bin_path + " " + arguments + " 2>&1";
+      std::string output;
+      FILE* pipe = popen(cmd.c_str(), "r");
+      if (!pipe) {
+        return "{\"error\": \"Failed to execute system CLI tool\"}";
+      }
+      char buffer[4096];
+      while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+      }
+      int status = pclose(pipe);
+      while (!output.empty() && output.back() == '\n') {
+        output.pop_back();
+      }
+      try {
+        auto j = nlohmann::json::parse(output);
+        return j.dump();
+      } catch (const nlohmann::json::exception&) {
+        return nlohmann::json(
+                   {{"tool", tool_name},
+                    {"source", "system_cli"},
+                    {"exit_code", WIFEXITED(status)
+                                      ? WEXITSTATUS(status) : -1},
+                    {"output", output}})
+            .dump();
+      }
     }
 
-    char buffer[4096];
-    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-      output += buffer;
-    }
-    int status = pclose(pipe);
-
-    while (!output.empty() && output.back() == '\n') {
-      output.pop_back();
-    }
-
-    if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
-      LOG(WARNING) << "System CLI " << tool_name
-                   << " exited with code " << WEXITSTATUS(status);
-    }
-
-    try {
-      auto j = nlohmann::json::parse(output);
-      return j.dump();
-    } catch (const nlohmann::json::exception&) {
-      return nlohmann::json(
-                 {{"tool", tool_name},
-                  {"source", "system_cli"},
-                  {"exit_code", WIFEXITED(status)
-                                    ? WEXITSTATUS(status) : -1},
-                  {"output", output}})
-          .dump();
-    }
+    return result;
   }
 
   // Resolve tool directory (TPK CLI plugins)
