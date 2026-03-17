@@ -234,52 +234,49 @@ cleanup_overlay_usr() {
 run_without_container() {
   echo "Watchdog cgroup unavailable. Falling back to chroot with unshare."
 
-  mkdir -p "${BUNDLE_DIR}/rootfs/skills" "${BUNDLE_DIR}/rootfs/proc" \
-           "${BUNDLE_DIR}/rootfs/dev" "${BUNDLE_DIR}/rootfs/tmp" \
-           "${BUNDLE_DIR}/rootfs/usr" "${BUNDLE_DIR}/rootfs/etc" \
-           "${BUNDLE_DIR}/rootfs/opt/etc" \
-           "${BUNDLE_DIR}/rootfs/host_lib" "${BUNDLE_DIR}/rootfs/run" \
-           "${BUNDLE_DIR}/rootfs/data" "${APP_DATA_DIR}/data"
+  local R="${BUNDLE_DIR}/rootfs"
 
-  # Determine /usr mount strategy
-  USR_MOUNT_CMD=""
+  mkdir -p "$R/skills" "$R/proc" "$R/dev" "$R/tmp" \
+           "$R/usr" "$R/etc" "$R/opt/etc" \
+           "$R/host_lib" "$R/run" "$R/data" "${APP_DATA_DIR}/data"
+
+  # Build the mount + chroot command as a single string for unshare
+  local CMD="mount --make-rprivate / || true"
+  CMD="$CMD; mount -t proc proc \"$R/proc\" || true"
+  CMD="$CMD; mount --rbind /dev \"$R/dev\" || true"
+  CMD="$CMD; mount --rbind \"${APP_DATA_DIR}/tools/skills\" \"$R/skills\" || true"
+  CMD="$CMD; mount --rbind \"${APP_DATA_DIR}/data\" \"$R/data\" || true"
+  CMD="$CMD; mount --rbind /tmp \"$R/tmp\" || true"
+
+  # Mount /usr (overlay or rootfs-direct)
   if [ "${OVERLAY_OK}" = "true" ]; then
-    USR_MOUNT_CMD="mount --rbind \\\"${MERGED_USR}\\\" \\\"${BUNDLE_DIR}/rootfs/usr\\\" || true
-    mount -o remount,bind,ro \\\"${BUNDLE_DIR}/rootfs/usr\\\" || true"
+    CMD="$CMD; mount --rbind \"${MERGED_USR}\" \"$R/usr\" || true"
+    CMD="$CMD; mount -o remount,bind,ro \"$R/usr\" || true"
   fi
 
-  exec unshare -m /bin/sh -c "
-    mount --make-rprivate / || true
-    mount -t proc proc \\\"${BUNDLE_DIR}/rootfs/proc\\\" || true
-    mount --rbind /dev \\\"${BUNDLE_DIR}/rootfs/dev\\\" || true
-    mount --rbind \\\"${APP_DATA_DIR}/tools/skills\\\" \\\"${BUNDLE_DIR}/rootfs/skills\\\" || true
-    mount --rbind \\\"${APP_DATA_DIR}/data\\\" \\\"${BUNDLE_DIR}/rootfs/data\\\" || true
-    mount --rbind /tmp \\\"${BUNDLE_DIR}/rootfs/tmp\\\" || true
+  CMD="$CMD; mount --rbind /etc \"$R/etc\" || true"
+  CMD="$CMD; mount -o remount,bind,ro \"$R/etc\" || true"
+  CMD="$CMD; mount --rbind /opt/etc \"$R/opt/etc\" || true"
+  CMD="$CMD; mount -o remount,bind,ro \"$R/opt/etc\" || true"
+  CMD="$CMD; mount --rbind /lib \"$R/host_lib\" || true"
+  CMD="$CMD; mount -o remount,bind,ro \"$R/host_lib\" || true"
 
-    # Mount /usr (overlay or rootfs-direct)
-    \${USR_MOUNT_CMD}
-    mount --rbind /etc \\\"${BUNDLE_DIR}/rootfs/etc\\\" || true
-    mount -o remount,bind,ro \\\"${BUNDLE_DIR}/rootfs/etc\\\" || true
-    mount --rbind /opt/etc \\\"${BUNDLE_DIR}/rootfs/opt/etc\\\" || true
-    mount -o remount,bind,ro \\\"${BUNDLE_DIR}/rootfs/opt/etc\\\" || true
-    mount --rbind /lib \\\"${BUNDLE_DIR}/rootfs/host_lib\\\" || true
-    mount -o remount,bind,ro \\\"${BUNDLE_DIR}/rootfs/host_lib\\\" || true
-    if [ -d /lib64 ]; then
-      mkdir -p \\\"${BUNDLE_DIR}/rootfs/lib64\\\"
-      mount --rbind /lib64 \\\"${BUNDLE_DIR}/rootfs/lib64\\\" || true
-      mount -o remount,bind,ro \\\"${BUNDLE_DIR}/rootfs/lib64\\\" || true
-    fi
+  if [ -d /lib64 ]; then
+    mkdir -p "$R/lib64"
+    CMD="$CMD; mount --rbind /lib64 \"$R/lib64\" || true"
+    CMD="$CMD; mount -o remount,bind,ro \"$R/lib64\" || true"
+  fi
 
-    # Read-write mount: /run (D-Bus runtime sockets)
-    mount --rbind /run \\\"${BUNDLE_DIR}/rootfs/run\\\" || true
+  CMD="$CMD; mount --rbind /run \"$R/run\" || true"
 
-    # Read-only mount: CLI tools
-    mkdir -p \\\"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw/tools/cli\\\" || true
-    mount --rbind \\\"${APP_DATA_DIR}/tools/cli\\\" \\\"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw/tools/cli\\\" || true
-    mount -o remount,bind,ro \\\"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw/tools/cli\\\" || true
+  # CLI tools
+  mkdir -p "$R/opt/usr/share/tizenclaw/tools/cli"
+  CMD="$CMD; mount --rbind \"${APP_DATA_DIR}/tools/cli\" \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
+  CMD="$CMD; mount -o remount,bind,ro \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
 
-    exec chroot \\\"${BUNDLE_DIR}/rootfs\\\" /bin/sh -c 'LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/host_lib:/lib64 exec python3 /skills/skill_executor.py'
-  "
+  CMD="$CMD; exec chroot \"$R\" /bin/sh -c 'LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/host_lib:/lib64 exec python3 /skills/skill_executor.py'"
+
+  exec unshare -m /bin/sh -c "$CMD"
 }
 
 start_container() {
