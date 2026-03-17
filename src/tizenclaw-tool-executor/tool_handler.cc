@@ -161,36 +161,10 @@ nlohmann::json ToolHandler::HandleTool(const std::string& tool_name,
             {"output", "Entry point not found for tool: " + tool_name}};
   }
 
-  // For Python tools, try in-process execution
-  if (runtime == "python" && python_engine_.IsInitialized()) {
-    LOG(INFO) << "Executing Python tool in-process: " << script;
-
-    std::ifstream f(script);
-    if (!f.is_open()) {
-      return {{"status", "error"},
-              {"output", "Cannot open script: " + script}};
-    }
-    std::string code((std::istreambuf_iterator<char>(f)),
-                      std::istreambuf_iterator<char>());
-
-    std::string setup =
-        "import os; os.environ['CLAW_ARGS'] = " +
-        EscapeShellArg(args_str) + "\n";
-
-    auto [output, rc] = python_engine_.RunCode(setup + code);
-    if (rc != 0 && output.empty()) {
-      return {{"status", "error"},
-              {"output", "Python execution failed (rc=" +
-                         std::to_string(rc) + ")"}};
-    }
-    if (rc != 0) {
-      return {{"status", "error"},
-              {"output", output.substr(0, 500)}};
-    }
-    return {{"status", "ok"}, {"output", ExtractJsonOutput(output)}};
-  }
-
-  // Fallback: fork/exec
+  // Always use fork/exec for tool scripts.
+  // In-process Python is NOT used here because tool scripts may import
+  // C extension modules that are incompatible with embedded Python and
+  // would crash the tool executor process.
   std::string cmd;
   if (runtime == "python") {
     std::string python = PythonEngine::FindPython3();
