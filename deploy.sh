@@ -110,17 +110,17 @@ ensure_python3_on_device() {
 
   # Check if python3 already exists
   local has_python
-  has_python=$(sdb_shell "which python3 2>/dev/null" | tr -d '\r\n' || true)
-  if [ -n "${has_python}" ] && [ "${has_python}" != "" ]; then
+  has_python=$(sdb_shell "ls /usr/bin/python3 2>/dev/null" | tr -d '\r\n' || true)
+  if [ -n "${has_python}" ] && [[ "${has_python}" == *"/python3"* ]]; then
     ok "python3 already installed on device: ${has_python}"
     return 0
   fi
 
   log "python3 not found on device, installing..."
 
-  if [ -z "${REPO_BASE}" ] && [ -z "${REPO_PLATFORM}" ]; then
-    warn "No repo URLs configured in ${REPO_CONFIG}. Cannot install python3."
-    warn "Please set base/platform repo URLs in repo_config.ini"
+  if [ -z "${REPO_BASE}" ]; then
+    warn "No base repo URL configured in ${REPO_CONFIG}. Cannot install python3."
+    warn "Please set base repo URL in repo_config.ini"
     return 1
   fi
 
@@ -133,26 +133,78 @@ ensure_python3_on_device() {
     *)       repo_arch="${ARCH}" ;;
   esac
 
-  # Add repos on device
-  if [ -n "${REPO_BASE}" ]; then
-    log "Adding base repo on device..."
-    sdb_shell "zypper ar -G -f '${REPO_BASE}${repo_arch}/' tizenclaw-base 2>/dev/null || zypper mr -e tizenclaw-base 2>/dev/null || true"
+  local base_url="${REPO_BASE}${repo_arch}/"
+  local tmp_dir="/tmp/tizenclaw_python3_rpms"
+  mkdir -p "${tmp_dir}"
+
+  # Discover available RPM filenames from the repo index
+  log "Fetching RPM index from ${base_url}..."
+  local index_html
+  index_html=$(curl -sL "${base_url}" 2>/dev/null || true)
+  if [ -z "${index_html}" ]; then
+    warn "Failed to fetch repo index from ${base_url}"
+    return 1
   fi
 
-  if [ -n "${REPO_PLATFORM}" ]; then
-    log "Adding platform repo on device..."
-    sdb_shell "zypper ar -G -f '${REPO_PLATFORM}${repo_arch}/' tizenclaw-platform 2>/dev/null || zypper mr -e tizenclaw-platform 2>/dev/null || true"
+  # Find python3-base and libpython3 RPM names
+  local python3_base_rpm
+  local libpython3_rpm
+  python3_base_rpm=$(echo "${index_html}" | grep -oE "python3-base-[0-9][^\"]*\.rpm" | sort -V | tail -1 || true)
+  libpython3_rpm=$(echo "${index_html}" | grep -oE "libpython3[_0-9]*-[0-9][^\"]*\.rpm" | sort -V | tail -1 || true)
+
+  if [ -z "${python3_base_rpm}" ]; then
+    warn "python3-base RPM not found in repo index"
+    return 1
   fi
 
-  # Refresh and install python3
-  log "Refreshing repos and installing python3..."
-  sdb_shell "zypper --non-interactive refresh tizenclaw-base tizenclaw-platform 2>/dev/null || true"
-  sdb_shell "zypper --non-interactive install --no-confirm python3-base libpython3 2>/dev/null || true"
+  local rpms_to_install=()
+
+  # Download python3-base
+  log "Downloading ${python3_base_rpm}..."
+  if curl -sL -o "${tmp_dir}/${python3_base_rpm}" "${base_url}${python3_base_rpm}"; then
+    ok "Downloaded: ${python3_base_rpm}"
+    rpms_to_install+=("${tmp_dir}/${python3_base_rpm}")
+  else
+    warn "Failed to download ${python3_base_rpm}"
+    return 1
+  fi
+
+  # Download libpython3 (if found)
+  if [ -n "${libpython3_rpm}" ]; then
+    log "Downloading ${libpython3_rpm}..."
+    if curl -sL -o "${tmp_dir}/${libpython3_rpm}" "${base_url}${libpython3_rpm}"; then
+      ok "Downloaded: ${libpython3_rpm}"
+      rpms_to_install+=("${tmp_dir}/${libpython3_rpm}")
+    else
+      warn "Failed to download ${libpython3_rpm}, continuing without it"
+    fi
+  fi
+
+  # Push RPMs to device and install
+  for rpm_file in "${rpms_to_install[@]}"; do
+    local rpm_name
+    rpm_name=$(basename "${rpm_file}")
+    log "Pushing ${rpm_name} to device..."
+    run sdb_cmd push "${rpm_file}" "/tmp/"
+    ok "Pushed: ${rpm_name}"
+  done
+
+  # Install all pushed RPMs
+  local device_rpms=""
+  for rpm_file in "${rpms_to_install[@]}"; do
+    device_rpms="${device_rpms} /tmp/$(basename "${rpm_file}")"
+  done
+
+  log "Installing python3 RPMs on device..."
+  sdb_shell "rpm -Uvh --force --nodeps ${device_rpms} 2>&1" || true
+
+  # Clean up host temp files
+  rm -rf "${tmp_dir}"
 
   # Verify
-  has_python=$(sdb_shell "which python3 2>/dev/null" | tr -d '\r\n' || true)
-  if [ -n "${has_python}" ]; then
-    ok "python3 installed: ${has_python}"
+  has_python=$(sdb_shell "ls /usr/bin/python3 2>/dev/null" | tr -d '\r\n' || true)
+  if [ -n "${has_python}" ] && [[ "${has_python}" == *"/python3"* ]]; then
+    ok "python3 installed successfully: ${has_python}"
   else
     warn "python3 installation may have failed. Tool executor will use fork/exec fallback."
   fi

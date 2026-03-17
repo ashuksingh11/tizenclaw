@@ -749,7 +749,7 @@ int main() {
     return 1;
   }
 
-  if (listen(srv, 10) < 0) {
+  if (listen(srv, 128) < 0) {
     LOG(ERROR) << "listen() failed: " << strerror(errno);
     close(srv);
     return 1;
