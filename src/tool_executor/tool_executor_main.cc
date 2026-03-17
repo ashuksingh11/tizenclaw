@@ -19,14 +19,15 @@
  *
  * Listens on an abstract namespace Unix domain socket and executes
  * tool scripts on the host Linux directly.  Python code is run
- * in-process via dlopen'd libpython (no fork/exec overhead).
+ * in-process via linked libpython (Py_Initialize / PyRun_SimpleString).
  *
  * Protocol: 4-byte big-endian length prefix + UTF-8 JSON body
  * Security: SO_PEERCRED validates peer is tizenclaw or tizenclaw-cli.
  */
 
+#include <Python.h>
+
 #include <arpa/inet.h>
-#include <dlfcn.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -73,92 +74,29 @@ const std::vector<std::string> kAllowedCallers = {
 volatile sig_atomic_t g_running = 1;
 void SignalHandler(int) { g_running = 0; }
 
-// ─── Embedded Python via dlopen ─────────────────────────────
-// We dlopen libpython at runtime so the tool-executor binary
-// doesn't have a hard link-time dependency on python3-devel.
-// This lets us ship a single binary that works with any
-// Python 3.x version installed on the device.
-
-struct PythonAPI {
-  void* handle = nullptr;
-  // Core init/finalize
-  void (*Py_Initialize)() = nullptr;
-  int  (*Py_IsInitialized)() = nullptr;
-  // Execute code and capture output
-  int  (*PyRun_SimpleString)(const char*) = nullptr;
-  // GIL
-  void (*PyEval_InitThreads)() = nullptr;
-
-  bool loaded = false;
-};
-
-static PythonAPI g_py;
+// ─── Embedded Python (direct link) ──────────────────────────
 static std::mutex g_py_mutex;
-
-template <typename T>
-bool LoadSym(void* h, const char* name, T& out) {
-  out = reinterpret_cast<T>(dlsym(h, name));
-  return out != nullptr;
-}
+static bool g_py_initialized = false;
 
 bool InitPython() {
   std::lock_guard<std::mutex> lock(g_py_mutex);
-  if (g_py.loaded) return true;
+  if (g_py_initialized) return true;
 
-  // Try versioned names first, then generic
-  const char* libs[] = {
-      "libpython3.14.so.1.0",
-      "libpython3.14.so",
-      "libpython3.12.so.1.0",
-      "libpython3.12.so",
-      "libpython3.11.so.1.0",
-      "libpython3.11.so",
-      "libpython3.so",
-      nullptr,
-  };
-
-  for (int i = 0; libs[i]; ++i) {
-    g_py.handle = dlopen(libs[i], RTLD_NOW | RTLD_GLOBAL);
-    if (g_py.handle) {
-      LOG(INFO) << "Loaded " << libs[i];
-      break;
-    }
-  }
-
-  if (!g_py.handle) {
-    LOG(ERROR) << "Failed to dlopen libpython: " << dlerror();
+  Py_Initialize();
+  if (!Py_IsInitialized()) {
+    LOG(ERROR) << "Py_Initialize() failed";
     return false;
   }
 
-  bool ok = true;
-  ok &= LoadSym(g_py.handle, "Py_Initialize", g_py.Py_Initialize);
-  ok &= LoadSym(g_py.handle, "Py_IsInitialized", g_py.Py_IsInitialized);
-  ok &= LoadSym(g_py.handle, "PyRun_SimpleString", g_py.PyRun_SimpleString);
-  // PyEval_InitThreads is optional (removed in 3.12+)
-  LoadSym(g_py.handle, "PyEval_InitThreads", g_py.PyEval_InitThreads);
-
-  if (!ok) {
-    LOG(ERROR) << "Failed to resolve Python symbols";
-    dlclose(g_py.handle);
-    g_py.handle = nullptr;
-    return false;
-  }
-
-  g_py.Py_Initialize();
-  if (g_py.PyEval_InitThreads)
-    g_py.PyEval_InitThreads();
-
-  g_py.loaded = true;
-  LOG(INFO) << "Python interpreter initialized";
+  g_py_initialized = true;
+  LOG(INFO) << "Python interpreter initialized (linked)";
   return true;
 }
 
 /// Run Python code in-process and capture stdout/stderr.
-/// Uses a temporary file for output capture (avoids needing
-/// PyObject* manipulation without headers).
 std::pair<std::string, int> RunPythonCode(const std::string& code) {
   std::lock_guard<std::mutex> lock(g_py_mutex);
-  if (!g_py.loaded) return {"Python not initialized", -1};
+  if (!g_py_initialized) return {"Python not initialized", -1};
 
   // Create temp file for captured output
   char out_path[] = "/tmp/tizenclaw_pyout_XXXXXX";
@@ -189,7 +127,7 @@ std::pair<std::string, int> RunPythonCode(const std::string& code) {
       "    with open('" + std::string(out_path) + "', 'w') as _f:\n"
       "        _f.write(_buf.getvalue())\n";
 
-  int rc = g_py.PyRun_SimpleString(wrapper.c_str());
+  int rc = PyRun_SimpleString(wrapper.c_str());
 
   // Read captured output
   std::string output;
@@ -391,7 +329,7 @@ nlohmann::json HandleSkill(const std::string& skill_name,
   }
 
   // For Python skills, try in-process execution via libpython
-  if (runtime == "python" && g_py.loaded) {
+  if (runtime == "python" && g_py_initialized) {
     LOG(INFO) << "Executing Python skill in-process: " << script;
 
     // Read the script file
@@ -453,7 +391,7 @@ nlohmann::json HandleExecuteCode(const std::string& code, int /*timeout*/) {
   LOG(INFO) << "HandleExecuteCode: " << code.size() << " chars";
 
   // Try in-process Python first
-  if (g_py.loaded) {
+  if (g_py_initialized) {
     auto [output, rc] = RunPythonCode(code);
     if (rc != 0 && output.empty()) {
       return {{"status", "error"},
@@ -583,7 +521,7 @@ nlohmann::json HandleDiag() {
   nlohmann::json diag;
   diag["pid"] = getpid();
   diag["python3_path"] = FindPython3();
-  diag["python_embedded"] = g_py.loaded;
+  diag["python_embedded"] = g_py_initialized;
 
   std::vector<std::string> paths = {
       "/usr/bin/python3", kSkillsDir, kCustomSkillsDir,

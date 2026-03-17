@@ -30,6 +30,8 @@ BuildRequires:  pkgconfig(aul)
 BuildRequires:  pkgconfig(rua)
 BuildRequires:  pkgconfig(vconf)
 BuildRequires:  pkgconfig(vconf-internal-keys)
+BuildRequires:  python3-devel
+BuildRequires:  python3-base
 
 %description
 TizenClaw Native Agent running as a System Service, utilizing LXC for skills execution.
