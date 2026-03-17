@@ -58,6 +58,8 @@ namespace {
 // ─── Constants ──────────────────────────────────────────────
 constexpr const char kSocketName[] = "tizenclaw-tool-executor.sock";
 constexpr size_t kSocketNameLen = sizeof(kSocketName);
+constexpr const char kSandboxSocketName[] = "tizenclaw-code-sandbox.sock";
+constexpr size_t kSandboxSocketNameLen = sizeof(kSandboxSocketName);
 constexpr size_t kMaxPayload = 10 * 1024 * 1024;
 constexpr int kExecTimeout = 30;
 constexpr int kCodeExecTimeout = 15;
@@ -387,10 +389,85 @@ nlohmann::json HandleSkill(const std::string& skill_name,
   return {{"status", "ok"}, {"output", ExtractJsonOutput(output)}};
 }
 
-nlohmann::json HandleExecuteCode(const std::string& code, int /*timeout*/) {
+// ─── Code Sandbox connection ──────────────────────────────
+int ConnectToCodeSandbox() {
+  int s = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (s < 0) return -1;
+
+  struct sockaddr_un addr;
+  std::memset(&addr, 0, sizeof(addr));
+  addr.sun_family = AF_UNIX;
+  addr.sun_path[0] = '\0';
+  std::memcpy(addr.sun_path + 1, kSandboxSocketName,
+              kSandboxSocketNameLen - 1);
+
+  socklen_t addr_len =
+      offsetof(struct sockaddr_un, sun_path) + 1 +
+      kSandboxSocketNameLen - 1;
+
+  if (connect(s, reinterpret_cast<struct sockaddr*>(&addr), addr_len) < 0) {
+    close(s);
+    return -1;
+  }
+  return s;
+}
+
+/// Forward a JSON request to the code sandbox and return the response.
+nlohmann::json ForwardToSandbox(const nlohmann::json& req) {
+  int sock = ConnectToCodeSandbox();
+  if (sock < 0) {
+    LOG(WARNING) << "Code sandbox not available, falling back to host";
+    return {};
+  }
+
+  std::string payload = req.dump();
+  uint32_t net_len = htonl(payload.size());
+
+  if (write(sock, &net_len, 4) != 4) {
+    close(sock);
+    return {};
+  }
+  size_t total = 0;
+  while (total < payload.size()) {
+    ssize_t w = write(sock, payload.data() + total, payload.size() - total);
+    if (w <= 0) { close(sock); return {}; }
+    total += w;
+  }
+
+  // Read response
+  uint32_t resp_net_len = 0;
+  if (!RecvExact(sock, &resp_net_len, 4)) { close(sock); return {}; }
+  uint32_t resp_len = ntohl(resp_net_len);
+  if (resp_len > kMaxPayload) { close(sock); return {}; }
+
+  std::vector<char> buf(resp_len);
+  if (!RecvExact(sock, buf.data(), resp_len)) { close(sock); return {}; }
+  close(sock);
+
+  try {
+    return nlohmann::json::parse(std::string(buf.data(), resp_len));
+  } catch (...) {
+    return {};
+  }
+}
+
+nlohmann::json HandleExecuteCode(const std::string& code, int timeout) {
   LOG(INFO) << "HandleExecuteCode: " << code.size() << " chars";
 
-  // Try in-process Python first
+  // Try forwarding to code sandbox container first
+  nlohmann::json sandbox_req;
+  sandbox_req["command"] = "execute_code";
+  sandbox_req["code"] = code;
+  sandbox_req["timeout"] = timeout;
+
+  auto resp = ForwardToSandbox(sandbox_req);
+  if (!resp.empty()) {
+    LOG(INFO) << "Code executed in sandbox container";
+    return resp;
+  }
+
+  // Fallback: run in-process via linked Python
+  LOG(INFO) << "Sandbox unavailable, executing in-process";
   if (g_py_initialized) {
     auto [output, rc] = RunPythonCode(code);
     if (rc != 0 && output.empty()) {
@@ -410,7 +487,6 @@ nlohmann::json HandleExecuteCode(const std::string& code, int /*timeout*/) {
   if (python.empty()) {
     return {{"status", "error"}, {"output", "python3 not found"}};
   }
-
   char tmp_path[] = "/tmp/tizenclaw_dynamic_XXXXXX.py";
   int fd = mkstemps(tmp_path, 3);
   if (fd < 0) {
@@ -423,13 +499,28 @@ nlohmann::json HandleExecuteCode(const std::string& code, int /*timeout*/) {
   auto [output, rc] = RunCommand(python + " " + EscapeShellArg(tmp_path),
                                   kCodeExecTimeout);
   unlink(tmp_path);
-
   if (rc != 0) {
     return {{"status", "error"},
             {"output", "exit " + std::to_string(rc) + ": " +
                        output.substr(0, 500)}};
   }
   return {{"status", "ok"}, {"output", ExtractJsonOutput(output)}};
+}
+
+nlohmann::json HandleInstallPackage(const std::string& pkg_type,
+                                     const std::string& name) {
+  LOG(INFO) << "HandleInstallPackage: type=" << pkg_type << " name=" << name;
+
+  nlohmann::json req;
+  req["command"] = "install_package";
+  req["type"] = pkg_type;
+  req["name"] = name;
+
+  auto resp = ForwardToSandbox(req);
+  if (!resp.empty()) return resp;
+
+  return {{"status", "error"},
+          {"output", "Code sandbox not available for package installation"}};
 }
 
 nlohmann::json HandleFileManager(const nlohmann::json& req) {
@@ -591,6 +682,14 @@ void HandleClient(int client_fd) {
       }
     } else if (command == "file_manager") {
       resp = HandleFileManager(req);
+    } else if (command == "install_package") {
+      std::string pkg_type = req.value("type", "pip");
+      std::string name = req.value("name", "");
+      if (name.empty()) {
+        resp = {{"status", "error"}, {"output", "No package name"}};
+      } else {
+        resp = HandleInstallPackage(pkg_type, name);
+      }
     } else {
       std::string skill = req.value("skill", "");
       std::string args = req.value("args", "{}");

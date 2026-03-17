@@ -74,6 +74,7 @@ INSTALL(TARGETS ${TARGET_TIZENCLAW} DESTINATION ${BINDIR})
 INSTALL(FILES
   ${CMAKE_SOURCE_DIR}/packaging/tizenclaw.service
   ${CMAKE_SOURCE_DIR}/packaging/tizenclaw-tool-executor.service
+  ${CMAKE_SOURCE_DIR}/packaging/tizenclaw-code-sandbox.service
   DESTINATION /usr/lib/systemd/system/
 )
 
@@ -81,6 +82,12 @@ INSTALL(FILES
 INSTALL(PROGRAMS
   ${CMAKE_SOURCE_DIR}/scripts/run_standard_container.sh
   ${CMAKE_SOURCE_DIR}/scripts/skills_secure_container.sh
+  DESTINATION /usr/libexec/tizenclaw/
+)
+
+# Code executor for sandbox container
+INSTALL(FILES
+  ${CMAKE_SOURCE_DIR}/scripts/code_executor.py
   DESTINATION /usr/libexec/tizenclaw/
 )
 

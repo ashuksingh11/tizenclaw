@@ -605,6 +605,10 @@ do_restart_and_run() {
   run sdb_shell systemctl restart tizenclaw-tool-executor || true
   ok "Tool executor restarted"
 
+  log "Restarting tizenclaw-code-sandbox service..."
+  run sdb_shell systemctl restart tizenclaw-code-sandbox || true
+  ok "Code sandbox restarted"
+
   log "Restarting tizenclaw service..."
   run sdb_shell systemctl restart tizenclaw
   ok "Service restarted"

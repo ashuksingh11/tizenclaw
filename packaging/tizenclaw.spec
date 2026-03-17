@@ -81,9 +81,12 @@ mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/skills
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/config
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/embedded
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/cli
+mkdir -p %{buildroot}/opt/usr/share/tizenclaw/sandbox/packages/pip
+mkdir -p %{buildroot}/opt/usr/share/tizenclaw/sandbox/packages/npm
 
 ln -sf ../tizenclaw.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw.service
 ln -sf ../tizenclaw-tool-executor.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw-tool-executor.service
+ln -sf ../tizenclaw-code-sandbox.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw-code-sandbox.service
 
 %files
 %defattr(-,root,root,-)
@@ -96,10 +99,13 @@ ln -sf ../tizenclaw-tool-executor.service %{buildroot}%{_unitdir}/multi-user.tar
 %{_bindir}/tizenclaw-tool-executor
 %{_unitdir}/tizenclaw.service
 %{_unitdir}/tizenclaw-tool-executor.service
+%{_unitdir}/tizenclaw-code-sandbox.service
 %{_unitdir}/multi-user.target.wants/tizenclaw.service
 %{_unitdir}/multi-user.target.wants/tizenclaw-tool-executor.service
+%{_unitdir}/multi-user.target.wants/tizenclaw-code-sandbox.service
 /usr/libexec/tizenclaw/run_standard_container.sh
 /usr/libexec/tizenclaw/skills_secure_container.sh
+/usr/libexec/tizenclaw/code_executor.py
 /usr/libexec/tizenclaw/crun
 /opt/usr/share/tizenclaw/img/rootfs.tar.gz
 /opt/usr/share/tizenclaw/config/*
@@ -111,6 +117,10 @@ ln -sf ../tizenclaw-tool-executor.service %{buildroot}%{_unitdir}/multi-user.tar
 /opt/usr/share/tizenclaw/tools/system_cli/
 %dir /opt/usr/share/tizenclaw/tools/
 %dir /opt/usr/share/tizenclaw/config/
+%dir /opt/usr/share/tizenclaw/sandbox/
+%dir /opt/usr/share/tizenclaw/sandbox/packages/
+%dir /opt/usr/share/tizenclaw/sandbox/packages/pip/
+%dir /opt/usr/share/tizenclaw/sandbox/packages/npm/
 %dir /opt/usr/share/tizenclaw/
 %{_sysconfdir}/package-manager/parserlib/metadata/libtizenclaw-metadata-llm-backend-plugin.so
 %{_datarootdir}/parser-plugins/tizenclaw-metadata-llm-backend-plugin.info

@@ -2,10 +2,11 @@
 set -euo pipefail
 
 APP_DATA_DIR="/opt/usr/share/tizenclaw"
-BUNDLE_DIR="${APP_DATA_DIR}/bundles/skills_secure"
+BUNDLE_DIR="${APP_DATA_DIR}/bundles/code_sandbox"
 ROOTFS_TAR="${APP_DATA_DIR}/img/rootfs.tar.gz"
-CONTAINER_ID="tizenclaw_skills_secure"
+CONTAINER_ID="tizenclaw_code_sandbox"
 MERGED_USR="${BUNDLE_DIR}/merged_usr"
+PACKAGES_DIR="${APP_DATA_DIR}/sandbox/packages"
 
 detect_runtime() {
   if [ -x /usr/libexec/tizenclaw/crun ]; then
@@ -44,10 +45,14 @@ write_config() {
   "process": {
     "terminal": false,
     "user": {"uid": 0, "gid": 0},
-    "args": ["/usr/bin/python3", "/skills/skill_executor.py"],
+    "args": ["/usr/bin/python3", "/sandbox/code_executor.py"],
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      "LD_LIBRARY_PATH=/lib64:/host_lib:/usr/lib64:/usr/lib:/host_usr_lib:/host_usr_lib64"
+      "LD_LIBRARY_PATH=/lib64:/host_lib:/usr/lib64:/usr/lib:/host_usr_lib:/host_usr_lib64",
+      "PYTHONPATH=/packages/pip",
+      "PIP_TARGET=/packages/pip",
+      "NPM_CONFIG_PREFIX=/packages/npm",
+      "NODE_PATH=/packages/npm/lib/node_modules"
     ],
     "cwd": "/",
     "noNewPrivileges": true,
@@ -61,7 +66,7 @@ write_config() {
     "rlimits": [
       {"type": "RLIMIT_NOFILE", "hard": 256, "soft": 256},
       {"type": "RLIMIT_NPROC", "hard": 64, "soft": 64},
-      {"type": "RLIMIT_AS", "hard": 268435456, "soft": 268435456}
+      {"type": "RLIMIT_AS", "hard": 536870912, "soft": 536870912}
     ]
   },
   "root": {
@@ -81,9 +86,15 @@ write_config() {
       "options": ["rbind", "ro"]
     },
     {
-      "destination": "/skills",
+      "destination": "/sandbox",
       "type": "bind",
-      "source": "${APP_DATA_DIR}/tools/skills",
+      "source": "/usr/libexec/tizenclaw",
+      "options": ["rbind", "ro"]
+    },
+    {
+      "destination": "/packages",
+      "type": "bind",
+      "source": "${PACKAGES_DIR}",
       "options": ["rbind", "rw"]
     },
     {
@@ -207,6 +218,7 @@ EOF
 
 prepare_bundle() {
   mkdir -p "${BUNDLE_DIR}/rootfs"
+  mkdir -p "${PACKAGES_DIR}/pip" "${PACKAGES_DIR}/npm"
   if [ ! -f "${BUNDLE_DIR}/.extracted" ]; then
     tar --overwrite -xzf "${ROOTFS_TAR}" -C "${BUNDLE_DIR}/rootfs"
     touch "${BUNDLE_DIR}/.extracted"
@@ -300,7 +312,7 @@ run_without_container() {
   CMD="$CMD; mount --rbind \"${APP_DATA_DIR}/tools/cli\" \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
   CMD="$CMD; mount -o remount,bind,ro \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
 
-  CMD="$CMD; exec chroot \"$R\" /usr/bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; LD_LIBRARY_PATH=/lib64:/host_lib:/usr/lib64:/usr/lib:/host_usr_lib:/host_usr_lib64 exec /usr/bin/python3 /skills/skill_executor.py'"
+  CMD="$CMD; exec chroot \"$R\" /usr/bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PYTHONPATH=/packages/pip; export PIP_TARGET=/packages/pip; export NPM_CONFIG_PREFIX=/packages/npm; export NODE_PATH=/packages/npm/lib/node_modules; LD_LIBRARY_PATH=/lib64:/host_lib:/usr/lib64:/usr/lib:/host_usr_lib:/host_usr_lib64 exec /usr/bin/python3 /sandbox/code_executor.py'"
 
   exec unshare -m --propagation unchanged /usr/bin/sh -c "$CMD"
 }
