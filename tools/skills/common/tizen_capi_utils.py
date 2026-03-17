@@ -32,11 +32,15 @@ def _preload_glibc():
     _glibc_preloaded = True
 
     search_paths = [
-        "/host_lib/libc.so.6",  # container: host /lib mounted
-        "/lib/libc.so.6",       # usrmerge or host-direct
-        "/lib64/libc.so.6",     # x86_64 multilib convention
-        "/usr/lib/libc.so.6",   # usrmerge systems
-        "/usr/lib64/libc.so.6", # x86_64 Tizen emulator
+        "/host_lib/libc.so.6",                         # container: host /lib mounted
+        "/lib/libc.so.6",                              # usrmerge or host-direct
+        "/lib64/libc.so.6",                            # x86_64 multilib convention
+        "/usr/lib/libc.so.6",                          # usrmerge systems
+        "/usr/lib64/libc.so.6",                        # x86_64 Tizen emulator
+        "/lib/arm-linux-gnueabihf/libc.so.6",          # armv7l Debian multiarch
+        "/lib/aarch64-linux-gnu/libc.so.6",            # aarch64 Debian multiarch
+        "/host_lib/arm-linux-gnueabihf/libc.so.6",     # armv7l container host lib
+        "/host_lib/aarch64-linux-gnu/libc.so.6",       # aarch64 container host lib
     ]
     for path in search_paths:
         if os.path.exists(path):
@@ -55,12 +59,16 @@ def load_library(libnames):
     # All possible library directories in container environments.
     # Includes both overlay-merged paths and bind-mount paths.
     search_dirs = [
-        "/usr/lib64",       # x86_64 Tizen libs via overlay
-        "/usr/lib",         # armv7l Tizen libs via overlay
-        "/lib64",           # x86_64 host /lib64 bind-mount
-        "/host_lib",        # host /lib bind-mount
-        "/host_usr_lib",    # host /usr/lib bind-mount (no-overlay)
-        "/host_usr_lib64",  # host /usr/lib64 bind-mount (no-overlay)
+        "/usr/lib",                          # Tizen libs via overlay
+        "/usr/lib64",                        # x86_64 Tizen libs via overlay
+        "/lib",                              # host core libs
+        "/lib64",                            # x86_64 host libs
+        "/host_lib",                         # host /lib bind-mount
+        "/host_usr_lib",                     # host /usr/lib bind-mount (no-overlay)
+        "/host_usr_lib64",                   # host /usr/lib64 bind-mount (no-overlay)
+        "/usr/lib/arm-linux-gnueabihf",      # armv7l Debian multiarch
+        "/usr/lib/aarch64-linux-gnu",        # aarch64 Debian multiarch
+        "/usr/lib/x86_64-linux-gnu",         # x86_64 Debian multiarch
     ]
     # Also add LD_LIBRARY_PATH dirs
     ldpath = os.environ.get("LD_LIBRARY_PATH", "")
@@ -75,7 +83,7 @@ def load_library(libnames):
             full = os.path.join(d, libname)
             if os.path.exists(full):
                 try:
-                    return ctypes.CDLL(full)
+                    return ctypes.CDLL(full, mode=ctypes.RTLD_GLOBAL)
                 except OSError as e:
                     errors.append(f"{full}: {e}")
 
