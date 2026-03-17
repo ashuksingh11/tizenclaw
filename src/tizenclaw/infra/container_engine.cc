@@ -246,12 +246,9 @@ std::string ContainerEngine::ExecuteSkill(const std::string& skill_name,
       return result;  // Not JSON, return as-is
     }
   } else {
-    // UDS unavailable — try crun exec before host-direct
-    LOG(WARNING) << "UDS unavailable, trying crun " << "exec fallback";
-    result = ExecuteSkillViaCrun(skill_name, arg_str);
-    if (!result.empty() && result != "{}") {
-      return result;
-    }
+    // UDS unavailable — skip to host-direct fallback
+    LOG(WARNING) << "UDS unavailable, trying "
+                 << "host-direct fallback";
   }
 
   // 3rd priority: host-direct fallback
@@ -335,6 +332,13 @@ std::string ContainerEngine::ExecuteSkillViaSocket(
 
   LOG(INFO) << "Connected to tool-executor @"
             << kToolExecutorSocketName;
+
+  // Set a 30-second receive timeout so we don't give up
+  // while the tool executor is running the tool
+  struct timeval tv;
+  tv.tv_sec = 30;
+  tv.tv_usec = 0;
+  setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
   // Build request JSON
   nlohmann::json req;
