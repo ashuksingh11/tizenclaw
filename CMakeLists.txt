@@ -23,6 +23,9 @@ SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-stringop-overflow")
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-parameter")
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-result")
 
+# Fix transitive libxml2 dependency for libsoup-2.4, libpkgmgr-parser, etc.
+SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--no-as-needed -lxml2 -Wl,--as-needed")
+
 ## Paths
 SET(PREFIX ${CMAKE_INSTALL_PREFIX})
 SET(BINDIR "${CMAKE_INSTALL_PREFIX}/bin")
