@@ -198,7 +198,7 @@ EOF
 prepare_bundle() {
   mkdir -p "${BUNDLE_DIR}/rootfs"
   if [ ! -f "${BUNDLE_DIR}/.extracted" ]; then
-    tar -xzf "${ROOTFS_TAR}" -C "${BUNDLE_DIR}/rootfs"
+    tar --overwrite -xzf "${ROOTFS_TAR}" -C "${BUNDLE_DIR}/rootfs"
     touch "${BUNDLE_DIR}/.extracted"
   fi
   write_config
