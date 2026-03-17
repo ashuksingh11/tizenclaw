@@ -315,7 +315,7 @@ std::string OtaUpdater::UpdateSkill(const std::string& skill_name) {
   if (reload_cb_) reload_cb_();
 
   nlohmann::json result = {{"status", "updated"},
-                           {"skill", skill_name},
+                           {"tool", skill_name},
                            {"old_version", target->local_version},
                            {"new_version", target->remote_version}};
   return result.dump();
@@ -367,7 +367,7 @@ std::string OtaUpdater::RollbackSkill(const std::string& skill_name) {
   std::string restored_ver = ReadSkillVersion(skill_dir);
 
   nlohmann::json result = {{"status", "rolled_back"},
-                           {"skill", skill_name},
+                           {"tool", skill_name},
                            {"restored_version", restored_ver}};
   return result.dump();
 }

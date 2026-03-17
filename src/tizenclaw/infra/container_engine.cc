@@ -338,7 +338,7 @@ std::string ContainerEngine::ExecuteSkillViaSocket(
 
   // Build request JSON
   nlohmann::json req;
-  req["skill"] = skill_name;
+  req["tool"] = skill_name;
   req["args"] = arg_str;
   std::string payload = req.dump();
 
