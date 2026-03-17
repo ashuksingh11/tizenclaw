@@ -81,13 +81,13 @@ INSTALL(FILES
 # Container scripts
 INSTALL(PROGRAMS
   ${CMAKE_SOURCE_DIR}/scripts/run_standard_container.sh
-  ${CMAKE_SOURCE_DIR}/scripts/skills_secure_container.sh
+  ${CMAKE_SOURCE_DIR}/scripts/tizenclaw_secure_container.sh
   DESTINATION /usr/libexec/tizenclaw/
 )
 
 # Code executor for sandbox container
 INSTALL(FILES
-  ${CMAKE_SOURCE_DIR}/scripts/code_executor.py
+  ${CMAKE_SOURCE_DIR}/scripts/tizenclaw_code_executor.py
   DESTINATION /usr/libexec/tizenclaw/
 )
 

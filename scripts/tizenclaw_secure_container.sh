@@ -45,7 +45,7 @@ write_config() {
   "process": {
     "terminal": false,
     "user": {"uid": 0, "gid": 0},
-    "args": ["/usr/bin/python3", "/sandbox/code_executor.py"],
+    "args": ["/usr/bin/python3", "/sandbox/tizenclaw_code_executor.py"],
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       "LD_LIBRARY_PATH=/lib64:/host_lib:/usr/lib64:/usr/lib:/host_usr_lib:/host_usr_lib64",
@@ -312,7 +312,7 @@ run_without_container() {
   CMD="$CMD; mount --rbind \"${APP_DATA_DIR}/tools/cli\" \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
   CMD="$CMD; mount -o remount,bind,ro \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
 
-  CMD="$CMD; exec chroot \"$R\" /usr/bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PYTHONPATH=/packages/pip; export PIP_TARGET=/packages/pip; export NPM_CONFIG_PREFIX=/packages/npm; export NODE_PATH=/packages/npm/lib/node_modules; LD_LIBRARY_PATH=/lib64:/host_lib:/usr/lib64:/usr/lib:/host_usr_lib:/host_usr_lib64 exec /usr/bin/python3 /sandbox/code_executor.py'"
+  CMD="$CMD; exec chroot \"$R\" /usr/bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PYTHONPATH=/packages/pip; export PIP_TARGET=/packages/pip; export NPM_CONFIG_PREFIX=/packages/npm; export NODE_PATH=/packages/npm/lib/node_modules; LD_LIBRARY_PATH=/lib64:/host_lib:/usr/lib64:/usr/lib:/host_usr_lib:/host_usr_lib64 exec /usr/bin/python3 /sandbox/tizenclaw_code_executor.py'"
 
   exec unshare -m --propagation unchanged /usr/bin/sh -c "$CMD"
 }

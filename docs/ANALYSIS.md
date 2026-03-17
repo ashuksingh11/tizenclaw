@@ -230,7 +230,7 @@ tizenclaw/
 │   └── web_search/                  # Web search (Wikipedia API)
 ├── scripts/                         # Container & infra scripts (9)
 │   ├── run_standard_container.sh    # Daemon OCI container
-│   ├── skills_secure_container.sh   # Skill execution secure container
+│   ├── tizenclaw_secure_container.sh   # Secure container for code execution
 │   ├── build_rootfs.sh              # Alpine RootFS builder
 │   ├── start_mcp_tunnel.sh          # MCP tunnel via SDB
 │   ├── fetch_crun_source.sh         # crun source downloader

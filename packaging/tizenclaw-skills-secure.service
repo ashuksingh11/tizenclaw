@@ -5,9 +5,9 @@ Before=tizenclaw.service
 
 [Service]
 Type=simple
-ExecStart=/usr/libexec/tizenclaw/skills_secure_container.sh start
-ExecStop=/usr/libexec/tizenclaw/skills_secure_container.sh stop
-ExecReload=/usr/libexec/tizenclaw/skills_secure_container.sh restart
+ExecStart=/usr/libexec/tizenclaw/tizenclaw_secure_container.sh start
+ExecStop=/usr/libexec/tizenclaw/tizenclaw_secure_container.sh stop
+ExecReload=/usr/libexec/tizenclaw/tizenclaw_secure_container.sh restart
 User=root
 Group=root
 

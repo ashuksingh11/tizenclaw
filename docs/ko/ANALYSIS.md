@@ -164,7 +164,7 @@ tizenclaw/
 │   └── web_search/                  # 웹 검색 (Wikipedia API)
 ├── scripts/                         # 컨테이너 & 인프라 스크립트 (9개)
 │   ├── run_standard_container.sh    # 데몬용 OCI 컨테이너
-│   ├── skills_secure_container.sh   # 스킬 실행 보안 컨테이너
+│   ├── tizenclaw_secure_container.sh   # 코드 실행 보안 컨테이너
 │   ├── build_rootfs.sh              # Alpine RootFS 빌드
 │   ├── start_mcp_tunnel.sh          # SDB를 통한 MCP 터널
 │   ├── fetch_crun_source.sh         # crun 소스 다운로드

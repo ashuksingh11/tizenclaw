@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-code_executor.py — Runs inside the secure container.
+tizenclaw_code_executor.py — Runs inside the secure container.
 
 Listens on an abstract namespace Unix domain socket and executes
 LLM-generated Python/shell code in an isolated environment.

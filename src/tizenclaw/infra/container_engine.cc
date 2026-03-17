@@ -692,7 +692,7 @@ bool ContainerEngine::StartSkillsContainer() {
   // Fork a background process so skill_executor.py runs
   // as a daemon; we poll for the UDS socket to appear.
   std::string script =
-      "/usr/libexec/tizenclaw/skills_secure_container.sh";
+      "/usr/libexec/tizenclaw/tizenclaw_secure_container.sh";
 
   if (access(script.c_str(), X_OK) != 0) {
     LOG(ERROR) << "Container start script "
@@ -756,7 +756,7 @@ void ContainerEngine::StopSkillsContainer() {
   // Call the shell script to stop the container
   // (handles crun delete + overlay cleanup).
   std::string script =
-      "/usr/libexec/tizenclaw/skills_secure_container.sh";
+      "/usr/libexec/tizenclaw/tizenclaw_secure_container.sh";
   if (access(script.c_str(), X_OK) == 0) {
     RunCommand(EscapeShellArg(script) + " stop");
   }

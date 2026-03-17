@@ -104,8 +104,8 @@ ln -sf ../tizenclaw-code-sandbox.service %{buildroot}%{_unitdir}/multi-user.targ
 %{_unitdir}/multi-user.target.wants/tizenclaw-tool-executor.service
 %{_unitdir}/multi-user.target.wants/tizenclaw-code-sandbox.service
 /usr/libexec/tizenclaw/run_standard_container.sh
-/usr/libexec/tizenclaw/skills_secure_container.sh
-/usr/libexec/tizenclaw/code_executor.py
+/usr/libexec/tizenclaw/tizenclaw_secure_container.sh
+/usr/libexec/tizenclaw/tizenclaw_code_executor.py
 /usr/libexec/tizenclaw/crun
 /opt/usr/share/tizenclaw/img/rootfs.tar.gz
 /opt/usr/share/tizenclaw/config/*
