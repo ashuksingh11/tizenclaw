@@ -216,11 +216,11 @@ prepare_overlay_usr() {
   # from the host layer.
   if mount -t overlay overlay \
        -o "lowerdir=${BUNDLE_DIR}/rootfs/usr:/usr" \
-       "${MERGED_USR}" 2>/dev/null; then
+       "${MERGED_USR}"; then
     echo "OverlayFS mounted: rootfs/usr + /usr -> merged_usr"
     OVERLAY_OK=true
   else
-    echo "OverlayFS unavailable, rootfs /usr used as-is"
+    echo "OverlayFS mount failed (exit=$?), rootfs /usr used as-is"
     OVERLAY_OK=false
   fi
 }
@@ -254,9 +254,10 @@ run_without_container() {
     CMD="$CMD; mount --rbind \"${MERGED_USR}\" \"$R/usr\" || true"
     CMD="$CMD; mount -o remount,bind,ro \"$R/usr\" || true"
   else
-    # No overlay: mount host CAPI libs at separate paths
-    CMD="$CMD; mount --rbind /usr/lib \"$R/host_usr_lib\" 2>/dev/null || true"
-    CMD="$CMD; mount --rbind /usr/lib64 \"$R/host_usr_lib64\" 2>/dev/null || true"
+    # No overlay: bind-mount host CAPI libs BEFORE unshare
+    echo "Bind-mounting host /usr/lib -> $R/host_usr_lib"
+    mount -o bind /usr/lib "$R/host_usr_lib" 2>&1 || echo "WARN: mount /usr/lib failed"
+    mount -o bind /usr/lib64 "$R/host_usr_lib64" 2>&1 || echo "WARN: mount /usr/lib64 failed (may not exist)"
   fi
 
   CMD="$CMD; mount --rbind /etc \"$R/etc\" || true"
