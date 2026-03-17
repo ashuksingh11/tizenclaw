@@ -279,9 +279,9 @@ run_without_container() {
   CMD="$CMD; mount --rbind \"${APP_DATA_DIR}/tools/cli\" \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
   CMD="$CMD; mount -o remount,bind,ro \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
 
-  CMD="$CMD; exec chroot \"$R\" /bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; LD_LIBRARY_PATH=/lib64:/host_lib:/usr/lib64:/usr/lib:/host_usr_lib:/host_usr_lib64 exec /usr/bin/python3 /skills/skill_executor.py'"
+  CMD="$CMD; exec chroot \"$R\" /usr/bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; LD_LIBRARY_PATH=/lib64:/host_lib:/usr/lib64:/usr/lib:/host_usr_lib:/host_usr_lib64 exec /usr/bin/python3 /skills/skill_executor.py'"
 
-  exec unshare -m /bin/sh -c "$CMD"
+  exec unshare -m --propagation unchanged /usr/bin/sh -c "$CMD"
 }
 
 start_container() {
@@ -295,17 +295,21 @@ start_container() {
 
   cd "${BUNDLE_DIR}"
   if [[ "$(basename "${RUNTIME_BIN}")" == "crun" ]]; then
-    # Check if watchdog cgroup is accessible; if not and no runc, use chroot fallback
+    local has_runc=false
+    command -v runc >/dev/null 2>&1 && has_runc=true
+
+    # Check if watchdog cgroup is accessible; if not and no runc,
+    # use chroot fallback immediately.
     if { [ ! -d "/sys/fs/cgroup/watchdog" ] || [ ! -w "/sys/fs/cgroup/watchdog" ]; } \
-      && ! command -v runc >/dev/null 2>&1; then
+      && [ "${has_runc}" = false ]; then
       run_without_container
     fi
     # Try --cgroup-manager=disabled if supported
     if "${RUNTIME_BIN}" run --help 2>&1 | grep -q -- "--cgroup-manager"; then
       exec "${RUNTIME_BIN}" run --cgroup-manager=disabled "${CONTAINER_ID}"
     else
-      # crun doesn't support --cgroup-manager; try runc if available
-      if command -v runc >/dev/null 2>&1; then
+      # crun doesn't support --cgroup-manager; try runc or chroot
+      if [ "${has_runc}" = true ]; then
         echo "crun does not support --cgroup-manager, switching to runc"
         exec runc run "${CONTAINER_ID}"
       else

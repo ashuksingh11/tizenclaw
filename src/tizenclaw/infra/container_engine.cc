@@ -320,22 +320,41 @@ std::string ContainerEngine::ExecuteSkill(const std::string& skill_name,
 
 std::string ContainerEngine::ExecuteSkillViaSocket(
     const std::string& skill_name, const std::string& arg_str) {
-  int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+  auto try_connect = [this]() -> int {
+    int s = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (s < 0) {
+      LOG(WARNING) << "UDS socket() failed: " << strerror(errno);
+      return -1;
+    }
+
+    struct sockaddr_un addr;
+    std::memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, kSkillSocketPath,
+            sizeof(addr.sun_path) - 1);
+
+    if (connect(s,
+                reinterpret_cast<struct sockaddr*>(&addr),
+                sizeof(addr)) < 0) {
+      close(s);
+      return -1;
+    }
+    return s;
+  };
+
+  int sock = try_connect();
   if (sock < 0) {
-    LOG(WARNING) << "UDS socket() failed: " << strerror(errno);
-    return "{}";
-  }
-
-  struct sockaddr_un addr;
-  std::memset(&addr, 0, sizeof(addr));
-  addr.sun_family = AF_UNIX;
-  strncpy(addr.sun_path, kSkillSocketPath, sizeof(addr.sun_path) - 1);
-
-  if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) <
-      0) {
-    LOG(WARNING) << "UDS connect failed: " << strerror(errno);
-    close(sock);
-    return "{}";
+    // Retry once after ensuring the container is running.
+    LOG(WARNING) << "UDS connect failed, retrying "
+                 << "after EnsureSkillsContainerRunning";
+    if (EnsureSkillsContainerRunning()) {
+      sock = try_connect();
+    }
+    if (sock < 0) {
+      LOG(WARNING) << "UDS connect retry failed: "
+                   << strerror(errno);
+      return "{}";
+    }
   }
 
   LOG(ERROR) << "[DEBUG] UDS connected to " << "skill_executor at "
@@ -739,13 +758,15 @@ bool ContainerEngine::StartSkillsContainer() {
   if (pid == 0) {
     // Child: detach and exec the container script.
     setsid();
-    // Redirect stdout/stderr to /dev/null so the daemon
-    // doesn't hold file descriptors.
-    int devnull = open("/dev/null", O_WRONLY);
-    if (devnull >= 0) {
-      dup2(devnull, STDOUT_FILENO);
-      dup2(devnull, STDERR_FILENO);
-      close(devnull);
+    // Redirect stdout/stderr to a log file for debugging.
+    // Previous /dev/null redirect made crash diagnosis
+    // impossible.
+    int logfd = open("/tmp/tizenclaw_container_start.log",
+                     O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (logfd >= 0) {
+      dup2(logfd, STDOUT_FILENO);
+      dup2(logfd, STDERR_FILENO);
+      close(logfd);
     }
     execl("/usr/bin/bash", "bash", script.c_str(),
           "start", nullptr);
@@ -757,8 +778,10 @@ bool ContainerEngine::StartSkillsContainer() {
             << "pid=" << pid;
 
   // Wait for the skill_executor UDS socket to appear
-  // (up to 10 seconds).
-  for (int i = 0; i < 20; ++i) {
+  // (up to 30 seconds).  The unshare+chroot fallback path
+  // can take >10s on first run (rootfs extraction + overlay
+  // mount + Python startup).
+  for (int i = 0; i < 60; ++i) {
     usleep(500000);  // 500ms
     if (access(kSkillSocketPath, F_OK) == 0) {
       LOG(INFO) << "Skill executor socket "
@@ -769,7 +792,7 @@ bool ContainerEngine::StartSkillsContainer() {
   }
 
   LOG(WARNING) << "Skill executor socket did "
-               << "not appear within 10s";
+               << "not appear within 30s";
   return false;
 }
 
