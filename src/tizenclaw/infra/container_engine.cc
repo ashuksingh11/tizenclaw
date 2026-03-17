@@ -219,14 +219,14 @@ bool ContainerEngine::Initialize() {
 
   // Eagerly start the secure container so skill execution
   // is immediately available (don't wait for first request).
-  if (!runtime_bin_.empty()) {
-    if (EnsureSkillsContainerRunning()) {
-      LOG(INFO) << "Secure skills container "
-                << "started during init";
-    } else {
-      LOG(WARNING) << "Could not start secure "
-                   << "container during init";
-    }
+  // StartSkillsContainer uses the shell script which has its
+  // own fallback chain (crun → runc → unshare+chroot).
+  if (EnsureSkillsContainerRunning()) {
+    LOG(INFO) << "Secure skills container "
+              << "started during init";
+  } else {
+    LOG(WARNING) << "Could not start secure "
+                 << "container during init";
   }
 
   return true;
@@ -866,7 +866,7 @@ bool ContainerEngine::WriteSkillsConfig() const {
              "/skills/skill_executor.py"],
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      "LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/host_lib:/lib64"
+      "LD_LIBRARY_PATH=/lib64:/host_lib:/usr/lib64:/usr/lib:/host_usr_lib:/host_usr_lib64"
     ],
     "cwd": "/",
     "noNewPrivileges": true,

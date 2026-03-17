@@ -35,7 +35,7 @@ write_config() {
     "args": ["/usr/bin/python3", "/skills/skill_executor.py"],
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      "LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/host_lib:/lib64"
+      "LD_LIBRARY_PATH=/lib64:/host_lib:/usr/lib64:/usr/lib:/host_usr_lib:/host_usr_lib64"
     ],
     "cwd": "/",
     "noNewPrivileges": true,
@@ -249,12 +249,11 @@ run_without_container() {
   CMD="$CMD; mount --rbind \"${APP_DATA_DIR}/data\" \"$R/data\" || true"
   CMD="$CMD; mount --rbind /tmp \"$R/tmp\" || true"
 
-  # Mount /usr (overlay or rootfs-direct)
-  if [ "${OVERLAY_OK}" = "true" ]; then
-    CMD="$CMD; mount --rbind \"${MERGED_USR}\" \"$R/usr\" || true"
-    CMD="$CMD; mount -o remount,bind,ro \"$R/usr\" || true"
-  else
-    # No overlay: bind-mount host CAPI libs BEFORE unshare
+  # Do NOT overlay /usr — overlayfs empties rootfs python3 stdlib.
+  # Rootfs /usr has Python3+stdlib. Host CAPI libs are accessible
+  # via /lib64 and /host_lib bind-mounts (see below).
+  if [ "${OVERLAY_OK}" != "true" ]; then
+    # Extra: bind-mount host /usr/lib for CAPI libs (no-overlay)
     echo "Bind-mounting host /usr/lib -> $R/host_usr_lib"
     mount -o bind /usr/lib "$R/host_usr_lib" 2>&1 || echo "WARN: mount /usr/lib failed"
     mount -o bind /usr/lib64 "$R/host_usr_lib64" 2>&1 || echo "WARN: mount /usr/lib64 failed (may not exist)"
@@ -280,7 +279,7 @@ run_without_container() {
   CMD="$CMD; mount --rbind \"${APP_DATA_DIR}/tools/cli\" \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
   CMD="$CMD; mount -o remount,bind,ro \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
 
-  CMD="$CMD; exec chroot \"$R\" /bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/host_lib:/host_usr_lib:/host_usr_lib64:/lib64 exec /usr/bin/python3 /skills/skill_executor.py'"
+  CMD="$CMD; exec chroot \"$R\" /bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; LD_LIBRARY_PATH=/lib64:/host_lib:/usr/lib64:/usr/lib:/host_usr_lib:/host_usr_lib64 exec /usr/bin/python3 /skills/skill_executor.py'"
 
   exec unshare -m /bin/sh -c "$CMD"
 }
