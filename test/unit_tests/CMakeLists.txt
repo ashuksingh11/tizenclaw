@@ -60,7 +60,7 @@ APPLY_PKG_CONFIG(tizenclaw-unittests PUBLIC
   RUA_DEPS
 )
 
-TARGET_LINK_LIBRARIES(tizenclaw-unittests PUBLIC pthread tizenclaw-core dl)
+TARGET_LINK_LIBRARIES(tizenclaw-unittests PUBLIC pthread tizenclaw-core dl xml2)
 
 TARGET_COMPILE_DEFINITIONS(tizenclaw-unittests PUBLIC
   APP_DATA_DIR="${APP_DATA_DIR}"
