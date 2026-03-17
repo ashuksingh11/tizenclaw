@@ -52,29 +52,38 @@ def load_library(libnames):
 
     _preload_glibc()
 
-    # Debug: log LD_LIBRARY_PATH in this process
+    # All possible library directories in container environments.
+    # Includes both overlay-merged paths and bind-mount paths.
+    search_dirs = [
+        "/usr/lib64",       # x86_64 Tizen libs via overlay
+        "/usr/lib",         # armv7l Tizen libs via overlay
+        "/lib64",           # x86_64 host /lib64 bind-mount
+        "/host_lib",        # host /lib bind-mount
+        "/host_usr_lib",    # host /usr/lib bind-mount (no-overlay)
+        "/host_usr_lib64",  # host /usr/lib64 bind-mount (no-overlay)
+    ]
+    # Also add LD_LIBRARY_PATH dirs
     ldpath = os.environ.get("LD_LIBRARY_PATH", "")
-    import sys
-    print(f"[CAPI_DEBUG] LD_LIBRARY_PATH={ldpath}", file=sys.stderr, flush=True)
+    for d in ldpath.split(":"):
+        if d and d not in search_dirs:
+            search_dirs.append(d)
 
     errors = []
     for libname in libnames:
-        # Try bare name first (uses LD_LIBRARY_PATH + ld.so.cache)
+        # Try full absolute path in each search directory first
+        for d in search_dirs:
+            full = os.path.join(d, libname)
+            if os.path.exists(full):
+                try:
+                    return ctypes.CDLL(full)
+                except OSError as e:
+                    errors.append(f"{full}: {e}")
+
+        # Fallback: bare name (uses dlopen default search)
         try:
             return ctypes.CDLL(libname)
         except OSError as e:
             errors.append(f"{libname}: {e}")
-
-        # Fallback: try full path in each LD_LIBRARY_PATH dir
-        for d in ldpath.split(":"):
-            full = os.path.join(d, libname) if d else None
-            if full and os.path.exists(full):
-                print(f"[CAPI_DEBUG] Found {full}, loading by path",
-                      file=sys.stderr, flush=True)
-                try:
-                    return ctypes.CDLL(full)
-                except OSError as e2:
-                    errors.append(f"{full}: {e2}")
 
     raise ImportError(f"Failed to load any of the libraries {libnames}. Errors: {'; '.join(errors)}")
 

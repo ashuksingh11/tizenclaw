@@ -32,7 +32,7 @@ write_config() {
   "process": {
     "terminal": false,
     "user": {"uid": 0, "gid": 0},
-    "args": ["python3", "/skills/skill_executor.py"],
+    "args": ["/usr/bin/python3", "/skills/skill_executor.py"],
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
       "LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/host_lib:/lib64"
@@ -280,7 +280,7 @@ run_without_container() {
   CMD="$CMD; mount --rbind \"${APP_DATA_DIR}/tools/cli\" \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
   CMD="$CMD; mount -o remount,bind,ro \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
 
-  CMD="$CMD; exec chroot \"$R\" /bin/sh -c 'LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/host_lib:/host_usr_lib:/host_usr_lib64:/lib64 exec python3 /skills/skill_executor.py'"
+  CMD="$CMD; exec chroot \"$R\" /bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; LD_LIBRARY_PATH=/usr/lib:/usr/lib64:/host_lib:/host_usr_lib:/host_usr_lib64:/lib64 exec /usr/bin/python3 /skills/skill_executor.py'"
 
   exec unshare -m /bin/sh -c "$CMD"
 }

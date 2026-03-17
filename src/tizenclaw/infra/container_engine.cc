@@ -689,7 +689,7 @@ bool ContainerEngine::PrepareSkillsBundle() {
 
   std::string prepare_cmd =
       "mkdir -p " + EscapeShellArg(rootfs_dir) + " && " + "if [ ! -f " +
-      EscapeShellArg(marker) + " ]; then " + "tar -xzf " +
+      EscapeShellArg(marker) + " ]; then " + "tar --overwrite -xzf " +
       EscapeShellArg(rootfs_tar_) + " -C " + EscapeShellArg(rootfs_dir) +
       " && touch " + EscapeShellArg(marker) + "; fi";
 
@@ -862,7 +862,7 @@ bool ContainerEngine::WriteSkillsConfig() const {
   "process": {
     "terminal": false,
     "user": {"uid": 0, "gid": 0},
-    "args": ["python3",
+    "args": ["/usr/bin/python3",
              "/skills/skill_executor.py"],
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
