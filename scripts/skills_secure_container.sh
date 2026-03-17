@@ -245,16 +245,15 @@ run_without_container() {
   # find the ELF interpreter for Debian Python (python3.11).
   # Symlinks won't work because the kernel resolves the interpreter
   # path before mount namespaces / bind-mounts are visible.
-  if [ -f /lib64/ld-linux-x86-64.so.2 ]; then
-    mkdir -p "${BUNDLE_DIR}/rootfs/lib64"
-    cp -f /lib64/ld-linux-x86-64.so.2 "${BUNDLE_DIR}/rootfs/lib64/" 2>/dev/null || true
-  fi
-  if [ -f /lib/ld-linux-armhf.so.3 ]; then
-    cp -f /lib/ld-linux-armhf.so.3 "${BUNDLE_DIR}/rootfs/lib/" 2>/dev/null || true
-  fi
-  if [ -f /lib/ld-linux-aarch64.so.1 ]; then
-    cp -f /lib/ld-linux-aarch64.so.1 "${BUNDLE_DIR}/rootfs/lib/" 2>/dev/null || true
-  fi
+  # Use glob to handle all architectures and path variations.
+  for ldso in /lib/ld-linux*.so* /lib64/ld-linux*.so* /usr/lib/ld-linux*.so*; do
+    if [ -f "$ldso" ]; then
+      destdir="${BUNDLE_DIR}/rootfs$(dirname "$ldso")"
+      mkdir -p "$destdir"
+      cp -f "$ldso" "$destdir/" 2>/dev/null || true
+      echo "Copied glibc ld-linux: $ldso -> $destdir/"
+    fi
+  done
 
   # Determine /usr mount strategy
   USR_MOUNT_CMD=""
