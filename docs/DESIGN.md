@@ -1,7 +1,7 @@
 # TizenClaw System Design Document
 
-> **Last Updated**: 2026-03-15
-> **Version**: 2.4
+> **Last Updated**: 2026-03-18
+> **Version**: 2.5
 
 ---
 
@@ -14,7 +14,7 @@ The system establishes a safe and extensible Agent-Skill interaction environment
 ### System Environment
 
 - **OS**: Tizen Embedded Linux (Tizen 10.0)
-- **Runtime**: systemd daemon (`tizenclaw.service`)
+- **Runtime**: systemd daemon (`tizenclaw.service`) with socket-activated companion services (`tizenclaw-tool-executor.socket`, `tizenclaw-code-sandbox.socket`)
 - **Security**: SMACK + DAC enforced, kUEP (Kernel Unprivileged Execution Protection) enabled
 - **Language**: C++20, Python 3.x (skills)
 
@@ -158,6 +158,8 @@ OCI-compliant skill execution environment:
 - **Namespace Isolation**: PID, Mount, User namespaces
 - **Fallback**: `unshare + chroot` when cgroup unavailable
 - **Skill Executor IPC**: Length-prefixed JSON over Unix Domain Socket between daemon and containerized Python executor
+- **Tool Executor IPC**: `ContainerEngine::ExecuteCliTool()` routes system CLI commands to `tizenclaw-tool-executor` via abstract namespace socket (`@tizenclaw-tool-executor.sock`). Falls back to direct `popen` if tool-executor is unreachable.
+- **Socket Activation**: Both `tizenclaw-tool-executor` and `tizenclaw-code-sandbox` use systemd socket activation (`LISTEN_FDS`/`LISTEN_PID`) for on-demand startup
 - **Host Bind-Mounts**: `/usr/bin`, `/usr/lib`, `/usr/lib64`, `/lib64` for Tizen C-API access
 
 ### 3.5 Channel Abstraction Layer
@@ -543,7 +545,7 @@ graph LR
 
 ### 7.2 Non-Functional Requirements
 
-- **Deployment**: systemd service, RPM packaging via GBS
+- **Deployment**: systemd service + socket activation, RPM packaging via GBS
 - **Runtime**: Python encapsulated inside Container RootFS (no host installation required)
 - **Performance**: Native C++ for low memory/CPU footprint on embedded devices
 - **Reliability**: Model fallback, exponential backoff, failed task retry

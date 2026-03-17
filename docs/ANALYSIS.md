@@ -1,6 +1,6 @@
 # TizenClaw Project Analysis
 
-> **Last Updated**: 2026-03-16
+> **Last Updated**: 2026-03-18
 
 ---
 
@@ -188,8 +188,19 @@ tizenclaw/
 │   │   ├── cli/                     # CLI tool plugin parser
 │   │   ├── llm-backend/             # LLM backend plugin parser
 │   │   └── skill/                   # Skill plugin parser
-│   └── tools/
-│       └── tizenclaw_cli.cc         # tizenclaw-cli tool
+│   ├── tizenclaw-cli/               # CLI tool (modular classes)
+│   │   ├── main.cc                  # Entry point, argument parsing
+│   │   ├── socket_client.cc/hh      # UDS IPC client
+│   │   ├── request_handler.cc/hh    # JSON-RPC request builder
+│   │   ├── response_printer.cc/hh   # Formatted output renderer
+│   │   └── interactive_shell.cc/hh  # Interactive REPL mode
+│   ├── tizenclaw-tool-executor/     # Tool executor daemon (socket-activated)
+│   │   ├── tizenclaw_tool_executor.cc # Main, IPC dispatcher, execute_cli handler
+│   │   ├── python_engine.cc/hh      # Embedded Python interpreter
+│   │   ├── tool_handler.cc/hh       # Skill execution handler
+│   │   ├── sandbox_proxy.cc/hh      # Code sandbox proxy
+│   │   ├── file_manager.cc/hh       # File operations handler
+│   │   └── peer_validator.cc/hh     # SO_PEERCRED peer validation
 │   └── common/                      # Common utilities (logging, nlohmann JSON)
 ├── tools/skills/                    # Python skills (35 directories)
 │   ├── common/tizen_capi_utils.py   # ctypes-based Tizen C-API wrapper

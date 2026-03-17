@@ -1,6 +1,6 @@
 # TizenClaw 프로젝트 분석
 
-> **최종 업데이트**: 2026-03-16
+> **최종 업데이트**: 2026-03-18
 
 ---
 
@@ -127,6 +127,19 @@ tizenclaw/
 │   │   ├── audit_logger.cc/hh       # Markdown 감사 로깅
 │   │   ├── skill_watcher.cc/hh      # inotify 스킬 핫리로드
 │   │   └── embedding_store.cc/hh    # SQLite RAG 벡터 스토어
+│   ├── tizenclaw-cli/               # CLI 도구 (모듈라 클래스)
+│   │   ├── main.cc                  # 진입점, 인자 파싱
+│   │   ├── socket_client.cc/hh      # UDS IPC 클라이언트
+│   │   ├── request_handler.cc/hh    # JSON-RPC 요청 빌더
+│   │   ├── response_printer.cc/hh   # 포맷팅된 출력 렌더러
+│   │   └── interactive_shell.cc/hh  # 대화형 REPL 모드
+│   ├── tizenclaw-tool-executor/     # 도구 실행기 데몸 (소켓 활성화)
+│   │   ├── tizenclaw_tool_executor.cc # 메인, IPC 디스패쳐, execute_cli 핸들러
+│   │   ├── python_engine.cc/hh      # 내장 Python 인터프리터
+│   │   ├── tool_handler.cc/hh       # 스킬 실행 핸들러
+│   │   ├── sandbox_proxy.cc/hh      # 코드 샌드박스 프록시
+│   │   ├── file_manager.cc/hh       # 파일 작업 핸들러
+│   │   └── peer_validator.cc/hh     # SO_PEERCRED 피어 검증
 │   └── common/                      # 공통 유틸리티 (로깅, nlohmann JSON)
 ├── tools/skills/                    # Python 스킬 (35개 디렉터리)
 │   ├── common/tizen_capi_utils.py   # ctypes 기반 Tizen C-API 래퍼

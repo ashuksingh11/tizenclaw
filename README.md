@@ -48,7 +48,7 @@ TizenClaw is part of the **Claw** family of AI agent runtimes, each targeting di
 - 🤖 **Extensible LLM Backends** — 5 built-in backends (Gemini, OpenAI, Anthropic, xAI, Ollama) with unified priority-based switching. Extend with unlimited additional backends via RPK plugins — no daemon recompilation required.
 - 🧩 **RPK Tool Distribution** — Extend the skill ecosystem dynamically using Tizen Resource Packages (RPKs) bundling Python skills without daemon recompilation. Platform-signed RPK packages are automatically discovered and symlinked into the skills directory.
 - 🔧 **CLI Tool Plugins** — Extend agent capabilities with native CLI tools packaged as TPKs. CLI tools run directly on the host for Tizen C-API access, with rich Markdown descriptors (`.tool.md`) for LLM tool discovery.
-- 📦 **Lightweight Deployment** — systemd + RPM, standalone device execution without Node.js/Docker
+- 📦 **Lightweight Deployment** — systemd + RPM with socket activation, standalone device execution without Node.js/Docker
 - 🔧 **Native MCP Server** — C++ MCP server integrated into daemon, Claude Desktop controls Tizen via sdb
 - 📊 **Health Monitoring** — Built-in Prometheus-style metrics endpoint + live dashboard panel
 - 🔄 **OTA Updates** — Over-the-air skill updates with version checking and rollback
@@ -136,8 +136,10 @@ sdb push ~/GBS-ROOT/local/repos/tizen/x86_64/RPMS/tizenclaw-1.0.0-1.x86_64.rpm /
 sdb push ~/GBS-ROOT/local/repos/tizen/x86_64/RPMS/tizenclaw-assets-1.0.0-1.x86_64.rpm /tmp/
 sdb shell rpm -Uvh --force /tmp/tizenclaw-1.0.0-1.x86_64.rpm /tmp/tizenclaw-assets-1.0.0-1.x86_64.rpm
 
-# Start daemon
+# Start daemon and enable socket activation
 sdb shell systemctl daemon-reload
+sdb shell systemctl enable tizenclaw-tool-executor.socket tizenclaw-code-sandbox.socket
+sdb shell systemctl restart tizenclaw-tool-executor.socket tizenclaw-code-sandbox.socket
 sdb shell systemctl restart tizenclaw
 ```
 
@@ -175,7 +177,7 @@ sdb shell systemctl restart tizenclaw
 
 ## Architecture
 
-TizenClaw uses a **dual-container architecture** powered by OCI-compliant runtimes (`crun`):
+TizenClaw uses a **dual-container architecture** powered by OCI-compliant runtimes (`crun`) with **systemd socket activation** for on-demand service startup:
 
 ```mermaid
 graph TB
@@ -217,6 +219,10 @@ graph TB
         AgentCore --> EmbeddingStore
     end
 
+    subgraph ToolExec["Tool Executor (socket-activated)"]
+        ToolExecSvc["tizenclaw-tool-executor<br/>(CLI + skill execution via IPC)"]
+    end
+
     subgraph Secure["Secure Container (crun)"]
         Skills["Python Skills<br/>(sandboxed)"]
         SkillList["35+ Skills via Tizen C-API<br/>App · Device · Network · Media<br/>Display · Sensor · System Control<br/>+ Runtime Custom Skills (LLM-generated)<br/>Async support via tizen-core"]
@@ -232,6 +238,7 @@ graph TB
     Telegram & Slack & Discord & Voice --> ChannelReg
     MCP --> IPC
     Webhook & WebUI --> WebDashboard
+    ContainerEngine -- "UDS IPC" --> ToolExecSvc
     ContainerEngine -- "crun exec" --> Skills
     ActionBridge -- "action C API" --> ActionService
 ```
@@ -427,10 +434,13 @@ sdb shell rpm -Uvh --force /tmp/tizenclaw-1.0.0-1.x86_64.rpm
 sdb push ~/GBS-ROOT/local/repos/tizen/x86_64/RPMS/tizenclaw-assets-1.0.0-1.x86_64.rpm /tmp/
 sdb shell rpm -Uvh --force /tmp/tizenclaw-assets-1.0.0-1.x86_64.rpm
 
-# Restart the daemon
+# Restart the daemon with socket activation
 sdb shell systemctl daemon-reload
+sdb shell systemctl enable tizenclaw-tool-executor.socket tizenclaw-code-sandbox.socket
+sdb shell systemctl restart tizenclaw-tool-executor.socket tizenclaw-code-sandbox.socket
 sdb shell systemctl restart tizenclaw
 sdb shell systemctl status tizenclaw -l
+sdb shell systemctl status tizenclaw-tool-executor.socket
 ```
 
 ---
@@ -523,56 +533,29 @@ tizenclaw/
 │   │   │   ├── skill_watcher.cc   #   inotify skill hot-reload
 │   │   │   └── ...                #   + headers (.hh)
 │   │   ├── llm/                   # LLM backend providers (14 files)
-│   │   │   ├── llm_backend.hh     #   Unified LLM interface
-│   │   │   ├── llm_backend_factory.cc # Backend factory pattern
-│   │   │   ├── gemini_backend.cc  #   Google Gemini
-│   │   │   ├── openai_backend.cc  #   OpenAI / xAI
-│   │   │   ├── anthropic_backend.cc  # Anthropic
-│   │   │   ├── ollama_backend.cc  #   Ollama (local)
-│   │   │   ├── plugin_llm_backend.cc # RPK LLM plugin backend
-│   │   │   └── plugin_manager.cc  #   LLM plugin lifecycle management
 │   │   ├── channel/               # Communication channels (23 files)
-│   │   │   ├── channel.hh         #   Channel interface (+ SendMessage)
-│   │   │   ├── channel_registry.cc#   Lifecycle + SendTo/Broadcast
-│   │   │   ├── channel_factory.cc #   Config-driven channel creation
-│   │   │   ├── plugin_channel.cc  #   Dynamic SO plugin wrapper
-│   │   │   ├── telegram_client.cc #   Telegram Bot API
-│   │   │   ├── slack_channel.cc   #   Slack (WebSocket)
-│   │   │   ├── discord_channel.cc #   Discord (WebSocket)
-│   │   │   ├── mcp_server.cc      #   MCP (JSON-RPC 2.0)
-│   │   │   ├── webhook_channel.cc #   Webhook HTTP
-│   │   │   ├── voice_channel.cc   #   Tizen STT/TTS
-│   │   │   ├── web_dashboard.cc   #   Admin SPA (port 9090)
-│   │   │   └── a2a_handler.cc     #   A2A protocol handler
 │   │   ├── storage/               # Data persistence (8 files)
-│   │   │   ├── session_store.cc   #   Markdown sessions
-│   │   │   ├── memory_store.cc    #   Persistent memory (long-term, episodic, short-term)
-│   │   │   ├── embedding_store.cc #   SQLite RAG vectors + FTS5 hybrid search
-│   │   │   └── audit_logger.cc    #   Audit logging
 │   │   ├── infra/                 # Infrastructure (28 files)
-│   │   │   ├── http_client.cc     #   libcurl HTTP wrapper
-│   │   │   ├── key_store.cc       #   Encrypted API keys
-│   │   │   ├── container_engine.cc#   OCI container (crun)
-│   │   │   ├── health_monitor.cc  #   Prometheus-style metrics
-│   │   │   ├── fleet_agent.cc     #   Enterprise fleet management
-│   │   │   ├── ota_updater.cc     #   OTA skill updates
-│   │   │   ├── tunnel_manager.cc  #   Secure tunnel (ngrok)
-│   │   │   ├── app_lifecycle_adapter.cc  # App lifecycle event adapter
-│   │   │   ├── recent_app_adapter.cc     # Recent app event adapter
-│   │   │   ├── package_event_adapter.cc  # Package event adapter
-│   │   │   ├── tizen_system_event_adapter.cc # Tizen system event adapter
-│   │   │   ├── vconf_event_adapter.cc    # Vconf settings event adapter
-│   │   │   └── pkgmgr_client.cc   #   Package manager client
+│   │   │   ├── container_engine.cc#   OCI container + tool-executor IPC
+│   │   │   └── ...                #   HTTP, keys, fleet, OTA, event adapters
 │   │   ├── embedding/             # On-device ML embedding (5 files)
-│   │   │   ├── on_device_embedding.cc # ONNX Runtime inference
-│   │   │   └── wordpiece_tokenizer.cc # BERT WordPiece tokenizer
 │   │   └── scheduler/             # Task automation (2 files)
-│   │       └── task_scheduler.cc  #   Cron/interval tasks
+│   ├── tizenclaw-cli/             # CLI tool (modular classes)
+│   │   ├── main.cc                #   Entry point, argument parsing
+│   │   ├── socket_client.cc/hh    #   UDS IPC client
+│   │   ├── request_handler.cc/hh  #   JSON-RPC request builder
+│   │   ├── response_printer.cc/hh #   Formatted output renderer
+│   │   └── interactive_shell.cc/hh#   Interactive REPL mode
+│   ├── tizenclaw-tool-executor/   # Tool executor daemon (socket-activated)
+│   │   ├── tizenclaw_tool_executor.cc # Main, IPC dispatcher, execute_cli handler
+│   │   ├── python_engine.cc/hh    #   Embedded Python interpreter
+│   │   ├── tool_handler.cc/hh     #   Skill execution handler
+│   │   ├── sandbox_proxy.cc/hh    #   Code sandbox proxy
+│   │   ├── file_manager.cc/hh     #   File operations handler
+│   │   └── peer_validator.cc/hh   #   SO_PEERCRED peer validation
 │   ├── libtizenclaw/              # C-API client library (SDK)
 │   ├── libtizenclaw-core/         # Core library (curl, LLM backend)
-│   ├── pkgmgr-metadata-plugin/    # Metadata parser plugins (skills, CLI, LLM backends)
-│   └── tools/                     # CLI tools source
-│       └── tizenclaw_cli.cc       #   tizenclaw-cli tool
+│   └── pkgmgr-metadata-plugin/    # Metadata parser plugins (skills, CLI, LLM backends)
 ├── tools/skills/                  # Python skill scripts (35 skills)
 ├── tools/embedded/                # Embedded tool MD schemas (17 files)
 ├── tools/cli/                     # CLI tools (aurum-cli + plugin symlinks from TPKs)
@@ -587,7 +570,12 @@ tizenclaw/
 │   ├── system_cli/                # System CLI tool descriptors
 │   ├── web/                       # Dashboard SPA (HTML/CSS/JS)
 │   └── img/                       # Container rootfs images (per-arch)
-├── packaging/                     # RPM spec, systemd services
+├── packaging/                     # RPM spec, systemd services & sockets
+│   ├── tizenclaw.service          #   Main daemon service
+│   ├── tizenclaw-tool-executor.service  # Tool executor (socket-activated)
+│   ├── tizenclaw-tool-executor.socket   # Socket unit for tool executor
+│   ├── tizenclaw-code-sandbox.service   # Code sandbox (socket-activated)
+│   └── tizenclaw-code-sandbox.socket    # Socket unit for code sandbox
 ├── docs/                          # Design, Analysis, Roadmap
 ├── LICENSE                        # Apache License 2.0
 └── CMakeLists.txt                 # Build system (C++20)
