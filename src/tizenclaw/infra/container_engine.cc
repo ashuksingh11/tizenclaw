@@ -192,41 +192,23 @@ bool ContainerEngine::Initialize() {
     RunCommand(CrunCmd("delete -f " + container_id_));
   }
 
-  // Also kill any stale skill_executor process left from
-  // chroot/unshare fallback (it survives daemon restarts
-  // because it runs in its own PID namespace).
-  auto [fuser_out, fuser_rc] =
-      RunCommand("fuser " +
-                 EscapeShellArg(std::string(kSkillSocketPath)) +
-                 " 2>/dev/null");
-  if (fuser_rc == 0 && !fuser_out.empty()) {
-    LOG(INFO) << "Killing stale skill_executor "
-              << "on " << kSkillSocketPath
-              << ": " << fuser_out;
-    RunCommand("fuser -k " +
-               EscapeShellArg(std::string(kSkillSocketPath)) +
-               " 2>/dev/null");
-  }
-
-  // Remove stale socket file so the new container
-  // starts with a clean socket.
-  RunCommand("rm -f " +
-             EscapeShellArg(std::string(kSkillSocketPath)));
-
   CleanupOverlayUsr();
 
   initialized_ = true;
 
-  // Eagerly start the secure container so skill execution
-  // is immediately available (don't wait for first request).
-  // StartSkillsContainer uses the shell script which has its
-  // own fallback chain (crun → runc → unshare+chroot).
-  if (EnsureSkillsContainerRunning()) {
-    LOG(INFO) << "Secure skills container "
-              << "started during init";
+  // Tool executor is a separate systemd service using an
+  // abstract namespace socket — no named socket cleanup
+  // needed (abstract sockets auto-clean on process exit).
+  // Check if tool-executor is reachable.
+  int test_fd = ConnectToToolExecutor();
+  if (test_fd >= 0) {
+    close(test_fd);
+    LOG(INFO) << "Tool executor reachable via abstract "
+              << "socket @" << kToolExecutorSocketName;
   } else {
-    LOG(WARNING) << "Could not start secure "
-                 << "container during init";
+    LOG(WARNING) << "Tool executor not reachable. "
+                 << "Ensure tizenclaw-tool-executor.service "
+                 << "is running.";
   }
 
   return true;
@@ -318,47 +300,41 @@ std::string ContainerEngine::ExecuteSkill(const std::string& skill_name,
   return ExtractJsonResult(output);
 }
 
+int ContainerEngine::ConnectToToolExecutor() const {
+  int s = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (s < 0) return -1;
+
+  struct sockaddr_un addr;
+  std::memset(&addr, 0, sizeof(addr));
+  addr.sun_family = AF_UNIX;
+  // Abstract namespace: sun_path[0] = '\0', name follows
+  addr.sun_path[0] = '\0';
+  std::memcpy(addr.sun_path + 1, kToolExecutorSocketName,
+              sizeof(kToolExecutorSocketName) - 1);
+
+  socklen_t addr_len =
+      offsetof(struct sockaddr_un, sun_path) + 1 +
+      sizeof(kToolExecutorSocketName) - 1;
+
+  if (connect(s, reinterpret_cast<struct sockaddr*>(&addr),
+              addr_len) < 0) {
+    close(s);
+    return -1;
+  }
+  return s;
+}
+
 std::string ContainerEngine::ExecuteSkillViaSocket(
     const std::string& skill_name, const std::string& arg_str) {
-  auto try_connect = [this]() -> int {
-    int s = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (s < 0) {
-      LOG(WARNING) << "UDS socket() failed: " << strerror(errno);
-      return -1;
-    }
-
-    struct sockaddr_un addr;
-    std::memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, kSkillSocketPath,
-            sizeof(addr.sun_path) - 1);
-
-    if (connect(s,
-                reinterpret_cast<struct sockaddr*>(&addr),
-                sizeof(addr)) < 0) {
-      close(s);
-      return -1;
-    }
-    return s;
-  };
-
-  int sock = try_connect();
+  int sock = ConnectToToolExecutor();
   if (sock < 0) {
-    // Retry once after ensuring the container is running.
-    LOG(WARNING) << "UDS connect failed, retrying "
-                 << "after EnsureSkillsContainerRunning";
-    if (EnsureSkillsContainerRunning()) {
-      sock = try_connect();
-    }
-    if (sock < 0) {
-      LOG(WARNING) << "UDS connect retry failed: "
-                   << strerror(errno);
-      return "{}";
-    }
+    LOG(WARNING) << "Tool executor connect failed: "
+                 << strerror(errno);
+    return "{}";
   }
 
-  LOG(ERROR) << "[DEBUG] UDS connected to " << "skill_executor at "
-             << kSkillSocketPath;
+  LOG(INFO) << "Connected to tool-executor @"
+            << kToolExecutorSocketName;
 
   // Build request JSON
   nlohmann::json req;
@@ -446,22 +422,10 @@ std::string ContainerEngine::ExecuteCode(const std::string& code) {
 
   LOG(INFO) << "ExecuteCode: " << code.size() << " chars";
 
-  // Connect to skill executor via UDS
-  int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+  // Connect to tool-executor via abstract namespace socket
+  int sock = ConnectToToolExecutor();
   if (sock < 0) {
-    LOG(WARNING) << "UDS socket() failed: " << strerror(errno);
-    return "{}";
-  }
-
-  struct sockaddr_un addr;
-  std::memset(&addr, 0, sizeof(addr));
-  addr.sun_family = AF_UNIX;
-  strncpy(addr.sun_path, kSkillSocketPath, sizeof(addr.sun_path) - 1);
-
-  if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) <
-      0) {
-    LOG(WARNING) << "UDS connect failed: " << strerror(errno);
-    close(sock);
+    LOG(WARNING) << "Tool executor connect failed";
     return "{}";
   }
 
@@ -548,21 +512,9 @@ std::string ContainerEngine::ExecuteFileOp(const std::string& operation,
 
   LOG(INFO) << "ExecuteFileOp: op=" << operation << " path=" << path;
 
-  int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+  int sock = ConnectToToolExecutor();
   if (sock < 0) {
-    LOG(WARNING) << "UDS socket() failed: " << strerror(errno);
-    return "{}";
-  }
-
-  struct sockaddr_un addr;
-  std::memset(&addr, 0, sizeof(addr));
-  addr.sun_family = AF_UNIX;
-  strncpy(addr.sun_path, kSkillSocketPath, sizeof(addr.sun_path) - 1);
-
-  if (connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) <
-      0) {
-    LOG(WARNING) << "UDS connect failed: " << strerror(errno);
-    close(sock);
+    LOG(WARNING) << "Tool executor connect failed";
     return "{}";
   }
 
@@ -777,21 +729,21 @@ bool ContainerEngine::StartSkillsContainer() {
   LOG(INFO) << "Launched container script "
             << "pid=" << pid;
 
-  // Wait for the skill_executor UDS socket to appear
-  // (up to 30 seconds).  The unshare+chroot fallback path
-  // can take >10s on first run (rootfs extraction + overlay
-  // mount + Python startup).
+  // Wait for the tool-executor abstract socket to
+  // become connectable (up to 30 seconds).
   for (int i = 0; i < 60; ++i) {
     usleep(500000);  // 500ms
-    if (access(kSkillSocketPath, F_OK) == 0) {
-      LOG(INFO) << "Skill executor socket "
+    int fd = ConnectToToolExecutor();
+    if (fd >= 0) {
+      close(fd);
+      LOG(INFO) << "Tool executor socket "
                 << "ready after " << (i + 1) * 500
                 << "ms";
       return true;
     }
   }
 
-  LOG(WARNING) << "Skill executor socket did "
+  LOG(WARNING) << "Tool executor socket did "
                << "not appear within 30s";
   return false;
 }
@@ -809,13 +761,8 @@ void ContainerEngine::StopSkillsContainer() {
     RunCommand(EscapeShellArg(script) + " stop");
   }
 
-  // Also kill any remaining skill_executor process
-  // on the socket (chroot/unshare fallback processes).
-  RunCommand("fuser -k " +
-             EscapeShellArg(std::string(kSkillSocketPath)) +
-             " 2>/dev/null");
-  RunCommand("rm -f " +
-             EscapeShellArg(std::string(kSkillSocketPath)));
+  // Abstract namespace sockets auto-clean on process exit.
+  // No named socket cleanup needed.
 
   CleanupOverlayUsr();
 }

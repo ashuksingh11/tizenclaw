@@ -67,6 +67,10 @@ class ContainerEngine {
   std::string CrunCmd(const std::string& subcmd) const;
   std::string FindPython3() const;
 
+  // Connect to tool-executor via abstract namespace socket.
+  // Returns fd >= 0 on success, -1 on failure.
+  int ConnectToToolExecutor() const;
+
   // Extract last JSON-like line from raw output
   static std::string ExtractJsonResult(const std::string& raw);
 
@@ -79,7 +83,9 @@ class ContainerEngine {
   std::string container_id_;
   std::string crun_root_;
 
-  static constexpr const char* kSkillSocketPath = "/tmp/tizenclaw_skill.sock";
+  // Abstract namespace socket name (no leading '\0' — added by connect code)
+  static constexpr const char kToolExecutorSocketName[] =
+      "tizenclaw-tool-executor.sock";
 };
 
 }  // namespace tizenclaw

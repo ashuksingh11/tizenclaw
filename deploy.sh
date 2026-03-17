@@ -29,6 +29,11 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+# Repo config
+REPO_CONFIG="${PROJECT_DIR}/repo_config.ini"
+REPO_BASE=""
+REPO_PLATFORM=""
+
 # ─────────────────────────────────────────────
 # Defaults
 # ─────────────────────────────────────────────
@@ -66,6 +71,91 @@ sdb_cmd() {
 
 sdb_shell() {
   sdb_cmd shell "$@"
+}
+
+# ─────────────────────────────────────────────
+# Load repo_config.ini (base / platform URLs)
+# ─────────────────────────────────────────────
+load_repo_config() {
+  if [ ! -f "${REPO_CONFIG}" ]; then
+    warn "Repo config not found: ${REPO_CONFIG}"
+    return 0
+  fi
+
+  while IFS='=' read -r key val; do
+    key=$(echo "$key" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    val=$(echo "$val" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    case "$key" in
+      base)     REPO_BASE="$val" ;;
+      platform) REPO_PLATFORM="$val" ;;
+    esac
+  done < <(grep -v '^#' "${REPO_CONFIG}" | grep -v '^\[' | grep '=')
+
+  if [ -n "${REPO_BASE}" ]; then
+    ok "Repo base    : ${REPO_BASE}"
+  fi
+  if [ -n "${REPO_PLATFORM}" ]; then
+    ok "Repo platform: ${REPO_PLATFORM}"
+  fi
+}
+
+# ─────────────────────────────────────────────
+# Ensure python3 is installed on device
+# ─────────────────────────────────────────────
+ensure_python3_on_device() {
+  if [ "${DRY_RUN}" = true ]; then
+    log "[DRY-RUN] Check/install python3 on device"
+    return 0
+  fi
+
+  # Check if python3 already exists
+  local has_python
+  has_python=$(sdb_shell "which python3 2>/dev/null" | tr -d '\r\n' || true)
+  if [ -n "${has_python}" ] && [ "${has_python}" != "" ]; then
+    ok "python3 already installed on device: ${has_python}"
+    return 0
+  fi
+
+  log "python3 not found on device, installing..."
+
+  if [ -z "${REPO_BASE}" ] && [ -z "${REPO_PLATFORM}" ]; then
+    warn "No repo URLs configured in ${REPO_CONFIG}. Cannot install python3."
+    warn "Please set base/platform repo URLs in repo_config.ini"
+    return 1
+  fi
+
+  # Determine arch-specific repo suffix
+  local repo_arch
+  case "${ARCH}" in
+    x86_64)  repo_arch="x86_64" ;;
+    aarch64) repo_arch="aarch64" ;;
+    armv7l)  repo_arch="armv7l" ;;
+    *)       repo_arch="${ARCH}" ;;
+  esac
+
+  # Add repos on device
+  if [ -n "${REPO_BASE}" ]; then
+    log "Adding base repo on device..."
+    sdb_shell "zypper ar -G -f '${REPO_BASE}${repo_arch}/' tizenclaw-base 2>/dev/null || zypper mr -e tizenclaw-base 2>/dev/null || true"
+  fi
+
+  if [ -n "${REPO_PLATFORM}" ]; then
+    log "Adding platform repo on device..."
+    sdb_shell "zypper ar -G -f '${REPO_PLATFORM}${repo_arch}/' tizenclaw-platform 2>/dev/null || zypper mr -e tizenclaw-platform 2>/dev/null || true"
+  fi
+
+  # Refresh and install python3
+  log "Refreshing repos and installing python3..."
+  sdb_shell "zypper --non-interactive refresh tizenclaw-base tizenclaw-platform 2>/dev/null || true"
+  sdb_shell "zypper --non-interactive install --no-confirm python3-base libpython3 2>/dev/null || true"
+
+  # Verify
+  has_python=$(sdb_shell "which python3 2>/dev/null" | tr -d '\r\n' || true)
+  if [ -n "${has_python}" ]; then
+    ok "python3 installed: ${has_python}"
+  else
+    warn "python3 installation may have failed. Tool executor will use fork/exec fallback."
+  fi
 }
 
 # ─────────────────────────────────────────────
@@ -510,7 +600,11 @@ do_restart_and_run() {
   run sdb_shell systemctl daemon-reload
   ok "Daemon reloaded"
 
-  # 4-2. Restart service
+  # 4-2. Restart services
+  log "Restarting tizenclaw-tool-executor service..."
+  run sdb_shell systemctl restart tizenclaw-tool-executor || true
+  ok "Tool executor restarted"
+
   log "Restarting tizenclaw service..."
   run sdb_shell systemctl restart tizenclaw
   ok "Service restarted"
@@ -598,11 +692,13 @@ show_summary() {
 main() {
   parse_args "$@"
   detect_arch
+  load_repo_config
   check_prerequisites
   do_build
   do_build_rag
   find_rpm
   do_deploy
+  ensure_python3_on_device
   do_restart_and_run
   do_e2e_tests
   show_summary

@@ -73,7 +73,7 @@ INSTALL(TARGETS ${TARGET_TIZENCLAW} DESTINATION ${BINDIR})
 # systemd services
 INSTALL(FILES
   ${CMAKE_SOURCE_DIR}/packaging/tizenclaw.service
-  ${CMAKE_SOURCE_DIR}/packaging/tizenclaw-skills-secure.service
+  ${CMAKE_SOURCE_DIR}/packaging/tizenclaw-tool-executor.service
   DESTINATION /usr/lib/systemd/system/
 )
 

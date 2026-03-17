@@ -81,7 +81,7 @@ mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/embedded
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/cli
 
 ln -sf ../tizenclaw.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw.service
-ln -sf ../tizenclaw-skills-secure.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw-skills-secure.service
+ln -sf ../tizenclaw-tool-executor.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw-tool-executor.service
 
 %files
 %defattr(-,root,root,-)
@@ -91,10 +91,11 @@ ln -sf ../tizenclaw-skills-secure.service %{buildroot}%{_unitdir}/multi-user.tar
 %{_bindir}/start_mcp_tunnel.sh
 %{_libdir}/libtizenclaw.so.*
 %{_libdir}/libtizenclaw-core.so.*
+%{_bindir}/tizenclaw-tool-executor
 %{_unitdir}/tizenclaw.service
-%{_unitdir}/tizenclaw-skills-secure.service
+%{_unitdir}/tizenclaw-tool-executor.service
 %{_unitdir}/multi-user.target.wants/tizenclaw.service
-%{_unitdir}/multi-user.target.wants/tizenclaw-skills-secure.service
+%{_unitdir}/multi-user.target.wants/tizenclaw-tool-executor.service
 /usr/libexec/tizenclaw/run_standard_container.sh
 /usr/libexec/tizenclaw/skills_secure_container.sh
 /usr/libexec/tizenclaw/crun
