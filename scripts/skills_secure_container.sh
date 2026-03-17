@@ -239,7 +239,10 @@ run_without_container() {
   mkdir -p "$R/skills" "$R/proc" "$R/dev" "$R/tmp" \
            "$R/usr" "$R/etc" "$R/opt/etc" \
            "$R/host_lib" "$R/host_usr_lib" "$R/host_usr_lib64" \
-           "$R/run" "$R/data" "${APP_DATA_DIR}/data"
+           "$R/run" "$R/data" "$R/opt/usr" \
+           "$R/tools/custom_skills" \
+           "${APP_DATA_DIR}/data" \
+           "${APP_DATA_DIR}/tools/custom_skills"
 
   # Build the mount + chroot command as a single string for unshare
   local CMD="mount --make-rprivate / || true"
@@ -249,11 +252,13 @@ run_without_container() {
   CMD="$CMD; mount --rbind \"${APP_DATA_DIR}/data\" \"$R/data\" || true"
   CMD="$CMD; mount --rbind /tmp \"$R/tmp\" || true"
 
-  # Do NOT overlay /usr — overlayfs empties rootfs python3 stdlib.
-  # Rootfs /usr has Python3+stdlib. Host CAPI libs are accessible
-  # via /lib64 and /host_lib bind-mounts (see below).
-  if [ "${OVERLAY_OK}" != "true" ]; then
-    # Extra: bind-mount host /usr/lib for CAPI libs (no-overlay)
+  # Bind-mount the overlay merged_usr as /usr inside the chroot.
+  # This matches the crun config: rootfs python3+stdlib (priority)
+  # plus host CAPI libs (fallback).
+  if [ "${OVERLAY_OK}" = "true" ]; then
+    CMD="$CMD; mount --rbind \"${MERGED_USR}\" \"$R/usr\" || true"
+  else
+    # No overlay: bind-mount host /usr/lib for CAPI libs
     echo "Bind-mounting host /usr/lib -> $R/host_usr_lib"
     mount -o bind /usr/lib "$R/host_usr_lib" 2>&1 || echo "WARN: mount /usr/lib failed"
     mount -o bind /usr/lib64 "$R/host_usr_lib64" 2>&1 || echo "WARN: mount /usr/lib64 failed (may not exist)"
@@ -274,7 +279,13 @@ run_without_container() {
 
   CMD="$CMD; mount --rbind /run \"$R/run\" || true"
 
-  # CLI tools
+  # /opt/usr — full app data directory for daemon IPC, config, tools
+  CMD="$CMD; mount --rbind /opt/usr \"$R/opt/usr\" || true"
+
+  # Custom skills (rw)
+  CMD="$CMD; mount --rbind \"${APP_DATA_DIR}/tools/custom_skills\" \"$R/tools/custom_skills\" || true"
+
+  # CLI tools (ro)
   mkdir -p "$R/opt/usr/share/tizenclaw/tools/cli"
   CMD="$CMD; mount --rbind \"${APP_DATA_DIR}/tools/cli\" \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
   CMD="$CMD; mount -o remount,bind,ro \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
