@@ -120,7 +120,9 @@ void HandleClient(
     tizenclaw::tool_executor::ToolHandler& tool_handler,
     tizenclaw::tool_executor::SandboxProxy& sandbox_proxy,
     tizenclaw::tool_executor::FileManager& file_manager) {
+  LOG(DEBUG) << "New client fd=" << client_fd;
   if (!validator.Validate(client_fd)) {
+    LOG(WARNING) << "Rejecting unauthenticated peer";
     nlohmann::json resp = {
         {"status", "error"},
         {"output", "Permission denied: caller not authorized"}};
@@ -157,17 +159,28 @@ void HandleClient(
     nlohmann::json resp;
     std::string command = req.value("command", "");
 
+    LOG(INFO) << "Command: " << command;
+    LOG(DEBUG) << "Request payload size=" << payload_len << " cmd=" << command;
+
     if (command == "diag") {
-      resp = HandleDiag(python_engine);
+      LOG(DEBUG) << "Handling diag command";
+      resp = {{"status", "ok"},
+              {"output", "tool-executor alive, pid=" +
+                         std::to_string(getpid())}};
     } else if (command == "execute_code") {
       std::string code = req.value("code", "");
       int timeout = req.value("timeout", kCodeExecTimeout);
+      LOG(DEBUG) << "execute_code: code_len=" << code.size()
+                 << " timeout=" << timeout;
       if (code.empty()) {
         resp = {{"status", "error"}, {"output", "No code provided"}};
       } else {
         resp = sandbox_proxy.HandleExecuteCode(code, timeout);
       }
     } else if (command == "file_manager") {
+      std::string op = req.value("operation", "");
+      std::string path = req.value("path", "");
+      LOG(DEBUG) << "file_manager: op=" << op << " path=" << path;
       resp = file_manager.Handle(req);
     } else if (command == "install_package") {
       std::string pkg_type = req.value("type", "pip");
@@ -181,6 +194,8 @@ void HandleClient(
       std::string cli_tool = req.value("tool_name", "");
       std::string cli_args = req.value("arguments", "");
       int cli_timeout = req.value("timeout", 10);
+      LOG(DEBUG) << "execute_cli: tool=" << cli_tool << " args=" << cli_args
+                 << " timeout=" << cli_timeout;
       if (cli_tool.empty()) {
         resp = {{"status", "error"}, {"output", "No tool_name"}};
       } else {
@@ -230,6 +245,7 @@ void HandleClient(
       // Default: tool execution (renamed from "skill")
       std::string tool = req.value("tool", "");
       std::string args = req.value("args", "{}");
+      LOG(DEBUG) << "tool_execution: tool=" << tool << " args=" << args;
       if (tool.empty()) {
         resp = {{"status", "error"}, {"output", "No tool specified"}};
       } else {
@@ -241,6 +257,7 @@ void HandleClient(
   }
 
   close(client_fd);
+  LOG(DEBUG) << "Client fd=" << client_fd << " disconnected";
 }
 
 }  // namespace
@@ -248,6 +265,7 @@ void HandleClient(
 // ─── Main ───────────────────────────────────────────────────
 int main() {
   LOG(INFO) << "tizenclaw-tool-executor starting (pid=" << getpid() << ")";
+  LOG(DEBUG) << "Startup: Initializing signal handlers and components.";
 
   signal(SIGTERM, SignalHandler);
   signal(SIGINT, SignalHandler);
@@ -322,6 +340,7 @@ int main() {
       LOG(ERROR) << "accept() failed: " << strerror(errno);
       break;
     }
+    LOG(DEBUG) << "Accepted new client connection, fd=" << client;
 
     std::thread t(HandleClient, client,
                   std::ref(validator),

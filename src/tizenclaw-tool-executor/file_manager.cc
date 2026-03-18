@@ -50,7 +50,13 @@ nlohmann::json FileManager::Handle(const nlohmann::json& req) {
 
   std::error_code ec;
   std::string real = fs::canonical(path, ec).string();
-  if (ec) real = path;
+  if (ec) {
+    LOG(DEBUG) << "canonical() failed for path=" << path
+               << " error=" << ec.message() << ", using raw path";
+    real = path;
+  } else {
+    LOG(DEBUG) << "canonical path: " << real;
+  }
 
   bool allowed = false;
   for (const auto& prefix : kAllowedPaths) {
@@ -60,6 +66,7 @@ nlohmann::json FileManager::Handle(const nlohmann::json& req) {
     }
   }
   if (!allowed) {
+    LOG(DEBUG) << "Path rejected: real=" << real << " not in allowed dirs";
     return {{"status", "error"},
             {"output", "Path outside allowed directories"}};
   }
@@ -74,6 +81,7 @@ nlohmann::json FileManager::Handle(const nlohmann::json& req) {
       if (!f.is_open())
         return {{"status", "error"}, {"output", "Failed to write file"}};
       f << content;
+      LOG(DEBUG) << "write_file: wrote " << content.size() << " bytes to " << path;
       nlohmann::json r = {{"result", "file_written"},
                           {"path", path}, {"size", (int)content.size()}};
       return {{"status", "ok"}, {"output", r.dump()}};
@@ -84,6 +92,7 @@ nlohmann::json FileManager::Handle(const nlohmann::json& req) {
       std::ifstream f(path);
       std::string content((std::istreambuf_iterator<char>(f)),
                            std::istreambuf_iterator<char>());
+      LOG(DEBUG) << "read_file: read " << content.size() << " bytes from " << path;
       nlohmann::json r = {{"result", "file_read"}, {"path", path},
                           {"content", content}, {"size", (int)content.size()}};
       return {{"status", "ok"}, {"output", r.dump()}};
@@ -92,6 +101,7 @@ nlohmann::json FileManager::Handle(const nlohmann::json& req) {
       if (!fs::exists(path, ec))
         return {{"status", "error"}, {"output", "Not found: " + path}};
       fs::remove_all(path, ec);
+      LOG(DEBUG) << "delete_file: deleted " << path;
       nlohmann::json r = {{"result", "deleted"}, {"path", path}};
       return {{"status", "ok"}, {"output", r.dump()}};
     }
@@ -106,6 +116,7 @@ nlohmann::json FileManager::Handle(const nlohmann::json& req) {
             {"size", e.is_regular_file() ? (int)e.file_size() : 0},
         });
       }
+      LOG(DEBUG) << "list_dir: " << entries.size() << " entries in " << path;
       nlohmann::json r = {{"result", "listing"},
                           {"path", path}, {"entries", entries}};
       return {{"status", "ok"}, {"output", r.dump()}};

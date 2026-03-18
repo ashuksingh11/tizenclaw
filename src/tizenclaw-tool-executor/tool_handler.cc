@@ -117,7 +117,11 @@ std::pair<std::string, std::string> ToolHandler::DetectRuntime(
   for (const auto& base : kToolSearchPaths) {
     std::string manifest = base + "/" + tool_name + "/manifest.json";
     std::ifstream f(manifest);
-    if (!f.is_open()) continue;
+    if (!f.is_open()) {
+      LOG(DEBUG) << "Manifest not found: " << manifest;
+      continue;
+    }
+    LOG(DEBUG) << "Manifest found: " << manifest;
     try {
       nlohmann::json j;
       f >> j;
@@ -138,6 +142,8 @@ std::pair<std::string, std::string> ToolHandler::DetectRuntime(
     } catch (...) {}
     break;
   }
+  LOG(DEBUG) << "DetectRuntime: runtime=" << runtime
+             << " entry_point=" << entry_point;
   return {runtime, entry_point};
 }
 
@@ -145,8 +151,13 @@ std::string ToolHandler::FindToolScript(const std::string& tool_name,
                                           const std::string& entry_point) {
   for (const auto& base : kToolSearchPaths) {
     std::string path = base + "/" + tool_name + "/" + entry_point;
-    if (access(path.c_str(), R_OK) == 0) return path;
+    if (access(path.c_str(), R_OK) == 0) {
+      LOG(DEBUG) << "Tool script found: " << path;
+      return path;
+    }
+    LOG(DEBUG) << "Tool script not at: " << path;
   }
+  LOG(DEBUG) << "Tool script not found for: " << tool_name;
   return "";
 }
 
@@ -183,6 +194,8 @@ nlohmann::json ToolHandler::HandleTool(const std::string& tool_name,
 
   LOG(INFO) << "Exec: runtime=" << runtime << " cmd=" << cmd;
   auto [output, rc] = RunCommand(cmd);
+  LOG(DEBUG) << "RunCommand result: rc=" << rc
+             << " output_len=" << output.size();
 
   if (rc != 0) {
     return {{"status", "error"},

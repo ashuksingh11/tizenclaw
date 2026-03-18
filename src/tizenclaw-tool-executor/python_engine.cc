@@ -35,6 +35,8 @@ bool PythonEngine::Initialize() {
   std::lock_guard<std::mutex> lock(mutex_);
   if (initialized_) return true;
 
+  LOG(DEBUG) << "Initializing embedded Python interpreter";
+
   Py_Initialize();
   if (!Py_IsInitialized()) {
     LOG(ERROR) << "Py_Initialize() failed";
@@ -49,6 +51,8 @@ bool PythonEngine::Initialize() {
 std::pair<std::string, int> PythonEngine::RunCode(const std::string& code) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (!initialized_) return {"Python not initialized", -1};
+
+  LOG(DEBUG) << "RunCode: code_len=" << code.size();
 
   char out_path[] = "/tmp/tizenclaw_pyout_XXXXXX";
   int fd = mkstemp(out_path);
@@ -77,6 +81,7 @@ std::pair<std::string, int> PythonEngine::RunCode(const std::string& code) {
       "        _f.write(_buf.getvalue())\n";
 
   int rc = PyRun_SimpleString(wrapper.c_str());
+  LOG(DEBUG) << "PyRun_SimpleString returned rc=" << rc;
 
   std::string output;
   std::ifstream ifs(out_path);
@@ -91,8 +96,12 @@ std::pair<std::string, int> PythonEngine::RunCode(const std::string& code) {
 
 std::string PythonEngine::FindPython3() {
   for (const auto& p : {"/usr/bin/python3", "/usr/local/bin/python3"}) {
-    if (access(p, X_OK) == 0) return p;
+    if (access(p, X_OK) == 0) {
+      LOG(DEBUG) << "Found python3 at: " << p;
+      return p;
+    }
   }
+  LOG(DEBUG) << "python3 not found in any known path";
   return "";
 }
 

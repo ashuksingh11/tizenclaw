@@ -43,6 +43,8 @@ bool PeerValidator::Validate(int client_fd) const {
     return false;
   }
 
+  LOG(DEBUG) << "Peer credentials: pid=" << cred.pid
+             << " uid=" << cred.uid << " gid=" << cred.gid;
   std::string exe_link = "/proc/" + std::to_string(cred.pid) + "/exe";
   char exe_path[PATH_MAX] = {};
   ssize_t n = readlink(exe_link.c_str(), exe_path, sizeof(exe_path) - 1);
@@ -52,11 +54,13 @@ bool PeerValidator::Validate(int client_fd) const {
   }
   exe_path[n] = '\0';
 
+  LOG(DEBUG) << "Peer exe path: " << exe_path;
   std::string basename = exe_path;
   auto slash = basename.rfind('/');
   if (slash != std::string::npos) basename = basename.substr(slash + 1);
   auto del = basename.find(" (deleted)");
   if (del != std::string::npos) basename = basename.substr(0, del);
+  LOG(DEBUG) << "Peer basename: " << basename;
 
   for (const auto& allowed : allowed_callers_) {
     if (basename == allowed) {

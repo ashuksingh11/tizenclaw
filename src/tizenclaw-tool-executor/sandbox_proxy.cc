@@ -80,6 +80,7 @@ SandboxProxy::SandboxProxy(PythonEngine& python_engine)
     : python_engine_(python_engine) {}
 
 int SandboxProxy::ConnectToSandbox() {
+  LOG(DEBUG) << "Connecting to sandbox socket: @" << kSandboxSocketName;
   int s = socket(AF_UNIX, SOCK_STREAM, 0);
   if (s < 0) return -1;
 
@@ -95,9 +96,11 @@ int SandboxProxy::ConnectToSandbox() {
       sizeof(kSandboxSocketName) - 1;
 
   if (connect(s, reinterpret_cast<struct sockaddr*>(&addr), addr_len) < 0) {
+    LOG(DEBUG) << "Sandbox connect failed: " << strerror(errno);
     close(s);
     return -1;
   }
+  LOG(DEBUG) << "Sandbox connected: fd=" << s;
   return s;
 }
 
@@ -157,6 +160,7 @@ nlohmann::json SandboxProxy::HandleExecuteCode(const std::string& code,
   // Fallback: in-process Python
   LOG(INFO) << "Sandbox unavailable, executing in-process";
   if (python_engine_.IsInitialized()) {
+    LOG(DEBUG) << "Using in-process Python fallback";
     auto [output, rc] = python_engine_.RunCode(code);
     if (rc != 0 && output.empty()) {
       return {{"status", "error"},
@@ -171,6 +175,7 @@ nlohmann::json SandboxProxy::HandleExecuteCode(const std::string& code,
   }
 
   // Fallback: fork/exec
+  LOG(DEBUG) << "Using fork/exec Python fallback";
   std::string python = PythonEngine::FindPython3();
   if (python.empty()) {
     return {{"status", "error"}, {"output", "python3 not found"}};
