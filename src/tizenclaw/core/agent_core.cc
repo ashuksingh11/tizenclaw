@@ -2449,6 +2449,7 @@ std::string AgentCore::ExecuteCli(const std::string& tool_name,
 namespace tizenclaw {
 
 void AgentCore::InitializeToolDispatcher() {
+#ifdef TIZEN_FEATURE_CODE_GENERATOR
   tool_dispatch_["execute_code"] =
       [this](const nlohmann::json& args,
              const std::string&,
@@ -2456,6 +2457,7 @@ void AgentCore::InitializeToolDispatcher() {
         return ExecuteCode(
             args.value("code", ""));
       };
+#endif  // TIZEN_FEATURE_CODE_GENERATOR
 
   tool_dispatch_["file_manager"] =
       [this](const nlohmann::json& args,
@@ -2512,12 +2514,14 @@ void AgentCore::InitializeToolDispatcher() {
         };
   }
 
+#ifdef TIZEN_FEATURE_CODE_GENERATOR
   tool_dispatch_["manage_custom_skill"] =
       [this](const nlohmann::json& args,
              const std::string&,
              const std::string&) {
         return ExecuteCustomSkillOp(args);
       };
+#endif  // TIZEN_FEATURE_CODE_GENERATOR
 
   for (const auto& n :
        {"ingest_document",
@@ -2662,10 +2666,12 @@ void AgentCore::InitializeToolDispatcher() {
         reg.Register(name, cap);
       };
 
+#ifdef TIZEN_FEATURE_CODE_GENERATOR
   register_builtin(
       "execute_code", "Execute Python code",
       "code_execution",
       SideEffect::kIrreversible);
+#endif  // TIZEN_FEATURE_CODE_GENERATOR
   register_builtin(
       "file_manager", "File operations",
       "file_system", SideEffect::kReversible);

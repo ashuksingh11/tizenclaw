@@ -24,6 +24,7 @@ namespace tizenclaw {
 
 void ToolDeclarationBuilder::AppendBuiltinTools(
     std::vector<LlmToolDecl>& tools) {
+#ifdef TIZEN_FEATURE_CODE_GENERATOR
   // execute_code
   {
     LlmToolDecl t;
@@ -48,6 +49,7 @@ void ToolDeclarationBuilder::AppendBuiltinTools(
          nlohmann::json::array({"code"})}};
     tools.push_back(t);
   }
+#endif  // TIZEN_FEATURE_CODE_GENERATOR
 
   // file_manager
   {
@@ -237,6 +239,7 @@ void ToolDeclarationBuilder::AppendBuiltinTools(
     tools.push_back(t);
   }
 
+#ifdef TIZEN_FEATURE_CODE_GENERATOR
   // manage_custom_skill
   {
     LlmToolDecl t;
@@ -322,6 +325,7 @@ void ToolDeclarationBuilder::AppendBuiltinTools(
              {"operation"})}};
     tools.push_back(t);
   }
+#endif  // TIZEN_FEATURE_CODE_GENERATOR
 
   // ingest_document (RAG)
   {
