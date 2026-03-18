@@ -1,10 +1,10 @@
 ---
-description: Main Development Workflow (Plan -> Develop -> Verify)
+description: Main Development Workflow (Plan -> Develop -> Verify -> Review)
 ---
 
 # TizenClaw Main Development Workflow
 
-This workflow defines the core development process (Plan -> Develop -> Verify) for the TizenClaw project. The AGENT must always follow this process when performing tasks.
+This workflow defines the core development process (Plan → Develop → Verify → Review → Commit) for the TizenClaw project. The AGENT must always follow this process when performing tasks.
 
 ## 1. Plan
 - Accurately understand the objectives and requirements.
@@ -37,8 +37,31 @@ Once `deploy.sh` successfully finishes:
 > [!TIP]
 > If a crash occurs after deployment, refer to the `crash_debug.md` workflow to analyze the crash dump.
 
-## 4. Commit (Completion of Work)
-When all verification is complete, perform a `git commit` to finalize the work according to the `commit_guidelines.md` workflow.
+## 4. Code Review
+After verification passes, perform a code review on all changed files using the `code_review.md` workflow checklist:
+1. **코딩 스타일** — `coding_rules.md` 준수 여부
+2. **무결성** — 로직 오류, 경계 조건, 에러 처리 누락
+3. **메모리 이슈** — 메모리 누수, dangling pointer, use-after-free
+4. **성능** — 불필요한 복사, 비효율적 루프, 락 경합
+5. **로직 문제** — 데드코드, 도달 불가 분기, 변수 섀도잉
+6. **보안** — 입력 검증 누락, 버퍼 오버플로우, 인젝션 취약점
+7. **스레드 안전성** — race condition, deadlock, GLib 콜백 안전성
+8. **리소스 관리** — fd/소켓/D-Bus 해제, GLib 리소스, 컨테이너 정리
+9. **테스트 커버리지** — gtest 추가/수정 여부, 새 함수 테스트 존재
+10. **에러 전파 및 로깅** — dlog 활용, 에러 전파 경로, silent failure 방지
+
+### Review-Fix Loop (최대 5회)
+- **PASS**: 모든 항목 통과 → Commit 단계로 진행
+- **FAIL**: 문제 발견 → **Develop** 단계로 돌아가 수정 → `deploy.sh` → **Verify** → 재 **Review**
+- 이 루프는 **최대 5회**까지 반복하며, 초과 시 사용자에게 에스컬레이션합니다.
+
+> [!CAUTION]
+> Review-Fix 루프가 5회를 초과하면 무한 루프 방지를 위해 사용자에게 보고해야 합니다.
+
+상세 체크리스트와 절차는 `code_review.md`를 참조하세요.
+
+## 5. Commit (Completion of Work)
+When all review passes, perform a `git commit` to finalize the work according to the `commit_guidelines.md` workflow.
 Refer to the detailed rules in the respective workflow, but the core points are as follows.
 
 ### Basic Structure of a Commit Message
@@ -79,6 +102,7 @@ This is a list of detailed workflow files referenced in this AGENTS workflow.
 | Workflow | File | Referenced Stage |
 |---|---|---|
 | Coding Rules | `coding_rules.md` | Plan |
+| Code Review | `code_review.md` | Code Review |
 | Commit Guidelines | `commit_guidelines.md` | Commit |
 | GTest Unit Testing | `gtest_integration.md` | Verify |
 | Crash Dump Debugging | `crash_debug.md` | Verify |
