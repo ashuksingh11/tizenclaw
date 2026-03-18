@@ -15,6 +15,8 @@
  */
 #include "agent_core.hh"
 
+#include <aul.h>
+#include <bundle.h>
 #include <curl/curl.h>
 #include <malloc.h>
 #include <sqlite3.h>
@@ -3019,15 +3021,59 @@ std::string AgentCore::GenerateWebApp(
   LOG(INFO) << "GenerateWebApp: created '"
             << app_id << "' at " << app_dir;
 
+  std::string app_url =
+      "http://localhost:9090/apps/" + app_id + "/";
+
+  // Auto-launch webview to display the generated app
+  bool launched = false;
+  constexpr const char* kWebViewAppId =
+      "org.tizen.tizenclaw-webview";
+
+  // Try launching with url key via bundle
+  bundle* b = bundle_create();
+  if (b) {
+    bundle_add_str(b, "url", app_url.c_str());
+    int launch_ret =
+        aul_launch_app(kWebViewAppId, b);
+    bundle_free(b);
+    if (launch_ret >= 0) {
+      LOG(INFO) << "GenerateWebApp: launched "
+                << kWebViewAppId
+                << " with url=" << app_url;
+      launched = true;
+    } else {
+      LOG(WARNING) << "GenerateWebApp: "
+                   << kWebViewAppId
+                   << " launch failed (ret="
+                   << launch_ret << ")";
+    }
+  }
+
+  // Fallback: try openUrl action or plain open
+  if (!launched) {
+    int open_ret = aul_open_app(kWebViewAppId);
+    if (open_ret >= 0) {
+      LOG(INFO) << "GenerateWebApp: opened "
+                << kWebViewAppId
+                << " (without url param)";
+      launched = true;
+    } else {
+      LOG(WARNING) << "GenerateWebApp: "
+                   << kWebViewAppId
+                   << " not available (ret="
+                   << open_ret << ")";
+    }
+  }
+
   nlohmann::json result = {
       {"status", "ok"},
       {"app_id", app_id},
       {"title", title},
       {"url", "/apps/" + app_id + "/"},
+      {"webview_launched", launched},
       {"message",
-       "Web app created. Access at "
-       "http://<device-ip>:9090/apps/" +
-           app_id + "/"}};
+       "Web app created. Access at " +
+           app_url}};
 
   if (!downloaded_assets.empty()) {
     result["assets"] = downloaded_assets;
