@@ -39,26 +39,26 @@ Once `deploy.sh` successfully finishes:
 
 ## 4. Code Review
 After verification passes, perform a code review on all changed files using the `code_review.md` workflow checklist:
-1. **코딩 스타일** — `coding_rules.md` 준수 여부
-2. **무결성** — 로직 오류, 경계 조건, 에러 처리 누락
-3. **메모리 이슈** — 메모리 누수, dangling pointer, use-after-free
-4. **성능** — 불필요한 복사, 비효율적 루프, 락 경합
-5. **로직 문제** — 데드코드, 도달 불가 분기, 변수 섀도잉
-6. **보안** — 입력 검증 누락, 버퍼 오버플로우, 인젝션 취약점
-7. **스레드 안전성** — race condition, deadlock, GLib 콜백 안전성
-8. **리소스 관리** — fd/소켓/D-Bus 해제, GLib 리소스, 컨테이너 정리
-9. **테스트 커버리지** — gtest 추가/수정 여부, 새 함수 테스트 존재
-10. **에러 전파 및 로깅** — dlog 활용, 에러 전파 경로, silent failure 방지
+1. **Coding Style** — `coding_rules.md` compliance
+2. **Correctness** — logic errors, boundary conditions, missing error handling
+3. **Memory Issues** — memory leaks, dangling pointer, use-after-free
+4. **Performance** — unnecessary copies, inefficient loops, lock contention
+5. **Logic Issues** — dead code, unreachable branches, variable shadowing
+6. **Security** — missing input validation, buffer overflow, injection vulnerabilities
+7. **Thread Safety** — race condition, deadlock, GLib callback safety
+8. **Resource Management** — fd/socket/D-Bus release, GLib resources, container cleanup
+9. **Test Coverage** — gtest additions/modifications, unit tests for new functions
+10. **Error Propagation & Logging** — dlog usage, error propagation paths, silent failure prevention
 
-### Review-Fix Loop (최대 5회)
-- **PASS**: 모든 항목 통과 → Commit 단계로 진행
-- **FAIL**: 문제 발견 → **Develop** 단계로 돌아가 수정 → `deploy.sh` → **Verify** → 재 **Review**
-- 이 루프는 **최대 5회**까지 반복하며, 초과 시 사용자에게 에스컬레이션합니다.
+### Review-Fix Loop (max 5 iterations)
+- **PASS**: All items pass → proceed to Commit stage
+- **FAIL**: Issues found → return to **Develop** stage to fix → `deploy.sh` → **Verify** → re-**Review**
+- This loop repeats up to **5 times**. If exceeded, escalate to the user.
 
 > [!CAUTION]
-> Review-Fix 루프가 5회를 초과하면 무한 루프 방지를 위해 사용자에게 보고해야 합니다.
+> If the Review-Fix loop exceeds 5 iterations, you must report to the user to prevent an infinite loop.
 
-상세 체크리스트와 절차는 `code_review.md`를 참조하세요.
+Refer to `code_review.md` for the detailed checklist and procedures.
 
 ## 5. Commit (Completion of Work)
 When all review passes, perform a `git commit` to finalize the work according to the `commit_guidelines.md` workflow.
