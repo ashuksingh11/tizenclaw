@@ -89,6 +89,10 @@ run_without_container() {
     mount --rbind /opt/etc \"${BUNDLE_DIR}/rootfs/opt/etc\" || true
     mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/opt/etc\" || true
     mount --rbind /opt/usr/share/tizenclaw \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw\" || true
+    mkdir -p \"${BUNDLE_DIR}/rootfs/opt/usr/share/crash/dump\"
+    if [ -d /opt/usr/share/crash ]; then
+      mount --rbind /opt/usr/share/crash \"${BUNDLE_DIR}/rootfs/opt/usr/share/crash\" || true
+    fi
     mount --rbind /run \"${BUNDLE_DIR}/rootfs/run\" || true
     mount --rbind /tmp \"${BUNDLE_DIR}/rootfs/tmp\" || true
 
@@ -135,6 +139,15 @@ write_config() {
       \"options\": [\"rbind\", \"ro\"]
     }"
   fi
+  if [ -d /opt/usr/share/crash ]; then
+    OPTIONAL_MOUNTS="${OPTIONAL_MOUNTS},
+    {
+      \"destination\": \"/opt/usr/share/crash\",
+      \"type\": \"bind\",
+      \"source\": \"/opt/usr/share/crash\",
+      \"options\": [\"rbind\", \"rw\"]
+    }"
+  fi
 
   cat >"${BUNDLE_DIR}/config.json" <<EOF
 {
@@ -154,7 +167,10 @@ write_config() {
       "inheritable": [],
       "permitted": [],
       "ambient": []
-    }
+    },
+    "rlimits": [
+      {"type": "RLIMIT_CORE", "hard": 67108864, "soft": 67108864}
+    ]
   },
   "root": {
     "path": "rootfs",

@@ -84,6 +84,7 @@ mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/embedded
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/cli
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/sandbox/packages/pip
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/sandbox/packages/npm
+mkdir -p %{buildroot}/opt/usr/share/crash/dump
 
 ln -sf ../tizenclaw.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw.service
 ln -sf ../tizenclaw-tool-executor.socket %{buildroot}%{_unitdir}/sockets.target.wants/tizenclaw-tool-executor.socket
@@ -125,6 +126,8 @@ ln -sf ../tizenclaw-code-sandbox.socket %{buildroot}%{_unitdir}/sockets.target.w
 %dir /opt/usr/share/tizenclaw/sandbox/packages/pip/
 %dir /opt/usr/share/tizenclaw/sandbox/packages/npm/
 %dir /opt/usr/share/tizenclaw/
+%dir /opt/usr/share/crash/
+%dir /opt/usr/share/crash/dump/
 %{_sysconfdir}/package-manager/parserlib/metadata/libtizenclaw-metadata-llm-backend-plugin.so
 %{_datarootdir}/parser-plugins/tizenclaw-metadata-llm-backend-plugin.info
 %{_sysconfdir}/package-manager/parserlib/metadata/libtizenclaw-metadata-skill-plugin.so

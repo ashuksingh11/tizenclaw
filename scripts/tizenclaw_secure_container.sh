@@ -39,6 +39,16 @@ write_config() {
     }"
   fi
 
+  if [ -d /opt/usr/share/crash ]; then
+    OPTIONAL_MOUNTS="${OPTIONAL_MOUNTS},
+    {
+      \"destination\": \"/opt/usr/share/crash\",
+      \"type\": \"bind\",
+      \"source\": \"/opt/usr/share/crash\",
+      \"options\": [\"rbind\", \"rw\"]
+    }"
+  fi
+
   cat >"${BUNDLE_DIR}/config.json" <<EOF
 {
   "ociVersion": "1.0.2",
@@ -66,7 +76,8 @@ write_config() {
     "rlimits": [
       {"type": "RLIMIT_NOFILE", "hard": 256, "soft": 256},
       {"type": "RLIMIT_NPROC", "hard": 64, "soft": 64},
-      {"type": "RLIMIT_AS", "hard": 536870912, "soft": 536870912}
+      {"type": "RLIMIT_AS", "hard": 536870912, "soft": 536870912},
+      {"type": "RLIMIT_CORE", "hard": 67108864, "soft": 67108864}
     ]
   },
   "root": {
@@ -188,7 +199,8 @@ write_config() {
           "prlimit64","getrandom","memfd_create",
           "statx","clone3","close_range","rseq",
           "newfstatat","accept","shutdown","fchmod",
-          "rt_sigaction","rt_sigprocmask","rt_sigreturn"
+          "rt_sigaction","rt_sigprocmask","rt_sigreturn",
+          "prctl","getrlimit"
         ],
         "action": "SCMP_ACT_ALLOW"
       }]
@@ -303,6 +315,12 @@ run_without_container() {
 
   # /opt/usr — full app data directory for daemon IPC, config, tools
   CMD="$CMD; mount --rbind /opt/usr \"$R/opt/usr\" || true"
+
+  # Crash dump directory for crash-worker
+  mkdir -p "$R/opt/usr/share/crash/dump"
+  if [ -d /opt/usr/share/crash ]; then
+    CMD="$CMD; mount --rbind /opt/usr/share/crash \"$R/opt/usr/share/crash\" || true"
+  fi
 
   # Custom skills (rw)
   CMD="$CMD; mount --rbind \"${APP_DATA_DIR}/tools/custom_skills\" \"$R/tools/custom_skills\" || true"

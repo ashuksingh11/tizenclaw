@@ -19,6 +19,7 @@
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -195,6 +196,10 @@ bool ContainerEngine::Initialize() {
   CleanupOverlayUsr();
 
   initialized_ = true;
+
+  // Ensure this process is dumpable so the host crash-worker
+  // can read /proc/[pid]/ and generate crash dumps.
+  prctl(PR_SET_DUMPABLE, 1);
 
   // Tool executor is a separate systemd service using an
   // abstract namespace socket — no named socket cleanup
@@ -956,7 +961,8 @@ bool ContainerEngine::WriteSkillsConfig() const {
     "rlimits": [
       {"type": "RLIMIT_NOFILE", "hard": 256, "soft": 256},
       {"type": "RLIMIT_NPROC", "hard": 64, "soft": 64},
-      {"type": "RLIMIT_AS", "hard": 268435456, "soft": 268435456}
+      {"type": "RLIMIT_AS", "hard": 268435456, "soft": 268435456},
+      {"type": "RLIMIT_CORE", "hard": 67108864, "soft": 67108864}
     ]
   },
   "root": {
@@ -1059,6 +1065,19 @@ bool ContainerEngine::WriteSkillsConfig() const {
     })";
   }
 
+  // Conditionally add crash dump directory mount if it
+  // exists on host — enables crash-worker to write dumps.
+  // The crash handler binary and path vary by device.
+  if (fs::is_directory("/opt/usr/share/crash", ec)) {
+    config_json += R"(,
+    {
+      "destination": "/opt/usr/share/crash",
+      "type": "bind",
+      "source": "/opt/usr/share/crash",
+      "options": ["rbind", "rw"]
+    })";
+  }
+
   config_json += R"(
   ],
   "linux": {
@@ -1097,7 +1116,8 @@ bool ContainerEngine::WriteSkillsConfig() const {
           "prlimit64","getrandom","memfd_create",
           "statx","clone3","close_range","rseq",
           "newfstatat","accept","shutdown","fchmod",
-          "rt_sigaction","rt_sigprocmask","rt_sigreturn"
+          "rt_sigaction","rt_sigprocmask","rt_sigreturn",
+          "prctl","getrlimit"
         ],
         "action": "SCMP_ACT_ALLOW"
       }]
