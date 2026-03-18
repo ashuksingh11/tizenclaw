@@ -3024,42 +3024,44 @@ std::string AgentCore::GenerateWebApp(
   std::string app_url =
       "http://localhost:9090/apps/" + app_id + "/";
 
-  // Auto-launch webview to display the generated app
+  // Auto-launch bridge app to display the generated app
+  // tizenclaw-bridge is a WGT app running on WRT,
+  // providing tizen.* Web Device API access to the generated web app
   bool launched = false;
-  constexpr const char* kWebViewAppId =
-      "org.tizen.tizenclaw-webview";
+  constexpr const char* kBridgeAppId =
+      "QvaPeQ7RDA.tizenclawbridge";
 
   // Try launching with url key via bundle
   bundle* b = bundle_create();
   if (b) {
     bundle_add_str(b, "url", app_url.c_str());
     int launch_ret =
-        aul_launch_app(kWebViewAppId, b);
+        aul_launch_app(kBridgeAppId, b);
     bundle_free(b);
     if (launch_ret >= 0) {
       LOG(INFO) << "GenerateWebApp: launched "
-                << kWebViewAppId
+                << kBridgeAppId
                 << " with url=" << app_url;
       launched = true;
     } else {
       LOG(WARNING) << "GenerateWebApp: "
-                   << kWebViewAppId
+                   << kBridgeAppId
                    << " launch failed (ret="
                    << launch_ret << ")";
     }
   }
 
-  // Fallback: try openUrl action or plain open
+  // Fallback: try plain open
   if (!launched) {
-    int open_ret = aul_open_app(kWebViewAppId);
+    int open_ret = aul_open_app(kBridgeAppId);
     if (open_ret >= 0) {
       LOG(INFO) << "GenerateWebApp: opened "
-                << kWebViewAppId
+                << kBridgeAppId
                 << " (without url param)";
       launched = true;
     } else {
       LOG(WARNING) << "GenerateWebApp: "
-                   << kWebViewAppId
+                   << kBridgeAppId
                    << " not available (ret="
                    << open_ret << ")";
     }

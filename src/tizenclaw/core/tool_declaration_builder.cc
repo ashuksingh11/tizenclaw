@@ -57,10 +57,12 @@ void ToolDeclarationBuilder::AppendBuiltinTools(
         "Manage files on the Tizen device. "
         "Create, read, delete files or list "
         "directory contents. Paths MUST start "
-        "with /tools/custom_skills/ or /data/ — "
-        "other paths are rejected. Use "
-        "/tools/custom_skills/ to save new skill "
-        "scripts, /data/ for persistent data.";
+        "with /tools/custom_skills/, /data/, or "
+        "/web/apps/ — other paths are rejected. "
+        "Use /tools/custom_skills/ for skill "
+        "scripts, /data/ for persistent data, "
+        "/web/apps/<app_id>/ to read/modify/delete "
+        "generated web app files.";
     t.parameters = {
         {"type", "object"},
         {"properties",
@@ -76,8 +78,8 @@ void ToolDeclarationBuilder::AppendBuiltinTools(
            {{"type", "string"},
             {"description",
              "File or directory path. Must start "
-             "with /tools/custom_skills/ or "
-             "/data/"}}},
+              "with /tools/custom_skills/, "
+              "/data/, or /web/apps/"}}},
           {"content",
            {{"type", "string"},
             {"description",
@@ -928,16 +930,20 @@ void ToolDeclarationBuilder::AppendBuiltinTools(
     LlmToolDecl t;
     t.name = "generate_web_app";
     t.description =
-        "Generate a dynamic web application and "
-        "serve it via the built-in web server. "
-        "Creates a complete HTML/CSS/JS app "
-        "accessible at "
+        "Generate or update a web application "
+        "that runs in the TizenClaw Bridge (WRT). "
+        "The app has access to Tizen Web Device "
+        "APIs (tizen.systeminfo, tizen.application, "
+        "tizen.alarm, tizen.notification, "
+        "tizen.power, tizen.sound, tizen.bluetooth, "
+        "etc.) since it runs in the WRT context. "
+        "Accessible at "
         "http://<device-ip>:9090/apps/<app_id>/. "
-        "Use this to create dashboards, data "
-        "visualizations, device control panels, "
-        "or any interactive web UI on demand. "
-        "The generated app can use the TizenClaw "
-        "REST API (same origin) for live data.";
+        "To UPDATE an existing app, use the same "
+        "app_id — files will be overwritten. "
+        "To modify specific files of an existing "
+        "app, use the file_manager tool with "
+        "/web/apps/<app_id>/ path instead.";
     t.parameters = {
         {"type", "object"},
         {"properties",

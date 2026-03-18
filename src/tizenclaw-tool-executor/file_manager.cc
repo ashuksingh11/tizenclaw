@@ -35,6 +35,7 @@ const std::string kAppDataDir = "/opt/usr/share/tizenclaw";
 const std::vector<std::string> kAllowedPaths = {
     kAppDataDir + "/tools/custom_skills",
     kAppDataDir + "/data",
+    kAppDataDir + "/web/apps",
 };
 
 constexpr size_t kMaxFileSize = 10 * 1024 * 1024;  // 10 MB

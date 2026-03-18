@@ -639,6 +639,17 @@ do_deploy() {
       log "[DRY-RUN] Download ${ngrok_url} and push to /usr/bin/ngrok"
     fi
   fi
+
+  # 3-6. Install TizenClaw Bridge WGT (if present)
+  local wgt_file="${PROJECT_DIR}/data/wgt/TizenClawBridge.wgt"
+  if [ -f "${wgt_file}" ]; then
+    log "Installing TizenClaw Bridge WGT..."
+    run sdb_cmd push "${wgt_file}" /tmp/TizenClawBridge.wgt
+    run sdb_shell pkgcmd -i -t wgt -p /tmp/TizenClawBridge.wgt -q 2>/dev/null || \
+      run sdb_shell pkgcmd -i -t wgt -p /tmp/TizenClawBridge.wgt -f -q 2>/dev/null || true
+    run sdb_shell rm -f /tmp/TizenClawBridge.wgt
+    ok "Bridge WGT installed"
+  fi
 }
 
 # ─────────────────────────────────────────────
