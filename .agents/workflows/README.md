@@ -16,7 +16,7 @@ When adding a new workflow, you must also update this list.
 
 | Slash Command | File | Description |
 |---|---|---|
-| `/AGENTS` | `AGENTS.md` | Main development workflow (Plan → Develop → Verify → Review → Commit) |
+| `/AGENTS` | [`../../AGENTS.md`](../../AGENTS.md) | Main development workflow (project root) |
 | `/code_review` | `code_review.md` | Code review checklist and Review-Fix loop (max 5 iterations) |
 | `/gbs_build` | `gbs_build.md` | Execute Tizen gbs build and verify build results |
 | `/deploy_to_emulator` | `deploy_to_emulator.md` | Deploy RPM to emulator/device via sdb |

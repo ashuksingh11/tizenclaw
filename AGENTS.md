@@ -1,16 +1,15 @@
----
-description: Main Development Workflow (Plan -> Develop -> Verify -> Review)
----
-
 # TizenClaw Main Development Workflow
 
-This workflow defines the core development process (Plan → Develop → Verify → Review → Commit) for the TizenClaw project. The AGENT must always follow this process when performing tasks.
+This document defines the core development process (Plan → Develop → Verify → Review → Commit) for the TizenClaw project. The AGENT must always follow this process when performing tasks.
+
+> [!IMPORTANT]
+> For detailed procedures on each topic, refer to the workflow documents under [`.agents/workflows/`](.agents/workflows/).
 
 ## 1. Plan
 - Accurately understand the objectives and requirements.
-- Analyze existing code and check applicable workflows (e.g., `/coding_rules`, `/commit_guidelines`). See `README.md` for the full workflow index. **CRITICAL**: The Agent MUST strictly adhere to the project's coding style as defined in `coding_rules.md` (e.g., Google C++ Style, 2-space indentation, trailing underscore `_` for members). Do not introduce or mimic inconsistent styles found in older legacy parts of the codebase.
+- Analyze existing code and check applicable workflows. **CRITICAL**: The Agent MUST strictly adhere to the project's coding style as defined in [`.agents/workflows/coding_rules.md`](.agents/workflows/coding_rules.md) (e.g., Google C++ Style, 2-space indentation, trailing underscore `_` for members). Do not introduce or mimic inconsistent styles found in older legacy parts of the codebase.
 - **CRITICAL BRANCH POLICY**: Do not create or switch to new branches for development or feature work. Always apply patches, make commits, and push changes directly to the **current branch** you are currently on. Maintain this single-branch development policy at all times.
-- **WORKFLOW DOC POLICY**: Workflow documents (.md) must only be created or modified after the corresponding feature has been fully verified (build, deploy, and runtime validation) on an actual device. Writing workflow documents for unverified features is prohibited. When adding a new workflow, you must also update the `README.md` index.
+- **WORKFLOW DOC POLICY**: Workflow documents (.md) must only be created or modified after the corresponding feature has been fully verified (build, deploy, and runtime validation) on an actual device. Writing workflow documents for unverified features is prohibited. When adding a new workflow, you must also update the workflow README.
 - Write a work unit (`task.md`) and establish a detailed plan before implementation.
 
 ## 2. Develop & Deploy
@@ -19,6 +18,8 @@ This workflow defines the core development process (Plan → Develop → Verify 
   - Run: `./deploy.sh`
   - The script will automatically trigger a `gbs build`, locate the built rpm packages, install them on the device, and restart the `tizenclaw` service.
   - **IMPORTANT**: Do NOT run raw `gbs build` commands directly. Always use `deploy.sh` for build and deployment. Raw GBS commands should only be executed when explicitly requested by the user.
+  - For advanced build options, refer to [`.agents/workflows/gbs_build.md`](.agents/workflows/gbs_build.md).
+  - For deployment details, refer to [`.agents/workflows/deploy_to_emulator.md`](.agents/workflows/deploy_to_emulator.md).
 
 ## 3. Verify
 Once `deploy.sh` successfully finishes:
@@ -31,16 +32,17 @@ Once `deploy.sh` successfully finishes:
   - Streaming: `sdb shell tizenclaw-cli --stream "your prompt here"`
   - Interactive mode: `sdb shell tizenclaw-cli` (type prompts, Ctrl+D to exit)
   - Example (workflow tools): `sdb shell tizenclaw-cli "Use the list_workflows tool to show the workflow list"`
+  - For detailed CLI testing procedures, refer to [`.agents/workflows/cli_testing.md`](.agents/workflows/cli_testing.md).
 - Verify the Web Dashboard is accessible:
   - Dashboard Port: `9090` (e.g., `http://<device-ip>:9090`)
-- If you need a more advanced component test, refer to `/gtest_integration.md`.
+- If you need a more advanced component test, refer to [`.agents/workflows/gtest_integration.md`](.agents/workflows/gtest_integration.md).
 
 > [!TIP]
-> If a crash occurs after deployment, refer to the `crash_debug.md` workflow to analyze the crash dump.
+> If a crash occurs after deployment, refer to [`.agents/workflows/crash_debug.md`](.agents/workflows/crash_debug.md) to analyze the crash dump.
 
 ## 4. Code Review
-After verification passes, perform a code review on all changed files using the `code_review.md` workflow checklist:
-1. **Coding Style** — `coding_rules.md` compliance
+After verification passes, perform a code review on all changed files using the [`.agents/workflows/code_review.md`](.agents/workflows/code_review.md) workflow checklist:
+1. **Coding Style** — [`.agents/workflows/coding_rules.md`](.agents/workflows/coding_rules.md) compliance
 2. **Correctness** — logic errors, boundary conditions, missing error handling
 3. **Memory Issues** — memory leaks, dangling pointer, use-after-free
 4. **Performance** — unnecessary copies, inefficient loops, lock contention
@@ -59,10 +61,8 @@ After verification passes, perform a code review on all changed files using the 
 > [!CAUTION]
 > If the Review-Fix loop exceeds 5 iterations, you must report to the user to prevent an infinite loop.
 
-Refer to `code_review.md` for the detailed checklist and procedures.
-
 ## 5. Commit (Completion of Work)
-When all review passes, perform a `git commit` to finalize the work according to the `commit_guidelines.md` workflow.
+When all review passes, perform a `git commit` to finalize the work according to [`.agents/workflows/commit_guidelines.md`](.agents/workflows/commit_guidelines.md).
 Refer to the detailed rules in the respective workflow, but the core points are as follows.
 
 ### Basic Structure of a Commit Message
@@ -98,13 +98,16 @@ does not provide the `pkgconfig(lxc)` dependency.
 ---
 
 ## Workflow Reference List
-This is a list of detailed workflow files referenced in this AGENTS workflow.
+Detailed workflow files are located under [`.agents/workflows/`](.agents/workflows/).
 
 | Workflow | File | Referenced Stage |
 |---|---|---|
-| Coding Rules | `coding_rules.md` | Plan |
-| Code Review | `code_review.md` | Code Review |
-| Commit Guidelines | `commit_guidelines.md` | Commit |
-| GTest Unit Testing | `gtest_integration.md` | Verify |
-| Crash Dump Debugging | `crash_debug.md` | Verify |
-| CLI Functional Testing | `cli_testing.md` | Verify |
+| Coding Rules | [`.agents/workflows/coding_rules.md`](.agents/workflows/coding_rules.md) | Plan |
+| Code Review | [`.agents/workflows/code_review.md`](.agents/workflows/code_review.md) | Code Review |
+| Commit Guidelines | [`.agents/workflows/commit_guidelines.md`](.agents/workflows/commit_guidelines.md) | Commit |
+| GBS Build | [`.agents/workflows/gbs_build.md`](.agents/workflows/gbs_build.md) | Develop & Deploy |
+| Deploy to Emulator | [`.agents/workflows/deploy_to_emulator.md`](.agents/workflows/deploy_to_emulator.md) | Develop & Deploy |
+| GTest Unit Testing | [`.agents/workflows/gtest_integration.md`](.agents/workflows/gtest_integration.md) | Verify |
+| CLI Functional Testing | [`.agents/workflows/cli_testing.md`](.agents/workflows/cli_testing.md) | Verify |
+| Crash Dump Debugging | [`.agents/workflows/crash_debug.md`](.agents/workflows/crash_debug.md) | Verify |
+| WSL Environment | [`.agents/workflows/wsl_environment.md`](.agents/workflows/wsl_environment.md) | Setup |
