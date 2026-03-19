@@ -147,6 +147,11 @@ class AgentCore {
   std::string ExecuteRagOp(const std::string& operation,
                            const nlohmann::json& args);
 
+  // Lookup Tizen Web API reference docs
+  // (list, read, search)
+  std::string ExecuteWebApiLookup(const std::string& operation,
+                                  const nlohmann::json& args);
+
   // Execute memory operations
   // (remember, recall, forget)
   std::string ExecuteMemoryOp(

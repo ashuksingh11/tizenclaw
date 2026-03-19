@@ -380,6 +380,51 @@ void ToolDeclarationBuilder::AppendBuiltinTools(
     tools.push_back(t);
   }
 
+  // lookup_web_api (Tizen Web API reference)
+  {
+    LlmToolDecl t;
+    t.name = "lookup_web_api";
+    t.description =
+        "Look up Tizen Web API reference documentation. "
+        "Use 'list' to see all available API guides and "
+        "Doxygen references (returns index.md). "
+        "Use 'read' with a path from the index to read "
+        "a specific document. "
+        "Use 'search' with a query to find matching "
+        "documents by keyword. "
+        "ALWAYS use this tool when generating Tizen "
+        "web app code that uses device APIs.";
+    t.parameters = {
+        {"type", "object"},
+        {"properties",
+         {{"operation",
+           {{"type", "string"},
+            {"enum",
+             nlohmann::json::array(
+                 {"list", "read", "search"})},
+            {"description",
+             "list: show index, "
+             "read: get a doc by path, "
+             "search: keyword search"}}},
+          {"path",
+           {{"type", "string"},
+            {"description",
+             "Relative path within the "
+             "web API docs (for 'read'). "
+             "e.g. 'guides/alarm/alarms.md' "
+             "or 'api/10.0/device_api/"
+             "mobile/tizen/alarm.md'"}}},
+          {"query",
+           {{"type", "string"},
+            {"description",
+             "Search keyword "
+             "(for 'search')"}}}}},
+        {"required",
+         nlohmann::json::array(
+             {"operation"})}};
+    tools.push_back(t);
+  }
+
   // run_supervisor
   {
     LlmToolDecl t;

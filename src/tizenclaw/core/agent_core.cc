@@ -1037,8 +1037,11 @@ std::string AgentCore::LoadSystemPrompt(const nlohmann::json& config) {
   return "You are TizenClaw, an AI assistant running "
          "on a Tizen device. You can control the device "
          "using the available tools. You possess extensive "
-         "documentation on Tizen Native APIs in your knowledge base; "
-         "always use the search_knowledge tool for Tizen development queries. "
+         "documentation on Tizen APIs in your knowledge base; "
+         "use the search_knowledge tool for Tizen Native API queries "
+         "and the lookup_web_api tool for Tizen Web API queries. "
+         "When generating Tizen web app code, ALWAYS use "
+         "lookup_web_api first to look up the correct API usage. "
          "Always respond in the same language as the user's message. "
          "Be concise and helpful.";
 }
@@ -1650,6 +1653,149 @@ std::string AgentCore::ExecuteRagOp(const std::string& operation,
   }
 
   return "{\"error\": \"Unknown RAG operation\"}";
+}
+
+std::string AgentCore::ExecuteWebApiLookup(
+    const std::string& operation,
+    const nlohmann::json& args) {
+  const std::string rag_base =
+      std::string(APP_DATA_DIR) + "/rag/web";
+
+  if (operation == "list") {
+    // Return index.md contents
+    std::string index_path = rag_base + "/index.md";
+    std::ifstream f(index_path);
+    if (!f.is_open()) {
+      return "{\"error\": \"Web API index not found. "
+             "RAG data may not be installed.\"}";
+    }
+    std::string content(
+        (std::istreambuf_iterator<char>(f)),
+        std::istreambuf_iterator<char>());
+    f.close();
+    return nlohmann::json(
+               {{"status", "ok"},
+                {"operation", "list"},
+                {"content", content}})
+        .dump();
+  }
+
+  if (operation == "read") {
+    std::string rel_path = args.value("path", "");
+    if (rel_path.empty()) {
+      return "{\"error\": \"path is required "
+             "for read operation\"}";
+    }
+
+    // Path traversal protection
+    if (rel_path.find("..") != std::string::npos) {
+      return "{\"error\": \"Invalid path\"}";
+    }
+
+    std::string full_path = rag_base + "/" + rel_path;
+    std::ifstream f(full_path);
+    if (!f.is_open()) {
+      return nlohmann::json(
+                 {{"error",
+                   "File not found: " + rel_path}})
+          .dump();
+    }
+    std::string content(
+        (std::istreambuf_iterator<char>(f)),
+        std::istreambuf_iterator<char>());
+    f.close();
+
+    // Truncate very large files to prevent
+    // context overflow
+    const size_t MAX_CONTENT = 32000;
+    bool truncated = false;
+    if (content.size() > MAX_CONTENT) {
+      content = content.substr(0, MAX_CONTENT);
+      truncated = true;
+    }
+
+    return nlohmann::json(
+               {{"status", "ok"},
+                {"operation", "read"},
+                {"path", rel_path},
+                {"content", content},
+                {"truncated", truncated}})
+        .dump();
+  }
+
+  if (operation == "search") {
+    std::string query = args.value("query", "");
+    if (query.empty()) {
+      return "{\"error\": \"query is required "
+             "for search operation\"}";
+    }
+
+    // Case-insensitive keyword search
+    std::string query_lower = query;
+    std::transform(query_lower.begin(),
+                   query_lower.end(),
+                   query_lower.begin(), ::tolower);
+
+    nlohmann::json matches = nlohmann::json::array();
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    int max_results = 20;
+
+    for (const auto& entry :
+         fs::recursive_directory_iterator(
+             rag_base, ec)) {
+      if (!entry.is_regular_file()) continue;
+      if (entry.path().extension() != ".md") continue;
+      if (matches.size() >= static_cast<size_t>(
+              max_results))
+        break;
+
+      std::ifstream f(entry.path());
+      if (!f.is_open()) continue;
+
+      std::string line;
+      int line_num = 0;
+      bool found = false;
+      std::string snippet;
+
+      while (std::getline(f, line)) {
+        line_num++;
+        std::string line_lower = line;
+        std::transform(line_lower.begin(),
+                       line_lower.end(),
+                       line_lower.begin(),
+                       ::tolower);
+        if (line_lower.find(query_lower) !=
+            std::string::npos) {
+          if (!found) {
+            snippet = line.substr(
+                0, std::min((size_t)200,
+                            line.size()));
+            found = true;
+          }
+        }
+      }
+      f.close();
+
+      if (found) {
+        std::string rel = fs::relative(
+            entry.path(), rag_base, ec).string();
+        matches.push_back(
+            {{"path", rel}, {"snippet", snippet}});
+      }
+    }
+
+    return nlohmann::json(
+               {{"status", "ok"},
+                {"operation", "search"},
+                {"query", query},
+                {"results", matches},
+                {"total", matches.size()}})
+        .dump();
+  }
+
+  return "{\"error\": \"Unknown operation. "
+         "Use: list, read, or search\"}";
 }
 
 std::vector<float> AgentCore::GenerateEmbedding(const std::string& text) {
@@ -2533,6 +2679,15 @@ void AgentCore::InitializeToolDispatcher() {
           return ExecuteRagOp(name, args);
         };
   }
+
+  tool_dispatch_["lookup_web_api"] =
+      [this](const nlohmann::json& args,
+             const std::string&,
+             const std::string&) {
+        std::string op =
+            args.value("operation", "");
+        return ExecuteWebApiLookup(op, args);
+      };
 
   for (const auto& n :
        {"run_supervisor",
