@@ -606,7 +606,22 @@ do_deploy() {
 
   ok "All RPMs processed"
 
-  # 3-5. Auto-download and install ngrok if requested
+  # 3-5. Extract RAG web docs (ensure fresh unzip)
+  log "Extracting RAG web docs..."
+  if [ "${DRY_RUN}" = false ]; then
+    sdb_shell "if [ -f /opt/usr/share/tizenclaw/rag/web.zip ]; then \
+      rm -rf /opt/usr/share/tizenclaw/rag/web && \
+      mkdir -p /opt/usr/share/tizenclaw/rag/web && \
+      unzip -o -q /opt/usr/share/tizenclaw/rag/web.zip \
+        -d /opt/usr/share/tizenclaw/rag/web && \
+      echo RAG_OK; \
+    else echo RAG_SKIP; fi" 2>/dev/null
+    ok "RAG web docs extracted"
+  else
+    log "[DRY-RUN] Unzip web.zip -> /opt/usr/share/tizenclaw/rag/web/"
+  fi
+
+  # 3-6. Auto-download and install ngrok if requested
   if [ "${WITH_NGROK}" = true ]; then
     log "Auto-installing ngrok..."
     local ngrok_arch
@@ -640,7 +655,7 @@ do_deploy() {
     fi
   fi
 
-  # 3-6. Install TizenClaw Bridge WGT (if present)
+  # 3-7. Install TizenClaw Bridge WGT (if present)
   local wgt_file="${PROJECT_DIR}/data/wgt/TizenClawBridge.wgt"
   if [ -f "${wgt_file}" ]; then
     log "Installing TizenClaw Bridge WGT..."
