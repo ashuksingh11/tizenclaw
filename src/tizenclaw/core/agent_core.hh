@@ -184,6 +184,10 @@ class AgentCore {
   // Load tool routing guide from MD
   std::string LoadRoutingGuide();
 
+  // Load condensed web API catalog from
+  // rag/web/index.md for system prompt injection
+  std::string LoadWebApiCatalog();
+
   // Build final system prompt with dynamic
   // skill list
   std::string BuildSystemPrompt(const std::vector<LlmToolDecl>& tools);
@@ -222,6 +226,9 @@ class AgentCore {
 
   // System prompt loaded from external file
   std::string system_prompt_;
+
+  // Condensed web API catalog for system prompt
+  std::string web_api_catalog_;
 
   // Session-based conversation history
   std::map<std::string, std::vector<LlmMessage>> sessions_;

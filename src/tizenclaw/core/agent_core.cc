@@ -165,6 +165,13 @@ bool AgentCore::Initialize() {
     LOG(WARNING) << "No system prompt configured";
   }
 
+  // Load condensed web API catalog for prompt
+  web_api_catalog_ = LoadWebApiCatalog();
+  if (!web_api_catalog_.empty()) {
+    LOG(INFO) << "Web API catalog loaded ("
+              << web_api_catalog_.size() << " chars)";
+  }
+
   // Load tool execution policy
   std::string policy_path =
       "/opt/usr/share/tizenclaw/config/"
@@ -1038,10 +1045,7 @@ std::string AgentCore::LoadSystemPrompt(const nlohmann::json& config) {
          "on a Tizen device. You can control the device "
          "using the available tools. You possess extensive "
          "documentation on Tizen APIs in your knowledge base; "
-         "use the search_knowledge tool for Tizen Native API queries "
-         "and the lookup_web_api tool for Tizen Web API queries. "
-         "When generating Tizen web app code, ALWAYS use "
-         "lookup_web_api first to look up the correct API usage. "
+         "use the search_knowledge tool for Tizen Native API queries. "
          "Always respond in the same language as the user's message. "
          "Be concise and helpful.";
 }
@@ -1061,9 +1065,99 @@ std::string AgentCore::LoadRoutingGuide() {
   return "";
 }
 
+std::string AgentCore::LoadWebApiCatalog() {
+  const std::string index_path =
+      std::string(APP_DATA_DIR) + "/rag/web/index.md";
+  std::ifstream f(index_path);
+  if (!f.is_open()) return "";
+
+  // Parse index.md: extract ## and ### headings
+  // and collect API names under each category
+  std::string catalog;
+  catalog += "\n\n## Tizen Web API Reference\n";
+  catalog += "You have access to Tizen Web API docs. ";
+  catalog += "Use `lookup_web_api` tool to read them.\n";
+  catalog += "- operation=\"read\", path=\"<path>\" ";
+  catalog += "to read a specific doc\n";
+  catalog += "- operation=\"search\", query=\"<keyword>\" ";
+  catalog += "to search by keyword\n\n";
+
+  std::string line;
+  std::string current_h2;
+  std::string current_h3;
+  std::vector<std::string> items;
+
+  auto flush_section = [&]() {
+    if (!current_h3.empty() && !items.empty()) {
+      catalog += "- **" + current_h3 + "**: ";
+      // Show first few items, then count
+      const size_t MAX_SHOW = 5;
+      for (size_t i = 0;
+           i < std::min(MAX_SHOW, items.size()); i++) {
+        if (i > 0) catalog += ", ";
+        catalog += items[i];
+      }
+      if (items.size() > MAX_SHOW) {
+        catalog += " (+ " +
+            std::to_string(items.size() - MAX_SHOW) +
+            " more)";
+      }
+      catalog += "\n";
+    }
+    items.clear();
+  };
+
+  while (std::getline(f, line)) {
+    if (line.substr(0, 3) == "## " &&
+        line.substr(0, 4) != "### ") {
+      flush_section();
+      current_h2 = line.substr(3);
+      catalog += "\n### " + current_h2 + "\n";
+      current_h3.clear();
+    } else if (line.substr(0, 4) == "### ") {
+      flush_section();
+      current_h3 = line.substr(4);
+    } else if (line.size() > 4 &&
+               line.substr(0, 3) == "- [") {
+      // Extract: - [Name](path) -> name and path
+      auto bracket_end = line.find(']');
+      auto paren_start = line.find('(');
+      auto paren_end = line.find(')');
+      if (bracket_end != std::string::npos &&
+          paren_start != std::string::npos &&
+          paren_end != std::string::npos) {
+        std::string name =
+            line.substr(3, bracket_end - 3);
+        std::string path = line.substr(
+            paren_start + 1,
+            paren_end - paren_start - 1);
+        // For first item in a section, show path
+        if (items.empty()) {
+          items.push_back(
+              name + " (`" + path + "`)" );
+        } else {
+          items.push_back(name);
+        }
+      }
+    }
+  }
+  flush_section();
+  f.close();
+
+  catalog += "\n> IMPORTANT: When generating Tizen web ";
+  catalog += "app code, ALWAYS call lookup_web_api ";
+  catalog += "with operation=\"read\" to read the ";
+  catalog += "relevant API document BEFORE writing ";
+  catalog += "code. The paths shown above are the ";
+  catalog += "exact paths to use.\n";
+
+  return catalog;
+}
+
 std::string AgentCore::BuildSystemPrompt(
     const std::vector<LlmToolDecl>& tools) {
-  std::string prompt = system_prompt_ + LoadRoutingGuide();
+  std::string prompt = system_prompt_ +
+      LoadRoutingGuide() + web_api_catalog_;
 
   // Build tool list string
   std::string tool_list;
