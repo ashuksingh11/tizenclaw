@@ -3325,6 +3325,8 @@ bool AgentCore::LaunchBridgeApp(
     const std::string& app_id) {
   constexpr const char* kBridgeAppId =
       "QvaPeQ7RDA.tizenclawbridge";
+  constexpr const char* kWebviewAppId =
+      "org.tizen.tizenclaw-webview";
   std::string app_url =
       "http://localhost:9090/apps/" + app_id + "/";
 
@@ -3355,7 +3357,30 @@ bool AgentCore::LaunchBridgeApp(
   LOG(WARNING) << "LaunchBridgeApp: "
                << kBridgeAppId
                << " not available (ret="
-               << ret << ")";
+               << ret << "), trying webview";
+
+  // Fallback: try tizenclaw-webview with
+  // __APP_SVC_URI__ key
+  bundle* wb = bundle_create();
+  if (wb) {
+    bundle_add_str(
+        wb, "__APP_SVC_URI__", app_url.c_str());
+    int wret = aul_launch_app(kWebviewAppId, wb);
+    bundle_free(wb);
+    if (wret >= 0) {
+      LOG(INFO) << "LaunchBridgeApp: launched "
+                << kWebviewAppId
+                << " with URI=" << app_url;
+      return true;
+    }
+    LOG(WARNING) << "LaunchBridgeApp: "
+                 << kWebviewAppId
+                 << " launch failed (ret="
+                 << wret << ")";
+  }
+
+  LOG(WARNING) << "LaunchBridgeApp: "
+               << "no webview app available";
   return false;
 }
 
