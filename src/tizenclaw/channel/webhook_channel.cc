@@ -187,6 +187,14 @@ void WebhookChannel::HandleRequest(SoupServer* server, SoupMessage* msg,
     return;
   }
 
+  // Reject new requests during shutdown to prevent Stop() deadlock.
+  if (!self->running_.load()) {
+    soup_message_set_status(msg, SOUP_STATUS_SERVICE_UNAVAILABLE);
+    soup_message_set_response(msg, "application/json", SOUP_MEMORY_COPY,
+                              "{\"error\":\"Shutting down\"}", 24);
+    return;
+  }
+
   // Run ProcessPrompt on a worker thread to avoid
   // blocking the GMainLoop (prevents deadlock).
   g_object_ref(msg);  // prevent libsoup from freeing msg early
@@ -214,10 +222,6 @@ void WebhookChannel::HandleRequest(SoupServer* server, SoupMessage* msg,
       ctx->result = "Error: agent not available";
     }
 
-    // Capture channel before g_main_context_invoke, because the
-    // callback may delete ctx on the GMainLoop thread.
-    auto* ch = ctx->channel;
-
     g_main_context_invoke(
         ctx->context,
         [](gpointer data) -> gboolean {
@@ -238,17 +242,20 @@ void WebhookChannel::HandleRequest(SoupServer* server, SoupMessage* msg,
           soup_server_unpause_message(
               c->server, c->msg);
           g_object_unref(c->msg);  // release our ref
+
+          // Decrement pending workers and notify Stop() on the
+          // GMainLoop thread to avoid use-after-free on the
+          // detached worker thread.
+          auto* ch = c->channel;
           delete c;
+          ch->pending_workers_.fetch_sub(1);
+          {
+            std::lock_guard<std::mutex> lk(ch->workers_mutex_);
+            ch->workers_cv_.notify_all();
+          }
           return G_SOURCE_REMOVE;
         },
         ctx);
-
-    // Decrement pending workers and notify Stop()
-    ch->pending_workers_.fetch_sub(1);
-    {
-      std::lock_guard<std::mutex> lk(ch->workers_mutex_);
-      ch->workers_cv_.notify_all();
-    }
   }).detach();
 }
 

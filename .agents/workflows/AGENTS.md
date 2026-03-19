@@ -18,6 +18,7 @@ This workflow defines the core development process (Plan → Develop → Verify 
 - After writing code, use the `deploy.sh` script to build, deploy, and restart the daemon via a single command.
   - Run: `./deploy.sh`
   - The script will automatically trigger a `gbs build`, locate the built rpm packages, install them on the device, and restart the `tizenclaw` service.
+  - **IMPORTANT**: Do NOT run raw `gbs build` commands directly. Always use `deploy.sh` for build and deployment. Raw GBS commands should only be executed when explicitly requested by the user.
 
 ## 3. Verify
 Once `deploy.sh` successfully finishes:

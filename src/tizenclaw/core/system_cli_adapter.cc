@@ -230,6 +230,9 @@ void SystemCliAdapter::ScanSystemdServices(
   }
 
   int discovered = 0;
+  // Collect discovered tools first, then merge under the lock.
+  std::map<std::string, SystemCliToolConfig> discovered_tools;
+
   for (const auto& entry : fs::directory_iterator(systemd_dir, ec)) {
     if (!entry.is_regular_file()) continue;
 
@@ -284,10 +287,7 @@ void SystemCliAdapter::ScanSystemdServices(
 
       // Binary doesn't exist: likely a CLI tool candidate
       std::string tool_name = fs::path(bin_path).filename().string();
-
-      std::lock_guard<std::mutex> lock(mutex_);
-      // Config-defined tools take precedence
-      if (tools_.contains(tool_name)) continue;
+      if (discovered_tools.contains(tool_name)) continue;
 
       SystemCliToolConfig tool_cfg;
       tool_cfg.binary_path = bin_path;
@@ -296,10 +296,21 @@ void SystemCliAdapter::ScanSystemdServices(
       tool_cfg.description =
           "Auto-discovered from " + filename;
 
-      tools_[tool_name] = std::move(tool_cfg);
+      discovered_tools[tool_name] = std::move(tool_cfg);
       discovered++;
       LOG(INFO) << "SystemCliAdapter: auto-discovered '"
                 << tool_name << "' from " << filename;
+    }
+  }
+
+  // Merge discovered tools under the lock.
+  // Config-defined tools take precedence.
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto& [name, cfg] : discovered_tools) {
+      if (!tools_.contains(name)) {
+        tools_[name] = std::move(cfg);
+      }
     }
   }
 
@@ -310,7 +321,7 @@ void SystemCliAdapter::ScanSystemdServices(
 void SystemCliAdapter::RegisterCapabilities() {
   auto& reg = CapabilityRegistry::GetInstance();
 
-  // Lock is already held or we read from stable state
+  std::lock_guard<std::mutex> lock(mutex_);
   for (const auto& [name, cfg] : tools_) {
     Capability cap;
     cap.name = "system_cli:" + name;

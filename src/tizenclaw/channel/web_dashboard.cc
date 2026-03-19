@@ -758,6 +758,14 @@ void WebDashboard::ApiChat(SoupMessage* msg) {
     return;
   }
 
+  // Reject new requests during shutdown to prevent Stop() deadlock.
+  if (!running_.load()) {
+    soup_message_set_status(msg, SOUP_STATUS_SERVICE_UNAVAILABLE);
+    soup_message_set_response(msg, "application/json", SOUP_MEMORY_COPY,
+                              "{\"error\":\"Shutting down\"}", 24);
+    return;
+  }
+
   // Pause the HTTP response so the GMainLoop thread is not blocked.
   // ProcessPrompt runs on a worker thread; once it finishes, the
   // result is dispatched back via g_main_context_invoke and the message is
@@ -779,12 +787,8 @@ void WebDashboard::ApiChat(SoupMessage* msg) {
     ctx->result = ctx->self->agent_->ProcessPrompt(
         ctx->session_id, prompt);
 
-    // Capture self before g_main_context_invoke, because the
-    // callback may delete ctx on the GMainLoop thread.
-    auto* self = ctx->self;
-
     g_main_context_invoke(
-        self->context_,
+        ctx->self->context_,
         [](gpointer data) -> gboolean {
           auto* c = static_cast<ChatCtx*>(data);
           nlohmann::json resp = {
@@ -803,17 +807,20 @@ void WebDashboard::ApiChat(SoupMessage* msg) {
           soup_server_unpause_message(
               c->self->server_, c->msg);
           g_object_unref(c->msg);  // release our ref
+
+          // Decrement pending workers and notify Stop() on the
+          // GMainLoop thread to avoid use-after-free on the
+          // detached worker thread.
+          auto* self = c->self;
           delete c;
+          self->pending_workers_.fetch_sub(1);
+          {
+            std::lock_guard<std::mutex> lk(self->workers_mutex_);
+            self->workers_cv_.notify_all();
+          }
           return G_SOURCE_REMOVE;
         },
         ctx);
-
-    // Decrement pending workers and notify Stop()
-    self->pending_workers_.fetch_sub(1);
-    {
-      std::lock_guard<std::mutex> lk(self->workers_mutex_);
-      self->workers_cv_.notify_all();
-    }
   }).detach();
 }
 
