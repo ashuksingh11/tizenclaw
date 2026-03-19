@@ -43,6 +43,7 @@ NOINIT=false
 INCREMENTAL=false
 SKIP_BUILD=false
 DRY_RUN=false
+DEBUG_MODE=false
 DEVICE_SERIAL=""
 WITH_NGROK=false
 RUN_TESTS=false
@@ -277,6 +278,7 @@ ${CYAN}Options:${NC}
       --with-bridge     Install TizenClawBridge WGT on the device
   -w, --with-ngrok      Auto-download and push ngrok binary to the device
   -d, --device <serial> Target a specific sdb device
+      --debug           Run tizenclaw natively on Host Linux (debug mode)
       --dry-run         Print commands without executing
   -h, --help            Show this help
 
@@ -311,6 +313,7 @@ parse_args() {
       --with-bridge)   WITH_BRIDGE=true; shift ;;
       -w|--with-ngrok) WITH_NGROK=true; shift ;;
       -d|--device)     DEVICE_SERIAL="$2"; shift 2 ;;
+      --debug)         DEBUG_MODE=true; shift ;;
       --dry-run)       DRY_RUN=true; shift ;;
       -h|--help)       usage ;;
       *)               fail "Unknown option: $1 (use --help)" ;;
@@ -513,12 +516,20 @@ find_rpm() {
   log "Searching in: ${RPMS_DIR}"
 
   # Find all matching RPMs (exclude unittests, debuginfo, debugsource)
-  mapfile -t RPM_FILES < <(find "${RPMS_DIR}" -maxdepth 1 \
-    -name "${PKG_NAME}*.rpm" \
-    ! -name "*-unittests-*" \
-    ! -name "*-debuginfo-*" \
-    ! -name "*-debugsource-*" \
-    2>/dev/null | sort)
+  if [ "${DEBUG_MODE}" = true ]; then
+    log "Debug mode enabled: Including debuginfo packages"
+    mapfile -t RPM_FILES < <(find "${RPMS_DIR}" -maxdepth 1 \
+      -name "${PKG_NAME}*.rpm" \
+      ! -name "*-unittests-*" \
+      2>/dev/null | sort)
+  else
+    mapfile -t RPM_FILES < <(find "${RPMS_DIR}" -maxdepth 1 \
+      -name "${PKG_NAME}*.rpm" \
+      ! -name "*-unittests-*" \
+      ! -name "*-debuginfo-*" \
+      ! -name "*-debugsource-*" \
+      2>/dev/null | sort)
+  fi
 
   if [ ${#RPM_FILES[@]} -eq 0 ]; then
     fail "No ${PKG_NAME} RPMs found in ${RPMS_DIR}/\n       Run a build first or remove --skip-build"
@@ -671,6 +682,19 @@ do_deploy() {
       ok "Bridge WGT installed"
     else
       warn "Bridge WGT not found: ${wgt_file}"
+    fi
+  fi
+
+  if [ "${DEBUG_MODE}" = true ]; then
+    local debug_service="${PROJECT_DIR}/packaging/tizenclaw-debug.service"
+    if [ -f "${debug_service}" ]; then
+      log "Overwriting tizenclaw.service with tizenclaw-debug.service for pure Host Linux execution..."
+      run sdb_cmd push "${debug_service}" /tmp/tizenclaw.service
+      run sdb_shell mv /tmp/tizenclaw.service /usr/lib/systemd/system/tizenclaw.service
+      run sdb_shell chmod 644 /usr/lib/systemd/system/tizenclaw.service
+      ok "tizenclaw.service replaced with debug version"
+    else
+      warn "Debug service file not found: ${debug_service}"
     fi
   fi
 }

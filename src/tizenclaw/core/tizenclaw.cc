@@ -655,6 +655,17 @@ int main(int argc, char* argv[]) {
     LOG(ERROR) << "Failed to initialize file log: " << e.what();
   }
 
+  bool is_debug_mode = false;
+  for (int i = 1; i < argc; ++i) {
+    if (std::string(argv[i]) == "--debug") {
+      is_debug_mode = true;
+    }
+  }
+
+  if (is_debug_mode) {
+    LOG(INFO) << "Starting TizenClaw in Host Linux debug mode";
+  }
+
   // --mcp-stdio mode: run MCP Server on stdio
   // without daemon event loop
   if (argc > 1 && std::string(argv[1]) == "--mcp-stdio") {
