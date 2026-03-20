@@ -43,6 +43,7 @@
 #include "../../common/file_log_backend.hh"
 #include "../channel/mcp_server.hh"
 #include "../infra/key_store.hh"
+#include "system_cli_adapter.hh"
 
 namespace tizenclaw {
 
@@ -639,6 +640,100 @@ void TizenClawDaemon::HandleIpcClient(int client_sock) {
             result = {{"error",
                        "PerceptionEngine not initialized"}};
           }
+          response_json = {
+              {"jsonrpc", "2.0"},
+              {"id", req_id},
+              {"result", result}};
+        } else if (method == "register_system_cli") {
+          auto& sys_cli =
+              SystemCliAdapter::GetInstance();
+          std::string name =
+              params.value("name", "");
+          std::string path =
+              params.value("path", "");
+          std::string description =
+              params.value("description", "");
+          std::string side_effect =
+              params.value("side_effect",
+                           "reversible");
+          int timeout =
+              params.value("timeout_seconds", 10);
+          std::string tool_doc =
+              params.value("tool_doc", "");
+          std::vector<std::string> blocked_args;
+          if (params.contains("blocked_args") &&
+              params["blocked_args"].is_array()) {
+            for (const auto& a :
+                 params["blocked_args"]) {
+              blocked_args.push_back(
+                  a.get<std::string>());
+            }
+          }
+
+          SystemCliToolConfig cfg;
+          cfg.binary_path = path;
+          cfg.timeout_seconds = timeout;
+          cfg.side_effect = side_effect;
+          cfg.description = description;
+          cfg.blocked_args = std::move(blocked_args);
+
+          std::string err =
+              sys_cli.RegisterTool(
+                  name, cfg, tool_doc);
+          if (err.empty()) {
+            // Invalidate cached tools
+            if (agent_) {
+              agent_->ReloadSkills();
+            }
+            response_json = {
+                {"jsonrpc", "2.0"},
+                {"id", req_id},
+                {"result",
+                 {{"status", "ok"},
+                  {"tool", name},
+                  {"message",
+                   "Tool registered "
+                   "successfully"}}}};
+          } else {
+            response_json = {
+                {"jsonrpc", "2.0"},
+                {"id", req_id},
+                {"error",
+                 {{"code", -32602},
+                  {"message", err}}}};
+          }
+        } else if (method == "unregister_system_cli") {
+          auto& sys_cli =
+              SystemCliAdapter::GetInstance();
+          std::string name =
+              params.value("name", "");
+          std::string err =
+              sys_cli.UnregisterTool(name);
+          if (err.empty()) {
+            if (agent_) {
+              agent_->ReloadSkills();
+            }
+            response_json = {
+                {"jsonrpc", "2.0"},
+                {"id", req_id},
+                {"result",
+                 {{"status", "ok"},
+                  {"tool", name},
+                  {"message",
+                   "Tool unregistered "
+                   "successfully"}}}};
+          } else {
+            response_json = {
+                {"jsonrpc", "2.0"},
+                {"id", req_id},
+                {"error",
+                 {{"code", -32602},
+                  {"message", err}}}};
+          }
+        } else if (method == "list_system_cli") {
+          auto result =
+              SystemCliAdapter::GetInstance()
+                  .GetRegisteredToolsJson();
           response_json = {
               {"jsonrpc", "2.0"},
               {"id", req_id},

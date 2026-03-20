@@ -24,9 +24,9 @@ User-defined or AI-generated scripts added at runtime.
 - **Usage**: Use when standard tools/skills are insufficient for a specific, newly defined requirement.
 
 ### E. System CLI Tools (`system_cli`) - Medium Priority
-System-level CLI tools from `/usr/bin` whitelisted via `system_cli_config.json`.
-- **Available tools**: `aul_test` (app lifecycle management), `winfo` (window compositor info/control).
-- **Usage**: Use for app listing/launching/termination (`aul_test`) and window/display diagnostics (`winfo`).
+System-level CLI tools from `/usr/bin` registered via `tizenclaw-cli --register-tool <path>`.
+- **Available tools**: Dynamically registered at runtime. Use `tizenclaw-cli --list-tools` to see current tools.
+- **Usage**: Use for system-level queries and operations that require host-level CLI tools.
 - **Priority**: Use after Tizen Actions but before Python skills for system-level queries.
 
 ## 2. Selection Strategy & Logic

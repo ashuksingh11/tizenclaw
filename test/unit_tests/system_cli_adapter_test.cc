@@ -369,3 +369,130 @@ TEST_F(SystemCliAdapterTest, AutoDiscoverDisabledByDefault) {
   // Should NOT discover because auto_discover is false
   EXPECT_FALSE(adapter.HasTool("hidden_tool"));
 }
+
+TEST_F(SystemCliAdapterTest, RegisterToolRuntime) {
+  WriteConfig(R"({"enabled": true, "tools_dir": ")" +
+      tools_dir_ + R"(", "tools": {}})");
+
+  auto& adapter = SystemCliAdapter::GetInstance();
+  EXPECT_TRUE(adapter.Initialize(config_path_));
+
+  // Create a fake binary
+  std::string fake_bin = test_dir_ + "/bin/new_tool";
+  CreateFakeBinary(fake_bin);
+
+  SystemCliToolConfig cfg;
+  cfg.binary_path = fake_bin;
+  cfg.timeout_seconds = 15;
+  cfg.side_effect = "none";
+  cfg.description = "Dynamically registered tool";
+  cfg.blocked_args = {"--dangerous"};
+
+  std::string tool_doc = "# new_tool\nA new tool\n";
+  std::string err = adapter.RegisterTool(
+      "new_tool", cfg, tool_doc);
+  EXPECT_TRUE(err.empty()) << "Error: " << err;
+  EXPECT_TRUE(adapter.HasTool("new_tool"));
+  EXPECT_EQ(adapter.Resolve("new_tool"), fake_bin);
+  EXPECT_EQ(adapter.GetTimeout("new_tool"), 15);
+
+  // Check tool.md was written
+  namespace fs = std::filesystem;
+  EXPECT_TRUE(fs::exists(
+      tools_dir_ + "/new_tool.tool.md"));
+
+  // Check capability was registered
+  auto* cap = CapabilityRegistry::GetInstance()
+                  .Get("system_cli:new_tool");
+  ASSERT_NE(cap, nullptr);
+  EXPECT_EQ(cap->category, "system_cli");
+}
+
+TEST_F(SystemCliAdapterTest, UnregisterToolRuntime) {
+  std::string fake_bin = test_dir_ + "/bin/tmp_tool";
+  CreateFakeBinary(fake_bin);
+
+  WriteConfig(R"({"enabled": true, "tools_dir": ")" +
+      tools_dir_ + R"(", "tools": {"tmp_tool": {"path": ")" +
+      fake_bin + R"(", "description": "Temp tool"}}})");
+
+  auto& adapter = SystemCliAdapter::GetInstance();
+  EXPECT_TRUE(adapter.Initialize(config_path_));
+  EXPECT_TRUE(adapter.HasTool("tmp_tool"));
+
+  std::string err = adapter.UnregisterTool("tmp_tool");
+  EXPECT_TRUE(err.empty()) << "Error: " << err;
+  EXPECT_FALSE(adapter.HasTool("tmp_tool"));
+
+  // Capability should be unregistered
+  auto* cap = CapabilityRegistry::GetInstance()
+                  .Get("system_cli:tmp_tool");
+  EXPECT_EQ(cap, nullptr);
+}
+
+TEST_F(SystemCliAdapterTest, UnregisterNonexistentTool) {
+  WriteConfig(R"({"enabled": true, "tools_dir": ")" +
+      tools_dir_ + R"(", "tools": {}})");
+
+  auto& adapter = SystemCliAdapter::GetInstance();
+  adapter.Initialize(config_path_);
+
+  std::string err = adapter.UnregisterTool("ghost");
+  EXPECT_FALSE(err.empty());
+}
+
+TEST_F(SystemCliAdapterTest, GetRegisteredToolsJson) {
+  std::string fake_bin = test_dir_ + "/bin/json_tool";
+  CreateFakeBinary(fake_bin);
+
+  WriteConfig(R"({"enabled": true, "tools_dir": ")" +
+      tools_dir_ + R"(", "tools": {"json_tool": {"path": ")" +
+      fake_bin + R"(", "timeout_seconds": 7,
+      "side_effect": "reversible",
+      "description": "JSON test tool"}}})");
+
+  WriteToolDoc("json_tool", "# json_tool\nTest");
+
+  auto& adapter = SystemCliAdapter::GetInstance();
+  adapter.Initialize(config_path_);
+
+  auto result = adapter.GetRegisteredToolsJson();
+  EXPECT_TRUE(result["enabled"].get<bool>());
+  EXPECT_EQ(result["tool_count"].get<int>(), 1);
+  ASSERT_TRUE(result["tools"].is_array());
+  EXPECT_EQ(result["tools"].size(), 1u);
+
+  auto& t = result["tools"][0];
+  EXPECT_EQ(t["name"].get<std::string>(),
+            "json_tool");
+  EXPECT_EQ(t["timeout_seconds"].get<int>(), 7);
+  EXPECT_TRUE(t["has_doc"].get<bool>());
+}
+
+TEST_F(SystemCliAdapterTest, SaveConfigRoundTrip) {
+  WriteConfig(R"({"enabled": true, "tools_dir": ")" +
+      tools_dir_ + R"(", "tools": {}})");
+
+  auto& adapter = SystemCliAdapter::GetInstance();
+  EXPECT_TRUE(adapter.Initialize(config_path_));
+
+  // Register a tool at runtime
+  std::string fake_bin = test_dir_ + "/bin/saved_tool";
+  CreateFakeBinary(fake_bin);
+
+  SystemCliToolConfig cfg;
+  cfg.binary_path = fake_bin;
+  cfg.timeout_seconds = 20;
+  cfg.side_effect = "none";
+  cfg.description = "Saved via config";
+
+  adapter.RegisterTool("saved_tool", cfg, "");
+
+  // Shutdown and reinitialize from same config
+  adapter.Shutdown();
+  CapabilityRegistry::GetInstance().Clear();
+  EXPECT_TRUE(adapter.Initialize(config_path_));
+  EXPECT_TRUE(adapter.HasTool("saved_tool"));
+  EXPECT_EQ(adapter.GetTimeout("saved_tool"), 20);
+}
+

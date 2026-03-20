@@ -250,3 +250,85 @@ void ResponsePrinter::PrintPerceptionStatus(
 
 }  // namespace cli
 }  // namespace tizenclaw
+
+// Extend outside namespace block to avoid issues
+namespace tizenclaw {
+namespace cli {
+
+void ResponsePrinter::PrintToolList(
+    const std::string& body) {
+  try {
+    auto j = nlohmann::json::parse(body);
+    auto res = j.value("result",
+                       nlohmann::json::object());
+    bool enabled = res.value("enabled", false);
+    int count = res.value("tool_count", 0);
+
+    std::cout << "=== System CLI Tools ===\n"
+              << "  Enabled: "
+              << (enabled ? "yes" : "no")
+              << "\n  Registered: " << count
+              << "\n\n";
+
+    if (res.contains("tools") &&
+        res["tools"].is_array()) {
+      for (const auto& t : res["tools"]) {
+        std::string name =
+            t.value("name", "?");
+        std::string path =
+            t.value("path", "?");
+        std::string desc =
+            t.value("description", "");
+        int timeout =
+            t.value("timeout_seconds", 10);
+        std::string se =
+            t.value("side_effect", "none");
+        bool doc = t.value("has_doc", false);
+
+        std::cout << "  " << name << "\n"
+                  << "    Path: " << path << "\n"
+                  << "    Desc: " << desc << "\n"
+                  << "    Timeout: " << timeout
+                  << "s  Side-effect: " << se
+                  << "  Doc: "
+                  << (doc ? "yes" : "no")
+                  << "\n\n";
+      }
+    }
+    if (count == 0) {
+      std::cout
+          << "  (no tools registered)\n"
+          << "  Use --register-tool <path> "
+          << "to add tools\n";
+    }
+  } catch (...) {
+    std::cout << body << "\n";
+  }
+}
+
+void ResponsePrinter::PrintToolResult(
+    const std::string& body) {
+  try {
+    auto j = nlohmann::json::parse(body);
+    if (j.contains("result")) {
+      auto res = j["result"];
+      std::cout << res.value("message", "OK")
+                << ": "
+                << res.value("tool", "")
+                << "\n";
+    } else if (j.contains("error")) {
+      auto err = j["error"];
+      std::cerr << "Error: "
+                << err.value("message",
+                             "Unknown error")
+                << "\n";
+    } else {
+      std::cout << body << "\n";
+    }
+  } catch (...) {
+    std::cout << body << "\n";
+  }
+}
+
+}  // namespace cli
+}  // namespace tizenclaw

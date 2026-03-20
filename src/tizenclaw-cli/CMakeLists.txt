@@ -5,6 +5,7 @@ ADD_EXECUTABLE(${TARGET_TIZENCLAW_CLI}
   request_handler.cc
   response_printer.cc
   interactive_shell.cc
+  tool_prober.cc
 )
 TARGET_INCLUDE_DIRECTORIES(${TARGET_TIZENCLAW_CLI} PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/../common"

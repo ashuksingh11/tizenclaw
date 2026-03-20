@@ -27,10 +27,13 @@
 #include <iostream>
 #include <string>
 
+#include <nlohmann/json.hpp>
+
 #include "interactive_shell.hh"
 #include "request_handler.hh"
 #include "response_printer.hh"
 #include "socket_client.hh"
+#include "tool_prober.hh"
 
 namespace {
 
@@ -51,12 +54,20 @@ void PrintUsage() {
             << "agents\n"
             << "  --perception  Show perception "
             << "engine status\n"
-            << "  --run-cli <tool> <args...>\n"
-            << "                Run a CLI tool "
-            << "directly via tool executor\n"
-            << "  -h, --help    Show this help\n\n"
-            << "If no prompt given, interactive "
-            << "mode.\n";
+             << "  --run-cli <tool> <args...>\n"
+             << "                Run a CLI tool "
+             << "directly via tool executor\n"
+             << "  --register-tool <path>\n"
+             << "                Register a system "
+             << "CLI tool by probing its help\n"
+             << "  --unregister-tool <name>\n"
+             << "                Unregister a "
+             << "system CLI tool\n"
+             << "  --list-tools  List registered "
+             << "system CLI tools\n"
+             << "  -h, --help    Show this help\n\n"
+             << "If no prompt given, interactive "
+             << "mode.\n";
 }
 
 }  // namespace
@@ -118,6 +129,67 @@ int main(int argc, char* argv[]) {
       }
       tizenclaw::cli::ResponsePrinter
           ::PrintPerceptionStatus(resp);
+      return 0;
+    } else if (arg == "--list-tools") {
+      tizenclaw::cli::SocketClient client;
+      std::string resp = client.SendJsonRpc(
+          "list_system_cli");
+      if (resp.empty()) {
+        std::cerr << "Failed to read response\n";
+        return 1;
+      }
+      tizenclaw::cli::ResponsePrinter
+          ::PrintToolList(resp);
+      return 0;
+    } else if (arg == "--register-tool" &&
+               i + 1 < argc) {
+      std::string path = argv[++i];
+      auto probe =
+          tizenclaw::cli::ToolProber::Probe(
+              path);
+      if (!probe.success) {
+        std::cerr << "Probe failed: "
+                  << probe.error << "\n";
+        return 1;
+      }
+
+      // Build JSON params with escaping via
+      // nlohmann::json to avoid manual escaping
+      nlohmann::json params;
+      params["name"] = probe.name;
+      params["path"] = path;
+      params["description"] = probe.description;
+      params["side_effect"] = "reversible";
+      params["timeout_seconds"] = 10;
+      params["tool_doc"] = probe.tool_doc;
+
+      tizenclaw::cli::SocketClient client;
+      std::string resp = client.SendJsonRpc(
+          "register_system_cli",
+          params.dump());
+      if (resp.empty()) {
+        std::cerr << "Failed to read response\n";
+        return 1;
+      }
+      tizenclaw::cli::ResponsePrinter
+          ::PrintToolResult(resp);
+      return 0;
+    } else if (arg == "--unregister-tool" &&
+               i + 1 < argc) {
+      std::string name = argv[++i];
+      nlohmann::json params;
+      params["name"] = name;
+
+      tizenclaw::cli::SocketClient client;
+      std::string resp = client.SendJsonRpc(
+          "unregister_system_cli",
+          params.dump());
+      if (resp.empty()) {
+        std::cerr << "Failed to read response\n";
+        return 1;
+      }
+      tizenclaw::cli::ResponsePrinter
+          ::PrintToolResult(resp);
       return 0;
     } else if (arg == "-s" && i + 1 < argc) {
       session_id = argv[++i];

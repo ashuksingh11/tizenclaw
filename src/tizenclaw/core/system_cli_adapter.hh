@@ -17,6 +17,8 @@
 #ifndef SYSTEM_CLI_ADAPTER_HH_
 #define SYSTEM_CLI_ADAPTER_HH_
 
+#include <json.hpp>
+
 #include <map>
 #include <mutex>
 #include <string>
@@ -76,6 +78,23 @@ class SystemCliAdapter {
   // Check if the adapter is enabled
   bool IsEnabled() const;
 
+  // Runtime registration: add a new system CLI tool.
+  // Writes tool.md to tools_dir_ and updates config.
+  // Returns empty string on success, error message on failure.
+  std::string RegisterTool(const std::string& name,
+                           const SystemCliToolConfig& config,
+                           const std::string& tool_doc);
+
+  // Runtime unregistration: remove a system CLI tool.
+  // Returns empty string on success, error message on failure.
+  std::string UnregisterTool(const std::string& name);
+
+  // Get all registered tools as JSON for listing.
+  nlohmann::json GetRegisteredToolsJson() const;
+
+  // Persist current tool configuration to disk.
+  bool SaveConfig();
+
  private:
   SystemCliAdapter() = default;
   ~SystemCliAdapter() = default;
@@ -85,10 +104,13 @@ class SystemCliAdapter {
   bool LoadConfig(const std::string& config_path);
   void LoadToolDocs(const std::string& tools_dir);
   void RegisterCapabilities();
+  void RegisterToolCapability(const std::string& name,
+                              const SystemCliToolConfig& cfg);
   void ScanSystemdServices(const std::string& systemd_dir);
 
   bool enabled_ = false;
   bool auto_discover_ = false;
+  std::string config_path_;
   std::string tools_dir_;
   std::string systemd_dir_;
   std::map<std::string, SystemCliToolConfig> tools_;

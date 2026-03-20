@@ -32,6 +32,14 @@ class ResponsePrinter {
   // response.
   static void PrintPerceptionStatus(
       const std::string& body);
+
+  // Pretty-print the list_system_cli JSON response.
+  static void PrintToolList(
+      const std::string& body);
+
+  // Pretty-print register/unregister result.
+  static void PrintToolResult(
+      const std::string& body);
 };
 
 }  // namespace cli

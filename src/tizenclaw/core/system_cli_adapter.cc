@@ -131,6 +131,8 @@ bool SystemCliAdapter::LoadConfig(const std::string& config_path) {
     enabled_ = config.value("enabled", false);
     if (!enabled_) return true;
 
+    config_path_ = config_path;
+
     tools_dir_ = config.value("tools_dir",
         "/opt/usr/share/tizenclaw/tools/system_cli");
     auto_discover_ = config.value("auto_discover", false);
@@ -318,29 +320,166 @@ void SystemCliAdapter::ScanSystemdServices(
             << discovered << " tools from " << systemd_dir;
 }
 
-void SystemCliAdapter::RegisterCapabilities() {
+void SystemCliAdapter::RegisterToolCapability(
+    const std::string& name, const SystemCliToolConfig& cfg) {
   auto& reg = CapabilityRegistry::GetInstance();
 
+  Capability cap;
+  cap.name = "system_cli:" + name;
+  cap.description = cfg.description;
+  cap.category = "system_cli";
+  cap.source = CapabilitySource::kSystemCli;
+  cap.contract.execution_env = "host";
+  cap.contract.estimated_duration_ms = cfg.timeout_seconds * 1000;
+
+  if (cfg.side_effect == "reversible") {
+    cap.contract.side_effect = SideEffect::kReversible;
+  } else if (cfg.side_effect == "irreversible") {
+    cap.contract.side_effect = SideEffect::kIrreversible;
+  } else {
+    cap.contract.side_effect = SideEffect::kNone;
+  }
+
+  reg.Register(cap.name, cap);
+}
+
+void SystemCliAdapter::RegisterCapabilities() {
   std::lock_guard<std::mutex> lock(mutex_);
   for (const auto& [name, cfg] : tools_) {
-    Capability cap;
-    cap.name = "system_cli:" + name;
-    cap.description = cfg.description;
-    cap.category = "system_cli";
-    cap.source = CapabilitySource::kSystemCli;
-    cap.contract.execution_env = "host";
-    cap.contract.estimated_duration_ms = cfg.timeout_seconds * 1000;
-
-    if (cfg.side_effect == "reversible") {
-      cap.contract.side_effect = SideEffect::kReversible;
-    } else if (cfg.side_effect == "irreversible") {
-      cap.contract.side_effect = SideEffect::kIrreversible;
-    } else {
-      cap.contract.side_effect = SideEffect::kNone;
-    }
-
-    reg.Register(cap.name, cap);
+    RegisterToolCapability(name, cfg);
   }
+}
+
+std::string SystemCliAdapter::RegisterTool(
+    const std::string& name,
+    const SystemCliToolConfig& config,
+    const std::string& tool_doc) {
+  if (name.empty()) return "Tool name is required";
+  if (config.binary_path.empty()) return "Binary path is required";
+
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!enabled_) return "SystemCliAdapter is not enabled";
+    tools_[name] = config;
+    if (!tool_doc.empty()) {
+      tool_docs_[name] = tool_doc;
+    }
+  }
+
+  // Write tool.md to tools_dir_
+  if (!tool_doc.empty()) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::create_directories(tools_dir_, ec);
+    std::string md_path = tools_dir_ + "/" + name + ".tool.md";
+    std::ofstream mf(md_path);
+    if (mf.is_open()) {
+      mf << tool_doc;
+      mf.close();
+      LOG(INFO) << "SystemCliAdapter: wrote " << md_path;
+    }
+  }
+
+  // Register capability
+  RegisterToolCapability(name, config);
+
+  // Persist config
+  SaveConfig();
+
+  LOG(INFO) << "SystemCliAdapter: registered tool '" << name
+            << "' -> " << config.binary_path;
+  return "";
+}
+
+std::string SystemCliAdapter::UnregisterTool(
+    const std::string& name) {
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!enabled_) return "SystemCliAdapter is not enabled";
+    if (!tools_.contains(name)) {
+      return "Tool not found: " + name;
+    }
+    tools_.erase(name);
+    tool_docs_.erase(name);
+  }
+
+  // Remove tool.md
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  std::string md_path = tools_dir_ + "/" + name + ".tool.md";
+  fs::remove(md_path, ec);
+
+  // Unregister capability
+  CapabilityRegistry::GetInstance().Unregister("system_cli:" + name);
+
+  // Persist config
+  SaveConfig();
+
+  LOG(INFO) << "SystemCliAdapter: unregistered tool '" << name << "'";
+  return "";
+}
+
+nlohmann::json SystemCliAdapter::GetRegisteredToolsJson() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  nlohmann::json result = nlohmann::json::object();
+  result["enabled"] = enabled_;
+  result["tool_count"] = tools_.size();
+  nlohmann::json tools_arr = nlohmann::json::array();
+  for (const auto& [name, cfg] : tools_) {
+    nlohmann::json t;
+    t["name"] = name;
+    t["path"] = cfg.binary_path;
+    t["timeout_seconds"] = cfg.timeout_seconds;
+    t["side_effect"] = cfg.side_effect;
+    t["description"] = cfg.description;
+    t["has_doc"] = tool_docs_.contains(name);
+    if (!cfg.blocked_args.empty()) {
+      t["blocked_args"] = cfg.blocked_args;
+    }
+    tools_arr.push_back(t);
+  }
+  result["tools"] = tools_arr;
+  return result;
+}
+
+bool SystemCliAdapter::SaveConfig() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (config_path_.empty()) {
+    LOG(WARNING) << "SystemCliAdapter: no config path set";
+    return false;
+  }
+
+  nlohmann::json config;
+  config["enabled"] = enabled_;
+  config["auto_discover"] = auto_discover_;
+  config["systemd_dir"] = systemd_dir_;
+  config["tools_dir"] = tools_dir_;
+
+  nlohmann::json tools_json = nlohmann::json::object();
+  for (const auto& [name, cfg] : tools_) {
+    nlohmann::json t;
+    t["path"] = cfg.binary_path;
+    t["timeout_seconds"] = cfg.timeout_seconds;
+    t["side_effect"] = cfg.side_effect;
+    t["description"] = cfg.description;
+    if (!cfg.blocked_args.empty()) {
+      t["blocked_args"] = cfg.blocked_args;
+    }
+    tools_json[name] = t;
+  }
+  config["tools"] = tools_json;
+
+  std::ofstream f(config_path_);
+  if (!f.is_open()) {
+    LOG(ERROR) << "SystemCliAdapter: cannot write config: "
+               << config_path_;
+    return false;
+  }
+  f << config.dump(2) << "\n";
+  f.close();
+
+  LOG(INFO) << "SystemCliAdapter: config saved to " << config_path_;
+  return true;
 }
 
 }  // namespace tizenclaw
