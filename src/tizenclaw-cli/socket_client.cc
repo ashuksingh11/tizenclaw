@@ -169,32 +169,24 @@ int SocketClient::SendToChannel(
 }
 
 std::string SocketClient::SendToExecutor(
-    const std::string& tool,
-    const std::string& args) {
+    const std::string& command,
+    const std::string& params_json) {
   int sock = ConnectToExecutor();
   if (sock < 0) return "";
 
-  std::string escaped_tool;
-  for (char c : tool) {
-    if (c == '"') escaped_tool += "\\\"";
-    else if (c == '\\') escaped_tool += "\\\\";
-    else escaped_tool += c;
+  nlohmann::json req;
+  try {
+    if (!params_json.empty() && params_json != "{}") {
+      req = nlohmann::json::parse(params_json);
+    }
+  } catch (const std::exception& e) {
+    LOG(ERROR) << "Failed to parse params_json: " << e.what();
+    // Fallback or treat as empty
   }
+  
+  req["command"] = command;
 
-  std::string escaped_args;
-  for (char c : args) {
-    if (c == '"') escaped_args += "\\\"";
-    else if (c == '\\') escaped_args += "\\\\";
-    else escaped_args += c;
-  }
-
-  // Use execute_cli command directly if tool is a CLI tool
-  std::string req =
-      "{\"command\": \"execute_cli\", "
-      "\"tool_name\": \"" + escaped_tool + "\", "
-      "\"arguments\": \"" + escaped_args + "\"}";
-
-  if (!SendPayload(sock, req)) {
+  if (!SendPayload(sock, req.dump())) {
     close(sock);
     std::cerr << "Failed to send request to executor\n";
     return "";

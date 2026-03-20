@@ -55,8 +55,16 @@ void PrintUsage() {
             << "  --perception  Show perception "
             << "engine status\n"
              << "  --run-cli <tool> <args...>\n"
-             << "                Run a CLI tool "
-             << "directly via tool executor\n"
+             << "                Run a CLI tool directly via tool executor\n"
+             << "  --start-cli <tool> [args]\n"
+             << "                Start a CLI session\n"
+             << "  --send-cli <session_id> <input>\n"
+             << "                Send input to a CLI session\n"
+             << "  --read-cli <session_id>\n"
+             << "                Read output from a CLI session\n"
+             << "  --close-cli <session_id>\n"
+             << "                Close a CLI session\n"
+             << "  --list-cli    List active CLI sessions\n"
              << "  --register-tool <path>\n"
              << "                Register a system "
              << "CLI tool by probing its help\n"
@@ -95,19 +103,64 @@ int main(int argc, char* argv[]) {
     } else if (arg == "--run-cli" &&
                i + 1 < argc) {
       std::string tool = argv[++i];
+      nlohmann::json params;
+      params["tool_name"] = tool;
       std::string args_str;
       for (int j = ++i; j < argc; ++j) {
         if (!args_str.empty()) args_str += " ";
         args_str += argv[j];
         ++i;
       }
+      params["arguments"] = args_str;
       tizenclaw::cli::SocketClient client;
-      std::string resp = client.SendToExecutor(tool, args_str);
+      std::string resp = client.SendToExecutor("execute_cli", params.dump());
       if (!resp.empty()) {
         std::cout << resp << "\n";
         return 0;
       }
       return 1;
+    } else if (arg == "--start-cli" && i + 1 < argc) {
+      std::string tool = argv[++i];
+      nlohmann::json params;
+      params["tool_name"] = tool;
+      if (i + 1 < argc) {
+          params["arguments"] = argv[++i];
+      }
+      tizenclaw::cli::SocketClient client;
+      std::string resp = client.SendToExecutor("execute_cli_session", params.dump());
+      std::cout << resp << "\n";
+      return 0;
+    } else if (arg == "--send-cli" && i + 2 < argc) {
+      std::string sid = argv[++i];
+      std::string input = argv[++i];
+      nlohmann::json params;
+      params["session_id"] = sid;
+      params["input"] = input;
+      tizenclaw::cli::SocketClient client;
+      std::string resp = client.SendToExecutor("cli_session_send", params.dump());
+      std::cout << resp << "\n";
+      return 0;
+    } else if (arg == "--read-cli" && i + 1 < argc) {
+      std::string sid = argv[++i];
+      nlohmann::json params;
+      params["session_id"] = sid;
+      tizenclaw::cli::SocketClient client;
+      std::string resp = client.SendToExecutor("cli_session_read", params.dump());
+      std::cout << resp << "\n";
+      return 0;
+    } else if (arg == "--close-cli" && i + 1 < argc) {
+      std::string sid = argv[++i];
+      nlohmann::json params;
+      params["session_id"] = sid;
+      tizenclaw::cli::SocketClient client;
+      std::string resp = client.SendToExecutor("cli_session_close", params.dump());
+      std::cout << resp << "\n";
+      return 0;
+    } else if (arg == "--list-cli") {
+      tizenclaw::cli::SocketClient client;
+      std::string resp = client.SendToExecutor("cli_session_list", "{}");
+      std::cout << resp << "\n";
+      return 0;
     } else if (arg == "--list-agents") {
       tizenclaw::cli::SocketClient client;
       std::string resp = client.SendJsonRpc(

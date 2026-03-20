@@ -38,8 +38,8 @@ class SocketClient {
 
   // Send request directly to tool executor
   [[nodiscard]] std::string SendToExecutor(
-      const std::string& tool,
-      const std::string& args);
+      const std::string& command,
+      const std::string& params_json);
 
  private:
   // Connect to the tizenclaw daemon abstract socket.
