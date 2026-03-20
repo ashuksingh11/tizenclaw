@@ -25,6 +25,8 @@
 #include <iostream>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 namespace tizenclaw {
 namespace cli {
 
@@ -180,7 +182,7 @@ std::string SocketClient::SendToExecutor(
       req = nlohmann::json::parse(params_json);
     }
   } catch (const std::exception& e) {
-    LOG(ERROR) << "Failed to parse params_json: " << e.what();
+    std::cerr << "Failed to parse params_json: " << e.what() << "\n";
     // Fallback or treat as empty
   }
   
