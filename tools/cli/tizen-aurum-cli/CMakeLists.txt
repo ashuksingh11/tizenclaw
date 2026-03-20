@@ -1,4 +1,4 @@
-# aurum-cli: Native C++ CLI for Aurum UI Automation
+# tizen-aurum-cli: Native C++ CLI for Aurum UI Automation
 # Supports two backends:
 #   - Default: libaurum direct (AT-SPI2)
 #   - --grpc:  aurum-bootstrap gRPC server
@@ -13,14 +13,16 @@ PKG_CHECK_MODULES(AURUM_CLI_DEPS REQUIRED
   protobuf
 )
 
-SET(AURUM_CLI_TARGET "aurum-cli")
+SET(AURUM_CLI_TARGET "tizen-aurum-cli")
 
 # ─── Proto code generation ──────────────────
-SET(AURUM_PROTO "${CMAKE_CURRENT_SOURCE_DIR}/aurum.proto")
+SET(AURUM_PROTO
+  "${CMAKE_CURRENT_SOURCE_DIR}/aurum.proto")
 SET(PROTO_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 
 FIND_PROGRAM(PROTOC protoc REQUIRED)
-FIND_PROGRAM(GRPC_CPP_PLUGIN grpc_cpp_plugin REQUIRED)
+FIND_PROGRAM(GRPC_CPP_PLUGIN
+  grpc_cpp_plugin REQUIRED)
 
 # aurum.pb.cc / aurum.pb.h
 ADD_CUSTOM_COMMAND(
@@ -32,7 +34,7 @@ ADD_CUSTOM_COMMAND(
     --cpp_out=${PROTO_GEN_DIR}
     ${AURUM_PROTO}
   DEPENDS ${AURUM_PROTO}
-  COMMENT "Generating protobuf stubs from aurum.proto"
+  COMMENT "Generating protobuf stubs"
 )
 
 # aurum.grpc.pb.cc / aurum.grpc.pb.h
@@ -46,7 +48,7 @@ ADD_CUSTOM_COMMAND(
     --plugin=protoc-gen-grpc=${GRPC_CPP_PLUGIN}
     ${AURUM_PROTO}
   DEPENDS ${AURUM_PROTO}
-  COMMENT "Generating gRPC stubs from aurum.proto"
+  COMMENT "Generating gRPC stubs"
 )
 
 # ─── Build ──────────────────────────────────
@@ -58,7 +60,8 @@ ADD_EXECUTABLE(${AURUM_CLI_TARGET}
   "${PROTO_GEN_DIR}/aurum.grpc.pb.cc"
 )
 
-TARGET_INCLUDE_DIRECTORIES(${AURUM_CLI_TARGET} PRIVATE
+TARGET_INCLUDE_DIRECTORIES(
+  ${AURUM_CLI_TARGET} PRIVATE
   ${AURUM_CLI_DEPS_INCLUDE_DIRS}
   ${PROTO_GEN_DIR}
 )
@@ -72,14 +75,11 @@ TARGET_COMPILE_OPTIONS(${AURUM_CLI_TARGET} PRIVATE
 )
 
 # ─── Install ────────────────────────────────
-SET(AURUM_CLI_INSTALL_DIR
-  "/opt/usr/share/tizenclaw/tools/cli/aurum-cli")
+SET(INSTALL_DIR
+  "${APP_DATA_DIR}/tools/cli/${AURUM_CLI_TARGET}")
 
 INSTALL(TARGETS ${AURUM_CLI_TARGET}
-  DESTINATION ${AURUM_CLI_INSTALL_DIR}
-)
-
+  DESTINATION ${INSTALL_DIR})
 INSTALL(FILES
   "${CMAKE_CURRENT_SOURCE_DIR}/tool.md"
-  DESTINATION ${AURUM_CLI_INSTALL_DIR}
-)
+  DESTINATION ${INSTALL_DIR})

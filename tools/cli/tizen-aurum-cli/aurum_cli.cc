@@ -627,9 +627,9 @@ int CmdMouseUp(int argc, char** argv) {
 
 void PrintUsage() {
   std::cerr <<
-R"(aurum-cli — Aurum UI Automation CLI
+R"(tizen-aurum-cli — Aurum UI Automation CLI
 
-Usage: aurum-cli <subcommand> [options]
+Usage: tizen-aurum-cli <subcommand> [options]
 
 Screen:
   screen-size               Get screen dimensions
