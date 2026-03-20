@@ -103,6 +103,8 @@ SET(TARGET_TIZEN_WEB_SEARCH_CLI
   "tizen-web-search-cli")
 SET(TARGET_TIZEN_FILE_MANAGER_CLI
   "tizen-file-manager-cli")
+SET(TARGET_TIZEN_MEDIA_CLI
+  "tizen-media-cli")
 
 ## CLI tools — Dependencies (declared once)
 PKG_CHECK_MODULES(CAPI_SYSTEM_DEVICE_DEPS REQUIRED
@@ -137,7 +139,23 @@ PKG_CHECK_MODULES(CAPI_MEDIA_TONE_PLAYER_DEPS REQUIRED
   capi-media-tone-player)
 PKG_CHECK_MODULES(NOTIFICATION_DEPS REQUIRED
   notification)
+PKG_CHECK_MODULES(CAPI_CONTENT_MEDIA_CONTENT_DEPS
+  capi-content-media-content)
+PKG_CHECK_MODULES(CAPI_MEDIA_METADATA_EXTRACTOR_DEPS
+  capi-media-metadata-extractor)
+PKG_CHECK_MODULES(CAPI_CONTENT_MIME_TYPE_DEPS
+  capi-content-mime-type)
 
+IF(CAPI_CONTENT_MEDIA_CONTENT_DEPS_FOUND AND
+   CAPI_MEDIA_METADATA_EXTRACTOR_DEPS_FOUND AND
+   CAPI_CONTENT_MIME_TYPE_DEPS_FOUND)
+  SET(BUILD_TIZEN_MEDIA_CLI TRUE)
+  MESSAGE(STATUS "tizen-media-cli: ENABLED")
+ELSE()
+  SET(BUILD_TIZEN_MEDIA_CLI FALSE)
+  MESSAGE(STATUS "tizen-media-cli: DISABLED "
+    "(missing media deps)")
+ENDIF()
 ADD_SUBDIRECTORY(tools/cli/tizen-aurum-cli)
 ADD_SUBDIRECTORY(tools/cli/tizen-control-display-cli)
 ADD_SUBDIRECTORY(tools/cli/tizen-device-info-cli)
@@ -149,6 +167,9 @@ ADD_SUBDIRECTORY(tools/cli/tizen-notification-cli)
 ADD_SUBDIRECTORY(tools/cli/tizen-sensor-cli)
 ADD_SUBDIRECTORY(tools/cli/tizen-web-search-cli)
 ADD_SUBDIRECTORY(tools/cli/tizen-file-manager-cli)
+IF(BUILD_TIZEN_MEDIA_CLI)
+  ADD_SUBDIRECTORY(tools/cli/tizen-media-cli)
+ENDIF()
 
 
 ## Unit Tests

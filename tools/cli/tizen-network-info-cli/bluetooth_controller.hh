@@ -28,6 +28,7 @@ class BluetoothController {
   ~BluetoothController() = default;
 
   std::string GetInfo() const;
+  std::string ListBondedDevices() const;
 };
 
 }  // namespace cli

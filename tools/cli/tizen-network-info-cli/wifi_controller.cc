@@ -19,7 +19,9 @@
 #include <wifi-manager.h>
 
 #include <cstdlib>
+#include <algorithm>
 #include <string>
+#include <vector>
 
 namespace tizenclaw {
 namespace cli {
@@ -71,6 +73,106 @@ std::string WifiController::GetWifiInfo() const {
          std::string(activated ? "true" : "false") +
          ", \"connection_state\": \"" + cs +
          "\", \"essid\": \"" + essid + "\"}";
+}
+
+namespace {
+
+std::string EscapeJson(const std::string& s) {
+  std::string result;
+  result.reserve(s.size());
+  for (char c : s) {
+    switch (c) {
+      case '"':  result += "\\\""; break;
+      case '\\': result += "\\\\"; break;
+      default:   result += c;      break;
+    }
+  }
+  return result;
+}
+
+constexpr const char* kSecNames[] = {
+    "none", "wep", "wpa_psk", "wpa2_psk",
+    "wpa_eap", "wpa2_eap", "wpa_ftp",
+    "wpa2_ftp", "wpa3_sae", "open_owe"};
+
+struct ApEntry {
+  std::string essid;
+  int rssi = 0;
+  int freq = 0;
+  std::string security;
+  int max_speed = 0;
+};
+
+bool FoundApCb(wifi_manager_ap_h ap,
+               void* user_data) {
+  auto* list =
+      static_cast<std::vector<ApEntry>*>(user_data);
+  ApEntry entry;
+
+  char* e = nullptr;
+  if (wifi_manager_ap_get_essid(ap, &e) == 0 && e) {
+    entry.essid = e;
+    free(e);
+  }
+
+  wifi_manager_ap_get_rssi(ap, &entry.rssi);
+  wifi_manager_ap_get_frequency(ap, &entry.freq);
+  wifi_manager_ap_get_max_speed(ap,
+                                &entry.max_speed);
+
+  wifi_manager_security_type_e sec;
+  if (wifi_manager_ap_get_security_type(
+          ap, &sec) == 0 &&
+      sec <= 9) {
+    entry.security = kSecNames[sec];
+  } else {
+    entry.security = "unknown";
+  }
+
+  list->push_back(std::move(entry));
+  return true;
+}
+
+}  // namespace
+
+std::string WifiController::ScanNetworks() const {
+  wifi_manager_h mgr = nullptr;
+  if (wifi_manager_initialize(&mgr) != 0)
+    return "{\"error\": "
+           "\"wifi_manager_initialize\"}";
+
+  // Request a synchronous scan
+  wifi_manager_scan(mgr, nullptr, nullptr);
+
+  std::vector<ApEntry> aps;
+  wifi_manager_foreach_found_ap(
+      mgr, FoundApCb, &aps);
+
+  wifi_manager_deinitialize(mgr);
+
+  // Sort by RSSI descending
+  std::sort(aps.begin(), aps.end(),
+            [](const ApEntry& a, const ApEntry& b) {
+              return a.rssi > b.rssi;
+            });
+
+  std::string result = "{\"networks\": [";
+  for (size_t i = 0; i < aps.size(); ++i) {
+    if (i > 0) result += ", ";
+    result += "{\"essid\": \"" +
+              EscapeJson(aps[i].essid) +
+              "\", \"rssi_dbm\": " +
+              std::to_string(aps[i].rssi) +
+              ", \"frequency_mhz\": " +
+              std::to_string(aps[i].freq) +
+              ", \"max_speed_mbps\": " +
+              std::to_string(aps[i].max_speed) +
+              ", \"security\": \"" +
+              aps[i].security + "\"}";
+  }
+  result += "], \"count\": " +
+            std::to_string(aps.size()) + "}";
+  return result;
 }
 
 }  // namespace cli

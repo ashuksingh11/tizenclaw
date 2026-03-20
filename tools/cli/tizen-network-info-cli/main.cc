@@ -30,7 +30,9 @@ constexpr const char kUsage[] = R"(Usage:
 Subcommands:
   network     Network connection info
   wifi        Wi-Fi status and AP info
+  wifi-scan   Scan for Wi-Fi networks
   bluetooth   Bluetooth adapter info
+  bt-scan     List bonded Bluetooth devices
   data-usage  Data usage statistics
 )";
 
@@ -54,9 +56,16 @@ int main(int argc, char* argv[]) {
   } else if (cmd == "wifi") {
     tizenclaw::cli::WifiController c;
     std::cout << c.GetWifiInfo() << std::endl;
+  } else if (cmd == "wifi-scan") {
+    tizenclaw::cli::WifiController c;
+    std::cout << c.ScanNetworks() << std::endl;
   } else if (cmd == "bluetooth") {
     tizenclaw::cli::BluetoothController c;
     std::cout << c.GetInfo() << std::endl;
+  } else if (cmd == "bt-scan") {
+    tizenclaw::cli::BluetoothController c;
+    std::cout << c.ListBondedDevices()
+              << std::endl;
   } else if (cmd == "data-usage") {
     tizenclaw::cli::DataUsageController c;
     std::cout << c.GetDataUsage() << std::endl;

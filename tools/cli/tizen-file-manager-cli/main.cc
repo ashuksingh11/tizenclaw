@@ -25,15 +25,16 @@ constexpr const char kUsage[] = R"(Usage:
   tizen-file-manager-cli <subcommand> [options]
 
 Subcommands:
-  read    --path <PATH>
-  write   --path <PATH> --content <TEXT>
-  append  --path <PATH> --content <TEXT>
-  remove  --path <PATH>
-  mkdir   --path <PATH>
-  list    --path <PATH>
-  stat    --path <PATH>
-  copy    --src <PATH> --dst <PATH>
-  move    --src <PATH> --dst <PATH>
+  read      --path <PATH>
+  write     --path <PATH> --content <TEXT>
+  append    --path <PATH> --content <TEXT>
+  remove    --path <PATH>
+  mkdir     --path <PATH>
+  list      --path <PATH>
+  stat      --path <PATH>
+  copy      --src <PATH> --dst <PATH>
+  move      --src <PATH> --dst <PATH>
+  download  --url <URL> --dest <PATH>
 )";
 
 void PrintUsage() {
@@ -139,6 +140,16 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << c.Move(src, dst) << std::endl;
+  } else if (cmd == "download") {
+    std::string url = GetArg(argc, argv, "--url");
+    std::string dest = GetArg(argc, argv, "--dest");
+    if (url.empty() || dest.empty()) {
+      std::cerr << "--url and --dest required\n";
+      return 1;
+    }
+
+    std::cout << c.Download(url, dest)
+              << std::endl;
   } else {
     PrintUsage();
     return 1;

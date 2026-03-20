@@ -14,24 +14,24 @@
  * limitations under the License.
  */
 
-#ifndef TIZENCLAW_CLI_WIFI_CONTROLLER_HH_
-#define TIZENCLAW_CLI_WIFI_CONTROLLER_HH_
+#ifndef METADATA_CONTROLLER_HH_
+#define METADATA_CONTROLLER_HH_
 
 #include <string>
 
 namespace tizenclaw {
 namespace cli {
 
-class WifiController {
+class MetadataController {
  public:
-  WifiController() = default;
-  ~WifiController() = default;
+  MetadataController() = default;
+  ~MetadataController() = default;
 
-  std::string GetWifiInfo() const;
-  std::string ScanNetworks() const;
+  std::string GetMetadata(
+      const std::string& file_path) const;
 };
 
 }  // namespace cli
 }  // namespace tizenclaw
 
-#endif  // TIZENCLAW_CLI_WIFI_CONTROLLER_HH_
+#endif  // METADATA_CONTROLLER_HH_

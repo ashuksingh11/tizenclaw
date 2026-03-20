@@ -1,13 +1,6 @@
 # tizen-file-manager-cli
-**Description**: File system operations — read, write, append, copy, move, remove, list, stat, mkdir.
-
-## Usage
-```
-tizen-file-manager-cli <subcommand> [options]
-```
-
+**Description**: File operations: read, write, append, copy, move, remove, list, stat, mkdir, download.
 ## Subcommands
-
 | Subcommand | Description | Required Args |
 |------------|-------------|---------------|
 | `read` | Read file contents | `--path` |
@@ -19,21 +12,6 @@ tizen-file-manager-cli <subcommand> [options]
 | `stat` | Get file/dir metadata | `--path` |
 | `copy` | Copy file | `--src --dst` |
 | `move` | Move/rename file | `--src --dst` |
-
-## Examples
-```bash
-# Read a file
-tizen-file-manager-cli read --path /tmp/test.txt
-
-# Write a file
-tizen-file-manager-cli write --path /tmp/out.txt --content "hello world"
-
-# List directory
-tizen-file-manager-cli list --path /opt/usr/share
-
-# Copy file
-tizen-file-manager-cli copy --src /tmp/a.txt --dst /tmp/b.txt
-```
-
+| `download` | Download file from URL | `--url --dest` |
 ## Output
 All output is JSON.

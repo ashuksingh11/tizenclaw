@@ -263,5 +263,47 @@ std::string FileController::Move(
       "Moved " + src + " -> " + dst);
 }
 
+std::string FileController::Download(
+    const std::string& url,
+    const std::string& dest) {
+  if (url.empty())
+    return ErrorJson("URL is required");
+  if (dest.empty())
+    return ErrorJson("Destination is required");
+
+  // Use curl to download
+  std::string cmd = "curl -fsSL -o '" + dest +
+                    "' '" + url + "' 2>&1";
+  FILE* pipe = popen(cmd.c_str(), "r");
+  if (!pipe)
+    return ErrorJson("Failed to execute curl");
+
+  std::string output;
+  char buf[1024];
+  while (fgets(buf, sizeof(buf), pipe))
+    output += buf;
+  int status = pclose(pipe);
+
+  if (status != 0) {
+    while (!output.empty() &&
+           output.back() == '\n')
+      output.pop_back();
+    return ErrorJson(
+        "Download failed: " + output);
+  }
+
+  // Verify file exists and get size
+  struct stat st;
+  if (::stat(dest.c_str(), &st) != 0)
+    return ErrorJson("Downloaded file not found");
+
+  return "{\"status\": \"success\", \"url\": \"" +
+         JsonEscape(url) +
+         "\", \"file_path\": \"" +
+         JsonEscape(dest) +
+         "\", \"size_bytes\": " +
+         std::to_string(st.st_size) + "}";
+}
+
 }  // namespace cli
 }  // namespace tizenclaw

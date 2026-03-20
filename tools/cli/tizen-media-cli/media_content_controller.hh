@@ -14,24 +14,24 @@
  * limitations under the License.
  */
 
-#ifndef TIZENCLAW_CLI_WIFI_CONTROLLER_HH_
-#define TIZENCLAW_CLI_WIFI_CONTROLLER_HH_
+#ifndef MEDIA_CONTENT_CONTROLLER_HH_
+#define MEDIA_CONTENT_CONTROLLER_HH_
 
 #include <string>
 
 namespace tizenclaw {
 namespace cli {
 
-class WifiController {
+class MediaContentController {
  public:
-  WifiController() = default;
-  ~WifiController() = default;
+  MediaContentController() = default;
+  ~MediaContentController() = default;
 
-  std::string GetWifiInfo() const;
-  std::string ScanNetworks() const;
+  std::string ListMedia(const std::string& type,
+                        int max_count) const;
 };
 
 }  // namespace cli
 }  // namespace tizenclaw
 
-#endif  // TIZENCLAW_CLI_WIFI_CONTROLLER_HH_
+#endif  // MEDIA_CONTENT_CONTROLLER_HH_

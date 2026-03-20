@@ -37,6 +37,8 @@ class FileController {
                    const std::string& dst);
   std::string Move(const std::string& src,
                    const std::string& dst);
+  std::string Download(const std::string& url,
+                       const std::string& dest);
 };
 
 }  // namespace cli

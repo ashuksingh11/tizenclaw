@@ -14,24 +14,26 @@
  * limitations under the License.
  */
 
-#ifndef TIZENCLAW_CLI_WIFI_CONTROLLER_HH_
-#define TIZENCLAW_CLI_WIFI_CONTROLLER_HH_
+#ifndef MIME_TYPE_CONTROLLER_HH_
+#define MIME_TYPE_CONTROLLER_HH_
 
 #include <string>
 
 namespace tizenclaw {
 namespace cli {
 
-class WifiController {
+class MimeTypeController {
  public:
-  WifiController() = default;
-  ~WifiController() = default;
+  MimeTypeController() = default;
+  ~MimeTypeController() = default;
 
-  std::string GetWifiInfo() const;
-  std::string ScanNetworks() const;
+  std::string GetMimeType(
+      const std::string& file_path) const;
+  std::string GetExtensions(
+      const std::string& mime_type) const;
 };
 
 }  // namespace cli
 }  // namespace tizenclaw
 
-#endif  // TIZENCLAW_CLI_WIFI_CONTROLLER_HH_
+#endif  // MIME_TYPE_CONTROLLER_HH_
