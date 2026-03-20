@@ -2458,6 +2458,127 @@ std::string AgentCore::ExecuteActionOp(const std::string& operation,
 #endif
 }
 
+std::string AgentCore::GenerateToolDoc(
+    const std::string& tool_name,
+    const std::string& binary_path,
+    const std::string& help_output) {
+  if (help_output.empty()) {
+    // Fallback: minimal doc without LLM
+    return "# " + tool_name +
+           "\n\nSystem CLI tool.\n\n"
+           "**Binary**: `" + binary_path +
+           "`\n**Category**: system_cli\n";
+  }
+
+  std::lock_guard<std::mutex> lock(backend_mutex_);
+  if (!backend_) {
+    LOG(WARNING) << "GenerateToolDoc: "
+                 << "no LLM backend available";
+    return "";
+  }
+
+  // Build a one-shot prompt to generate
+  // structured tool documentation optimized
+  // for LLM CLI invocation
+  std::string sys_prompt =
+      "You are a tool documentation generator "
+      "for an AI agent system called TizenClaw. "
+      "Your output will be read by an LLM that "
+      "needs to invoke this CLI tool with correct "
+      "arguments.\n\n"
+      "Generate a concise Markdown tool.md that "
+      "an LLM can use to construct correct CLI "
+      "invocations. Follow this EXACT format:\n\n"
+      "```\n"
+      "# <tool_name>\n"
+      "**Description**: <one-line summary of "
+      "what this tool does and when to use it>\n"
+      "**Category**: system_cli\n"
+      "## Subcommands\n"
+      "| Subcommand | Options |\n"
+      "|---|---|\n"
+      "| `<cmd>` | <description or options> |\n"
+      "## Usage\n"
+      "```\n"
+      "<tool_name> <subcommand> [options]\n"
+      "```\n"
+      "## Output\n"
+      "<describe output format: text, JSON, etc>\n"
+      "```\n\n"
+      "REFERENCE EXAMPLE (this is what good "
+      "output looks like):\n"
+      "```\n"
+      "# tizen-app-manager-cli\n"
+      "**Description**: Manage applications: "
+      "list, terminate, launch via app_control, "
+      "query package info.\n"
+      "## Subcommands\n"
+      "| Subcommand | Options |\n"
+      "|---|---|\n"
+      "| `list` | List installed UI apps |\n"
+      "| `terminate` | `--app-id <id>` |\n"
+      "| `launch` | `--app-id <id> "
+      "[--operation <op>] [--uri <uri>]` |\n"
+      "| `package-info` | `--package-id <id>` |\n"
+      "```\n\n"
+      "RULES:\n"
+      "- Output ONLY the Markdown, nothing else\n"
+      "- Keep it CONCISE - under 40 lines total\n"
+      "- Each subcommand row must show the exact "
+      "CLI syntax with options/arguments\n"
+      "- Group related commands if there are "
+      "many (use ### subsection headings)\n"
+      "- Use backticks for arguments: "
+      "`<appid>`, `<pkgid>`\n"
+      "- Include 3-5 Usage examples showing "
+      "exact command lines the LLM should use\n"
+      "- Describe output format (text/JSON/table)\n"
+      "- Do NOT include raw help output\n"
+      "- Do NOT wrap the entire output in "
+      "code fences";
+
+  std::string user_prompt =
+      "Analyze this CLI tool's help output and "
+      "generate a tool.md optimized for LLM "
+      "CLI invocation.\n\n"
+      "Tool: " + tool_name + "\n"
+      "Binary: " + binary_path + "\n\n"
+      "Help output:\n```\n" +
+      help_output + "\n```";
+
+  std::vector<LlmMessage> messages;
+
+  LlmMessage user_msg;
+  user_msg.role = "user";
+  user_msg.text = user_prompt;
+  messages.push_back(std::move(user_msg));
+
+  LOG(INFO) << "GenerateToolDoc: calling LLM for "
+            << tool_name;
+
+  try {
+    auto response = backend_->Chat(
+        messages, {}, nullptr, sys_prompt);
+    if (!response.text.empty()) {
+      LOG(INFO)
+          << "GenerateToolDoc: LLM generated "
+          << response.text.size() << " bytes";
+      return response.text;
+    }
+    LOG(WARNING)
+        << "GenerateToolDoc: LLM returned empty"
+        << " success=" << response.success
+        << " http=" << response.http_status
+        << " err=" << response.error_message;
+  } catch (const std::exception& e) {
+    LOG(ERROR)
+        << "GenerateToolDoc: LLM error: "
+        << e.what();
+  }
+
+  return "";
+}
+
 std::string AgentCore::ExecuteCustomSkillOp(const nlohmann::json& args) {
   namespace fs = std::filesystem;
   LOG(INFO) << "CustomSkillOp";

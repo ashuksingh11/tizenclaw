@@ -660,6 +660,8 @@ void TizenClawDaemon::HandleIpcClient(int client_sock) {
               params.value("timeout_seconds", 10);
           std::string tool_doc =
               params.value("tool_doc", "");
+          std::string help_output =
+              params.value("help_output", "");
           std::vector<std::string> blocked_args;
           if (params.contains("blocked_args") &&
               params["blocked_args"].is_array()) {
@@ -667,6 +669,21 @@ void TizenClawDaemon::HandleIpcClient(int client_sock) {
                  params["blocked_args"]) {
               blocked_args.push_back(
                   a.get<std::string>());
+            }
+          }
+
+          // Use LLM to generate structured
+          // tool.md from raw help output
+          if (!help_output.empty() && agent_) {
+            std::string llm_doc =
+                agent_->GenerateToolDoc(
+                    name, path, help_output);
+            if (!llm_doc.empty()) {
+              tool_doc = std::move(llm_doc);
+              LOG(INFO)
+                  << "register_system_cli: "
+                  << "LLM-generated tool doc for "
+                  << name;
             }
           }
 

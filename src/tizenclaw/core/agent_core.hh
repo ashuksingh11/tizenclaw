@@ -125,6 +125,14 @@ class AgentCore {
   [[nodiscard]] std::string ExecuteActionOp(const std::string& operation,
                                             const nlohmann::json& args);
 
+  // Generate a structured tool.md document from
+  // raw help output using LLM analysis.
+  // Returns the generated markdown string.
+  [[nodiscard]] std::string GenerateToolDoc(
+      const std::string& tool_name,
+      const std::string& binary_path,
+      const std::string& help_output);
+
  private:
   // Execute a skill and return its JSON output
   std::string ExecuteSkill(const std::string& skill_name,

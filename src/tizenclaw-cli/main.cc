@@ -161,6 +161,9 @@ int main(int argc, char* argv[]) {
       params["description"] = probe.description;
       params["side_effect"] = "reversible";
       params["timeout_seconds"] = 10;
+      // Send raw help output for LLM-based doc
+      // generation, with prober doc as fallback
+      params["help_output"] = probe.help_output;
       params["tool_doc"] = probe.tool_doc;
 
       tizenclaw::cli::SocketClient client;
