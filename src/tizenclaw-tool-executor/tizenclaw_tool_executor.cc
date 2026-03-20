@@ -333,6 +333,7 @@ int main() {
   tizenclaw::tool_executor::PythonEngine python_engine;
   tizenclaw::tool_executor::ToolHandler tool_handler(python_engine);
   tizenclaw::tool_executor::SandboxProxy sandbox_proxy(python_engine);
+  tizenclaw::tool_executor::CliSessionManager session_mgr;
 
   // Initialize embedded Python (non-fatal)
   if (python_engine.Initialize()) {
