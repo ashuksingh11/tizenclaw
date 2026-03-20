@@ -51,47 +51,8 @@ void ToolDeclarationBuilder::AppendBuiltinTools(
   }
 #endif  // TIZEN_FEATURE_CODE_GENERATOR
 
-  // file_manager
-  {
-    LlmToolDecl t;
-    t.name = "file_manager";
-    t.description =
-        "Manage files on the Tizen device. "
-        "Create, read, delete files or list "
-        "directory contents. Paths MUST start "
-        "with /tools/custom_skills/, /data/, or "
-        "/web/apps/ — other paths are rejected. "
-        "Use /tools/custom_skills/ for skill "
-        "scripts, /data/ for persistent data, "
-        "/web/apps/<app_id>/ to read/modify/delete "
-        "generated web app files.";
-    t.parameters = {
-        {"type", "object"},
-        {"properties",
-         {{"operation",
-           {{"type", "string"},
-            {"enum",
-             nlohmann::json::array(
-                 {"write_file", "read_file",
-                  "delete_file", "list_dir"})},
-            {"description",
-             "The file operation to perform"}}},
-          {"path",
-           {{"type", "string"},
-            {"description",
-             "File or directory path. Must start "
-              "with /tools/custom_skills/, "
-              "/data/, or /web/apps/"}}},
-          {"content",
-           {{"type", "string"},
-            {"description",
-             "File content "
-             "(for write_file only)"}}}}},
-        {"required",
-         nlohmann::json::array(
-             {"operation", "path"})}};
-    tools.push_back(t);
-  }
+  // file_manager removed — use tizen-file-manager-cli
+  // via execute_cli instead
 
   // create_task
   {
@@ -991,8 +952,8 @@ void ToolDeclarationBuilder::AppendBuiltinTools(
         "To UPDATE an existing app, use the same "
         "app_id — files will be overwritten. "
         "To modify specific files of an existing "
-        "app, use the file_manager tool with "
-        "/web/apps/<app_id>/ path instead.";
+        "app, use tizen-file-manager-cli via "
+        "execute_cli tool.";
     t.parameters = {
         {"type", "object"},
         {"properties",

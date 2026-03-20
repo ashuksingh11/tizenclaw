@@ -412,16 +412,6 @@ std::string PipelineExecutor::ExecuteStep(
           "this code: " +
           code;
       result = agent_->ProcessPrompt("pipeline_" + session_id, prompt);
-    } else if (step.tool_name == "file_manager") {
-      std::string prompt =
-          "Use the file_manager tool: "
-          "operation=" +
-          resolved_args.value("operation", "") +
-          " path=" + resolved_args.value("path", "");
-      if (resolved_args.contains("content")) {
-        prompt += " content=" + resolved_args.value("content", "");
-      }
-      result = agent_->ProcessPrompt("pipeline_" + session_id, prompt);
     } else {
       // Generic: instruct LLM to use the tool
       std::string prompt =

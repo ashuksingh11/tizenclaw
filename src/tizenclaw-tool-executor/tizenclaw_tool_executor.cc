@@ -46,7 +46,6 @@
 
 #include "../common/logging.hh"
 
-#include "file_manager.hh"
 #include "peer_validator.hh"
 #include "python_engine.hh"
 #include "sandbox_proxy.hh"
@@ -124,8 +123,7 @@ void HandleClient(
     tizenclaw::tool_executor::PeerValidator& validator,
     tizenclaw::tool_executor::PythonEngine& python_engine,
     tizenclaw::tool_executor::ToolHandler& tool_handler,
-    tizenclaw::tool_executor::SandboxProxy& sandbox_proxy,
-    tizenclaw::tool_executor::FileManager& file_manager) {
+    tizenclaw::tool_executor::SandboxProxy& sandbox_proxy) {
   UniqueFd client_fd(raw_fd);
   LOG(DEBUG) << "New client fd=" << client_fd.Get();
   if (!validator.Validate(client_fd.Get())) {
@@ -183,11 +181,6 @@ void HandleClient(
       } else {
         resp = sandbox_proxy.HandleExecuteCode(code, timeout);
       }
-    } else if (command == "file_manager") {
-      std::string op = req.value("operation", "");
-      std::string path = req.value("path", "");
-      LOG(DEBUG) << "file_manager: op=" << op << " path=" << path;
-      resp = file_manager.Handle(req);
     } else if (command == "install_package") {
       std::string pkg_type = req.value("type", "pip");
       std::string name = req.value("name", "");
@@ -283,7 +276,6 @@ int main() {
   tizenclaw::tool_executor::PythonEngine python_engine;
   tizenclaw::tool_executor::ToolHandler tool_handler(python_engine);
   tizenclaw::tool_executor::SandboxProxy sandbox_proxy(python_engine);
-  tizenclaw::tool_executor::FileManager file_manager;
 
   // Initialize embedded Python (non-fatal)
   if (python_engine.Initialize()) {
@@ -369,8 +361,7 @@ int main() {
                   std::ref(validator),
                   std::ref(python_engine),
                   std::ref(tool_handler),
-                  std::ref(sandbox_proxy),
-                  std::ref(file_manager));
+                  std::ref(sandbox_proxy));
     t.detach();
   }
 

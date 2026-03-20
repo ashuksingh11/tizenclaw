@@ -2699,37 +2699,8 @@ void AgentCore::InitializeToolDispatcher() {
       };
 #endif  // TIZEN_FEATURE_CODE_GENERATOR
 
-  tool_dispatch_["file_manager"] =
-      [this](const nlohmann::json& args,
-             const std::string&,
-             const std::string&) {
-        std::string op = args.value("operation", "");
-        std::string path = args.value("path", "");
-        std::string result = ExecuteFileOp(
-            op, path, args.value("content", ""));
-
-        // Auto-reload bridge app when web app
-        // files are modified
-        if ((op == "write_file" ||
-             op == "delete_file") &&
-            path.find("/web/apps/") !=
-                std::string::npos) {
-          // Extract app_id from path:
-          // .../web/apps/<app_id>/...
-          auto pos = path.find("/web/apps/");
-          std::string after =
-              path.substr(pos + 10);  // skip /web/apps/
-          auto slash = after.find('/');
-          std::string app_id =
-              (slash != std::string::npos)
-                  ? after.substr(0, slash)
-                  : after;
-          if (!app_id.empty()) {
-            LaunchBridgeApp(app_id);
-          }
-        }
-        return result;
-      };
+  // file_manager removed — use tizen-file-manager-cli
+  // via execute_cli instead
 
   for (const auto& n :
        {"create_task", "list_tasks",
@@ -2921,9 +2892,6 @@ void AgentCore::InitializeToolDispatcher() {
       "code_execution",
       SideEffect::kIrreversible);
 #endif  // TIZEN_FEATURE_CODE_GENERATOR
-  register_builtin(
-      "file_manager", "File operations",
-      "file_system", SideEffect::kReversible);
   register_builtin(
       "create_task", "Create scheduled task",
       "scheduler", SideEffect::kReversible);
