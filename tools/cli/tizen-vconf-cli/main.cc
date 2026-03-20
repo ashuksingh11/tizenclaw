@@ -34,41 +34,34 @@ void PrintUsage() {
               << "  watch <key>         Monitor vconf value changes\n";
 }
 
-json VConfValueToJson(const char* key) {
-    keynode_t* node = vconf_get_keynode(key);
+json KeyNodeToJson(keynode_t* node) {
     if (!node) return nullptr;
 
+    const char* key = vconf_keynode_get_name(node);
     int type = vconf_keynode_get_type(node);
     json j;
-    j["key"] = key;
+    j["key"] = key ? key : "unknown";
 
     switch (type) {
         case VCONF_TYPE_INT: {
-            int val = 0;
-            vconf_get_int(key, &val);
             j["type"] = "int";
-            j["value"] = val;
+            j["value"] = vconf_keynode_get_int(node);
             break;
         }
         case VCONF_TYPE_BOOL: {
-            int val = 0;
-            vconf_get_bool(key, &val);
             j["type"] = "bool";
-            j["value"] = (bool)val;
+            j["value"] = (bool)vconf_keynode_get_bool(node);
             break;
         }
         case VCONF_TYPE_DOUBLE: {
-            double val = 0;
-            vconf_get_double(key, &val);
             j["type"] = "double";
-            j["value"] = val;
+            j["value"] = vconf_keynode_get_double(node);
             break;
         }
         case VCONF_TYPE_STRING: {
-            char* val = vconf_get_str(key);
+            const char* val = vconf_keynode_get_str(node);
             j["type"] = "string";
             j["value"] = val ? std::string(val) : "";
-            if (val) free(val);
             break;
         }
         default:
@@ -76,12 +69,19 @@ json VConfValueToJson(const char* key) {
             j["value"] = nullptr;
             break;
     }
+    return j;
+}
+
+json VConfValueToJson(const char* key) {
+    keynode_t* node = vconf_get_keynode(key);
+    if (!node) return nullptr;
+    json j = KeyNodeToJson(node);
     vconf_keynode_destroy(node);
     return j;
 }
 
-void OnKeyChanged(const char* key, void* user_data) {
-    json j = VConfValueToJson(key);
+void OnKeyChanged(keynode_t* node, void* user_data) {
+    json j = KeyNodeToJson(node);
     j["event"] = "changed";
     std::cout << j.dump() << std::endl;
 }
@@ -149,7 +149,11 @@ int main(int argc, char* argv[]) {
         }
 
         // Initial state
-        OnKeyChanged(key.c_str(), nullptr);
+        json init_j = VConfValueToJson(key.c_str());
+        if (!init_j.is_null()) {
+            init_j["event"] = "initial";
+            std::cout << init_j.dump() << std::endl;
+        }
 
         while (g_keep_running) {
             pause(); // Wait for signals or callbacks
