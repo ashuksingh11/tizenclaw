@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "../../common/logging.hh"
+#include "../core/skill_manifest.hh"
 
 namespace {
 
@@ -45,36 +46,32 @@ std::pair<std::string, std::string> DetectSkillRuntime(
   std::string runtime = "python";
   std::string entry_point = skill_name + ".py";
 
-  std::string manifest_path =
-      skill_dir + "/" + skill_name + "/manifest.json";
-  std::ifstream mf(manifest_path);
-  if (mf.is_open()) {
-    try {
-      nlohmann::json j;
-      mf >> j;
-      runtime = j.value("runtime", "python");
-      // Support both "entry_point" (new) and
-      // "entrypoint" (legacy) keys.
-      std::string ep;
-      if (j.contains("entry_point"))
-        ep = j["entry_point"].get<std::string>();
-      else if (j.contains("entrypoint"))
-        ep = j["entrypoint"].get<std::string>();
+  std::string skill_path =
+      skill_dir + "/" + skill_name;
+  nlohmann::json j =
+      tizenclaw::SkillManifest::Load(skill_path);
+  if (!j.empty()) {
+    runtime = j.value("runtime", "python");
+    std::string ep;
+    if (j.contains("entry_point"))
+      ep = j["entry_point"].get<std::string>();
+    else if (j.contains("entrypoint"))
+      ep = j["entrypoint"].get<std::string>();
 
-      if (!ep.empty()) {
-        // Legacy format: "python3 foo.py" — strip
-        // runtime prefix, keep only filename.
-        auto pos = ep.rfind(' ');
-        if (pos != std::string::npos)
-          entry_point = ep.substr(pos + 1);
-        else
-          entry_point = ep;
-      } else {
-        if (runtime == "python") entry_point = skill_name + ".py";
-        else if (runtime == "node") entry_point = skill_name + ".js";
-        else entry_point = skill_name;  // native
-      }
-    } catch (...) {}
+    if (!ep.empty()) {
+      auto pos = ep.rfind(' ');
+      if (pos != std::string::npos)
+        entry_point = ep.substr(pos + 1);
+      else
+        entry_point = ep;
+    } else {
+      if (runtime == "python")
+        entry_point = skill_name + ".py";
+      else if (runtime == "node")
+        entry_point = skill_name + ".js";
+      else
+        entry_point = skill_name;  // native
+    }
   }
   return {runtime, entry_point};
 }

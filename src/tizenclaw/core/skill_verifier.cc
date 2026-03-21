@@ -25,6 +25,7 @@
 #include <json.hpp>
 
 #include "../../common/logging.hh"
+#include "skill_manifest.hh"
 
 namespace tizenclaw {
 
@@ -115,42 +116,86 @@ SkillVerifier::VerifyResult SkillVerifier::Verify(
   VerifyResult final_result;
   final_result.passed = true;
 
-  std::string manifest_path = skill_dir + "/manifest.json";
+  // Use unified manifest loading
+  // (SKILL.md > manifest.json)
+  bool has_skill_md =
+      SkillManifest::HasSkillMd(skill_dir);
+  std::string manifest_path =
+      skill_dir + "/manifest.json";
 
   // Step 1: Validate manifest
-  auto manifest_result = ValidateManifest(manifest_path);
-  if (!manifest_result.passed) {
-    final_result.passed = false;
-    final_result.errors.insert(
-        final_result.errors.end(),
-        manifest_result.errors.begin(),
-        manifest_result.errors.end());
-    return final_result;
+  // For SKILL.md, validate via SkillManifest::Load()
+  // For manifest.json, use legacy validation
+  if (has_skill_md) {
+    auto j = SkillManifest::ParseSkillMd(
+        skill_dir + "/SKILL.md");
+    if (j.empty() || !j.contains("name") ||
+        j["name"].get<std::string>().empty()) {
+      final_result.passed = false;
+      final_result.errors.push_back(
+          "SKILL.md missing or invalid 'name' "
+          "field");
+      return final_result;
+    }
+    if (!j.contains("description") ||
+        !j["description"].is_string()) {
+      final_result.warnings.push_back(
+          "Missing 'description' field "
+          "in SKILL.md");
+    }
+    if (!j.contains("parameters") ||
+        !j["parameters"].is_object()) {
+      final_result.passed = false;
+      final_result.errors.push_back(
+          "Missing or invalid 'parameters' in "
+          "SKILL.md");
+      return final_result;
+    }
+    if (j.contains("runtime")) {
+      std::string rt =
+          j["runtime"].get<std::string>();
+      if (!IsValidRuntime(rt)) {
+        final_result.passed = false;
+        final_result.errors.push_back(
+            "Invalid runtime: '" + rt +
+            "'. Must be python, node, or native");
+        return final_result;
+      }
+    }
+  } else {
+    auto manifest_result =
+        ValidateManifest(manifest_path);
+    if (!manifest_result.passed) {
+      final_result.passed = false;
+      final_result.errors.insert(
+          final_result.errors.end(),
+          manifest_result.errors.begin(),
+          manifest_result.errors.end());
+      return final_result;
+    }
+    final_result.warnings.insert(
+        final_result.warnings.end(),
+        manifest_result.warnings.begin(),
+        manifest_result.warnings.end());
   }
-  final_result.warnings.insert(
-      final_result.warnings.end(),
-      manifest_result.warnings.begin(),
-      manifest_result.warnings.end());
 
   // Read manifest for runtime and entry_point
   std::string runtime = "python";
   std::string entry_point;
   std::string name;
-  try {
-    std::ifstream f(manifest_path);
-    nlohmann::json j;
-    f >> j;
-    name = j.value("name", "");
-    runtime = j.value("runtime", "python");
-    entry_point = j.value("entry_point", "");
-    if (entry_point.empty()) {
-      entry_point = GetEntryPointForRuntime(name, runtime);
-    }
-  } catch (...) {
+  auto j = SkillManifest::Load(skill_dir);
+  if (j.empty()) {
     final_result.passed = false;
     final_result.errors.push_back(
-        "Failed to parse manifest.json");
+        "Failed to load skill manifest");
     return final_result;
+  }
+  name = j.value("name", "");
+  runtime = j.value("runtime", "python");
+  entry_point = j.value("entry_point", "");
+  if (entry_point.empty()) {
+    entry_point =
+        GetEntryPointForRuntime(name, runtime);
   }
 
   // Step 2: Validate entry point
@@ -381,42 +426,78 @@ SkillVerifier::VerifyResult SkillVerifier::DryRun(
 
 void SkillVerifier::DisableSkill(
     const std::string& skill_dir) {
+  // Update manifest.json if present
   std::string path = skill_dir + "/manifest.json";
-  try {
-    std::ifstream fin(path);
-    nlohmann::json j;
-    fin >> j;
-    fin.close();
+  if (std::filesystem::exists(path)) {
+    try {
+      std::ifstream fin(path);
+      nlohmann::json j;
+      fin >> j;
+      fin.close();
 
-    j["verified"] = false;
+      j["verified"] = false;
 
-    std::ofstream fout(path);
-    fout << j.dump(4) << std::endl;
-    LOG(INFO) << "Skill disabled: " << skill_dir;
-  } catch (const std::exception& e) {
-    LOG(ERROR) << "Failed to disable skill: "
-               << e.what();
+      std::ofstream fout(path);
+      fout << j.dump(4) << std::endl;
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "Failed to disable skill "
+                 << "(manifest.json): " << e.what();
+    }
   }
+
+  // Update SKILL.md if present
+  std::string skill_md = skill_dir + "/SKILL.md";
+  if (std::filesystem::exists(skill_md)) {
+    auto j = SkillManifest::ParseSkillMd(skill_md);
+    if (!j.empty()) {
+      j["verified"] = false;
+      std::ofstream sf(skill_md);
+      if (sf.is_open()) {
+        sf << SkillManifest::GenerateSkillMd(j);
+        sf.close();
+      }
+    }
+  }
+
+  LOG(INFO) << "Skill disabled: " << skill_dir;
 }
 
 void SkillVerifier::EnableSkill(
     const std::string& skill_dir) {
+  // Update manifest.json if present
   std::string path = skill_dir + "/manifest.json";
-  try {
-    std::ifstream fin(path);
-    nlohmann::json j;
-    fin >> j;
-    fin.close();
+  if (std::filesystem::exists(path)) {
+    try {
+      std::ifstream fin(path);
+      nlohmann::json j;
+      fin >> j;
+      fin.close();
 
-    j["verified"] = true;
+      j["verified"] = true;
 
-    std::ofstream fout(path);
-    fout << j.dump(4) << std::endl;
-    LOG(INFO) << "Skill enabled: " << skill_dir;
-  } catch (const std::exception& e) {
-    LOG(ERROR) << "Failed to enable skill: "
-               << e.what();
+      std::ofstream fout(path);
+      fout << j.dump(4) << std::endl;
+    } catch (const std::exception& e) {
+      LOG(ERROR) << "Failed to enable skill "
+                 << "(manifest.json): " << e.what();
+    }
   }
+
+  // Update SKILL.md if present
+  std::string skill_md = skill_dir + "/SKILL.md";
+  if (std::filesystem::exists(skill_md)) {
+    auto j = SkillManifest::ParseSkillMd(skill_md);
+    if (!j.empty()) {
+      j["verified"] = true;
+      std::ofstream sf(skill_md);
+      if (sf.is_open()) {
+        sf << SkillManifest::GenerateSkillMd(j);
+        sf.close();
+      }
+    }
+  }
+
+  LOG(INFO) << "Skill enabled: " << skill_dir;
 }
 
 }  // namespace tizenclaw

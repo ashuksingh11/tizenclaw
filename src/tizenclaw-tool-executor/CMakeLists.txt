@@ -6,6 +6,7 @@ ADD_EXECUTABLE(${TARGET_TOOL_EXECUTOR}
   ${TOOL_EXECUTOR_SRCS}
   cli_session_manager.cc
   "${CMAKE_CURRENT_SOURCE_DIR}/../common/logging.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../tizenclaw/core/skill_manifest.cc"
 )
 
 # Python3 include/lib paths via sysconfig
