@@ -22,17 +22,31 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <iostream>
+#include <thread>
 
 namespace tizenclaw {
 
 McpClient::McpClient(const std::string& server_name, const std::string& command,
-                     const std::vector<std::string>& args)
-    : server_name_(server_name), command_(command), args_(args) {}
+                     const std::vector<std::string>& args, int timeout_ms)
+    : server_name_(server_name), command_(command), args_(args), timeout_ms_(timeout_ms) {
+    UpdateLastUsed();
+}
 
 McpClient::~McpClient() { Disconnect(); }
 
+void McpClient::UpdateLastUsed() {
+  last_used_ms_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::system_clock::now().time_since_epoch())
+                      .count();
+}
+
+long long McpClient::GetLastUsedMs() const {
+  return last_used_ms_;
+}
+
 bool McpClient::Connect() {
   if (is_connected_) return true;
+  UpdateLastUsed();
 
   if (pipe(pipe_stdin_) == -1 || pipe(pipe_stdout_) == -1) {
     LOG(ERROR) << "MCP Client: Failed to create pipes for " << server_name_;
@@ -122,7 +136,18 @@ void McpClient::Disconnect() {
 
   if (pid_ > 0) {
     kill(pid_, SIGTERM);
-    waitpid(pid_, nullptr, WNOHANG);
+    int wstatus;
+    int ret = 0;
+    for (int i = 0; i < 10; ++i) {
+      ret = waitpid(pid_, &wstatus, WNOHANG);
+      if (ret > 0) break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (ret <= 0) {
+      LOG(WARNING) << "MCP Client: " << server_name_ << " stuck, sending SIGKILL";
+      kill(pid_, SIGKILL);
+      waitpid(pid_, &wstatus, 0);
+    }
     pid_ = -1;
   }
 }
@@ -158,8 +183,10 @@ nlohmann::json McpClient::CallTool(const std::string& tool_name, const nlohmann:
     {"arguments", arguments}
   };
 
+  UpdateLastUsed();
+
   try {
-    nlohmann::json response = SendRequestSync("tools/call", params, 30000); // 30s timeout
+    nlohmann::json response = SendRequestSync("tools/call", params, timeout_ms_);
     LOG(INFO) << "MCP Client: CallTool response for " << tool_name << ": " << response.dump();
     if (response.contains("result")) {
       return response["result"];

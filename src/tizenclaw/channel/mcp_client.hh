@@ -20,7 +20,7 @@ class McpClient {
 
   // Constructor takes a server name, command, and arguments
   McpClient(const std::string& server_name, const std::string& command,
-            const std::vector<std::string>& args);
+            const std::vector<std::string>& args, int timeout_ms = 10000);
   ~McpClient();
 
   // Start the MCP server process and perform initialize handshake
@@ -38,6 +38,13 @@ class McpClient {
 
   const std::string& GetServerName() const { return server_name_; }
   bool IsConnected() const { return is_connected_; }
+
+  // Update last_used
+  void UpdateLastUsed();
+  long long GetLastUsedMs() const;
+
+  // Timeout setting
+  int GetTimeoutMs() const { return timeout_ms_; }
 
  private:
   std::string server_name_;
@@ -62,10 +69,13 @@ class McpClient {
   // Send a JSON-RPC request and wait for the response matching req_id
   nlohmann::json SendRequestSync(const std::string& method,
                                  const nlohmann::json& params,
-                                 int timeout_ms = 10000);
+                                 int timeout_ms);
 
   // Persistent read buffer for stdio pipe
   std::string read_buffer_;
+  
+  int timeout_ms_;
+  std::atomic<long long> last_used_ms_{0};
 };
 
 }  // namespace tizenclaw

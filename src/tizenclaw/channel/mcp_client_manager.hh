@@ -7,7 +7,10 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <memory>
 #include <mutex>
+#include <thread>
+#include <atomic>
 
 namespace tizenclaw {
 
@@ -31,8 +34,24 @@ class McpClientManager {
   static bool IsMcpTool(const std::string& full_tool_name);
 
  private:
+  struct ServerConfig {
+    std::string command;
+    std::vector<std::string> args;
+    bool is_sandbox = false;
+    int timeout_ms = 30000;
+    int idle_timeout_sec = 0;
+    std::vector<LlmToolDecl> cached_tools;
+    bool loaded = false;
+  };
+
   std::map<std::string, std::shared_ptr<McpClient>> clients_;
+  std::map<std::string, ServerConfig> configs_;
   std::mutex clients_mutex_;
+
+  std::thread idle_monitor_thread_;
+  std::atomic<bool> is_running_{false};
+
+  void IdleMonitorLoop();
 
   // Parses prefix "mcp__" to extract server name and actual tool name
   bool ParseToolName(const std::string& full_tool_name,
