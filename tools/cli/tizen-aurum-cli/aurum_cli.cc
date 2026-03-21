@@ -686,6 +686,56 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  // ── Auto re-exec as owner user for AT-SPI ──
+  // AT-SPI requires connecting to the owner user's D-Bus
+  // session bus. When run as root (e.g. via sdb shell or
+  // tool-executor), D-Bus security policy blocks registration.
+  // Solution: re-execute self as 'owner' user.
+  {
+    const char* dbus_addr = getenv("DBUS_SESSION_BUS_ADDRESS");
+    bool need_reexec = (getuid() == 0) &&
+                       (!dbus_addr || strlen(dbus_addr) == 0);
+
+    // Check if we're already a re-exec child
+    const char* reexec_marker = getenv("_AURUM_REEXEC");
+    if (need_reexec && !reexec_marker) {
+      // Build command: su - owner -c '<self> <args>'
+      std::string self_path = argv[0];
+      std::string cmd = "su - owner -c '";
+      cmd += self_path;
+      for (int i = 1; i < argc; ++i) {
+        cmd += " ";
+        // Escape single quotes in args
+        std::string arg = argv[i];
+        std::string escaped;
+        for (char c : arg) {
+          if (c == '\'') escaped += "'\\''";
+          else escaped += c;
+        }
+        cmd += escaped;
+      }
+      cmd += "' 2>&1";
+
+      // Set marker to prevent infinite re-exec loop
+      setenv("_AURUM_REEXEC", "1", 1);
+
+      // Execute and pass-through output
+      FILE* pipe = popen(cmd.c_str(), "r");
+      if (pipe) {
+        char buf[4096];
+        while (fgets(buf, sizeof(buf), pipe)) {
+          // Filter out D-Bus warnings
+          if (strstr(buf, "dbind-WARNING") ||
+              strstr(buf, "dbind-CRITICAL")) continue;
+          std::cout << buf;
+        }
+        int status = pclose(pipe);
+        return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+      }
+      // popen failed — fall through to direct execution
+    }
+  }
+
   // Detect --grpc mode and --grpc-addr
   bool grpc_mode = false;
   std::string grpc_addr = "localhost:50051";
