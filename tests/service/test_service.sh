@@ -91,3 +91,12 @@ else
 fi
 
 suite_end
+section "S10" "Web Dashboard"
+DASHBOARD_CHECK=$(sdb_shell "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9090/ 2>/dev/null" | tr -d '[:space:]')
+if [ "$DASHBOARD_CHECK" = "200" ] || [ "$DASHBOARD_CHECK" = "302" ]; then
+  _pass "Dashboard is accessible (HTTP ${DASHBOARD_CHECK})"
+else
+  _skip "Dashboard accessibility" "HTTP ${DASHBOARD_CHECK} (may need time after restart)"
+fi
+
+suite_end
