@@ -100,6 +100,8 @@ bool OnDeviceEmbedding::Initialize(const std::string& model_dir,
   g_ort->SetInterOpNumThreads(opts, 1);
   g_ort->SetSessionGraphOptimizationLevel(
       opts, ORT_ENABLE_ALL);
+  g_ort->DisableCpuMemArena(opts);
+  g_ort->DisableMemPattern(opts);
 
   // 5. Load model
   std::string model_path = model_dir + "/model.onnx";

@@ -125,6 +125,7 @@ class WebDashboard : public Channel {
   AgentCore* agent_;
   TaskScheduler* scheduler_;
   SoupServer* server_ = nullptr;
+  GThreadPool* chat_thread_pool_ = nullptr;
   std::thread server_thread_;
   GMainContext* context_ = nullptr;
   GMainLoop* loop_ = nullptr;

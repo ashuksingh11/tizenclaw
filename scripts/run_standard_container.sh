@@ -157,7 +157,8 @@ write_config() {
     "user": {"uid": 0, "gid": 0},
     "args": ${process_args_json},
     "env": [
-      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "MALLOC_ARENA_MAX=2"
     ],
     "cwd": "/",
     "noNewPrivileges": true,
