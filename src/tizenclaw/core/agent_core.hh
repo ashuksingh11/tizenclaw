@@ -290,7 +290,8 @@ class AgentCore {
   // Embedding store for RAG
   EmbeddingStore embedding_store_;
 
-  // On-device embedding (LLM-backend-independent)
+  // Safe lock for lazy embedding
+  mutable std::mutex embedding_mutex_;
   OnDeviceEmbedding on_device_embedding_;
 
   // Memory store for persistent memory

@@ -108,6 +108,15 @@ void AgentCore::MaintenanceLoop() {
       // Prune old memory entries
       memory_store_.PruneShortTerm();
       memory_store_.PruneEpisodic();
+
+      // Free ONNX Runtime memory embedding if loaded (lazy un-load)
+      {
+        std::lock_guard<std::mutex> lock(embedding_mutex_);
+        if (on_device_embedding_.IsAvailable()) {
+          on_device_embedding_.Shutdown();
+          LOG(INFO) << "On-device embedding model unloaded to save memory (idle)";
+        }
+      }
     }
   }
 }
@@ -348,28 +357,7 @@ bool AgentCore::Initialize() {
     }
   }
 
-  // Initialize on-device embedding model
-  {
-    auto guard =
-        boot.Track("OnDeviceEmbedding");
-    std::string model_dir =
-        std::string(APP_DATA_DIR) +
-        "/models/all-MiniLM-L6-v2";
-    std::string ort_lib =
-        std::string(APP_DATA_DIR) +
-        "/lib/libonnxruntime.so";
-    if (on_device_embedding_.Initialize(
-            model_dir, ort_lib)) {
-      LOG(INFO)
-          << "On-device embedding ready "
-          << "(LLM-independent)";
-    } else {
-      guard.SetFailed("not available");
-      LOG(WARNING)
-          << "On-device embedding not "
-          << "available (will use LLM)";
-    }
-  }
+  // Removed pre-loading of OnDeviceEmbedding. It will be loaded lazily on first use.
 
   // Initialize supervisor engine
   {
@@ -2092,7 +2080,21 @@ std::string AgentCore::ExecuteWebApiLookup(
 
 std::vector<float> AgentCore::GenerateEmbedding(const std::string& text) {
   // Prefer on-device embedding (LLM-independent)
+  {
+    std::lock_guard<std::mutex> lock(embedding_mutex_);
+    if (!on_device_embedding_.IsAvailable()) {
+      std::string model_dir = std::string(APP_DATA_DIR) + "/models/all-MiniLM-L6-v2";
+      std::string ort_lib = std::string(APP_DATA_DIR) + "/lib/libonnxruntime.so";
+      if (!on_device_embedding_.Initialize(model_dir, ort_lib)) {
+        LOG(WARNING) << "On-device embedding lazy-init failed";
+      } else {
+        LOG(INFO) << "On-device embedding lazily initialized";
+      }
+    }
+  }
+
   if (on_device_embedding_.IsAvailable()) {
+    std::lock_guard<std::mutex> lock(embedding_mutex_);
     return on_device_embedding_.Encode(text);
   }
 

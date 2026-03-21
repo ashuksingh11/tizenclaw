@@ -421,6 +421,14 @@ std::string TodayDateStr() {
   return oss.str();
 }
 
+struct ChatCtx {
+  WebDashboard* self;
+  SoupMessage* msg;
+  std::string result;
+  std::string session_id;
+  std::string prompt;
+};
+
 }  // namespace
 
 void WebDashboard::ApiSessions(
@@ -549,19 +557,18 @@ void WebDashboard::ApiTasks(
         name.substr(name.size() - 3) != ".md")
       continue;
 
-    // Read task file for metadata
+    // Read task file for metadata (only first 256 bytes)
     std::ifstream tf(entry.path());
-    std::string content;
+    std::string content_preview;
     if (tf.is_open()) {
-      content.assign(
-          (std::istreambuf_iterator<char>(tf)),
-          std::istreambuf_iterator<char>());
+      char buf[256] = {0};
+      tf.read(buf, sizeof(buf) - 1);
+      content_preview.assign(buf, tf.gcount());
     }
 
     nlohmann::json task_j;
     task_j["file"] = name;
-    task_j["content_preview"] =
-        content.substr(0, 200);
+    task_j["content_preview"] = content_preview;
 
     std::error_code fec;
     auto lwt = entry.last_write_time(fec);
@@ -772,56 +779,32 @@ void WebDashboard::ApiChat(SoupMessage* msg) {
   // unpaused, allowing the response to be sent.
   g_object_ref(msg);  // prevent libsoup from freeing msg early
   soup_server_pause_message(server_, msg);
-
-  struct ChatCtx {
-    WebDashboard* self;
-    SoupMessage* msg;
-    std::string result;
-    std::string session_id;
-  };
-
-  auto* ctx = new ChatCtx{this, msg, "", session_id};
+  auto* ctx = new ChatCtx{this, msg, "", session_id, prompt};
 
   pending_workers_.fetch_add(1);
-  std::thread([ctx, prompt]() {
-    ctx->result = ctx->self->agent_->ProcessPrompt(
-        ctx->session_id, prompt);
-
-    g_main_context_invoke(
-        ctx->self->context_,
-        [](gpointer data) -> gboolean {
-          auto* c = static_cast<ChatCtx*>(data);
-          nlohmann::json resp = {
-              {"status", "ok"},
-              {"session_id", c->session_id},
-              {"response", c->result}};
-          std::string resp_str = resp.dump();
-
-          soup_message_set_status(
-              c->msg, SOUP_STATUS_OK);
-          soup_message_set_response(
-              c->msg, "application/json",
-              SOUP_MEMORY_COPY,
-              resp_str.c_str(),
-              static_cast<gsize>(resp_str.size()));
-          soup_server_unpause_message(
-              c->self->server_, c->msg);
-          g_object_unref(c->msg);  // release our ref
-
-          // Decrement pending workers and notify Stop() on the
-          // GMainLoop thread to avoid use-after-free on the
-          // detached worker thread.
-          auto* self = c->self;
-          delete c;
-          self->pending_workers_.fetch_sub(1);
-          {
-            std::lock_guard<std::mutex> lk(self->workers_mutex_);
-            self->workers_cv_.notify_all();
-          }
-          return G_SOURCE_REMOVE;
-        },
-        ctx);
-  }).detach();
+  if (chat_thread_pool_) {
+    g_thread_pool_push(chat_thread_pool_, ctx, nullptr);
+  } else {
+    // Fallback if pool creation failed
+    std::thread([ctx]() {
+      ctx->result = ctx->self->agent_->ProcessPrompt(ctx->session_id, ctx->prompt);
+      g_main_context_invoke(ctx->self->context_, [](gpointer data) -> gboolean {
+        auto* c = static_cast<ChatCtx*>(data);
+        nlohmann::json resp = {{"status", "ok"}, {"session_id", c->session_id}, {"response", c->result}};
+        std::string resp_str = resp.dump();
+        soup_message_set_status(c->msg, SOUP_STATUS_OK);
+        soup_message_set_response(c->msg, "application/json", SOUP_MEMORY_COPY, resp_str.c_str(), static_cast<gsize>(resp_str.size()));
+        soup_server_unpause_message(c->self->server_, c->msg);
+        g_object_unref(c->msg);
+        auto* self = c->self;
+        delete c;
+        self->pending_workers_.fetch_sub(1);
+        std::lock_guard<std::mutex> lk(self->workers_mutex_);
+        self->workers_cv_.notify_all();
+        return G_SOURCE_REMOVE;
+      }, ctx);
+    }).detach();
+  }
 }
 
 bool WebDashboard::Start() {
@@ -834,8 +817,30 @@ bool WebDashboard::Start() {
 
   // Create a dedicated GMainContext so that SoupServer and
   // g_main_context_invoke() callbacks all run on the server thread,
-  // not the default (tizen_core) context.
   context_ = g_main_context_new();
+
+  // Initialize Chat Thread Pool limit (2 concurent chats MAX)
+  chat_thread_pool_ = g_thread_pool_new(
+      [](gpointer data, gpointer /* user_data */) {
+        auto* ctx = static_cast<ChatCtx*>(data);
+        ctx->result = ctx->self->agent_->ProcessPrompt(ctx->session_id, ctx->prompt);
+        g_main_context_invoke(ctx->self->context_, [](gpointer data2) -> gboolean {
+          auto* c = static_cast<ChatCtx*>(data2);
+          nlohmann::json resp = {{"status", "ok"}, {"session_id", c->session_id}, {"response", c->result}};
+          std::string resp_str = resp.dump();
+          soup_message_set_status(c->msg, SOUP_STATUS_OK);
+          soup_message_set_response(c->msg, "application/json", SOUP_MEMORY_COPY, resp_str.c_str(), static_cast<gsize>(resp_str.size()));
+          soup_server_unpause_message(c->self->server_, c->msg);
+          g_object_unref(c->msg);
+          auto* self = c->self;
+          delete c;
+          self->pending_workers_.fetch_sub(1);
+          std::lock_guard<std::mutex> lk(self->workers_mutex_);
+          self->workers_cv_.notify_all();
+          return G_SOURCE_REMOVE;
+        }, ctx);
+      },
+      this, 2, FALSE, nullptr);
 
   // SoupServer must be created and start listening inside the
   // server thread so that libsoup attaches its internal sources
@@ -954,6 +959,11 @@ void WebDashboard::Stop() {
   if (context_) {
     g_main_context_unref(context_);
     context_ = nullptr;
+  }
+
+  if (chat_thread_pool_) {
+    g_thread_pool_free(chat_thread_pool_, FALSE, TRUE);
+    chat_thread_pool_ = nullptr;
   }
 
   LOG(INFO) << "WebDashboard stopped.";
