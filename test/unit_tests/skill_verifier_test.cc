@@ -106,8 +106,16 @@ TEST_F(SkillVerifierTest, MissingManifestFails) {
   auto result = SkillVerifier::Verify(test_dir_);
   EXPECT_FALSE(result.passed);
   ASSERT_FALSE(result.errors.empty());
-  EXPECT_NE(result.errors[0].find("manifest.json"),
-            std::string::npos);
+  // Should mention manifest in some form
+  bool found = false;
+  for (const auto& e : result.errors) {
+    if (e.find("manifest") != std::string::npos ||
+        e.find("SKILL.md") != std::string::npos) {
+      found = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(found);
 }
 
 TEST_F(SkillVerifierTest, MissingNameFails) {

@@ -42,6 +42,7 @@
 #include "skill_plugin_manager.hh"
 #include "system_cli_adapter.hh"
 #include "capability_registry.hh"
+#include "skill_manifest.hh"
 #include "skill_verifier.hh"
 #include "tool_indexer.hh"
 #include "tool_declaration_builder.hh"
@@ -1032,7 +1033,9 @@ std::vector<LlmToolDecl> AgentCore::LoadSkillDeclarations() {
   skill_dirs_.clear();
   const std::string skills_dir = "/opt/usr/share/tizenclaw/tools/skills";
 
-  // Lambda to scan a skills directory
+  // Lambda to scan a skills directory.
+  // Supports both SKILL.md (Anthropic standard) and
+  // manifest.json (legacy). SKILL.md takes priority.
   auto scan_dir = [&](const std::string& dir) {
     std::error_code ec;
     if (!fs::is_directory(dir, ec)) return;
@@ -1041,14 +1044,13 @@ std::vector<LlmToolDecl> AgentCore::LoadSkillDeclarations() {
       if (!entry.is_directory()) continue;
       auto dirname = entry.path().filename().string();
       if (dirname[0] == '.') continue;
-      std::string manifest_path = entry.path() / "manifest.json";
-      std::ifstream mf(manifest_path);
-      if (!mf.is_open()) continue;
+      std::string skill_path = entry.path().string();
+
+      // Load manifest (SKILL.md > manifest.json)
+      nlohmann::json j = SkillManifest::Load(skill_path);
+      if (j.empty()) continue;
 
       try {
-        nlohmann::json j;
-        mf >> j;
-
         // Skip disabled skills
         if (j.contains("verified") &&
             j["verified"].is_boolean() &&
@@ -1072,8 +1074,10 @@ std::vector<LlmToolDecl> AgentCore::LoadSkillDeclarations() {
           cap.description = t.description;
           cap.source = CapabilitySource::kSkill;
           cap.category =
-              j.contains("metadata") &&
-              j["metadata"].contains("category")
+              j.contains("category")
+                  ? j["category"].get<std::string>()
+              : j.contains("metadata") &&
+                j["metadata"].contains("category")
                   ? j["metadata"]["category"]
                         .get<std::string>()
                   : "general";
@@ -1095,7 +1099,7 @@ std::vector<LlmToolDecl> AgentCore::LoadSkillDeclarations() {
         }
       } catch (const std::exception& e) {
         LOG(WARNING) << "Failed to parse "
-                     << "manifest: " << manifest_path
+                     << "skill manifest: " << skill_path
                      << ": " << e.what();
       }
     }
@@ -2750,6 +2754,15 @@ std::string AgentCore::ExecuteCustomSkillOp(const nlohmann::json& args) {
     }
     mf << manifest.dump(4) << std::endl;
     mf.close();
+
+    // Also generate SKILL.md (Anthropic standard)
+    std::string skill_md_path =
+        skill_dir + "/SKILL.md";
+    std::ofstream sf(skill_md_path);
+    if (sf.is_open()) {
+      sf << SkillManifest::GenerateSkillMd(manifest);
+      sf.close();
+    }
 
     // Write code file
     std::string code_path =

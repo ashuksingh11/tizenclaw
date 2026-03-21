@@ -97,6 +97,52 @@ does not provide the `pkgconfig(lxc)` dependency.
 
 ---
 
+## Skill Format Standard (Anthropic Standard)
+
+TizenClaw skills follow the Anthropic standard skill format. Each skill is organized as a directory containing a `SKILL.md` file with YAML frontmatter.
+
+### Skill Directory Structure
+```
+tools/skills/<skill_name>/
+├── SKILL.md               ← Required: YAML frontmatter + Markdown documentation
+├── <skill_name>.py        ← Entry point script (or .js / binary)
+├── manifest.json          ← Optional: Legacy format (backward compatible)
+├── scripts/               ← Optional: Helper scripts
+├── examples/              ← Optional: Reference implementations
+├── resources/             ← Optional: Additional assets
+```
+
+### SKILL.md Format
+```markdown
+---
+name: skill_name
+description: "What the skill does"
+category: Device Info
+risk_level: low
+runtime: python
+entry_point: skill_name.py
+---
+
+# Skill Title
+
+Detailed documentation about the skill...
+
+```json:parameters
+{
+  "type": "object",
+  "properties": {},
+  "required": []
+}
+```​
+```
+
+### Priority Rules
+- If `SKILL.md` exists → use it (Anthropic standard)
+- Else if `manifest.json` exists → use it (legacy fallback)
+- Both can coexist; `SKILL.md` always takes priority
+
+---
+
 ## Workflow Reference List
 Detailed workflow files are located under [`.agents/workflows/`](.agents/workflows/).
 

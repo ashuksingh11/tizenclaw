@@ -23,6 +23,9 @@
 
 #include "../../common/logging.hh"
 #include "../core/agent_core.hh"
+#include "../core/skill_manifest.hh"
+
+#include <filesystem>
 
 namespace tizenclaw {
 
@@ -31,24 +34,24 @@ McpServer::McpServer(AgentCore* agent) : agent_(agent) { DiscoverTools(); }
 void McpServer::DiscoverTools() {
   tools_.clear();
 
-  // Scan skill manifests
+  // Scan skill manifests (SKILL.md > manifest.json)
   const std::string skills_dir = "/opt/usr/share/tizenclaw/tools/skills";
 
-  DIR* dir = opendir(skills_dir.c_str());
-  if (dir) {
-    struct dirent* ent;
-    while ((ent = readdir(dir)) != nullptr) {
-      if (ent->d_name[0] == '.') continue;
-      std::string name(ent->d_name);
-      if (name == "mcp_server") continue;
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  if (fs::is_directory(skills_dir, ec)) {
+    for (const auto& entry :
+         fs::directory_iterator(skills_dir, ec)) {
+      if (!entry.is_directory()) continue;
+      auto name = entry.path().filename().string();
+      if (name[0] == '.' || name == "mcp_server")
+        continue;
 
-      std::string manifest_path = skills_dir + "/" + name + "/manifest.json";
-      std::ifstream mf(manifest_path);
-      if (!mf.is_open()) continue;
+      nlohmann::json j =
+          SkillManifest::Load(entry.path().string());
+      if (j.empty()) continue;
 
       try {
-        nlohmann::json j;
-        mf >> j;
         if (j.contains("parameters")) {
           ToolInfo t;
           t.name = j.value("name", name);
@@ -59,10 +62,10 @@ void McpServer::DiscoverTools() {
           LOG(INFO) << "MCP: Discovered tool: " << t.name;
         }
       } catch (...) {
-        LOG(WARNING) << "MCP: Failed to parse: " << manifest_path;
+        LOG(WARNING) << "MCP: Failed to parse: "
+                     << entry.path().string();
       }
     }
-    closedir(dir);
   }
 
   // Add synthetic tool: ask_tizenclaw

@@ -30,6 +30,7 @@
 #define PROJECT_TAG "TIZENCLAW_TOOL_EXECUTOR"
 
 #include "../common/logging.hh"
+#include "../tizenclaw/core/skill_manifest.hh"
 
 namespace tizenclaw {
 namespace tool_executor {
@@ -145,31 +146,31 @@ std::pair<std::string, std::string> ToolHandler::DetectRuntime(
   std::string entry_point = tool_name + ".py";
 
   for (const auto& base : kToolSearchPaths) {
-    std::string manifest = base + "/" + tool_name + "/manifest.json";
-    std::ifstream f(manifest);
-    if (!f.is_open()) {
-      LOG(DEBUG) << "Manifest not found: " << manifest;
+    std::string tool_dir = base + "/" + tool_name;
+
+    // Use SkillManifest for unified loading
+    // (SKILL.md > manifest.json)
+    nlohmann::json j = SkillManifest::Load(tool_dir);
+    if (j.empty()) {
+      LOG(DEBUG) << "No manifest in: " << tool_dir;
       continue;
     }
-    LOG(DEBUG) << "Manifest found: " << manifest;
-    try {
-      nlohmann::json j;
-      f >> j;
-      runtime = j.value("runtime", "python");
-      std::string ep;
-      if (j.contains("entry_point"))
-        ep = j["entry_point"].get<std::string>();
-      else if (j.contains("entrypoint"))
-        ep = j["entrypoint"].get<std::string>();
-      if (!ep.empty()) {
-        auto pos = ep.rfind(' ');
-        entry_point = (pos != std::string::npos) ? ep.substr(pos + 1) : ep;
-      } else {
-        if (runtime == "python") entry_point = tool_name + ".py";
-        else if (runtime == "node") entry_point = tool_name + ".js";
-        else entry_point = tool_name;
-      }
-    } catch (...) {}
+    LOG(DEBUG) << "Manifest found: " << tool_dir;
+
+    runtime = j.value("runtime", "python");
+    std::string ep;
+    if (j.contains("entry_point"))
+      ep = j["entry_point"].get<std::string>();
+    else if (j.contains("entrypoint"))
+      ep = j["entrypoint"].get<std::string>();
+    if (!ep.empty()) {
+      auto pos = ep.rfind(' ');
+      entry_point = (pos != std::string::npos) ? ep.substr(pos + 1) : ep;
+    } else {
+      if (runtime == "python") entry_point = tool_name + ".py";
+      else if (runtime == "node") entry_point = tool_name + ".js";
+      else entry_point = tool_name;
+    }
     break;
   }
   LOG(DEBUG) << "DetectRuntime: runtime=" << runtime
