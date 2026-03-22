@@ -205,8 +205,10 @@ tizenclaw/
 ├── tests/
 │   ├── unit/                        # gtest/gmock 단위 테스트 (42개 파일)
 │   ├── e2e/                         # E2E 스모크 테스트 스크립트
-│   ├── cli_tools/                   # CLI 도구 검증 테스트
-│   └── mcp/                         # MCP 프로토콜 준수 테스트
+│   └── verification/                # 풀 검증 테스트 스위트
+│       ├── run_all.sh               # 마스터 러너
+│       ├── cli_tools/               # CLI 도구 검증 테스트
+│       └── mcp/                     # MCP 프로토콜 준수 테스트
 ├── packaging/                       # RPM 패키징 & systemd
 │   ├── tizenclaw.spec               # GBS RPM 빌드 스펙
 │   ├── tizenclaw.service            # 데몬 systemd 서비스

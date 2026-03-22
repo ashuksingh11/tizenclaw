@@ -811,7 +811,7 @@ do_full_tests() {
 
   header "Step 6: Full Verification Test Suite"
 
-  local test_script="${PROJECT_DIR}/tests/run_all.sh"
+  local test_script="${PROJECT_DIR}/tests/verification/run_all.sh"
   if [ ! -f "${test_script}" ]; then
     warn "Full test script not found: ${test_script}"
     return 1

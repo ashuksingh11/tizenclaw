@@ -2,15 +2,15 @@
 # ═══════════════════════════════════════════════════════════════════
 # TizenClaw Test Suite — Master Runner
 #
-# Discovers and runs all test scripts under tests/, aggregating
-# results into a final summary report.
+# Discovers and runs all test scripts under tests/verification/,
+# aggregating results into a final summary report.
 #
 # Usage:
-#   ./tests/run_all.sh                         # Run all suites
-#   ./tests/run_all.sh -d <serial>             # Target specific device
-#   ./tests/run_all.sh -s cli_tools            # Run only cli_tools suite
-#   ./tests/run_all.sh -s service,mcp          # Run specific suites
-#   ./tests/run_all.sh --list                  # List available suites
+#   ./tests/verification/run_all.sh                         # Run all suites
+#   ./tests/verification/run_all.sh -d <serial>             # Target specific device
+#   ./tests/verification/run_all.sh -s cli_tools            # Run only cli_tools suite
+#   ./tests/verification/run_all.sh -s service,mcp          # Run specific suites
+#   ./tests/verification/run_all.sh --list                  # List available suites
 #
 # Exit codes:
 #   0 = all suites passed

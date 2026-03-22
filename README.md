@@ -563,11 +563,13 @@ tizenclaw/
 ├── scripts/                       # Container setup, CI, hooks
 ├── tests/
 │   ├── unit/                      # Google Test unit tests (42 test files)
-│   ├── e2e/                       # End-to-end smoke test scripts
-│   ├── cli_tools/                 # CLI tool validation tests
-│   ├── llm_integration/           # LLM agent integration tests
-│   ├── mcp/                       # MCP protocol compliance tests
-│   └── regression/                # Crash resilience & edge cases
+│   ├── e2e/                       # E2E smoke test scripts
+│   └── verification/              # Full verification test suites
+│       ├── run_all.sh             #   Master runner
+│       ├── cli_tools/             #   CLI tool validation
+│       ├── llm_integration/       #   LLM agent tests
+│       ├── mcp/                   #   MCP protocol compliance
+│       └── regression/            #   Crash resilience & edge cases
 ├── data/
 │   ├── config/                    # Active configuration files
 │   ├── devel/                     # Development configuration

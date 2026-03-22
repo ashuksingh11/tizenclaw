@@ -6,23 +6,23 @@ End-to-end test automation framework for TizenClaw. Runs against real devices
 ## Quick Start
 
 ```bash
-# Run all test suites
-./tests/run_all.sh
+# Run all verification suites
+./tests/verification/run_all.sh
 
 # Target a specific device
-./tests/run_all.sh -d <device-serial>
+./tests/verification/run_all.sh -d <device-serial>
 
 # Run a specific suite
-./tests/run_all.sh -s cli_tools
+./tests/verification/run_all.sh -s cli_tools
 
 # Run multiple suites
-./tests/run_all.sh -s service,mcp,regression
+./tests/verification/run_all.sh -s service,mcp,regression
 
 # List available suites
-./tests/run_all.sh --list
+./tests/verification/run_all.sh --list
 
 # Run a single test file
-./tests/cli_tools/test_device_info.sh -d <device-serial>
+./tests/verification/cli_tools/test_device_info.sh -d <device-serial>
 ```
 
 ## Prerequisites
@@ -39,39 +39,23 @@ End-to-end test automation framework for TizenClaw. Runs against real devices
 
 ```
 tests/
-├── run_all.sh                     # Master runner
-├── lib/
-│   └── test_framework.sh          # Shared assertion & utility library
-├── service/
-│   └── test_service.sh            # Daemon health & infrastructure
-├── cli_tools/
-│   ├── test_app_manager.sh        # App list, launch, terminate
-│   ├── test_aurum.sh              # UI automation (screen, elements)
-│   ├── test_device_info.sh        # Battery, CPU, storage, thermal
-│   ├── test_display.sh            # Brightness control
-│   ├── test_file_manager.sh       # File CRUD operations
-│   ├── test_hardware.sh           # Haptic, LED, power lock
-│   ├── test_media.sh              # Media DB query, MIME types
-│   ├── test_network.sh            # WiFi, BT, network status
-│   ├── test_notification.sh       # Send notifications
-│   ├── test_sensor.sh             # Accelerometer, light, proximity
-│   ├── test_sound.sh              # Volume control, audio devices
-│   ├── test_vconf.sh              # VConf key read/write
-│   └── test_web_search.sh         # Web search API
-├── embedded_tools/
-│   ├── test_code_execution.sh     # Python code execution
-│   ├── test_pipeline.sh           # Pipeline CRUD
-│   ├── test_session.sh            # Session management
-│   ├── test_task.sh               # Task management
-│   └── test_workflow.sh           # Workflow CRUD
-├── llm_integration/
-│   ├── test_prompt_response.sh    # Basic prompt/response
-│   ├── test_streaming.sh          # Streaming mode
-│   └── test_tool_invocation.sh    # LLM-driven tool calls
-├── mcp/
-│   └── test_mcp_protocol.sh       # MCP JSON-RPC compliance
-└── regression/
-    └── test_known_issues.sh        # Crash resilience, edge cases
+├── unit/                            # gtest/gmock C++ unit tests (ctest)
+│   ├── CMakeLists.txt
+│   ├── *_test.cc  (42 files)
+│   └── mock/
+├── e2e/                             # E2E smoke tests (deploy.sh -t)
+│   ├── test_smoke.sh
+│   └── test_mcp.sh
+└── verification/                    # Full verification suites (deploy.sh -T)
+    ├── run_all.sh                   # Master runner
+    ├── lib/
+    │   └── test_framework.sh        # Shared assertion & utility library
+    ├── service/                     # Daemon health & infrastructure
+    ├── cli_tools/                   # CLI tool validation (13 tools)
+    ├── embedded_tools/              # Session, workflow, pipeline, code exec
+    ├── llm_integration/             # LLM agent prompt/response/streaming
+    ├── mcp/                         # MCP JSON-RPC compliance
+    └── regression/                  # Crash resilience & edge cases
 ```
 
 ## Test Suites
@@ -160,7 +144,7 @@ making it suitable for CI pipelines:
 - name: E2E Tests
   run: |
     sdb connect $DEVICE_IP
-    ./tests/run_all.sh -d $DEVICE_SERIAL
+    ./tests/verification/run_all.sh -d $DEVICE_SERIAL
 ```
 
 ## Test Directory Layout
@@ -168,8 +152,5 @@ making it suitable for CI pipelines:
 | Location | Type | Purpose |
 |----------|------|---------|
 | `tests/unit/` | gtest (C++) | Unit tests — run during `gbs build` via `ctest` |
-| `tests/e2e/` | Shell | E2E smoke/MCP tests (used by `deploy.sh -t`) |
-| `tests/cli_tools/` | Shell | CLI tool validation |
-| `tests/llm_integration/` | Shell | LLM agent integration tests |
-| `tests/mcp/` | Shell | MCP protocol compliance |
-| `tests/regression/` | Shell | Crash resilience & edge cases |
+| `tests/e2e/` | Shell | E2E smoke tests (used by `deploy.sh -t`) |
+| `tests/verification/` | Shell | Full verification suites (used by `deploy.sh -T`) |

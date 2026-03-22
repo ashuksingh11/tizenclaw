@@ -268,9 +268,11 @@ tizenclaw/
 │       └── <arch>/rootfs.tar.gz     # Alpine RootFS (49 MB)
 ├── tests/
 │   ├── unit/                        # gtest/gmock unit tests (42 test files)
-│   ├── e2e/                         # End-to-end smoke test scripts
-│   ├── cli_tools/                   # CLI tool validation tests
-│   └── mcp/                         # MCP protocol compliance tests
+│   ├── e2e/                         # E2E smoke test scripts
+│   └── verification/                # Full verification test suites
+│       ├── run_all.sh               # Master runner
+│       ├── cli_tools/               # CLI tool validation
+│       └── mcp/                     # MCP protocol compliance
 ├── packaging/                       # RPM packaging & systemd
 │   ├── tizenclaw.spec               # GBS RPM build spec
 │   ├── tizenclaw.service            # Daemon systemd service
