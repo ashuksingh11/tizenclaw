@@ -1,6 +1,6 @@
 # TizenClaw Project Analysis
 
-> **Last Updated**: 2026-03-18
+> **Last Updated**: 2026-03-22
 
 ---
 
@@ -438,6 +438,7 @@ Built-in tools (implemented in AgentCore directly):
 | 17 | Multi-Agent Orchestration | Supervisor agent, skill pipelines, A2A protocol | ✅ |
 | 18 | Production Readiness | Health metrics, OTA updates, Action Framework | ✅ |
 | 19 | Edge & Tunneling | ngrok integration, memory trim, binary optimization | ✅ |
+| 20 | Ecosystem Expansion | Capability Registry, RPK/CLI/LLM plugins, Fleet, hybrid RAG | ✅ |
 
 ---
 

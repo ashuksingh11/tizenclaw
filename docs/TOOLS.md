@@ -1,14 +1,12 @@
 # TizenClaw Tools Reference
 
-TizenClaw provides **13 native CLI tool suites** (C++ command-line executables replacing the legacy Python skills), and **20+ built-in tools** (native C++). All tools are registered in the **Capability Registry** with function contracts.
+> **Last Updated**: 2026-03-22
 
-> **Anthropic Standard Compatibility**: TizenClaw's skill system fully implements the **Anthropic Standard Skill Format** (utilizing `SKILL.md`, YAML frontmatter, and JSON schema parameters). Furthermore, the core agent daemon features a built-in **Anthropic-compliant MCP Client** (Model Context Protocol) to seamlessly connect to external MCP tool servers, vastly expanding its capability profile.
+TizenClaw provides **13 native CLI tool suites** (C++ command-line executables), **20+ built-in tools** (native C++), and support for dynamic tool expansion via RPK/TPK plugins. All tools are registered in the [Capability Registry](DESIGN.md#34-capability-registry) with function contracts.
 
-> Container skills use `ctypes` FFI to call Tizen C-API directly. Async skills use the **tizen-core** event loop for callback-based APIs.
+> **Anthropic Standard Compatibility**: TizenClaw's skill system fully implements the **Anthropic Standard Skill Format** (`SKILL.md`, YAML frontmatter, JSON schema parameters). The daemon also features a built-in **MCP Client** (Model Context Protocol) to connect to external MCP tool servers.
 
----
-
-> **Note**: Legacy Python container skills have been rewritten and ported directly as native CLI tools for superior performance and native Tizen API access.
+> CLI tool suites use `ctypes` FFI to call Tizen C-API directly. Async skills (⚡) use the **tizen-core** event loop for callback-based APIs.
 
 ---
 
