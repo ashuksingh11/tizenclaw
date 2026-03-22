@@ -171,13 +171,14 @@
       if (!active) return;
       callTool(toolName, args)
         .then(function(result) {
-          if (active) callback(result, null);
+          if (active) {
+            callback(result, null);
+            setTimeout(poll, ms);
+          }
         })
         .catch(function(err) {
-          if (active) callback(null, err);
-        })
-        .finally(function() {
           if (active) {
+            callback(null, err);
             setTimeout(poll, ms);
           }
         });
