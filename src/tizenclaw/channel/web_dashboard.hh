@@ -132,6 +132,9 @@ class WebDashboard : public Channel {
       SoupMessage* msg,
       GHashTable* query);
   void ApiBridgeChat(SoupMessage* msg);
+  void ApiBridgeEvents(
+      SoupMessage* msg,
+      GHashTable* query);
 
   // Bridge rate limiting check
   bool CheckBridgeRateLimit(
@@ -187,6 +190,17 @@ class WebDashboard : public Channel {
       std::vector<int64_t>> bridge_rate_;
   std::mutex bridge_rate_mutex_;
   static constexpr int kBridgeRateLimit = 10;
+
+  // Active SSE connections for /api/bridge/events
+  struct SseClient {
+    SoupMessage* msg;
+    std::string app_id;
+    std::set<std::string> topics;
+    int sub_id = -1;
+  };
+  std::vector<std::shared_ptr<SseClient>>
+      sse_clients_;
+  std::mutex sse_mutex_;
 };
 
 }  // namespace tizenclaw

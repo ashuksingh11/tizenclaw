@@ -26,6 +26,7 @@
 
 #include "../../common/logging.hh"
 #include "../core/agent_core.hh"
+#include "../core/event_bus.hh"
 #include "../scheduler/task_scheduler.hh"
 #include "../storage/audit_logger.hh"
 
@@ -238,6 +239,9 @@ void WebDashboard::HandleApi(
   } else if (path == "/api/bridge/chat") {
     const_cast<WebDashboard*>(this)->
         ApiBridgeChat(msg);
+  } else if (path == "/api/bridge/events") {
+    const_cast<WebDashboard*>(this)->
+        ApiBridgeEvents(msg, query);
   } else {
     soup_message_set_status(
         msg, SOUP_STATUS_NOT_FOUND);
@@ -2261,6 +2265,171 @@ void WebDashboard::ApiBridgeChat(
         },
         ctx);
   }).detach();
+}
+
+void WebDashboard::ApiBridgeEvents(
+    SoupMessage* msg, GHashTable* query) {
+  // Parse query parameters
+  std::string app_id;
+  std::set<std::string> topics;
+  if (query) {
+    const char* aid =
+        static_cast<const char*>(
+            g_hash_table_lookup(
+                query, "app_id"));
+    const char* t =
+        static_cast<const char*>(
+            g_hash_table_lookup(
+                query, "topics"));
+    if (aid) app_id = aid;
+    if (t) {
+      // Comma-separated topic list
+      std::string ts(t);
+      size_t pos = 0;
+      while (pos < ts.size()) {
+        auto comma = ts.find(',', pos);
+        if (comma == std::string::npos)
+          comma = ts.size();
+        auto topic =
+            ts.substr(pos, comma - pos);
+        if (!topic.empty())
+          topics.insert(topic);
+        pos = comma + 1;
+      }
+    }
+  }
+
+  // Set up SSE response headers
+  soup_message_set_status(msg, SOUP_STATUS_OK);
+  soup_message_headers_replace(
+      msg->response_headers,
+      "Content-Type", "text/event-stream");
+  soup_message_headers_replace(
+      msg->response_headers,
+      "Cache-Control", "no-cache");
+  soup_message_headers_replace(
+      msg->response_headers,
+      "Connection", "keep-alive");
+  soup_message_headers_set_encoding(
+      msg->response_headers,
+      SOUP_ENCODING_CHUNKED);
+
+  // Send initial SSE comment as keepalive
+  std::string init = ": connected\n\n";
+  soup_message_body_append(
+      msg->response_body,
+      SOUP_MEMORY_COPY,
+      init.c_str(), init.size());
+  soup_server_unpause_message(server_, msg);
+
+  // Create SSE client tracking
+  auto client = std::make_shared<SseClient>();
+  client->msg = msg;
+  client->app_id = app_id;
+  client->topics = topics;
+
+  // Subscribe to EventBus
+  auto weak = std::weak_ptr<SseClient>(client);
+  auto* self = this;
+
+  int sub_id =
+      EventBus::GetInstance().SubscribeAll(
+          [weak, self](
+              const SystemEvent& event) {
+    auto c = weak.lock();
+    if (!c) return;
+
+    // Filter by topics if specified
+    if (!c->topics.empty() &&
+        c->topics.find(event.name) ==
+            c->topics.end() &&
+        c->topics.find(event.source) ==
+            c->topics.end()) {
+      return;
+    }
+
+    // Format as SSE
+    nlohmann::json j;
+    j["event"] = event.name;
+    j["source"] = event.source;
+    j["data"] = event.data;
+    j["timestamp"] = event.timestamp;
+
+    std::string sse =
+        "event: " + event.source + "\n" +
+        "data: " + j.dump() + "\n\n";
+
+    // Schedule send on main loop
+    auto* payload = new std::string(sse);
+    auto msg_ptr = c->msg;
+    auto* srv = self->server_;
+
+    g_main_context_invoke(
+        self->context_,
+        [](gpointer data) -> gboolean {
+          auto* pair =
+              static_cast<std::pair<
+                  SoupServer*,
+                  std::pair<SoupMessage*,
+                            std::string*>>*>(
+                  data);
+          auto* srv_p = pair->first;
+          auto* msg_p = pair->second.first;
+          auto* str = pair->second.second;
+
+          soup_message_body_append(
+              msg_p->response_body,
+              SOUP_MEMORY_COPY,
+              str->c_str(), str->size());
+          soup_server_unpause_message(
+              srv_p, msg_p);
+
+          delete str;
+          delete pair;
+          return G_SOURCE_REMOVE;
+        },
+        new std::pair<
+            SoupServer*,
+            std::pair<SoupMessage*,
+                      std::string*>>(
+            srv, {msg_ptr, payload}));
+  });
+
+  client->sub_id = sub_id;
+
+  // Track the client
+  {
+    std::lock_guard<std::mutex> lock(
+        sse_mutex_);
+    sse_clients_.push_back(client);
+  }
+
+  // Register disconnect handler
+  g_object_ref(msg);
+  g_signal_connect(
+      msg, "finished",
+      G_CALLBACK(+[](SoupMessage* m,
+                      gpointer data) {
+        auto* self_p =
+            static_cast<WebDashboard*>(data);
+        // Find and remove client
+        std::lock_guard<std::mutex> lock(
+            self_p->sse_mutex_);
+        for (auto it =
+                 self_p->sse_clients_.begin();
+             it !=
+             self_p->sse_clients_.end();
+             ++it) {
+          if ((*it)->msg == m) {
+            EventBus::GetInstance().Unsubscribe(
+                (*it)->sub_id);
+            self_p->sse_clients_.erase(it);
+            break;
+          }
+        }
+        g_object_unref(m);
+      }),
+      this);
 }
 
 }  // namespace tizenclaw

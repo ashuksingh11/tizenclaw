@@ -150,6 +150,59 @@
       return d.response;
     });
   }
+  /**
+   * Periodically call a tool and deliver
+   * results to a callback. Essential for
+   * real-time dashboards.
+   * @param {string} toolName - Tool to call
+   * @param {Object} [args] - Tool arguments
+   * @param {Function} callback - fn(result)
+   * @param {number} [intervalMs=3000] - Poll
+   *   interval in milliseconds
+   * @returns {Function} stop - Call to stop
+   */
+  function autoRefresh(toolName, args,
+                       callback, intervalMs) {
+    var ms = intervalMs || 3000;
+    var active = true;
+
+    function poll() {
+      if (!active) return;
+      callTool(toolName, args)
+        .then(function(result) {
+          if (active) callback(result, null);
+        })
+        .catch(function(err) {
+          if (active) callback(null, err);
+        })
+        .finally(function() {
+          if (active) {
+            setTimeout(poll, ms);
+          }
+        });
+    }
+
+    // First call immediately
+    poll();
+
+    return function stop() {
+      active = false;
+    };
+  }
+
+  /**
+   * Run callback when SDK is ready.
+   * Ensures DOM is loaded.
+   * @param {Function} fn - Callback
+   */
+  function onReady(fn) {
+    if (document.readyState !== 'loading') {
+      fn();
+    } else {
+      document.addEventListener(
+          'DOMContentLoaded', fn);
+    }
+  }
 
   // Expose global TizenClaw namespace
   window.TizenClaw = {
@@ -157,9 +210,11 @@
     callTool: callTool,
     getAvailableTools: getAvailableTools,
     subscribe: subscribe,
+    autoRefresh: autoRefresh,
+    onReady: onReady,
     setData: setData,
     getData: getData,
     askLLM: askLLM,
-    version: '1.1.0'
+    version: '1.2.0'
   };
 })();
