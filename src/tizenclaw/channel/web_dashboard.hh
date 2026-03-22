@@ -127,6 +127,9 @@ class WebDashboard : public Channel {
   void ApiBridgeTools(
       SoupMessage* msg,
       GHashTable* query) const;
+  void ApiBridgeData(
+      SoupMessage* msg,
+      GHashTable* query);
 
   // Load allowed_tools from app manifest
   std::vector<std::string> LoadAppAllowedTools(

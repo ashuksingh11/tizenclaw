@@ -232,6 +232,9 @@ void WebDashboard::HandleApi(
         ApiBridgeTool(msg);
   } else if (path == "/api/bridge/tools") {
     ApiBridgeTools(msg, query);
+  } else if (path == "/api/bridge/data") {
+    const_cast<WebDashboard*>(this)->
+        ApiBridgeData(msg, query);
   } else {
     soup_message_set_status(
         msg, SOUP_STATUS_NOT_FOUND);
@@ -1851,6 +1854,220 @@ WebDashboard::LoadAppAllowedTools(
   } catch (...) {}
 
   return allowed;
+}
+
+void WebDashboard::ApiBridgeData(
+    SoupMessage* msg, GHashTable* query) {
+  if (msg->method == SOUP_METHOD_GET) {
+    // GET: read data by key
+    std::string app_id;
+    std::string key;
+    if (query) {
+      const char* aid =
+          static_cast<const char*>(
+              g_hash_table_lookup(
+                  query, "app_id"));
+      const char* k =
+          static_cast<const char*>(
+              g_hash_table_lookup(
+                  query, "key"));
+      if (aid) app_id = aid;
+      if (k) key = k;
+    }
+
+    if (app_id.empty() || key.empty()) {
+      std::string err =
+          "{\"error\":\"app_id and key "
+          "are required\"}";
+      soup_message_set_status(
+          msg, SOUP_STATUS_BAD_REQUEST);
+      soup_message_set_response(
+          msg, "application/json",
+          SOUP_MEMORY_COPY,
+          err.c_str(),
+          static_cast<gsize>(err.size()));
+      return;
+    }
+
+    // Prevent path traversal
+    if (app_id.find("..") !=
+            std::string::npos ||
+        key.find("..") !=
+            std::string::npos ||
+        key.find('/') !=
+            std::string::npos) {
+      std::string err =
+          "{\"error\":\"Invalid parameters\"}";
+      soup_message_set_status(
+          msg, SOUP_STATUS_BAD_REQUEST);
+      soup_message_set_response(
+          msg, "application/json",
+          SOUP_MEMORY_COPY,
+          err.c_str(),
+          static_cast<gsize>(err.size()));
+      return;
+    }
+
+    std::string data_path =
+        std::string(APP_DATA_DIR) +
+        "/web/apps/" + app_id +
+        "/data/" + key + ".json";
+    std::ifstream df(data_path);
+    if (!df.is_open()) {
+      std::string resp =
+          "{\"key\":\"" + key +
+          "\",\"value\":null}";
+      soup_message_set_status(
+          msg, SOUP_STATUS_OK);
+      soup_message_set_response(
+          msg, "application/json",
+          SOUP_MEMORY_COPY,
+          resp.c_str(),
+          static_cast<gsize>(resp.size()));
+      return;
+    }
+
+    std::string content(
+        (std::istreambuf_iterator<char>(df)),
+        std::istreambuf_iterator<char>());
+
+    nlohmann::json resp;
+    resp["key"] = key;
+    try {
+      resp["value"] =
+          nlohmann::json::parse(content);
+    } catch (...) {
+      resp["value"] = content;
+    }
+    std::string body = resp.dump();
+    soup_message_set_status(
+        msg, SOUP_STATUS_OK);
+    soup_message_set_response(
+        msg, "application/json",
+        SOUP_MEMORY_COPY,
+        body.c_str(),
+        static_cast<gsize>(body.size()));
+
+  } else if (msg->method ==
+             SOUP_METHOD_POST) {
+    // POST: write data
+    SoupMessageBody* req_body =
+        msg->request_body;
+    if (!req_body || !req_body->data ||
+        req_body->length == 0) {
+      std::string err =
+          "{\"error\":\"Empty body\"}";
+      soup_message_set_status(
+          msg, SOUP_STATUS_BAD_REQUEST);
+      soup_message_set_response(
+          msg, "application/json",
+          SOUP_MEMORY_COPY,
+          err.c_str(),
+          static_cast<gsize>(err.size()));
+      return;
+    }
+
+    std::string payload(
+        req_body->data, req_body->length);
+    std::string app_id;
+    std::string key;
+    nlohmann::json val;
+
+    try {
+      auto j =
+          nlohmann::json::parse(payload);
+      app_id = j.value("app_id", "");
+      key = j.value("key", "");
+      if (j.contains("value"))
+        val = j["value"];
+    } catch (const std::exception& ex) {
+      std::string err =
+          "{\"error\":\"Invalid JSON\"}";
+      soup_message_set_status(
+          msg, SOUP_STATUS_BAD_REQUEST);
+      soup_message_set_response(
+          msg, "application/json",
+          SOUP_MEMORY_COPY,
+          err.c_str(),
+          static_cast<gsize>(err.size()));
+      return;
+    }
+
+    if (app_id.empty() || key.empty()) {
+      std::string err =
+          "{\"error\":\"app_id and key "
+          "are required\"}";
+      soup_message_set_status(
+          msg, SOUP_STATUS_BAD_REQUEST);
+      soup_message_set_response(
+          msg, "application/json",
+          SOUP_MEMORY_COPY,
+          err.c_str(),
+          static_cast<gsize>(err.size()));
+      return;
+    }
+
+    // Prevent path traversal
+    if (app_id.find("..") !=
+            std::string::npos ||
+        key.find("..") !=
+            std::string::npos ||
+        key.find('/') !=
+            std::string::npos) {
+      std::string err =
+          "{\"error\":\"Invalid parameters\"}";
+      soup_message_set_status(
+          msg, SOUP_STATUS_BAD_REQUEST);
+      soup_message_set_response(
+          msg, "application/json",
+          SOUP_MEMORY_COPY,
+          err.c_str(),
+          static_cast<gsize>(err.size()));
+      return;
+    }
+
+    std::string data_dir =
+        std::string(APP_DATA_DIR) +
+        "/web/apps/" + app_id + "/data";
+    std::error_code ec;
+    fs::create_directories(data_dir, ec);
+
+    std::string data_path =
+        data_dir + "/" + key + ".json";
+    std::ofstream of(data_path);
+    if (!of.is_open()) {
+      std::string err =
+          "{\"error\":\"Failed to write data\"}";
+      soup_message_set_status(
+          msg,
+          SOUP_STATUS_INTERNAL_SERVER_ERROR);
+      soup_message_set_response(
+          msg, "application/json",
+          SOUP_MEMORY_COPY,
+          err.c_str(),
+          static_cast<gsize>(err.size()));
+      return;
+    }
+
+    of << val.dump();
+    of.close();
+
+    nlohmann::json resp = {
+        {"status", "ok"},
+        {"key", key}};
+    std::string body = resp.dump();
+    soup_message_set_status(
+        msg, SOUP_STATUS_OK);
+    soup_message_set_response(
+        msg, "application/json",
+        SOUP_MEMORY_COPY,
+        body.c_str(),
+        static_cast<gsize>(body.size()));
+  } else {
+    soup_message_set_status(
+        msg,
+        SOUP_STATUS_METHOD_NOT_ALLOWED);
+  }
 }
 
 }  // namespace tizenclaw
