@@ -298,6 +298,10 @@ void WebDashboard::ServeStaticFile(SoupMessage* msg,
   }
 
   soup_message_set_status(msg, SOUP_STATUS_OK);
+  soup_message_headers_replace(
+      msg->response_headers,
+      "Cache-Control",
+      "no-cache, no-store, must-revalidate");
   soup_message_set_response(msg, content_type.c_str(), SOUP_MEMORY_COPY,
                             content.c_str(),
                             static_cast<gsize>(content.size()));
