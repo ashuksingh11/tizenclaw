@@ -87,7 +87,7 @@ SystemSettingsController::GetSystemSettings() const {
          "\", \"font_size\": \"" + fsize +
          "\", \"motion_enabled\": " +
          GetBoolStr(
-             SYSTEM_SETTINGS_KEY_MOTION_ENABLED) +
+             SYSTEM_SETTINGS_KEY_MOTION_ACTIVATION) +
          "}";
 }
 

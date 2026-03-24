@@ -343,15 +343,7 @@ check_prerequisites() {
     fi
   fi
 
-  if ! command -v sdb &>/dev/null; then
-    if [ "${DRY_RUN}" = true ]; then
-      warn "sdb not found (ignored in dry-run)"
-    else
-      fail "sdb not found. Install Tizen sdb first."
-    fi
-  else
-    ok "sdb found"
-  fi
+
 
   log "Architecture : ${ARCH}"
   log "Project dir  : ${PROJECT_DIR}"
@@ -519,16 +511,18 @@ find_rpm() {
 
   log "Searching in: ${RPMS_DIR}"
 
-  # Find all matching RPMs (exclude unittests, debuginfo, debugsource)
+  # Find all matching RPMs (exclude unittests, debuginfo, debugsource, devel)
   if [ "${DEBUG_MODE}" = true ]; then
     log "Debug mode enabled: Including debuginfo packages"
     mapfile -t RPM_FILES < <(find "${RPMS_DIR}" -maxdepth 1 \
       -name "${PKG_NAME}*.rpm" \
+      ! -name "*-devel-*" \
       ! -name "*-unittests-*" \
       2>/dev/null | sort)
   else
     mapfile -t RPM_FILES < <(find "${RPMS_DIR}" -maxdepth 1 \
       -name "${PKG_NAME}*.rpm" \
+      ! -name "*-devel-*" \
       ! -name "*-unittests-*" \
       ! -name "*-debuginfo-*" \
       ! -name "*-debugsource-*" \
