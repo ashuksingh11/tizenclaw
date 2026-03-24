@@ -35,6 +35,7 @@ Once `deploy.sh` successfully finishes:
   - For detailed CLI testing procedures, refer to [`.agents/workflows/cli_testing.md`](.agents/workflows/cli_testing.md).
 - Verify the Web Dashboard is accessible:
   - Dashboard Port: `9090` (e.g., `http://<device-ip>:9090`)
+  - **Web UI QA Testing**: You MUST use the `gstack` skill located in `.agents/skills/gstack` to perform headless browser QA testing, UI verification, and capture screenshots for the Web Dashboard. Before testing, read `.agents/skills/gstack/SKILL.md` for detailed usage instructions.
 - If you need a more advanced component test, refer to [`.agents/workflows/gtest_integration.md`](.agents/workflows/gtest_integration.md).
 
 > [!TIP]
@@ -103,7 +104,8 @@ TizenClaw skills follow the Anthropic standard skill format. Each skill is organ
 
 ### Skill Directory Structure
 ```
-tools/skills/<skill_name>/
+tools/skills/<skill_name>/     ← Project-level skills
+.agents/skills/<skill_name>/   ← Agent core skills (e.g., gstack)
 ├── SKILL.md               ← Required: YAML frontmatter + Markdown documentation
 ├── <skill_name>.py        ← Entry point script (or .js / binary)
 ├── manifest.json          ← Optional: Legacy format (backward compatible)
