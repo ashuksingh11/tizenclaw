@@ -70,6 +70,14 @@
       "cooldown_minutes": 15,
       "action": "direct",
       "direct_prompt": "디바이스 온도가 높습니다. CPU 부하를 분석하고 불필요한 작업을 줄이는 방법을 제안해주세요."
+    },
+    {
+      "name": "remote_oven_preheated",
+      "event_type": "oven.preheated",
+      "condition": {},
+      "cooldown_minutes": 1,
+      "action": "direct",
+      "direct_prompt": " Swarm 네트워크를 통해 스마트 오븐의 예열이 완료되었다는 이벤트를 수신했습니다! 거실 TV 에이전트로서 사용자 화면에 친절하게 이 사실을 알려주는 메시지를 생성해주세요."
     }
   ]
 }

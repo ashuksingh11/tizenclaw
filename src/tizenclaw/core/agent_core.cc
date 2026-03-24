@@ -279,6 +279,15 @@ bool AgentCore::Initialize() {
     user_profile_store_.Initialize(profile_db_path);
   }
 
+  // Initialize Swarm Networking
+  {
+    auto guard = boot.Track("SwarmManager");
+    swarm_manager_ = std::make_unique<SwarmManager>(safety_guard_);
+    if (!swarm_manager_->Start()) {
+      LOG(WARNING) << "Failed to start SwarmManager, multi-device networking disabled.";
+    }
+  }
+
   {
     auto guard = boot.Track("LlmBackend");
     if (!SwitchToBestBackend(false)) {
@@ -2475,6 +2484,12 @@ std::string AgentCore::ExecuteSupervisorOp(const std::string& operation,
     // Active delegations
     auto delegations =
         supervisor_->ListActiveDelegations();
+
+    // Swarm peers
+    nlohmann::json swarm_peers = nlohmann::json::array();
+    if (swarm_manager_) {
+      swarm_peers = swarm_manager_->GetStatusJson()["active_peers"];
+    }
 
     // Event bus sources
     auto sources =

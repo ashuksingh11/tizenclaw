@@ -37,6 +37,7 @@
 #include "tool_policy.hh"
 #include "tool_router.hh"
 #include "user_profile_store.hh"
+#include "swarm_manager.hh"
 #include "action_bridge.hh"
 #include "auto_skill_agent.hh"
 #include "system_context_provider.hh"
@@ -281,6 +282,7 @@ class AgentCore {
   SafetyGuard safety_guard_;
   OfflineFallback offline_fallback_;
   UserProfileStore user_profile_store_;
+  std::unique_ptr<SwarmManager> swarm_manager_;
   ToolPolicy tool_policy_;
   ToolRouter tool_router_;
 
