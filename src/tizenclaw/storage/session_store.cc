@@ -384,6 +384,7 @@ std::vector<LlmMessage> SessionStore::MarkdownToMessages(
       }
     }
 
+    if (msg.role.empty()) continue;
     history.push_back(msg);
   }
 

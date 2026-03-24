@@ -37,6 +37,10 @@ nlohmann::json AnthropicBackend::ToAnthropicMessages(
     const std::vector<LlmMessage>& messages) const {
   nlohmann::json msgs = nlohmann::json::array();
   for (auto& msg : messages) {
+    if (msg.role != "user" && msg.role != "assistant" && msg.role != "tool") {
+      continue;
+    }
+
     nlohmann::json entry;
 
     if (msg.role == "user") {

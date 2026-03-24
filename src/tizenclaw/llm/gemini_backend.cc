@@ -39,6 +39,10 @@ nlohmann::json GeminiBackend::ToGeminiContents(
     const std::vector<LlmMessage>& messages) const {
   nlohmann::json contents = nlohmann::json::array();
   for (auto& msg : messages) {
+    if (msg.role != "user" && msg.role != "assistant" && msg.role != "tool") {
+      continue;
+    }
+
     nlohmann::json entry;
 
     if (msg.role == "user") {
