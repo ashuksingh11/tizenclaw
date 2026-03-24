@@ -32,6 +32,7 @@
 #include "../storage/memory_store.hh"
 #include "agent_role.hh"
 #include "agent_factory.hh"
+#include "offline_fallback.hh"
 #include "safety_guard.hh"
 #include "tool_policy.hh"
 #include "tool_router.hh"
@@ -277,6 +278,7 @@ class AgentCore {
 
   SessionStore session_store_;
   SafetyGuard safety_guard_;
+  OfflineFallback offline_fallback_;
   ToolPolicy tool_policy_;
   ToolRouter tool_router_;
 

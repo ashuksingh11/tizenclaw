@@ -261,6 +261,15 @@ bool AgentCore::Initialize() {
     safety_guard_.LoadDeviceProfile(profile_path);
   }
 
+  // Load offline fallback rules
+  {
+    auto guard = boot.Track("OfflineFallback");
+    std::string fallback_path =
+        std::string(APP_DATA_DIR) +
+        "/config/offline_fallback.json";
+    offline_fallback_.LoadConfig(fallback_path);
+  }
+
   {
     auto guard = boot.Track("LlmBackend");
     if (!SwitchToBestBackend(false)) {
@@ -677,8 +686,53 @@ std::string AgentCore::ProcessPrompt(
       resp = TryFallbackBackends(local_history, tools, on_chunk, full_prompt);
 
       if (!resp.success) {
-        // All backends failed — track error
-        if (health_monitor_) health_monitor_->IncrementErrorCount();
+        // All backends failed — try offline fallback
+        auto fallback = offline_fallback_.Match(prompt);
+        if (fallback.matched) {
+          LOG(INFO) << "All LLM backends failed, "
+                    << "using offline fallback";
+          std::string fallback_result;
+
+          if (!fallback.tool_name.empty()) {
+            // Execute the matched tool directly
+            auto it = tool_dispatch_.find(
+                fallback.tool_name);
+            if (it != tool_dispatch_.end()) {
+              fallback_result = it->second(
+                  fallback.args,
+                  fallback.tool_name,
+                  session_id);
+            } else {
+              fallback_result =
+                  "{\"error\": \"Tool not found: " +
+                  fallback.tool_name + "\"}";
+            }
+          }
+
+          // Build response
+          std::string reply;
+          if (!fallback.direct_response.empty()) {
+            reply = fallback.direct_response;
+          } else {
+            reply =
+                "[Offline mode] " + fallback_result;
+          }
+
+          // Save to history
+          {
+            std::lock_guard<std::mutex> lock(
+                session_mutex_);
+            LlmMessage msg;
+            msg.role = "assistant";
+            msg.text = reply;
+            sessions_[session_id].push_back(msg);
+          }
+          return reply;
+        }
+
+        // No fallback match — track error
+        if (health_monitor_)
+          health_monitor_->IncrementErrorCount();
         // Rollback: remove the user message
         {
           std::lock_guard<std::mutex> lock(session_mutex_);
@@ -686,7 +740,9 @@ std::string AgentCore::ProcessPrompt(
             sessions_[session_id].pop_back();
           }
         }
-        return "Error: " + resp.error_message;
+        return "Error: All language model backends "
+               "are unavailable. " +
+               resp.error_message;
       }
     }
 
