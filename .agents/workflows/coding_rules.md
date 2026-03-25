@@ -59,7 +59,10 @@ When implementing TizenClaw in this repository, the Agent (AI) must **strictly**
 ## 3. CMake and Build Support
 - Written targeting the Tizen GBS (Gerrit Build System) environment, `gbs build` must always succeed via CMake.
 - When adding new C++ source files, you must update the `SOURCES` list in `CMakeLists.txt`.
-- **Warning Flags**: The project compiles with `-Wall -Wextra -Wshadow -Wunused -fPIC`. All code must compile **warning-free** under these flags.
+- **Warning Flags & Zero Warning Policy**: 
+  - The project compiles with `-Wall -Wextra -Wshadow -Wunused -fPIC`. 
+  - **CRITICAL**: All code MUST compile **warning-free**. Any build warning (including those from unused variables, type mismatches, ODR violations, etc.) is considered a build failure and must be fixed immediately.
+  - The agent is not allowed to proceed to the commit stage or skip fixing warnings. Warnings are treated as strictly as errors.
 
 ## 4. Tizen-Specific Rules
 - Features requiring privileges (Network, LXC execution, AppManager, etc.) must be explicitly stated in the `<privileges>` block of `tizen-manifest.xml`.

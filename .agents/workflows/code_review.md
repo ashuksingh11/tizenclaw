@@ -20,6 +20,7 @@ Review all changed source files against the following 10 categories in order.
 
 ### 2. Correctness
 - Verify logic behaves as intended
+- **Zero compiler warnings compliance**: All build warnings must be treated as errors and resolved before proceeding.
 - Boundary condition handling
 - Missing error/exception handling
 - Return value validation (including `[[nodiscard]]` usage)
