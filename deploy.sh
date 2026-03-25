@@ -59,8 +59,8 @@ INCREMENTAL=false
 SKIP_BUILD=false
 DRY_RUN=false
 DEBUG_MODE=false
-DEVICE_SERIAL=""
 WITH_NGROK=false
+WITH_CRUN=false
 RUN_TESTS=false
 RUN_FULL_TESTS=false
 WITH_ASSETS=false
@@ -293,9 +293,9 @@ ${CYAN}Options:${NC}
   -T, --full-test       Run all automated test suites after deployment
       --with-assets     Also build and deploy tizenclaw-assets
       --with-bridge     Install TizenClawBridge WGT on the device
+      --with-crun       Build crun and enable container execution mode
   -w, --with-ngrok      Auto-download and push ngrok binary to the device
   -d, --device <serial> Target a specific sdb device
-      --debug           Run tizenclaw natively on Host Linux (debug mode)
       --dry-run         Print commands without executing
   -h, --help            Show this help
 
@@ -330,9 +330,9 @@ parse_args() {
       -T|--full-test) RUN_FULL_TESTS=true; shift ;;
       --with-assets)   WITH_ASSETS=true; shift ;;
       --with-bridge)   WITH_BRIDGE=true; shift ;;
+      --with-crun)     WITH_CRUN=true; shift ;;
       -w|--with-ngrok) WITH_NGROK=true; shift ;;
       -d|--device)     DEVICE_SERIAL="$2"; shift 2 ;;
-      --debug)         DEBUG_MODE=true; shift ;;
       --dry-run)       DRY_RUN=true; shift ;;
       -h|--help)       usage ;;
       *)               fail "Unknown option: $1 (use --help)" ;;
@@ -401,6 +401,13 @@ do_build() {
   if [ "${NOINIT}" = true ]; then
     gbs_args+=("--noinit")
     log "Using --noinit (skipping build-env initialization)"
+  fi
+
+  if [ "${WITH_CRUN}" = true ]; then
+    gbs_args+=("--define" "with_crun 1")
+    log "Building WITH crun support (container mode)"
+  else
+    log "Building WITHOUT crun (default native debug mode)"
   fi
 
   log "Running: gbs build ${gbs_args[*]}"
@@ -702,21 +709,7 @@ do_deploy() {
         run sdb_shell pkgcmd -i -t wgt -p /tmp/TizenClawBridge.wgt -f -q 2>/dev/null || true
       run sdb_shell rm -f /tmp/TizenClawBridge.wgt
       ok "Bridge WGT installed"
-    else
-      warn "Bridge WGT not found: ${wgt_file}"
-    fi
-  fi
-
-  if [ "${DEBUG_MODE}" = true ]; then
-    local debug_service="${PROJECT_DIR}/packaging/tizenclaw-debug.service"
-    if [ -f "${debug_service}" ]; then
-      log "Overwriting tizenclaw.service with tizenclaw-debug.service for pure Host Linux execution..."
-      run sdb_cmd push "${debug_service}" /tmp/tizenclaw.service
-      run sdb_shell mv /tmp/tizenclaw.service /usr/lib/systemd/system/tizenclaw.service
-      run sdb_shell chmod 644 /usr/lib/systemd/system/tizenclaw.service
-      ok "tizenclaw.service replaced with debug version"
-    else
-      warn "Debug service file not found: ${debug_service}"
+        warn "Bridge WGT not found: ${wgt_file}"
     fi
   fi
 }

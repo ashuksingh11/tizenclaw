@@ -72,22 +72,40 @@ TARGET_COMPILE_DEFINITIONS(${TARGET_TIZENCLAW} PUBLIC
 
 INSTALL(TARGETS ${TARGET_TIZENCLAW} DESTINATION ${BINDIR})
 
+if(WITH_CRUN)
+  set(TIZENCLAW_SERVICE ${CMAKE_SOURCE_DIR}/packaging/tizenclaw.service)
+  set(TIZENCLAW_SANDBOX_SERVICE ${CMAKE_SOURCE_DIR}/packaging/tizenclaw-code-sandbox.service)
+else()
+  set(TIZENCLAW_SERVICE ${CMAKE_SOURCE_DIR}/packaging/tizenclaw-debug.service)
+  set(TIZENCLAW_SANDBOX_SERVICE ${CMAKE_SOURCE_DIR}/packaging/tizenclaw-code-sandbox-debug.service)
+endif()
+
 # systemd services and sockets
 INSTALL(FILES
-  ${CMAKE_SOURCE_DIR}/packaging/tizenclaw.service
+  ${TIZENCLAW_SERVICE}
+  RENAME tizenclaw.service
+  DESTINATION /usr/lib/systemd/system/
+)
+INSTALL(FILES
+  ${TIZENCLAW_SANDBOX_SERVICE}
+  RENAME tizenclaw-code-sandbox.service
+  DESTINATION /usr/lib/systemd/system/
+)
+INSTALL(FILES
   ${CMAKE_SOURCE_DIR}/packaging/tizenclaw-tool-executor.service
   ${CMAKE_SOURCE_DIR}/packaging/tizenclaw-tool-executor.socket
-  ${CMAKE_SOURCE_DIR}/packaging/tizenclaw-code-sandbox.service
   ${CMAKE_SOURCE_DIR}/packaging/tizenclaw-code-sandbox.socket
   DESTINATION /usr/lib/systemd/system/
 )
 
 # Container scripts
-INSTALL(PROGRAMS
-  ${CMAKE_SOURCE_DIR}/scripts/run_standard_container.sh
-  ${CMAKE_SOURCE_DIR}/scripts/tizenclaw_secure_container.sh
-  DESTINATION /usr/libexec/tizenclaw/
-)
+if(WITH_CRUN)
+  INSTALL(PROGRAMS
+    ${CMAKE_SOURCE_DIR}/scripts/run_standard_container.sh
+    ${CMAKE_SOURCE_DIR}/scripts/tizenclaw_secure_container.sh
+    DESTINATION /usr/libexec/tizenclaw/
+  )
+endif()
 
 # Code executor for sandbox container
 INSTALL(FILES

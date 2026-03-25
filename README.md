@@ -318,9 +318,9 @@ TizenClaw reads configuration from `/opt/usr/share/tizenclaw/` on the device. Al
 ### Automated Build & Deploy (Recommended)
 
 ```bash
-./deploy.sh                    # Build + deploy to connected device
+./deploy.sh                    # Default build (Native mode without containers)
+./deploy.sh --with-crun        # Build with crun (Containerized execution mode)
 ./deploy.sh --with-ngrok       # With secure tunnel
-./deploy.sh --debug            # Debug mode (no container)
 ```
 
 ### Manual Build

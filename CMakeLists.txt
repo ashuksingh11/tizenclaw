@@ -82,8 +82,11 @@ PKG_CHECK_MODULES(GTEST_DEPS REQUIRED gtest gmock)
 ## Build targets
 ADD_SUBDIRECTORY(src)
 
-## Third-party: crun (extract, patch, configure, build)
-ADD_SUBDIRECTORY(third_party/crun)
+OPTION(WITH_CRUN "Build crun and run with containers" OFF)
+if(WITH_CRUN)
+  ## Third-party: crun (extract, patch, configure, build)
+  ADD_SUBDIRECTORY(third_party/crun)
+endif()
 
 ## CLI tools — Target names
 SET(TARGET_TIZEN_CONTROL_DISPLAY_CLI

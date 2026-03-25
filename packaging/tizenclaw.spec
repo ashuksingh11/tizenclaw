@@ -89,7 +89,13 @@ export CFLAGS="$CFLAGS -Wall -Wno-shadow -Wno-unused-function -Os -flto"
 export CXXFLAGS="$CXXFLAGS -Wall -Os -flto"
 export LDFLAGS="$LDFLAGS -Wl,--as-needed -flto"
 
-%cmake . -DTIZENCLAW_ARCH=%{_arch} -DFULLVER=%{version}
+%if 0%{?with_crun}
+%define cmake_with_crun -DWITH_CRUN=ON
+%else
+%define cmake_with_crun -DWITH_CRUN=OFF
+%endif
+
+%cmake . -DTIZENCLAW_ARCH=%{_arch} -DFULLVER=%{version} %{cmake_with_crun}
 %__make %{?_smp_mflags}
 
 
@@ -144,11 +150,13 @@ fi
 %{_unitdir}/multi-user.target.wants/tizenclaw.service
 %{_unitdir}/sockets.target.wants/tizenclaw-tool-executor.socket
 %{_unitdir}/sockets.target.wants/tizenclaw-code-sandbox.socket
+%if 0%{?with_crun}
 /usr/libexec/tizenclaw/run_standard_container.sh
 /usr/libexec/tizenclaw/tizenclaw_secure_container.sh
-/usr/libexec/tizenclaw/tizenclaw_code_executor.py
 /usr/libexec/tizenclaw/crun
 /opt/usr/share/tizenclaw/img/rootfs.tar.gz
+%endif
+/usr/libexec/tizenclaw/tizenclaw_code_executor.py
 /opt/usr/share/tizenclaw/config/*
 # /opt/usr/share/tizen-tools/skills/
 /opt/usr/share/tizen-tools/routing_guide.md
