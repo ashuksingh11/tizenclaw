@@ -51,6 +51,7 @@
 #include "tool_dispatcher.hh"
 #include "workflow_engine.hh"
 #include "../channel/mcp_client_manager.hh"
+#include "../infra/canvas_ipc_server.hh"
 
 namespace tizenclaw {
 
@@ -358,6 +359,9 @@ class AgentCore {
 
   // Manager for connecting to external MCP Servers
   std::unique_ptr<McpClientManager> mcp_client_manager_;
+
+  // Canvas IPC Server
+  std::unique_ptr<CanvasIpcServer> canvas_ipc_server_;
 
   // Get session-specific system prompt
   // (falls back to global system_prompt_)

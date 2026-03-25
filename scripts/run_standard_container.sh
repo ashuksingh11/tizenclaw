@@ -59,6 +59,10 @@ run_without_container() {
     mount --bind /etc/resolv.conf \"${BUNDLE_DIR}/rootfs/etc/resolv.conf\" || true
     touch \"${BUNDLE_DIR}/rootfs/etc/nsswitch.conf\" 2>/dev/null || true
     mount --bind /etc/nsswitch.conf \"${BUNDLE_DIR}/rootfs/etc/nsswitch.conf\" || true
+    touch \"${BUNDLE_DIR}/rootfs/etc/ld.so.conf\" 2>/dev/null || true
+    mount --bind /etc/ld.so.conf \"${BUNDLE_DIR}/rootfs/etc/ld.so.conf\" || true
+    touch \"${BUNDLE_DIR}/rootfs/etc/ld.so.cache\" 2>/dev/null || true
+    mount --bind /etc/ld.so.cache \"${BUNDLE_DIR}/rootfs/etc/ld.so.cache\" || true
     
     mount --make-rprivate / || true
     
@@ -98,7 +102,7 @@ run_without_container() {
     mount --rbind /run \"${BUNDLE_DIR}/rootfs/run\" || true
     mount --rbind /tmp \"${BUNDLE_DIR}/rootfs/tmp\" || true
 
-    exec chroot \"${BUNDLE_DIR}/rootfs\" ${CMD} 2>>/tmp/tizenclaw_daemon.log
+    exec chroot \"${BUNDLE_DIR}/rootfs\" /usr/bin/env XDG_RUNTIME_DIR=\"\${XDG_RUNTIME_DIR}\" WAYLAND_DISPLAY=\"\${WAYLAND_DISPLAY}\" LD_LIBRARY_PATH=/usr/lib64/hal:/usr/lib/hal ${CMD} 2>>/tmp/tizenclaw_daemon.log
   "
 }
 
@@ -170,7 +174,11 @@ write_config() {
     "args": ${process_args_json},
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-      "MALLOC_ARENA_MAX=2"
+      "MALLOC_ARENA_MAX=2",
+      "XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/5000}",
+      "XVDA_SOCKET=${XVDA_SOCKET:-}",
+      "WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}",
+      "DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-}"
     ],
     "cwd": "/",
     "noNewPrivileges": true,

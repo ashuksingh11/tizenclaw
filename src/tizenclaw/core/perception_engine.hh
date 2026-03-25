@@ -29,6 +29,7 @@
 #include "device_profiler.hh"
 #include "event_bus.hh"
 #include "proactive_advisor.hh"
+#include "screen_perceptor.hh"
 #include "system_context_provider.hh"
 
 namespace tizenclaw {
@@ -91,6 +92,7 @@ class PerceptionEngine {
   // Sub-components (owned)
   std::unique_ptr<DeviceProfiler> profiler_;
   std::unique_ptr<ContextFusionEngine> fusion_;
+  std::unique_ptr<ScreenPerceptor> screen_perceptor_;
   std::unique_ptr<ProactiveAdvisor> advisor_;
 
   // Analysis thread

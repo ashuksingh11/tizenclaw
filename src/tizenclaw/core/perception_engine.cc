@@ -30,6 +30,8 @@ PerceptionEngine::PerceptionEngine(
       profiler_(std::make_unique<DeviceProfiler>()),
       fusion_(
           std::make_unique<ContextFusionEngine>()),
+      screen_perceptor_(
+          std::make_unique<ScreenPerceptor>()),
       advisor_(std::make_unique<ProactiveAdvisor>(
           agent, channels)) {}
 
@@ -51,6 +53,19 @@ void PerceptionEngine::Start() {
   running_.store(true);
   analysis_thread_ = std::thread(
       &PerceptionEngine::AnalysisLoop, this);
+
+  // Start screen perception (optional — graceful
+  // degradation if screen-connector unavailable)
+  if (screen_perceptor_) {
+    if (screen_perceptor_->Start()) {
+      LOG(INFO) << "ScreenPerceptor: visual "
+                << "perception active";
+    } else {
+      LOG(INFO) << "ScreenPerceptor: visual "
+                << "perception unavailable "
+                << "(no screen-connector)";
+    }
+  }
 
   LOG(INFO) << "PerceptionEngine started "
             << "(hybrid: event-driven + "
@@ -77,6 +92,11 @@ void PerceptionEngine::Stop() {
     EventBus::GetInstance().Unsubscribe(
         subscription_id_);
     subscription_id_ = -1;
+  }
+
+  // Stop screen perception
+  if (screen_perceptor_) {
+    screen_perceptor_->Stop();
   }
 
   LOG(INFO) << "PerceptionEngine stopped";
@@ -339,6 +359,17 @@ nlohmann::json PerceptionEngine::GetStatus()
     auto insight = advisor_->GetLastInsight();
     if (!insight.empty()) {
       status["last_insight"] = insight;
+    }
+  }
+
+  // Screen perception status
+  if (screen_perceptor_) {
+    status["screen_perception"] =
+        screen_perceptor_->GetStatus();
+    auto ctx =
+        screen_perceptor_->GetLatestScreenContext();
+    if (!ctx.empty()) {
+      status["screen_context"] = ctx;
     }
   }
 

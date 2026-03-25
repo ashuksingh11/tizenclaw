@@ -506,6 +506,17 @@ bool AgentCore::Initialize() {
     }
   }
 
+  // Initialize Canvas IPC Server
+  {
+    auto guard = boot.Track("CanvasIpcServer");
+    canvas_ipc_server_ = std::make_unique<CanvasIpcServer>();
+    if (!canvas_ipc_server_->Start()) {
+      LOG(WARNING) << "Failed to start Canvas IPC server. NUI Canvas integration may not work.";
+    } else {
+      LOG(INFO) << "Canvas IPC Server ready";
+    }
+  }
+
   // Initialize memory store
   {
     auto guard = boot.Track("MemoryStore");
@@ -558,6 +569,11 @@ void AgentCore::Shutdown() {
   if (action_bridge_) {
     action_bridge_->Stop();
     action_bridge_.reset();
+  }
+
+  if (canvas_ipc_server_) {
+    canvas_ipc_server_->Stop();
+    canvas_ipc_server_.reset();
   }
 
   embedding_store_.Close();
@@ -669,6 +685,10 @@ std::string AgentCore::ProcessPrompt(
 
   // Reset idle tracking for this prompt
   tool_policy_.ResetIdleTracking(session_id);
+
+  if (canvas_ipc_server_) {
+    canvas_ipc_server_->BroadcastState("thinking", "Agent is thinking...");
+  }
 
   while (iterations < max_iter) {
     // Build session-specific system prompt
@@ -788,6 +808,9 @@ std::string AgentCore::ProcessPrompt(
       }
 
       LOG(INFO) << "Final response: " << resp.text;
+      if (canvas_ipc_server_) {
+        canvas_ipc_server_->BroadcastState("idle", "Response ready");
+      }
 
       // Auto skill generation: detect capability gap
       // and attempt to create a new skill
@@ -825,6 +848,12 @@ std::string AgentCore::ProcessPrompt(
 
     LOG(INFO) << "Iteration " << (iterations + 1) << ": Executing "
               << resp.tool_calls.size() << " tools in parallel";
+
+    if (canvas_ipc_server_) {
+      canvas_ipc_server_->BroadcastState(
+          "tool_call",
+          "Executing " + std::to_string(resp.tool_calls.size()) + " tools...");
+    }
 
     // Execute multiple tools in parallel using std::async
     struct ToolExecResult {
@@ -2720,7 +2749,6 @@ std::string AgentCore::ExecuteWorkflowOp(
 
 std::string AgentCore::ExecuteActionOp(const std::string& operation,
                                        const nlohmann::json& args) {
-#ifdef TIZEN_ACTION_ENABLED
   if (!action_bridge_) {
     return "{\"error\":"
            "\"Action bridge not available\"}";
@@ -2746,13 +2774,6 @@ std::string AgentCore::ExecuteActionOp(const std::string& operation,
   }
 
   return "{\"error\":\"Unknown action op: " + operation + "\"}";
-#else
-  (void)operation;
-  (void)args;
-  return "{\"error\":"
-         "\"Tizen Action not supported "
-         "in this build\"}";
-#endif
 }
 
 bool AgentCore::ConnectMcpServers(const std::string& config_path) {
