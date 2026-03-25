@@ -73,15 +73,9 @@ SystemSettingsController::GetSystemSettings() const {
              SYSTEM_SETTINGS_KEY_LOCALE_TIMEFORMAT_24HOUR) +
          ", \"device_name\": \"" +
          GetStr(SYSTEM_SETTINGS_KEY_DEVICE_NAME) +
-         "\", \"ringtone_path\": \"" +
-         GetStr(
-             SYSTEM_SETTINGS_KEY_INCOMING_CALL_RINGTONE) +
          "\", \"wallpaper_home\": \"" +
          GetStr(
              SYSTEM_SETTINGS_KEY_WALLPAPER_HOME_SCREEN) +
-         "\", \"wallpaper_lock\": \"" +
-         GetStr(
-             SYSTEM_SETTINGS_KEY_WALLPAPER_LOCK_SCREEN) +
          "\", \"font_type\": \"" +
          GetStr(SYSTEM_SETTINGS_KEY_FONT_TYPE) +
          "\", \"font_size\": \"" + fsize +
