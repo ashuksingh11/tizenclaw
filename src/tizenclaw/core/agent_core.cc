@@ -696,7 +696,7 @@ std::string AgentCore::ProcessPrompt(
 
     // Query LLM backend with retry (max 3 attempts)
     LlmResponse resp;
-    static constexpr int kMaxLlmRetries = 3;
+    static constexpr int kMaxLlmRetries = 1;
     static constexpr int kLlmRetryBaseMs = 500;
     for (int llm_attempt = 0; llm_attempt < kMaxLlmRetries; ++llm_attempt) {
       resp = current_backend->Chat(
@@ -933,7 +933,7 @@ std::string AgentCore::ProcessPrompt(
         auto start = std::chrono::steady_clock::now();
 
         // Tool execution with retry (max 3 attempts)
-        static constexpr int kMaxToolRetries = 3;
+        static constexpr int kMaxToolRetries = 1;
         static constexpr int kRetryBaseDelayMs = 200;
         for (int attempt = 0; attempt < kMaxToolRetries; ++attempt) {
           auto it = tool_dispatch_.find(resolved_name);

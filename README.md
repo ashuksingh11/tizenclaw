@@ -74,11 +74,11 @@
 </td>
 <td width="50%">
 
-### 🔒 Security First
+### 🔒 Security & Reliability
 - OCI container isolation (crun + seccomp + namespace)
 - Device-bound encrypted API key storage
 - Tool execution policy with risk levels & loop detection
-- HMAC-SHA256 webhook authentication
+- **Fail-Fast execution** (max 1 retry) to prevent retry storms
 - Structured Markdown audit logging
 
 ### 📡 7+ Communication Channels

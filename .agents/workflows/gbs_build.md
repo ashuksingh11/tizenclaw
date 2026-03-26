@@ -34,7 +34,10 @@ Whenever build-related changes occur (code modifications, `CMakeLists.txt` modif
 
    You can verify the build results through the log files generated in the directories above.
 
-4. **Caution: Prohibition of Pipe (`|`) Usage**
+4. **Zero Warnings Policy**
+   The build must complete **without any warning messages**. You must resolve all compiler and packaging warnings before committing. This is a strict project rule to maintain code quality.
+
+5. **Caution: Prohibition of Pipe (`|`) Usage**
    Do not filter the output of the `gbs build` command with pipes like `| tail` or `| grep`. Pipes buffer the output, causing the build to appear as if it has hung.
    - ❌ `gbs build -A ${ARCH} --include-all 2>&1 | tail -50`
    - ✅ `gbs build -A ${ARCH} --include-all 2>&1`

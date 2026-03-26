@@ -223,8 +223,9 @@ The central orchestration engine implementing the **Agentic Loop**:
 | Feature | Details |
 |---------|---------|
 | **Iterative Tool Calling** | LLM generates tool calls → execute → feed results back → repeat |
+| **Fail-Fast Retry** | Tools and LLM calls fail immediately on error (max 1 retry) to prevent storms and delegate recovery to the LLM |
 | **Streaming Responses** | Chunked IPC delivery (`stream_chunk` / `stream_end`) |
-| **Context Compaction** | Oldest 10 turns summarized via LLM when exceeding 15 turns |
+| **Context Compaction** | Oldest 10 turns summarized via LLM when > 15 turns (planned migration: Token-budget threshold) |
 | **Edge Memory Management** | `MaintenanceLoop` calls `malloc_trim(0)` + `sqlite3_release_memory` after 5min idle |
 | **Multi-Session** | Concurrent sessions with per-session system prompt and history isolation |
 | **Backend Selection** | `SwitchToBestBackend()` unified priority queue (Plugin > active > fallback) |

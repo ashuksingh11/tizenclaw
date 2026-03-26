@@ -123,8 +123,9 @@ Tizen의 보안 정책(SMACK, DAC, kUEP) 하에서 안전하고 확장 가능한
 | 기능 | 세부사항 |
 |------|---------|
 | **반복 도구 호출** | LLM이 도구 호출 생성 → 실행 → 결과 피드백 → 반복 |
+| **Fail-Fast 재시도** | 도구/LLM 호출 실패 시 반복(Retry Storm)을 방지하고 즉시 포기 후 에러를 LLM으로 이관 (최대 1회) |
 | **스트리밍 응답** | 청크 IPC 전달 (`stream_chunk` / `stream_end`) |
-| **컨텍스트 압축** | 15턴 초과 시 가장 오래된 10턴을 LLM으로 요약 압축 |
+| **컨텍스트 압축** | 15턴 초과 시 가장 오래된 10턴을 LLM으로 요약 압축 (향후 토큰 예산 기반 동적 압축으로 전환 예정) |
 | **엣지 메모리 관리** | `MaintenanceLoop`가 5분 유휴 시 `malloc_trim(0)` + `sqlite3_release_memory` 호출 |
 | **멀티 세션** | 세션별 시스템 프롬프트와 히스토리 격리 |
 | **백엔드 선택** | `SwitchToBestBackend()` 통합 우선순위 큐 (Plugin > active > fallback) |
