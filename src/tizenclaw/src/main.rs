@@ -15,7 +15,7 @@ pub mod core;
 pub mod channel;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
@@ -39,11 +39,11 @@ fn main() {
 
     // Initialize AgentCore
     log::info!("[Boot] Initializing AgentCore...");
-    let mut agent = core::agent_core::AgentCore::new();
+    let agent = core::agent_core::AgentCore::new();
     if !agent.initialize() {
         log::error!("AgentCore initialization failed");
     }
-    let agent = Arc::new(Mutex::new(agent));
+    let agent = Arc::new(agent);
 
     // Start IPC server
     log::info!("[Boot] Starting IPC server...");
@@ -92,9 +92,7 @@ fn main() {
     ipc.stop();
     let _ = ipc_handle.join();
 
-    if let Ok(mut a) = agent.lock() {
-        a.shutdown();
-    }
+    agent.shutdown();
 
     log::info!("TizenClaw daemon stopped.");
 }

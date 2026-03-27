@@ -5,6 +5,16 @@ This document defines the core development process (Plan → Design → Develop 
 > [!IMPORTANT]
 > For detailed procedures on each topic, refer to the workflow documents under [`.agents/workflows/`](.agents/workflows/).
 
+```text
+  ┌────────┐    ┌────────┐    ┌─────────┐    ┌────────────────┐    ┌───────────────┐    ┌────────┐
+  │ 1.Plan │───▶│2.Design│───▶│3.Develop│───▶│4.Build & Deploy│───▶│5.Test & Review│───▶│6.Commit│
+  └────────┘    └────────┘    └─────────┘    └────────────────┘    └───────────────┘    └────────┘
+                                   ▲                                       │                  
+                                   │            [FAIL]                     │                  
+                                   └───────────────────────────────────────┘                  
+                                             (Development Fix)                                
+```
+
 ## 1. Plan
 - Accurately understand the objectives and user requirements.
 - Write a work unit (`task.md`) and establish a high-level plan before proceeding.

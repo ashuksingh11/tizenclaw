@@ -28,6 +28,8 @@ pub struct SessionStore {
 impl SessionStore {
     pub fn new(db_path: &str) -> Result<Self, String> {
         let db = sqlite::open_database(db_path).map_err(|e| format!("DB open: {}", e))?;
+        // Enable WAL mode for better concurrent read/write performance
+        let _ = db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;");
         let store = SessionStore { db };
         store.init_tables().map_err(|e| format!("DB init: {}", e))?;
         Ok(store)
@@ -70,7 +72,13 @@ impl SessionStore {
     }
 
     pub fn add_message(&self, session_id: &str, role: &str, content: &str) {
-        self.ensure_session(session_id);
+        // Batch all operations in a single transaction to avoid
+        // multiple fsync calls (~10-30ms savings per message).
+        let _ = self.db.execute_batch("BEGIN IMMEDIATE");
+        let _ = self.db.execute(
+            "INSERT OR IGNORE INTO sessions (id) VALUES (?1)",
+            params![session_id],
+        );
         let _ = self.db.execute(
             "INSERT INTO messages (session_id, role, content) VALUES (?1, ?2, ?3)",
             params![session_id, role, content],
@@ -79,6 +87,7 @@ impl SessionStore {
             "UPDATE sessions SET updated_at = datetime('now') WHERE id = ?1",
             params![session_id],
         );
+        let _ = self.db.execute_batch("COMMIT");
     }
 
     pub fn get_messages(&self, session_id: &str, limit: usize) -> Vec<SessionMessage> {

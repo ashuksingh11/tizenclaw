@@ -2,8 +2,12 @@
 //!
 //! Manages LLM interaction, tool calling, session management,
 //! and the agentic loop (prompt → LLM → tool call → result → LLM → ...).
+//!
+//! Thread-safety: uses fine-grained internal locking so callers can
+//! share `Arc<AgentCore>` without an outer Mutex.
 
 use serde_json::{json, Value};
+use std::sync::{Mutex, RwLock};
 
 use crate::infra::key_store::KeyStore;
 use crate::llm::backend::{self, LlmBackend, LlmMessage, LlmResponse};
@@ -77,66 +81,94 @@ impl LlmConfig {
     }
 }
 
+/// Thread-safe AgentCore with fine-grained internal locking.
+///
+/// Callers share `Arc<AgentCore>` — no outer Mutex needed.
+/// Each field that requires mutation is individually protected:
+/// - `backend` + `fallback_backends`: Mutex (used during LLM calls)
+/// - `session_store`: Mutex (SQLite is not Sync)
+/// - `tool_dispatcher`: RwLock (reads are frequent, writes are rare)
 pub struct AgentCore {
-    backend: Option<Box<dyn LlmBackend>>,
-    fallback_backends: Vec<Box<dyn LlmBackend>>,
-    session_store: Option<SessionStore>,
-    tool_dispatcher: ToolDispatcher,
-    key_store: KeyStore,
-    system_prompt: String,
-    backend_name: String,
-    llm_config: LlmConfig,
+    backend: Mutex<Option<Box<dyn LlmBackend>>>,
+    fallback_backends: Mutex<Vec<Box<dyn LlmBackend>>>,
+    session_store: Mutex<Option<SessionStore>>,
+    tool_dispatcher: RwLock<ToolDispatcher>,
+    key_store: Mutex<KeyStore>,
+    system_prompt: RwLock<String>,
+    backend_name: RwLock<String>,
+    llm_config: Mutex<LlmConfig>,
 }
 
 impl AgentCore {
     pub fn new() -> Self {
         AgentCore {
-            backend: None,
-            fallback_backends: Vec::new(),
-            session_store: None,
-            tool_dispatcher: ToolDispatcher::new(),
-            key_store: KeyStore::new(),
-            system_prompt: String::new(),
-            backend_name: String::new(),
-            llm_config: LlmConfig::default(),
+            backend: Mutex::new(None),
+            fallback_backends: Mutex::new(Vec::new()),
+            session_store: Mutex::new(None),
+            tool_dispatcher: RwLock::new(ToolDispatcher::new()),
+            key_store: Mutex::new(KeyStore::new()),
+            system_prompt: RwLock::new(String::new()),
+            backend_name: RwLock::new(String::new()),
+            llm_config: Mutex::new(LlmConfig::default()),
         }
     }
 
-    pub fn initialize(&mut self) -> bool {
+    pub fn initialize(&self) -> bool {
         log::info!("AgentCore initializing...");
 
         // Load API keys
         let key_path = format!("{}/config/keys.json", APP_DATA_DIR);
-        self.key_store.load(&key_path);
+        if let Ok(mut ks) = self.key_store.lock() {
+            ks.load(&key_path);
+        }
 
         // Load system prompt
         let prompt_path = format!("{}/config/system_prompt.txt", APP_DATA_DIR);
-        self.system_prompt = std::fs::read_to_string(&prompt_path).unwrap_or_else(|_| {
+        let prompt = std::fs::read_to_string(&prompt_path).unwrap_or_else(|_| {
             "You are TizenClaw, an AI assistant for Tizen devices. \
              You can execute tools to help users interact with the device."
                 .into()
         });
+        if let Ok(mut sp) = self.system_prompt.write() {
+            *sp = prompt;
+        }
 
         // Load LLM config (supports multi-backend + fallback)
         let llm_config_path = format!("{}/config/llm_config.json", APP_DATA_DIR);
-        self.llm_config = LlmConfig::load(&llm_config_path);
-        self.backend_name = self.llm_config.active_backend.clone();
+        let config = LlmConfig::load(&llm_config_path);
+        let active_name = config.active_backend.clone();
+        let fallback_names = config.fallback_backends.clone();
 
         // Initialize primary backend
-        self.backend = self.create_and_init_backend(&self.backend_name.clone());
-        if self.backend.is_some() {
-            log::info!("Primary LLM backend '{}' initialized", self.backend_name);
+        let primary = Self::create_and_init_backend_static(&config, &active_name);
+        if primary.is_some() {
+            log::info!("Primary LLM backend '{}' initialized", active_name);
         } else {
-            log::error!("Primary LLM backend '{}' failed to initialize", self.backend_name);
+            log::error!("Primary LLM backend '{}' failed to initialize", active_name);
+        }
+
+        if let Ok(mut be) = self.backend.lock() {
+            *be = primary;
+        }
+        if let Ok(mut bn) = self.backend_name.write() {
+            *bn = active_name;
         }
 
         // Initialize fallback backends
-        let fallback_names = self.llm_config.fallback_backends.clone();
+        let mut fallbacks = Vec::new();
         for name in &fallback_names {
-            if let Some(be) = self.create_and_init_backend(name) {
+            if let Some(be) = Self::create_and_init_backend_static(&config, name) {
                 log::info!("Fallback LLM backend '{}' initialized", name);
-                self.fallback_backends.push(be);
+                fallbacks.push(be);
             }
+        }
+        if let Ok(mut fbs) = self.fallback_backends.lock() {
+            *fbs = fallbacks;
+        }
+
+        // Store config for later use
+        if let Ok(mut cfg) = self.llm_config.lock() {
+            *cfg = config;
         }
 
         // Initialize session store
@@ -144,23 +176,30 @@ impl AgentCore {
         match SessionStore::new(&db_path) {
             Ok(store) => {
                 log::info!("Session store initialized");
-                self.session_store = Some(store);
+                if let Ok(mut ss) = self.session_store.lock() {
+                    *ss = Some(store);
+                }
             }
             Err(e) => log::error!("Session store failed: {}", e),
         }
 
         // Load tools from all subdirectories under /opt/usr/share/tizen-tools
-        self.tool_dispatcher.load_tools_from_root("/opt/usr/share/tizen-tools");
+        if let Ok(mut td) = self.tool_dispatcher.write() {
+            td.load_tools_from_root("/opt/usr/share/tizen-tools");
+        }
         log::info!("Tools loaded");
 
         true
     }
 
-    /// Create and initialize an LLM backend by name using the loaded config.
-    fn create_and_init_backend(&self, name: &str) -> Option<Box<dyn LlmBackend>> {
+    /// Create and initialize an LLM backend by name using the provided config.
+    fn create_and_init_backend_static(
+        config: &LlmConfig,
+        name: &str,
+    ) -> Option<Box<dyn LlmBackend>> {
         let mut be = backend::create_backend(name)?;
-        let config = self.llm_config.backend_config(name);
-        if be.initialize(&config) {
+        let cfg = config.backend_config(name);
+        if be.initialize(&cfg) {
             Some(be)
         } else {
             log::warn!("Backend '{}' created but failed to initialize", name);
@@ -169,32 +208,55 @@ impl AgentCore {
     }
 
     /// Execute a chat request against the primary backend, falling back on failure.
+    ///
+    /// Acquires backend lock only for the duration of each `chat()` call.
     fn chat_with_fallback(
         &self,
         messages: &[LlmMessage],
         tools: &[crate::llm::backend::LlmToolDecl],
         on_chunk: Option<&dyn Fn(&str)>,
     ) -> LlmResponse {
-        // Try primary backend
-        if let Some(be) = &self.backend {
-            let resp = be.chat(messages, tools, on_chunk, &self.system_prompt);
-            if resp.success {
-                return resp;
+        let system_prompt = self.system_prompt.read()
+            .map(|sp| sp.clone())
+            .unwrap_or_default();
+
+        // Try primary backend — lock is held only during chat()
+        {
+            let be_guard = self.backend.lock();
+            if let Ok(be_opt) = be_guard {
+                if let Some(be) = be_opt.as_ref() {
+                    let resp = be.chat(messages, tools, on_chunk, &system_prompt);
+                    if resp.success {
+                        return resp;
+                    }
+                    let bn = self.backend_name.read()
+                        .map(|n| n.clone())
+                        .unwrap_or_default();
+                    log::warn!(
+                        "Primary backend '{}' failed (HTTP {}): {}",
+                        bn, resp.http_status, resp.error_message
+                    );
+                }
             }
-            log::warn!(
-                "Primary backend '{}' failed (HTTP {}): {}",
-                self.backend_name, resp.http_status, resp.error_message
-            );
         }
+        // Primary lock is released here
 
         // Try fallback backends in order
-        for fb in &self.fallback_backends {
-            log::info!("Trying fallback backend '{}'", fb.get_name());
-            let resp = fb.chat(messages, tools, on_chunk, &self.system_prompt);
-            if resp.success {
-                return resp;
+        {
+            let fbs_guard = self.fallback_backends.lock();
+            if let Ok(fbs) = fbs_guard {
+                for fb in fbs.iter() {
+                    log::info!("Trying fallback backend '{}'", fb.get_name());
+                    let resp = fb.chat(messages, tools, on_chunk, &system_prompt);
+                    if resp.success {
+                        return resp;
+                    }
+                    log::warn!(
+                        "Fallback '{}' also failed: {}",
+                        fb.get_name(), resp.error_message
+                    );
+                }
             }
-            log::warn!("Fallback '{}' also failed: {}", fb.get_name(), resp.error_message);
         }
 
         LlmResponse {
@@ -204,6 +266,9 @@ impl AgentCore {
     }
 
     /// Process a user prompt through the agentic loop.
+    ///
+    /// Thread-safe: acquires fine-grained locks on individual fields
+    /// rather than locking the entire AgentCore.
     pub fn process_prompt(
         &self,
         session_id: &str,
@@ -212,21 +277,33 @@ impl AgentCore {
     ) -> String {
         log::info!("Processing prompt for session '{}' ({} chars)", session_id, prompt.len());
 
-        if self.backend.is_none() && self.fallback_backends.is_empty() {
-            return "Error: No LLM backend configured".into();
+        // Quick check: do we have any backend?
+        {
+            let has_primary = self.backend.lock()
+                .map(|b| b.is_some())
+                .unwrap_or(false);
+            let has_fallback = self.fallback_backends.lock()
+                .map(|f| !f.is_empty())
+                .unwrap_or(false);
+            if !has_primary && !has_fallback {
+                return "Error: No LLM backend configured".into();
+            }
         }
 
-        // Store user message
-        if let Some(store) = &self.session_store {
-            store.add_message(session_id, "user", prompt);
+        // Store user message (short lock on session_store)
+        if let Ok(ss) = self.session_store.lock() {
+            if let Some(store) = ss.as_ref() {
+                store.add_message(session_id, "user", prompt);
+            }
         }
 
-        // Build conversation history
-        let history = self
-            .session_store
-            .as_ref()
-            .map(|s| s.get_messages(session_id, MAX_CONTEXT_MESSAGES))
-            .unwrap_or_default();
+        // Build conversation history (short lock on session_store)
+        let history = {
+            let ss = self.session_store.lock();
+            ss.ok()
+                .and_then(|s| s.as_ref().map(|store| store.get_messages(session_id, MAX_CONTEXT_MESSAGES)))
+                .unwrap_or_default()
+        };
 
         let mut messages: Vec<LlmMessage> = history
             .iter()
@@ -242,9 +319,12 @@ impl AgentCore {
             messages.push(LlmMessage::user(prompt));
         }
 
-        let tools = self.tool_dispatcher.get_tool_declarations();
+        // Get tool declarations (read lock — allows concurrent reads)
+        let tools = self.tool_dispatcher.read()
+            .map(|td| td.get_tool_declarations())
+            .unwrap_or_default();
 
-        // Agentic loop
+        // Agentic loop — no global lock held during LLM calls
         for round in 0..MAX_TOOL_ROUNDS {
             let response = self.chat_with_fallback(&messages, &tools, on_chunk);
 
@@ -257,19 +337,22 @@ impl AgentCore {
                 return err;
             }
 
-            // Record token usage
-            if let Some(store) = &self.session_store {
-                let backend_name = self
-                    .backend
-                    .as_ref()
-                    .map(|b| b.get_name())
-                    .unwrap_or("unknown");
-                store.record_usage(
-                    session_id,
-                    response.prompt_tokens,
-                    response.completion_tokens,
-                    backend_name,
-                );
+            // Record token usage (short lock on session_store)
+            {
+                let be_name = self.backend.lock()
+                    .ok()
+                    .and_then(|b| b.as_ref().map(|be| be.get_name().to_string()))
+                    .unwrap_or_else(|| "unknown".into());
+                if let Ok(ss) = self.session_store.lock() {
+                    if let Some(store) = ss.as_ref() {
+                        store.record_usage(
+                            session_id,
+                            response.prompt_tokens,
+                            response.completion_tokens,
+                            &be_name,
+                        );
+                    }
+                }
             }
 
             if response.has_tool_calls() {
@@ -283,18 +366,43 @@ impl AgentCore {
                     ..Default::default()
                 });
 
-                // Execute each tool call and add results
-                for tc in &response.tool_calls {
+                // Execute tool calls — parallel when multiple, sequential when single
+                if response.tool_calls.len() == 1 {
+                    let tc = &response.tool_calls[0];
                     log::info!("Executing tool: {} (id: {})", tc.name, tc.id);
-                    let result = self.tool_dispatcher.execute(&tc.name, &tc.args);
+                    let result = if let Ok(td) = self.tool_dispatcher.read() {
+                        td.execute(&tc.name, &tc.args)
+                    } else {
+                        json!({"error": "Tool dispatcher unavailable"})
+                    };
                     messages.push(LlmMessage::tool_result(&tc.id, &tc.name, result));
+                } else {
+                    // Parallel execution for multiple tool calls
+                    let results: Vec<_> = std::thread::scope(|s| {
+                        let handles: Vec<_> = response.tool_calls.iter().map(|tc| {
+                            log::info!("Executing tool (parallel): {} (id: {})", tc.name, tc.id);
+                            s.spawn(|| {
+                                if let Ok(td) = self.tool_dispatcher.read() {
+                                    td.execute(&tc.name, &tc.args)
+                                } else {
+                                    json!({"error": "Tool dispatcher unavailable"})
+                                }
+                            })
+                        }).collect();
+                        handles.into_iter().map(|h| h.join().unwrap_or(json!({"error": "Thread panicked"}))).collect()
+                    });
+                    for (tc, result) in response.tool_calls.iter().zip(results) {
+                        messages.push(LlmMessage::tool_result(&tc.id, &tc.name, result));
+                    }
                 }
                 // Continue loop for next LLM response
             } else {
                 // Final text response
                 let text = response.text;
-                if let Some(store) = &self.session_store {
-                    store.add_message(session_id, "assistant", &text);
+                if let Ok(ss) = self.session_store.lock() {
+                    if let Some(store) = ss.as_ref() {
+                        store.add_message(session_id, "assistant", &text);
+                    }
                 }
                 return text;
             }
@@ -303,23 +411,45 @@ impl AgentCore {
         "Error: Maximum tool call rounds exceeded".into()
     }
 
-    pub fn shutdown(&mut self) {
+    pub fn shutdown(&self) {
         log::info!("AgentCore shutting down");
-        if let Some(be) = &mut self.backend {
-            be.shutdown();
+        if let Ok(mut be) = self.backend.lock() {
+            if let Some(b) = be.as_mut() {
+                b.shutdown();
+            }
         }
-        for fb in &mut self.fallback_backends {
-            fb.shutdown();
+        if let Ok(mut fbs) = self.fallback_backends.lock() {
+            for fb in fbs.iter_mut() {
+                fb.shutdown();
+            }
         }
     }
 
-    pub fn get_session_store(&self) -> &Option<SessionStore> {
-        &self.session_store
+    pub fn get_session_store(&self) -> Option<SessionStoreRef> {
+        let guard = self.session_store.lock().ok()?;
+        if guard.is_some() {
+            Some(SessionStoreRef { guard })
+        } else {
+            None
+        }
     }
 
-    pub fn reload_tools(&mut self) {
-        self.tool_dispatcher = ToolDispatcher::new();
-        self.tool_dispatcher.load_tools_from_root("/opt/usr/share/tizen-tools");
+    pub fn reload_tools(&self) {
+        if let Ok(mut td) = self.tool_dispatcher.write() {
+            *td = ToolDispatcher::new();
+            td.load_tools_from_root("/opt/usr/share/tizen-tools");
+        }
         log::info!("Tools reloaded");
+    }
+}
+
+/// RAII guard providing access to the SessionStore while holding the lock.
+pub struct SessionStoreRef<'a> {
+    guard: std::sync::MutexGuard<'a, Option<SessionStore>>,
+}
+
+impl<'a> SessionStoreRef<'a> {
+    pub fn store(&self) -> &SessionStore {
+        self.guard.as_ref().unwrap()
     }
 }

@@ -372,6 +372,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "libtizenclaw"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "log",
+ "serde_json",
+]
+
+[[package]]
+name = "libtizenclaw-core"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "log",
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -714,6 +733,7 @@ version = "1.0.0"
 dependencies = [
  "libc",
  "log",
+ "native-tls",
  "rusqlite",
  "serde",
  "serde_json",
@@ -722,13 +742,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "tizenclaw-cli-rust"
+name = "tizenclaw-cli"
 version = "1.0.0"
 dependencies = [
  "libc",
  "serde",
  "serde_json",
  "tizen-sys",
+]
+
+[[package]]
+name = "tizenclaw-tool-executor"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "log",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

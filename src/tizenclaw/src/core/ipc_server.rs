@@ -23,7 +23,7 @@ impl IpcServer {
     }
 
     /// Start the IPC server in a new thread.
-    pub fn start(&self, agent: Arc<std::sync::Mutex<AgentCore>>) -> std::thread::JoinHandle<()> {
+    pub fn start(&self, agent: Arc<AgentCore>) -> std::thread::JoinHandle<()> {
         let running = self.running.clone();
         let active_clients = self.active_clients.clone();
         running.store(true, Ordering::SeqCst);
@@ -40,7 +40,7 @@ impl IpcServer {
     fn server_loop(
         running: Arc<AtomicBool>,
         active_clients: Arc<AtomicUsize>,
-        agent: Arc<std::sync::Mutex<AgentCore>>,
+        agent: Arc<AgentCore>,
     ) {
         // Abstract namespace socket via raw libc API
         let sock = unsafe {
@@ -117,10 +117,10 @@ impl IpcServer {
         }
 
         unsafe { libc::close(sock); }
-        log::info!("IPC Server stopped");
+        log::info!("IPC Server stopped")
     }
 
-    fn handle_client(fd: i32, agent: Arc<std::sync::Mutex<AgentCore>>) {
+    fn handle_client(fd: i32, agent: Arc<AgentCore>) {
         loop {
             // Read 4-byte length prefix
             let mut len_buf = [0u8; 4];
@@ -153,16 +153,13 @@ impl IpcServer {
         }
     }
 
-    fn dispatch_request(raw: &str, agent: &Arc<std::sync::Mutex<AgentCore>>, _client_fd: i32) -> String {
+    fn dispatch_request(raw: &str, agent: &Arc<AgentCore>, _client_fd: i32) -> String {
         let req: Value = match serde_json::from_str(raw) {
             Ok(v) => v,
             Err(_) => {
-                // Plain text prompt
-                if let Ok(a) = agent.lock() {
-                    let result = a.process_prompt("default", raw, None);
-                    return json!({"jsonrpc":"2.0","id":null,"result":{"text":result}}).to_string();
-                }
-                return json!({"jsonrpc":"2.0","error":{"code":-32603,"message":"Agent locked"}}).to_string();
+                // Plain text prompt — no lock needed, AgentCore handles its own locking
+                let result = agent.process_prompt("default", raw, None);
+                return json!({"jsonrpc":"2.0","id":null,"result":{"text":result}}).to_string();
             }
         };
 
@@ -181,27 +178,19 @@ impl IpcServer {
                 if text.is_empty() {
                     return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Empty prompt"},"id":req_id}).to_string();
                 }
-                if let Ok(a) = agent.lock() {
-                    let result = a.process_prompt(session_id, text, None);
-                    json!({"text": result})
-                } else {
-                    json!({"error": "Agent busy"})
-                }
+                let result = agent.process_prompt(session_id, text, None);
+                json!({"text": result})
             }
             "get_usage" => {
-                if let Ok(a) = agent.lock() {
-                    if let Some(store) = a.get_session_store() {
-                        let usage = store.load_daily_usage("");
-                        json!({
-                            "prompt_tokens": usage.total_prompt_tokens,
-                            "completion_tokens": usage.total_completion_tokens,
-                            "total_requests": usage.total_requests
-                        })
-                    } else {
-                        json!({"error": "No session store"})
-                    }
+                if let Some(ss_ref) = agent.get_session_store() {
+                    let usage = ss_ref.store().load_daily_usage("");
+                    json!({
+                        "prompt_tokens": usage.total_prompt_tokens,
+                        "completion_tokens": usage.total_completion_tokens,
+                        "total_requests": usage.total_requests
+                    })
                 } else {
-                    json!({"error": "Agent busy"})
+                    json!({"error": "No session store"})
                 }
             }
             _ => {

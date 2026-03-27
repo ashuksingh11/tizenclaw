@@ -201,8 +201,8 @@ pub fn http_get(
     unreachable!()
 }
 
-fn do_post(url: &str, headers: &[(&str, &str)], body: &str, timeout_secs: u64) -> Result<HttpResponse, String> {
-    let agent = build_agent(timeout_secs);
+fn do_post(url: &str, headers: &[(&str, &str)], body: &str, _timeout_secs: u64) -> Result<HttpResponse, String> {
+    let agent = AGENT.get_or_init(|| build_agent(120));
 
     let mut req = agent.post(url);
     for (k, v) in headers {
@@ -234,8 +234,8 @@ fn do_post(url: &str, headers: &[(&str, &str)], body: &str, timeout_secs: u64) -
     }
 }
 
-fn do_get(url: &str, headers: &[(&str, &str)], timeout_secs: u64) -> Result<HttpResponse, String> {
-    let agent = build_agent(timeout_secs);
+fn do_get(url: &str, headers: &[(&str, &str)], _timeout_secs: u64) -> Result<HttpResponse, String> {
+    let agent = AGENT.get_or_init(|| build_agent(120));
 
     let mut req = agent.get(url);
     for (k, v) in headers {
