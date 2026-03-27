@@ -1,6 +1,9 @@
-# Build artifacts
-build/
+# Build artifacts (top-level only, not vendor/*/build/)
+/build/
 build_local/
+
+# Rust / Cargo
+/target/
 *.o
 *.d
 *.rpm
