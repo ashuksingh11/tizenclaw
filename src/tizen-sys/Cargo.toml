@@ -5,3 +5,6 @@ edition = "2021"
 
 [dependencies]
 # No external dependencies to support offline GBS build
+
+[features]
+mock-sys = []

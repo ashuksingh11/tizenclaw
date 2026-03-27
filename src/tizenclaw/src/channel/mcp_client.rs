@@ -305,6 +305,12 @@ pub struct McpClientManager {
     clients: Vec<McpClient>,
 }
 
+impl Default for McpClientManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl McpClientManager {
     pub fn new() -> Self {
         McpClientManager {

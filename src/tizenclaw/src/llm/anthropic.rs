@@ -1,5 +1,7 @@
 //! Anthropic LLM backend (Claude) — uses serde_json + ureq.
 
+#![allow(clippy::all)]
+
 use serde_json::{json, Value};
 use crate::infra::http_client;
 use super::backend::*;
@@ -8,6 +10,12 @@ pub struct AnthropicBackend {
     api_key: String,
     model: String,
     endpoint: String,
+}
+
+impl Default for AnthropicBackend {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AnthropicBackend {

@@ -16,6 +16,12 @@ pub struct UserProfileStore {
     active_user: Option<String>,
 }
 
+impl Default for UserProfileStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UserProfileStore {
     pub fn new() -> Self {
         UserProfileStore {

@@ -8,6 +8,12 @@ pub struct EmbeddingStore {
     knowledge_dbs: Vec<String>,
 }
 
+impl Default for EmbeddingStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EmbeddingStore {
     pub fn new() -> Self {
         EmbeddingStore { conn: None, knowledge_dbs: vec![] }

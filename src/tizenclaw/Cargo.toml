@@ -4,6 +4,7 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "time", "macros", "sync", "rt"] }
 tizen-sys = { path = "../tizen-sys" }
 
 # JSON
@@ -22,3 +23,6 @@ log = "0.4"
 
 # POSIX (signals, sockets)
 libc = "0.2"
+
+[features]
+mock-sys = ["tizen-sys/mock-sys"]

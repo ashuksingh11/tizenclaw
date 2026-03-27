@@ -4,6 +4,12 @@ use serde_json::{json, Value};
 
 pub struct ProactiveAdvisor;
 
+impl Default for ProactiveAdvisor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProactiveAdvisor {
     pub fn new() -> Self { ProactiveAdvisor }
 

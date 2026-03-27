@@ -25,6 +25,12 @@ pub struct McpServer {
     tools: Vec<McpToolInfo>,
 }
 
+impl Default for McpServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl McpServer {
     pub fn new() -> Self {
         let mut server = McpServer { tools: Vec::new() };

@@ -55,6 +55,12 @@ pub struct EventBus {
     next_id: AtomicI32,
 }
 
+impl Default for EventBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventBus {
     pub fn new() -> Self {
         EventBus {

@@ -4,6 +4,12 @@ use serde_json::{json, Value};
 
 pub struct AgentFactory;
 
+impl Default for AgentFactory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AgentFactory {
     pub fn new() -> Self { AgentFactory }
 

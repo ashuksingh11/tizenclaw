@@ -16,6 +16,12 @@ pub struct SkillVerifier {
     blocked_imports: Vec<String>,
 }
 
+impl Default for SkillVerifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SkillVerifier {
     pub fn new() -> Self {
         SkillVerifier {

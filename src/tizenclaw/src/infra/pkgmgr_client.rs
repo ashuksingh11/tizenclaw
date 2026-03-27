@@ -58,7 +58,7 @@ impl PkgmgrClient {
 
     /// Check if a package is installed.
     pub fn is_installed(pkg_id: &str) -> bool {
-        Self::get_package_info(pkg_id).map_or(false, |p| p.installed)
+        Self::get_package_info(pkg_id).is_some_and(|p| p.installed)
     }
 
     fn parse_pkg_list(output: &str) -> Vec<PackageInfo> {

@@ -10,6 +10,12 @@ pub struct KeyStore {
     config_path: String,
 }
 
+impl Default for KeyStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KeyStore {
     pub fn new() -> Self {
         KeyStore {

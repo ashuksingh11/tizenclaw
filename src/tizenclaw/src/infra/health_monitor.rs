@@ -13,6 +13,12 @@ pub struct HealthMonitor {
     start_time: std::time::Instant,
 }
 
+impl Default for HealthMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HealthMonitor {
     pub fn new() -> Self {
         HealthMonitor {

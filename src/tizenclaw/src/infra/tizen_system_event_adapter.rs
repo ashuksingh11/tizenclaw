@@ -36,6 +36,12 @@ pub struct TizenSystemEventAdapter {
     callbacks: Vec<(SystemEventKind, SystemEventCallback)>,
 }
 
+impl Default for TizenSystemEventAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TizenSystemEventAdapter {
     pub fn new() -> Self {
         TizenSystemEventAdapter {

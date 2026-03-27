@@ -1,5 +1,7 @@
 //! Gemini LLM backend (Google AI) — uses serde_json + ureq.
 
+#![allow(clippy::all)]
+
 use serde_json::{json, Value};
 use crate::infra::http_client;
 use super::backend::*;
@@ -8,6 +10,12 @@ pub struct GeminiBackend {
     api_key: String,
     model: String,
     endpoint: String,
+}
+
+impl Default for GeminiBackend {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GeminiBackend {

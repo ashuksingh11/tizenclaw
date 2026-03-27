@@ -269,6 +269,12 @@ fn do_get(url: &str, headers: &[(&str, &str)], _timeout_secs: u64) -> Result<Htt
 /// Convenience struct for channels/MCP.
 pub struct HttpClient;
 
+impl Default for HttpClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HttpClient {
     pub fn new() -> Self { HttpClient }
 

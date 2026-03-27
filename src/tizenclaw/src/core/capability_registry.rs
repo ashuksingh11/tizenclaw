@@ -14,6 +14,12 @@ pub struct CapabilityRegistry {
     capabilities: HashMap<String, Capability>,
 }
 
+impl Default for CapabilityRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CapabilityRegistry {
     pub fn new() -> Self {
         CapabilityRegistry { capabilities: HashMap::new() }

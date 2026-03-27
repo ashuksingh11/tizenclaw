@@ -280,7 +280,7 @@ fn parse_request(stream: &mut std::net::TcpStream) -> Option<HttpRequest> {
     let mut first_line = String::new();
     reader.read_line(&mut first_line).ok()?;
 
-    let parts: Vec<&str> = first_line.trim().split_whitespace().collect();
+    let parts: Vec<&str> = first_line.split_whitespace().collect();
     if parts.len() < 2 { return None; }
 
     let method = parts[0].to_string();
@@ -988,10 +988,10 @@ fn parse_proc_status() -> (i64, i64, i32) {
     if let Ok(content) = std::fs::read_to_string("/proc/self/status") {
         for line in content.lines() {
             if let Some(val) = line.strip_prefix("VmRSS:") {
-                rss_kb = val.trim().split_whitespace().next()
+                rss_kb = val.split_whitespace().next()
                     .and_then(|s| s.parse().ok()).unwrap_or(0);
             } else if let Some(val) = line.strip_prefix("VmSize:") {
-                vm_kb = val.trim().split_whitespace().next()
+                vm_kb = val.split_whitespace().next()
                     .and_then(|s| s.parse().ok()).unwrap_or(0);
             } else if let Some(val) = line.strip_prefix("Threads:") {
                 threads = val.trim().parse().unwrap_or(0);
@@ -1062,7 +1062,7 @@ fn today_date_str() -> String {
     let days = secs / 86400;
     let y = (days * 4 + 2) / 1461 + 1970;
     let mut doy = days - ((y - 1970) * 365 + (y - 1969) / 4);
-    let leap = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 1 } else { 0 };
+    let leap = if y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400)) { 1 } else { 0 };
     let months = [31, 28 + leap, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut m = 0u64;
     for (i, &ml) in months.iter().enumerate() {

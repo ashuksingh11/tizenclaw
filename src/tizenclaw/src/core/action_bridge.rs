@@ -18,6 +18,12 @@ pub struct ActionSchema {
     pub app_id: String,
 }
 
+impl Default for ActionBridge {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ActionBridge {
     pub fn new() -> Self {
         ActionBridge { actions: HashMap::new(), on_change: None, running: false }

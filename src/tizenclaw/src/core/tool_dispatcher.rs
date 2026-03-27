@@ -1,5 +1,7 @@
 //! Tool dispatcher — routes tool calls from LLM to executors.
 
+#![allow(clippy::all)]
+
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
@@ -18,6 +20,12 @@ pub struct ToolDecl {
 /// Executes tools by spawning CLI processes.
 pub struct ToolDispatcher {
     tools: HashMap<String, ToolDecl>,
+}
+
+impl Default for ToolDispatcher {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ToolDispatcher {

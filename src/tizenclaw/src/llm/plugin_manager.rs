@@ -22,6 +22,12 @@ pub struct PluginManager {
     plugin_registry: HashMap<String, PathBuf>,
 }
 
+impl Default for PluginManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PluginManager {
     pub fn new() -> Self {
         PluginManager {

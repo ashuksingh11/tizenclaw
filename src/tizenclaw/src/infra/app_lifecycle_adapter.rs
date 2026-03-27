@@ -23,6 +23,12 @@ pub struct AppLifecycleAdapter {
     callback: Option<Arc<Mutex<AppEventCallback>>>,
 }
 
+impl Default for AppLifecycleAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AppLifecycleAdapter {
     pub fn new() -> Self {
         AppLifecycleAdapter {

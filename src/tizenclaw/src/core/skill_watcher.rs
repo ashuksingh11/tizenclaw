@@ -15,7 +15,13 @@ const POLL_INTERVAL_SECS: u64 = 5;
 
 pub struct SkillWatcher {
     running: Arc<AtomicBool>,
-    on_change: Option<Box<dyn Fn() + Send + Sync>>,
+    on_change: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+impl Default for SkillWatcher {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SkillWatcher {
@@ -27,7 +33,7 @@ impl SkillWatcher {
     }
 
     pub fn set_change_callback(&mut self, cb: impl Fn() + Send + Sync + 'static) {
-        self.on_change = Some(Box::new(cb));
+        self.on_change = Some(Arc::new(cb));
     }
 
     pub fn start(&self) -> Option<std::thread::JoinHandle<()>> {
@@ -37,6 +43,7 @@ impl SkillWatcher {
         self.running.store(true, Ordering::SeqCst);
 
         let running = self.running.clone();
+        let cb_opt = self.on_change.clone();
 
         let handle = std::thread::spawn(move || {
             log::info!("SkillWatcher started, monitoring: {}", TOOLS_ROOT);
@@ -49,8 +56,9 @@ impl SkillWatcher {
                 if new_mtimes != mtimes {
                     log::info!("SkillWatcher: change detected under {}", TOOLS_ROOT);
                     mtimes = new_mtimes;
-                    // Note: on_change callback invocation would be wired
-                    // through AgentCore to trigger skill reload
+                    if let Some(cb) = &cb_opt {
+                        cb();
+                    }
                 }
             }
             log::info!("SkillWatcher stopped");

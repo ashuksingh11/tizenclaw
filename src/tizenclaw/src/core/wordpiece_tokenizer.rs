@@ -22,6 +22,12 @@ pub struct WordPieceTokenizer {
     pad_id: i64,
 }
 
+impl Default for WordPieceTokenizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WordPieceTokenizer {
     pub fn new() -> Self {
         Self {

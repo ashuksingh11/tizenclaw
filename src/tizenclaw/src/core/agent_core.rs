@@ -99,6 +99,12 @@ pub struct AgentCore {
     llm_config: Mutex<LlmConfig>,
 }
 
+impl Default for AgentCore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AgentCore {
     pub fn new() -> Self {
         AgentCore {
@@ -425,7 +431,7 @@ impl AgentCore {
         }
     }
 
-    pub fn get_session_store(&self) -> Option<SessionStoreRef> {
+    pub fn get_session_store(&self) -> Option<SessionStoreRef<'_>> {
         let guard = self.session_store.lock().ok()?;
         if guard.is_some() {
             Some(SessionStoreRef { guard })

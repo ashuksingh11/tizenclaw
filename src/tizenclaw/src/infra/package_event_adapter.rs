@@ -31,6 +31,12 @@ pub struct PackageEventAdapter {
     callback: Option<PackageEventCallback>,
 }
 
+impl Default for PackageEventAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PackageEventAdapter {
     pub fn new() -> Self {
         PackageEventAdapter {

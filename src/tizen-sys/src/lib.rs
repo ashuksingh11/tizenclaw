@@ -9,7 +9,6 @@
 #![allow(non_snake_case)]
 #![allow(dead_code)]
 
-use std::os::raw::{c_char, c_int, c_void, c_uint};
 
 // ─────────────────────────────────────────
 // dlog — Tizen logging
@@ -22,8 +21,18 @@ pub mod dlog {
     pub const DLOG_INFO: c_int = 5;
     pub const DLOG_DEBUG: c_int = 6;
 
+    #[cfg(not(feature = "mock-sys"))]
     extern "C" {
         pub fn dlog_print(prio: c_int, tag: *const c_char, fmt: *const c_char, ...) -> c_int;
+    }
+
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn dlog_print(prio: c_int, tag: *const c_char, fmt: *const c_char) -> c_int {
+        let tag_str = std::ffi::CStr::from_ptr(tag).to_string_lossy();
+        let fmt_str = std::ffi::CStr::from_ptr(fmt).to_string_lossy();
+        println!("[MOCK DLOG {}] [{}] {}", prio, tag_str, fmt_str);
+        0
     }
 }
 
@@ -35,6 +44,7 @@ pub mod tizen_core {
 
     pub type tizen_core_task_h = *mut c_void;
 
+    #[cfg(not(feature = "mock-sys"))]
     extern "C" {
         pub fn tizen_core_init() -> c_int;
         pub fn tizen_core_shutdown() -> c_int;
@@ -47,6 +57,25 @@ pub mod tizen_core {
         pub fn tizen_core_task_run(task: tizen_core_task_h) -> c_int;
         pub fn tizen_core_task_quit(task: tizen_core_task_h) -> c_int;
     }
+
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn tizen_core_init() -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn tizen_core_shutdown() -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn tizen_core_task_create(_n: *const c_char, _u: c_int, _t: *mut tizen_core_task_h) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn tizen_core_task_destroy(_t: tizen_core_task_h) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn tizen_core_task_run(_t: tizen_core_task_h) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn tizen_core_task_quit(_t: tizen_core_task_h) -> c_int { 0 }
 }
 
 // ─────────────────────────────────────────
@@ -55,12 +84,26 @@ pub mod tizen_core {
 pub mod vconf {
     use std::os::raw::{c_char, c_int};
 
+    #[cfg(not(feature = "mock-sys"))]
     extern "C" {
         pub fn vconf_get_str(key: *const c_char) -> *mut c_char;
         pub fn vconf_get_int(key: *const c_char, val: *mut c_int) -> c_int;
         pub fn vconf_set_str(key: *const c_char, val: *const c_char) -> c_int;
         pub fn vconf_set_int(key: *const c_char, val: c_int) -> c_int;
     }
+
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn vconf_get_str(_key: *const c_char) -> *mut c_char { std::ptr::null_mut() }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn vconf_get_int(_key: *const c_char, val: *mut c_int) -> c_int { *val = 0; 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn vconf_set_str(_key: *const c_char, _val: *const c_char) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn vconf_set_int(_key: *const c_char, _val: c_int) -> c_int { 0 }
 }
 
 // ─────────────────────────────────────────
@@ -83,6 +126,7 @@ pub mod pkgmgr {
         data: *mut c_void,
     ) -> c_int;
 
+    #[cfg(not(feature = "mock-sys"))]
     extern "C" {
         pub fn pkgmgr_client_new(client_type: c_int) -> *mut pkgmgr_client;
         pub fn pkgmgr_client_free(client: *mut pkgmgr_client) -> c_int;
@@ -92,6 +136,20 @@ pub mod pkgmgr {
             data: *mut c_void,
         ) -> c_int;
     }
+
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn pkgmgr_client_new(_client_type: c_int) -> *mut pkgmgr_client { std::ptr::null_mut() }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn pkgmgr_client_free(_client: *mut pkgmgr_client) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn pkgmgr_client_listen_status(
+        _client: *mut pkgmgr_client,
+        _handler: pkgmgr_handler,
+        _data: *mut c_void,
+    ) -> c_int { 0 }
 }
 
 // ─────────────────────────────────────────
@@ -124,6 +182,7 @@ pub mod soup {
 
     pub const SOUP_MEMORY_COPY: c_int = 1;
 
+    #[cfg(not(feature = "mock-sys"))]
     extern "C" {
         pub fn g_object_unref(object: gpointer);
         pub fn g_object_new(object_type: GType, first_property_name: *const c_char, ...) -> gpointer;
@@ -151,6 +210,57 @@ pub mod soup {
             hdrs: *mut SoupMessageHeaders, name: *const c_char, value: *const c_char,
         );
     }
+
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn g_object_unref(_object: gpointer) {}
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn g_object_new(_object_type: GType, _first_property_name: *const c_char) -> gpointer { std::ptr::null_mut() }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn g_main_loop_new(_context: *mut GMainContext, _is_running: gboolean) -> *mut GMainLoop { std::ptr::null_mut() }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn g_main_loop_run(_loop_: *mut GMainLoop) {}
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn g_main_loop_quit(_loop_: *mut GMainLoop) {}
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn g_main_loop_unref(_loop_: *mut GMainLoop) {}
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn soup_server_get_type() -> GType { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn soup_server_listen_all(
+        _server: *mut SoupServer, _port: guint, _options: c_int, _error: *mut *mut GError,
+    ) -> gboolean { 1 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn soup_server_add_handler(
+        _server: *mut SoupServer, _path: *const c_char,
+        _callback: SoupServerCallback, _user_data: gpointer,
+        _destroy: Option<unsafe extern "C" fn(gpointer)>,
+    ) {}
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn soup_server_disconnect(_server: *mut SoupServer) {}
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn soup_message_set_status(_msg: *mut SoupMessage, _status_code: guint) {}
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn soup_message_set_response(
+        _msg: *mut SoupMessage, _content_type: *const c_char,
+        _resp_use: c_int, _resp_body: *const c_char, _resp_length: gsize,
+    ) {}
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn soup_message_headers_append(
+        _hdrs: *mut SoupMessageHeaders, _name: *const c_char, _value: *const c_char,
+    ) {}
 }
 
 // ─────────────────────────────────────────
@@ -167,6 +277,7 @@ pub mod app_event {
         user_data: *mut c_void,
     );
 
+    #[cfg(not(feature = "mock-sys"))]
     extern "C" {
         pub fn event_add_event_handler(
             event_name: *const c_char,
@@ -176,6 +287,18 @@ pub mod app_event {
         ) -> c_int;
         pub fn event_remove_event_handler(handler: event_handler_h) -> c_int;
     }
+
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn event_add_event_handler(
+        _event_name: *const c_char,
+        _callback: app_event_cb,
+        _user_data: *mut c_void,
+        _handler: *mut event_handler_h,
+    ) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn event_remove_event_handler(_handler: event_handler_h) -> c_int { 0 }
 }
 
 // ─────────────────────────────────────────
@@ -195,6 +318,7 @@ pub mod app_control {
         user_data: *mut c_void,
     );
 
+    #[cfg(not(feature = "mock-sys"))]
     extern "C" {
         pub fn app_control_create(app_control: *mut app_control_h) -> c_int;
         pub fn app_control_destroy(app_control: app_control_h) -> c_int;
@@ -226,16 +350,42 @@ pub mod app_control {
             user_data: *mut c_void,
         ) -> c_int;
     }
+
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn app_control_create(_app_control: *mut app_control_h) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn app_control_destroy(_app_control: app_control_h) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn app_control_set_operation(_app_control: app_control_h, _operation: *const c_char) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn app_control_set_app_id(_app_control: app_control_h, _app_id: *const c_char) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn app_control_set_uri(_app_control: app_control_h, _uri: *const c_char) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn app_control_add_extra_data(_app_control: app_control_h, _key: *const c_char, _value: *const c_char) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn app_control_get_extra_data(_app_control: app_control_h, _key: *const c_char, _value: *mut *mut c_char) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn app_control_send_launch_request(_app_control: app_control_h, _callback: Option<app_control_reply_cb>, _user_data: *mut c_void) -> c_int { 0 }
 }
 
 // ─────────────────────────────────────────
 // system_info — Tizen device information
 // ─────────────────────────────────────────
 pub mod system_info {
-    use std::os::raw::{c_char, c_int, c_void};
+    use std::os::raw::{c_char, c_int};
 
     pub const SYSTEM_INFO_ERROR_NONE: c_int = 0;
 
+    #[cfg(not(feature = "mock-sys"))]
     extern "C" {
         pub fn system_info_get_platform_string(
             key: *const c_char,
@@ -250,16 +400,27 @@ pub mod system_info {
             value: *mut c_int,
         ) -> c_int;
     }
+
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn system_info_get_platform_string(_key: *const c_char, _value: *mut *mut c_char) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn system_info_get_platform_int(_key: *const c_char, _value: *mut c_int) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn system_info_get_platform_bool(_key: *const c_char, _value: *mut c_int) -> c_int { 0 }
 }
 
 // ─────────────────────────────────────────
 // alarm — Tizen alarm API for scheduled tasks
 // ─────────────────────────────────────────
 pub mod alarm {
-    use std::os::raw::{c_char, c_int, c_void};
+    use std::os::raw::{c_int, c_void};
 
     pub type alarm_id_t = c_int;
 
+    #[cfg(not(feature = "mock-sys"))]
     extern "C" {
         pub fn alarm_schedule_after_delay(
             app_control: *mut c_void,
@@ -270,6 +431,16 @@ pub mod alarm {
         pub fn alarm_cancel(alarm_id: alarm_id_t) -> c_int;
         pub fn alarm_cancel_all() -> c_int;
     }
+
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn alarm_schedule_after_delay(_app_control: *mut c_void, _delay: c_int, _period: c_int, _alarm_id: *mut alarm_id_t) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn alarm_cancel(_alarm_id: alarm_id_t) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn alarm_cancel_all() -> c_int { 0 }
 }
 
 // ─────────────────────────────────────────
@@ -280,6 +451,7 @@ pub mod bundle {
 
     pub type bundle = c_void;
 
+    #[cfg(not(feature = "mock-sys"))]
     extern "C" {
         pub fn bundle_create() -> *mut bundle;
         pub fn bundle_free(b: *mut bundle) -> c_int;
@@ -294,4 +466,17 @@ pub mod bundle {
             str_val: *mut *mut c_char,
         ) -> c_int;
     }
+
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn bundle_create() -> *mut bundle { std::ptr::null_mut() }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn bundle_free(_b: *mut bundle) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn bundle_add_str(_b: *mut bundle, _key: *const c_char, _str_val: *const c_char) -> c_int { 0 }
+    #[cfg(feature = "mock-sys")]
+    #[no_mangle]
+    pub unsafe extern "C" fn bundle_get_str(_b: *mut bundle, _key: *const c_char, _str_val: *mut *mut c_char) -> c_int { 0 }
 }

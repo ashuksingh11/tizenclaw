@@ -23,7 +23,8 @@ extern "C" fn signal_handler(_sig: libc::c_int) {
     RUNNING.store(false, Ordering::SeqCst);
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // Initialize logging (dlog backend)
     common::logging::init();
     log::info!("═══════════════════════════════════════");
@@ -32,8 +33,8 @@ fn main() {
 
     // Set up signal handlers
     unsafe {
-        libc::signal(libc::SIGINT, signal_handler as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, signal_handler as libc::sighandler_t);
+        libc::signal(libc::SIGINT, signal_handler as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, signal_handler as *const () as libc::sighandler_t);
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
 
@@ -44,6 +45,21 @@ fn main() {
         log::error!("AgentCore initialization failed");
     }
     let agent = Arc::new(agent);
+
+    // Start SkillWatcher
+    log::info!("[Boot] Starting SkillWatcher...");
+    let mut skill_watcher = core::skill_watcher::SkillWatcher::new();
+    let agent_clone_watcher = agent.clone();
+    skill_watcher.set_change_callback(move || {
+        agent_clone_watcher.reload_tools();
+    });
+    let _watcher_handle = skill_watcher.start();
+
+    // Start TaskScheduler
+    log::info!("[Boot] Starting TaskScheduler...");
+    let task_scheduler = core::task_scheduler::TaskScheduler::new();
+    task_scheduler.load_config("/opt/usr/share/tizenclaw/config/scheduler_config.json");
+    let _scheduler_handle = task_scheduler.start();
 
     // Start IPC server
     log::info!("[Boot] Starting IPC server...");
@@ -83,12 +99,13 @@ fn main() {
 
     // Main loop — sleep until signal received
     while RUNNING.load(Ordering::SeqCst) {
-        std::thread::sleep(std::time::Duration::from_secs(1));
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     }
 
     // Shutdown
     log::info!("TizenClaw daemon shutting down...");
     channel_registry.stop_all();
+    task_scheduler.stop();
     ipc.stop();
     let _ = ipc_handle.join();
 

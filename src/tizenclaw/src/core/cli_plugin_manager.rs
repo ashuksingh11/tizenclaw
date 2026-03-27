@@ -15,6 +15,12 @@ pub struct CliPluginInfo {
     pub enabled: bool,
 }
 
+impl Default for CliPluginManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CliPluginManager {
     pub fn new() -> Self {
         CliPluginManager {

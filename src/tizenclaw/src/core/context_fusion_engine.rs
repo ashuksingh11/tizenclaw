@@ -4,6 +4,12 @@ use serde_json::{json, Value};
 
 pub struct ContextFusionEngine;
 
+impl Default for ContextFusionEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ContextFusionEngine {
     pub fn new() -> Self { ContextFusionEngine }
 

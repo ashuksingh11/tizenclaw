@@ -8,6 +8,7 @@ use std::sync::Mutex;
 pub enum RiskLevel { Low, Normal, High }
 
 impl RiskLevel {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "low" => RiskLevel::Low,
@@ -51,6 +52,12 @@ pub struct ToolPolicy {
 }
 
 const IDLE_WINDOW_SIZE: usize = 3;
+
+impl Default for ToolPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ToolPolicy {
     pub fn new() -> Self {
@@ -164,6 +171,7 @@ impl ToolPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_default_max_iterations() {

@@ -17,6 +17,12 @@ pub struct AutonomousTrigger {
     rules: HashMap<String, TriggerRule>,
 }
 
+impl Default for AutonomousTrigger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AutonomousTrigger {
     pub fn new() -> Self {
         AutonomousTrigger { rules: HashMap::new() }

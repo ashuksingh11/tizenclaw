@@ -21,6 +21,12 @@ pub struct TaskScheduler {
     tasks: Arc<std::sync::Mutex<Vec<ScheduledTask>>>,
 }
 
+impl Default for TaskScheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TaskScheduler {
     pub fn new() -> Self {
         TaskScheduler {
@@ -70,7 +76,7 @@ impl TaskScheduler {
         }
     }
 
-    pub fn start(&self) -> Option<std::thread::JoinHandle<()>> {
+    pub fn start(&self) -> Option<tokio::task::JoinHandle<()>> {
         if self.running.load(Ordering::SeqCst) {
             return None;
         }
@@ -79,13 +85,15 @@ impl TaskScheduler {
         let running = self.running.clone();
         let tasks = self.tasks.clone();
 
-        let handle = std::thread::spawn(move || {
+        let handle = tokio::spawn(async move {
             log::info!("TaskScheduler started");
             let mut last_run: std::collections::HashMap<String, std::time::Instant> =
                 std::collections::HashMap::new();
+            
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
 
             while running.load(Ordering::SeqCst) {
-                std::thread::sleep(std::time::Duration::from_secs(10));
+                interval.tick().await;
 
                 let task_list = match tasks.lock() {
                     Ok(t) => t.clone(),

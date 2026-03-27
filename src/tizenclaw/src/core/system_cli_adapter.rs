@@ -17,6 +17,12 @@ pub struct SystemCliAdapter {
     tools: HashMap<String, SystemCliTool>,
 }
 
+impl Default for SystemCliAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SystemCliAdapter {
     pub fn new() -> Self {
         SystemCliAdapter { tools: HashMap::new() }

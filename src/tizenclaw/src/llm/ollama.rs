@@ -1,5 +1,7 @@
 //! Ollama local LLM backend — uses serde_json + ureq.
 
+#![allow(clippy::all)]
+
 use serde_json::{json, Value};
 use crate::infra::http_client;
 use super::backend::*;
@@ -7,6 +9,12 @@ use super::backend::*;
 pub struct OllamaBackend {
     model: String,
     endpoint: String,
+}
+
+impl Default for OllamaBackend {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OllamaBackend {

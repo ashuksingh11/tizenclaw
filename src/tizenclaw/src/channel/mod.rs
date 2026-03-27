@@ -33,6 +33,12 @@ pub struct ChannelRegistry {
     channels: Vec<Box<dyn Channel>>,
 }
 
+impl Default for ChannelRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ChannelRegistry {
     pub fn new() -> Self {
         ChannelRegistry { channels: vec![] }

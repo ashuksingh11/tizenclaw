@@ -26,6 +26,12 @@ pub struct CanvasIpcServer {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
+impl Default for CanvasIpcServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CanvasIpcServer {
     pub fn new() -> Self {
         CanvasIpcServer {

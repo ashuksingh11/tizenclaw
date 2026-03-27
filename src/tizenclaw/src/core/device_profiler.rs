@@ -4,6 +4,12 @@ use serde_json::{json, Value};
 
 pub struct DeviceProfiler;
 
+impl Default for DeviceProfiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DeviceProfiler {
     pub fn new() -> Self { DeviceProfiler }
 

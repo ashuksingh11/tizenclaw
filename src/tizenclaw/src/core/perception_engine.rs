@@ -6,6 +6,12 @@ pub struct PerceptionEngine {
     last_screen_text: String,
 }
 
+impl Default for PerceptionEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PerceptionEngine {
     pub fn new() -> Self {
         PerceptionEngine { last_screen_text: String::new() }

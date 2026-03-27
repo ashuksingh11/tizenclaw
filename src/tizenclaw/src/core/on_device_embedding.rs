@@ -3,6 +3,8 @@
 //! Loads ONNX Runtime via `dlopen` for graceful fallback.
 //! Generates 384-dim embeddings independently of LLM backend.
 
+#![allow(clippy::all)]
+
 use super::wordpiece_tokenizer::WordPieceTokenizer;
 
 /// Embedding dimension for all-MiniLM-L6-v2.
@@ -103,6 +105,12 @@ pub struct OnDeviceEmbedding {
 // from a single thread (the embedding encode path is mutex-guarded in agent_core).
 unsafe impl Send for OnDeviceEmbedding {}
 unsafe impl Sync for OnDeviceEmbedding {}
+
+impl Default for OnDeviceEmbedding {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl OnDeviceEmbedding {
     pub fn new() -> Self {

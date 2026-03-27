@@ -28,6 +28,12 @@ pub struct PipelineExecutor {
     pipelines: HashMap<String, Pipeline>,
 }
 
+impl Default for PipelineExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PipelineExecutor {
     pub fn new() -> Self {
         PipelineExecutor { pipelines: HashMap::new() }

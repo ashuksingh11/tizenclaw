@@ -13,6 +13,12 @@ pub struct ContainerEngine {
     use_ipc: bool,
 }
 
+impl Default for ContainerEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ContainerEngine {
     pub fn new() -> Self {
         // Use IPC if the tool executor socket exists

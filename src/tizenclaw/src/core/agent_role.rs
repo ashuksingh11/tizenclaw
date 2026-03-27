@@ -17,6 +17,12 @@ pub struct AgentRoleRegistry {
     dynamic_roles: HashMap<String, AgentRole>,
 }
 
+impl Default for AgentRoleRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AgentRoleRegistry {
     pub fn new() -> Self {
         AgentRoleRegistry {

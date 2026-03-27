@@ -2,6 +2,12 @@
 
 pub struct AutoSkillAgent;
 
+impl Default for AutoSkillAgent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AutoSkillAgent {
     pub fn new() -> Self { AutoSkillAgent }
 

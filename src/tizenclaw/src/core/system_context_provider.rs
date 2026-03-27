@@ -7,6 +7,12 @@ pub struct SystemContextProvider {
     last_update: std::time::Instant,
 }
 
+impl Default for SystemContextProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SystemContextProvider {
     pub fn new() -> Self {
         SystemContextProvider {

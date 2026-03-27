@@ -12,6 +12,7 @@ pub enum SideEffect {
 }
 
 impl SideEffect {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         match s {
             "none" => SideEffect::None,
@@ -27,6 +28,12 @@ pub struct SafetyGuard {
     blocked_args: HashSet<String>,
     allow_irreversible: bool,
     max_tool_calls_per_session: usize,
+}
+
+impl Default for SafetyGuard {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SafetyGuard {

@@ -15,6 +15,12 @@ pub struct SkillRepository {
     skill_dirs: Vec<String>,
 }
 
+impl Default for SkillRepository {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SkillRepository {
     pub fn new() -> Self {
         SkillRepository {

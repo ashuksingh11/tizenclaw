@@ -20,6 +20,12 @@ pub struct OfflineFallback {
     rules: Vec<FallbackRule>,
 }
 
+impl Default for OfflineFallback {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OfflineFallback {
     pub fn new() -> Self {
         OfflineFallback { rules: vec![] }

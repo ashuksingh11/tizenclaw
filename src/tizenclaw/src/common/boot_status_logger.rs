@@ -8,6 +8,12 @@ pub struct BootStatusLogger {
     entries: Vec<(String, u64, bool)>,  // (name, duration_ms, success)
 }
 
+impl Default for BootStatusLogger {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BootStatusLogger {
     pub fn new() -> Self {
         BootStatusLogger {

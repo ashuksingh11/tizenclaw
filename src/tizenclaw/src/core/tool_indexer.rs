@@ -6,6 +6,12 @@ pub struct ToolIndexer {
     tools: Vec<LlmToolDecl>,
 }
 
+impl Default for ToolIndexer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolIndexer {
     pub fn new() -> Self {
         ToolIndexer { tools: vec![] }

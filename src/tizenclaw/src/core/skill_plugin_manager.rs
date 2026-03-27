@@ -15,6 +15,12 @@ pub struct SkillPluginInfo {
     pub enabled: bool,
 }
 
+impl Default for SkillPluginManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SkillPluginManager {
     pub fn new() -> Self {
         SkillPluginManager {

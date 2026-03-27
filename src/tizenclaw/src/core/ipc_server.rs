@@ -14,6 +14,12 @@ pub struct IpcServer {
     active_clients: Arc<AtomicUsize>,
 }
 
+impl Default for IpcServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IpcServer {
     pub fn new() -> Self {
         IpcServer {
@@ -163,7 +169,7 @@ impl IpcServer {
             }
         };
 
-        if req.get("jsonrpc").and_then(|v| v.as_str()) != Some("2.0") || !req.get("method").is_some() {
+        if req.get("jsonrpc").and_then(|v| v.as_str()) != Some("2.0") || req.get("method").is_none() {
             return json!({"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":null}).to_string();
         }
 
