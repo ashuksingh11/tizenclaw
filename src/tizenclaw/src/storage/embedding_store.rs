@@ -20,7 +20,7 @@ impl EmbeddingStore {
     }
 
     pub fn initialize(&mut self, db_path: &str) -> bool {
-        match Connection::open(db_path) {
+        match super::sqlite::open_database(db_path) {
             Ok(conn) => {
                 let _ = conn.execute_batch(
                     "CREATE TABLE IF NOT EXISTS embeddings (
@@ -86,19 +86,45 @@ impl EmbeddingStore {
             Some(c) => c,
             None => return vec![],
         };
-        // Simple keyword search (full vector search requires embedding model)
-        let sql = "SELECT source, chunk_text FROM embeddings WHERE chunk_text LIKE ?1 LIMIT ?2";
+
+        // Lazy-load knowledge databases via ATTACH
+        let mut attached_aliases = Vec::new();
+        for (i, db_path) in self.knowledge_dbs.iter().take(10).enumerate() {
+            let alias = format!("kb_{}", i);
+            let safe_path = db_path.replace("'", "''");
+            let attach_sql = format!("ATTACH DATABASE '{}' AS {}", safe_path, alias);
+            if let Err(e) = conn.execute_batch(&attach_sql) {
+                log::warn!("EmbeddingStore: failed to attach knowledge DB {}: {}", db_path, e);
+            } else {
+                attached_aliases.push(alias);
+            }
+        }
+
         let pattern = format!("%{}%", query);
-        let mut stmt = match conn.prepare(sql) {
-            Ok(s) => s,
-            Err(_) => return vec![],
+        let mut sql_parts = vec!["SELECT source, chunk_text FROM embeddings WHERE chunk_text LIKE ?1".to_string()];
+        
+        for alias in &attached_aliases {
+            sql_parts.push(format!("SELECT source, chunk_text FROM {}.embeddings WHERE chunk_text LIKE ?1", alias));
+        }
+
+        let full_sql = format!("{} LIMIT ?2", sql_parts.join(" UNION ALL "));
+
+        let results = if let Ok(mut stmt) = conn.prepare(&full_sql) {
+            stmt.query_map(params![pattern, top_k as i64], |row| {
+                Ok(json!({
+                    "source": row.get::<_, String>(0).unwrap_or_default(),
+                    "text": row.get::<_, String>(1).unwrap_or_default(),
+                }))
+            }).ok().map(|rows| rows.flatten().collect()).unwrap_or_default()
+        } else {
+            vec![]
         };
-        let results = stmt.query_map(params![pattern, top_k as i64], |row| {
-            Ok(json!({
-                "source": row.get::<_, String>(0).unwrap_or_default(),
-                "text": row.get::<_, String>(1).unwrap_or_default(),
-            }))
-        }).ok().map(|rows| rows.flatten().collect()).unwrap_or_default();
+
+        // Immediately detach to reclaim memory and file handles
+        for alias in attached_aliases {
+            let _ = conn.execute_batch(&format!("DETACH DATABASE {}", alias));
+        }
+
         results
     }
 
