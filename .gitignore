@@ -74,4 +74,4 @@ journal.txt
 
 # Agents
 .agents/
-@AGENTS.md
+AGENTS.md
