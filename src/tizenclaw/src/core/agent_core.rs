@@ -81,6 +81,12 @@ impl LlmConfig {
     }
 }
 
+#[derive(Debug, Clone)]
+struct CircuitBreakerState {
+    consecutive_failures: u32,
+    last_failure_time: Option<std::time::Instant>,
+}
+
 /// Thread-safe AgentCore with fine-grained internal locking.
 ///
 /// Callers share `Arc<AgentCore>` — no outer Mutex needed.
@@ -97,6 +103,7 @@ pub struct AgentCore {
     system_prompt: RwLock<String>,
     backend_name: RwLock<String>,
     llm_config: Mutex<LlmConfig>,
+    circuit_breakers: RwLock<std::collections::HashMap<String, CircuitBreakerState>>,
 }
 
 impl Default for AgentCore {
@@ -116,6 +123,7 @@ impl AgentCore {
             system_prompt: RwLock::new(String::new()),
             backend_name: RwLock::new(String::new()),
             llm_config: Mutex::new(LlmConfig::default()),
+            circuit_breakers: RwLock::new(std::collections::HashMap::new()),
         }
     }
 
@@ -209,6 +217,40 @@ impl AgentCore {
         }
     }
 
+    fn is_backend_available(&self, name: &str) -> bool {
+        let cb_guard = self.circuit_breakers.read().unwrap();
+        if let Some(state) = cb_guard.get(name) {
+            if state.consecutive_failures >= 2 {
+                if let Some(last_fail) = state.last_failure_time {
+                    if last_fail.elapsed().as_secs() < 60 {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    fn record_success(&self, name: &str) {
+        let mut cb_guard = self.circuit_breakers.write().unwrap();
+        let state = cb_guard.entry(name.to_string()).or_insert(CircuitBreakerState {
+            consecutive_failures: 0,
+            last_failure_time: None,
+        });
+        state.consecutive_failures = 0;
+        state.last_failure_time = None;
+    }
+
+    fn record_failure(&self, name: &str) {
+        let mut cb_guard = self.circuit_breakers.write().unwrap();
+        let state = cb_guard.entry(name.to_string()).or_insert(CircuitBreakerState {
+            consecutive_failures: 0,
+            last_failure_time: None,
+        });
+        state.consecutive_failures += 1;
+        state.last_failure_time = Some(std::time::Instant::now());
+    }
+
     /// Execute a chat request against the primary backend, falling back on failure.
     ///
     /// Acquires backend lock only for the duration of each `chat()` call.
@@ -224,19 +266,23 @@ impl AgentCore {
 
         // Try primary backend — lock is held only during chat()
         {
-            let be_guard = self.backend.read().await;
-            if let Some(be) = be_guard.as_ref() {
-                let resp = be.chat(messages, tools, on_chunk, &system_prompt).await;
-                if resp.success {
-                    return resp;
+            let bn = self.backend_name.read().map(|n| n.clone()).unwrap_or_default();
+            if self.is_backend_available(&bn) {
+                let be_guard = self.backend.read().await;
+                if let Some(be) = be_guard.as_ref() {
+                    let resp = be.chat(messages, tools, on_chunk, &system_prompt).await;
+                    if resp.success {
+                        self.record_success(&bn);
+                        return resp;
+                    }
+                    self.record_failure(&bn);
+                    log::warn!(
+                        "Primary backend '{}' failed (HTTP {}): {}",
+                        bn, resp.http_status, resp.error_message
+                    );
                 }
-                let bn = self.backend_name.read()
-                    .map(|n| n.clone())
-                    .unwrap_or_default();
-                log::warn!(
-                    "Primary backend '{}' failed (HTTP {}): {}",
-                    bn, resp.http_status, resp.error_message
-                );
+            } else {
+                log::warn!("Primary backend '{}' skipped due to Circuit Breaker", bn);
             }
         }
         // Primary lock is released here
@@ -245,15 +291,22 @@ impl AgentCore {
         {
             let fbs_guard = self.fallback_backends.read().await;
             for fb in fbs_guard.iter() {
-                log::info!("Trying fallback backend '{}'", fb.get_name());
-                let resp = fb.chat(messages, tools, on_chunk, &system_prompt).await;
-                if resp.success {
-                    return resp;
+                let bn = fb.get_name().to_string();
+                if self.is_backend_available(&bn) {
+                    log::info!("Trying fallback backend '{}'", bn);
+                    let resp = fb.chat(messages, tools, on_chunk, &system_prompt).await;
+                    if resp.success {
+                        self.record_success(&bn);
+                        return resp;
+                    }
+                    self.record_failure(&bn);
+                    log::warn!(
+                        "Fallback '{}' also failed: {}",
+                        bn, resp.error_message
+                    );
+                } else {
+                    log::warn!("Fallback backend '{}' skipped due to Circuit Breaker", bn);
                 }
-                log::warn!(
-                    "Fallback '{}' also failed: {}",
-                    fb.get_name(), resp.error_message
-                );
             }
         }
 
