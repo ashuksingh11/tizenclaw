@@ -3,7 +3,7 @@
 //! Wraps Tizen native APIs (vconf, pkgmgr, app_control, system_info)
 //! behind the standard platform trait interfaces.
 
-use libtizenclaw::{
+use tizenclaw::{
     AppControlProvider, PackageInfo, PackageManagerProvider,
     PlatformPlugin, SystemInfoProvider,
 };

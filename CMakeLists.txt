@@ -93,7 +93,7 @@ INSTALL(FILES "${CMAKE_SOURCE_DIR}/target/release/libtizenclaw_client.so"
         DESTINATION "${CMAKE_INSTALL_FULL_LIBDIR}")
 
 # C header
-INSTALL(FILES "${CMAKE_SOURCE_DIR}/src/libtizenclaw/include/tizenclaw.h"
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/src/libtizenclaw-client/include/tizenclaw.h"
         DESTINATION "${CMAKE_INSTALL_PREFIX}/include/tizenclaw")
 
 # pkgconfig
@@ -113,10 +113,10 @@ INSTALL(FILES "${CMAKE_SOURCE_DIR}/target/release/libtizenclaw_sdk.so"
 
 # Plugin SDK headers
 INSTALL(FILES
-    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-core/include/tizenclaw_error.h"
-    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-core/include/tizenclaw_channel.h"
-    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-core/include/tizenclaw_llm_backend.h"
-    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-core/include/tizenclaw_curl.h"
+    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-sdk/include/tizenclaw_error.h"
+    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-sdk/include/tizenclaw_channel.h"
+    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-sdk/include/tizenclaw_llm_backend.h"
+    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-sdk/include/tizenclaw_curl.h"
     DESTINATION "${CMAKE_INSTALL_PREFIX}/include/tizenclaw")
 
 # pkgconfig for tizenclaw-sdk

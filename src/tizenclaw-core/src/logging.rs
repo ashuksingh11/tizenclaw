@@ -2,7 +2,7 @@
 //!
 //! Wraps `tizen_sys::dlog::dlog_print()` to provide PlatformLogger for Tizen.
 
-use libtizenclaw::{LogLevel, PlatformLogger};
+use tizenclaw::{LogLevel, PlatformLogger};
 use std::ffi::CString;
 
 const TAG: &str = "TIZENCLAW";

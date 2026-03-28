@@ -9,7 +9,7 @@ name = "tizenclaw_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-libtizenclaw = { path = "../claw-platform" }
+libtizenclaw = { path = "../libtizenclaw" }
 tizen-sys = { path = "../tizen-sys" }
 serde_json = "1"
 log = "0.4"

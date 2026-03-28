@@ -14,7 +14,7 @@
 mod logging;
 mod adapters;
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::os::raw::c_char;
 
 /// Plugin metadata as JSON, conforming to the claw-platform ABI contract.
