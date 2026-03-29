@@ -40,10 +40,28 @@ impl LlmBackend for AnthropicBackend {
         let mut msgs = vec![];
         for msg in messages {
             if msg.role == "tool" {
+                let content_str = match msg.tool_result.as_str() {
+                    Some(s) => s.to_string(),
+                    None => msg.tool_result.to_string(),
+                };
                 msgs.push(json!({"role": "user", "content": [{
                     "type": "tool_result", "tool_use_id": msg.tool_call_id,
-                    "content": msg.tool_result.to_string()
+                    "content": content_str
                 }]}));
+            } else if msg.role == "assistant" && !msg.tool_calls.is_empty() {
+                let mut content = vec![];
+                if !msg.text.is_empty() {
+                    content.push(json!({"type": "text", "text": msg.text}));
+                }
+                for tc in &msg.tool_calls {
+                    content.push(json!({
+                        "type": "tool_use",
+                        "id": tc.id,
+                        "name": tc.name,
+                        "input": tc.args
+                    }));
+                }
+                msgs.push(json!({"role": "assistant", "content": content}));
             } else {
                 msgs.push(json!({"role": msg.role, "content": msg.text}));
             }

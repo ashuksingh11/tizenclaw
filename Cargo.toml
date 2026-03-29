@@ -7,9 +7,6 @@ members = [
     "src/libtizenclaw-client",
     "src/libtizenclaw-sdk",
     "src/tizenclaw-tool-executor",
-]
-# tizen-sys and tizenclaw-core are built separately via GBS for Tizen deployment
-exclude = [
     "src/tizen-sys",
     "src/tizenclaw-core",
 ]

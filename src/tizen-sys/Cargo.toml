@@ -4,7 +4,4 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
-# No external dependencies to support offline GBS build
-
-[features]
-mock-sys = []
+libloading = "0.8"

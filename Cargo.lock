@@ -1245,6 +1245,9 @@ dependencies = [
 [[package]]
 name = "tizen-sys"
 version = "1.0.0"
+dependencies = [
+ "libloading",
+]
 
 [[package]]
 name = "tizenclaw"
@@ -1271,6 +1274,17 @@ version = "1.0.0"
 dependencies = [
  "libc",
  "serde",
+ "serde_json",
+ "tizen-sys",
+]
+
+[[package]]
+name = "tizenclaw-core"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "libtizenclaw",
+ "log",
  "serde_json",
  "tizen-sys",
 ]

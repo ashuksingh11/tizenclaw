@@ -1,0 +1,8 @@
+Refactor dynamic FFI loading and fix Anthropic tool use bug
+
+- Refactored `tizen-sys` to use `libloading` for dynamic shared library probing (`dlopen`) at runtime instead of static linking, improving cross-platform compatibility.
+- Updated `dlsym_call` macro to ensure `Result`/`Option` returns without panicking.
+- Joined `tizen-sys` and `tizenclaw-core` back to workspace root members.
+- Specified exact GBS ABI major versions (e.g., `libdlog.so.0`, `libsoup-2.4.so.1`) as primary dlopen targets.
+- Fixed a critical serialization bug in `anthropic.rs` where assistant tool invocations (`LlmMessage::tool_calls`) were dropped, which broke Anthropic textual skill functionality.
+- Fixed over-aggressive `cleanup_workspace.sh` script to ignore the `vendor` directory from target deletion.
