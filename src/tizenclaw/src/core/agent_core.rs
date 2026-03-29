@@ -372,7 +372,8 @@ impl AgentCore {
         }
 
         // Get tool declarations (read lock — allows concurrent reads)
-        let tools = self.tool_dispatcher.read().await.get_tool_declarations();
+        let mut tools = self.tool_dispatcher.read().await.get_tool_declarations();
+        crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_builtin_tools(&mut tools);
 
         // Build System Prompt Dynamically
         let system_prompt = {
@@ -453,9 +454,44 @@ impl AgentCore {
                 let mut futures_list = Vec::new();
                 for tc in response.tool_calls.iter() {
                     log::info!("Executing tool (async): {} (id: {})", tc.name, tc.id);
-                    futures_list.push(async {
-                        let result = td_guard.execute(&tc.name, &tc.args).await;
-                        LlmMessage::tool_result(&tc.id, &tc.name, result)
+                    let skills_dir = self.platform.paths.skills_dir.clone();
+                    let td_guard_ref = &*td_guard;
+                    let tc_name = tc.name.clone();
+                    let tc_args = tc.args.clone();
+                    let tc_id = tc.id.clone();
+                    
+                    futures_list.push(async move {
+                        let result = if tc_name == "create_skill" {
+                            let name = tc_args.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed_skill");
+                            let content = tc_args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                            let sanitized_name = name.replace(|c: char| !c.is_ascii_alphanumeric() && c != '_', "");
+                            
+                            if sanitized_name.is_empty() {
+                                serde_json::json!({"error": "Invalid skill name"})
+                            } else {
+                                let skill_dir_path = skills_dir.join(&sanitized_name);
+                                if let Err(e) = std::fs::create_dir_all(&skill_dir_path) {
+                                    serde_json::json!({"error": format!("Failed to create skill directory: {}", e)})
+                                } else {
+                                    let skill_md_path = skill_dir_path.join("SKILL.md");
+                                    match std::fs::write(&skill_md_path, content) {
+                                        Ok(_) => serde_json::json!({"status": "success", "message": format!("Skill '{}' created successfully at {:?}", sanitized_name, skill_md_path)}),
+                                        Err(e) => serde_json::json!({"error": format!("Failed to write skill content: {}", e)})
+                                    }
+                                }
+                            }
+                        } else if tc_name == "read_skill" {
+                            let name = tc_args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            let sanitized_name = name.replace(|c: char| !c.is_ascii_alphanumeric() && c != '_', "");
+                            let skill_md_path = skills_dir.join(&sanitized_name).join("SKILL.md");
+                            match std::fs::read_to_string(&skill_md_path) {
+                                Ok(content) => serde_json::json!({"status": "success", "content": content}),
+                                Err(e) => serde_json::json!({"error": format!("Failed to read skill '{}': {}", sanitized_name, e)})
+                            }
+                        } else {
+                            td_guard_ref.execute(&tc_name, &tc_args).await
+                        };
+                        LlmMessage::tool_result(&tc_id, &tc_name, result)
                     });
                 }
                 let results = futures_util::future::join_all(futures_list).await;

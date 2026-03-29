@@ -79,7 +79,7 @@ fi
 
 %files
 %defattr(-,root,root,-)
-%manifest %{name}.manifest
+# %manifest %{name}.manifest
 %{_bindir}/tizenclaw
 %{_bindir}/tizenclaw-cli
 %{_bindir}/tizenclaw-tool-executor
