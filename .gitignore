@@ -90,5 +90,8 @@ journal.txt
 # Dev notes
 .dev_note
 
+# Temporary files
+.tmp/
+
 # Prompts
 .prompt
