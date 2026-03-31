@@ -1,14 +1,10 @@
-Refactor agent frameworks for AGI daemon under WSL
+Resolve dead code warnings in tizenclaw-core library
 
 Why:
-The CLI-based agent instructions were obsolete. The project required 
-a shift to creating an Autonomous AGI Agent focusing on Rust async
-behaviors, minimal FFI dependencies, and robust WSL interactions.
+The unused structures within the internal library triggered native
+dead-code compiler warnings during GBS tokenization phases.
 
 What:
-- Translate all .agent/ documentation to pure English
-- Pivot workflow from CLI tools to the Tizenclaw AGI daemon
-- Enforce Minimal FFI Principle inside Architect constraints
-- Outline tokio event loop paradigms in development guides
-- Embed WSL shell execution logic against Windows environment limits
-- Expose .agent directory to source control via .gitignore
+- Expose internal lib modules via robust public API boundaries
+- Assign pub modifiers across unused FFI layouts dynamically
+- Eliminate warnings verifying multi-architecture targets natively

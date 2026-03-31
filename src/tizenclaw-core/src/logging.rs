@@ -5,7 +5,7 @@
 use tizenclaw::{LogLevel, PlatformLogger};
 use std::ffi::CString;
 
-const TAG: &str = "TIZENCLAW";
+pub const TAG: &str = "TIZENCLAW";
 
 /// Tizen dlog-based logger (Rust API).
 pub struct DlogLogger;

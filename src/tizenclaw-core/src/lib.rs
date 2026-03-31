@@ -11,8 +11,8 @@
 //! - `claw_plugin_info()` → JSON string with plugin metadata
 //! - `claw_plugin_free_string()` → free strings returned by info
 
-mod logging;
-mod adapters;
+pub mod logging;
+pub mod adapters;
 
 use std::ffi::CString;
 use std::os::raw::c_char;

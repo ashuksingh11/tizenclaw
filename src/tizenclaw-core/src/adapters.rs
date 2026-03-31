@@ -145,7 +145,7 @@ impl PackageManagerProvider for TizenPackageManager {
     }
 }
 
-fn parse_tizen_pkg_list(output: &str) -> Vec<PackageInfo> {
+pub fn parse_tizen_pkg_list(output: &str) -> Vec<PackageInfo> {
     let mut packages = Vec::new();
     for line in output.lines() {
         let parts: Vec<&str> = line.split('\t').collect();
@@ -162,7 +162,7 @@ fn parse_tizen_pkg_list(output: &str) -> Vec<PackageInfo> {
     packages
 }
 
-fn parse_tizen_pkg_info(output: &str, pkg_id: &str) -> PackageInfo {
+pub fn parse_tizen_pkg_info(output: &str, pkg_id: &str) -> PackageInfo {
     let mut info = PackageInfo {
         pkg_id: pkg_id.to_string(),
         installed: true,
