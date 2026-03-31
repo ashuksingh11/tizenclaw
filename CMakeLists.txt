@@ -63,7 +63,6 @@ INSTALL(DIRECTORY "${CMAKE_SOURCE_DIR}/data/web/"
 
 # Tool routing guides
 INSTALL(FILES
-  "${CMAKE_SOURCE_DIR}/tools/routing_guide.md"
   "${CMAKE_SOURCE_DIR}/tools/tools.md"
   DESTINATION "/opt/usr/share/tizen-tools")
 

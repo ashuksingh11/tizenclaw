@@ -93,7 +93,6 @@ fi
 %{_unitdir}/sockets.target.wants/tizenclaw-code-sandbox.socket
 
 /opt/usr/share/tizenclaw/config/*
-/opt/usr/share/tizen-tools/routing_guide.md
 /opt/usr/share/tizen-tools/tools.md
 /opt/usr/share/tizenclaw/web/
 /opt/usr/share/tizen-tools/embedded/
