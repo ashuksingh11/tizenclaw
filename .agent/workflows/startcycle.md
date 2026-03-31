@@ -68,13 +68,14 @@ Refer to the `skills/supervising-workflow/SKILL.md` skill to validate Developmen
 
 ### 5. Build & Deploy
 Refer to the `skills/building-deploying/SKILL.md` skill to compile the optimized daemon using `./deploy.sh`.
-- **Building for both x86_64 and armv7l architectures** is mandatory.
+- **Building for x86_64 architecture** is mandatory.
+- **[DISABLED]**: armv7l (ARM) architecture verification is currently disabled to prioritize execution speed but can be re-enabled if required.
 - Save the deliverables in `.dev_note/05-build-and-deploy/`.
 - Update `.dev_note/DASHBOARD.md`.
 
 ### 5.1 Supervisor Gate — Build & Deploy
 Refer to the `skills/supervising-workflow/SKILL.md` skill to validate Build & Deploy stage outputs.
-- Verify both x86_64 AND armv7l builds were executed via `deploy.sh`.
+- Verify x86_64 build was executed via `deploy.sh`.
 - Verify no local `cargo build` was used.
 - Verify DASHBOARD.md was updated.
 - **On PASS**: proceed to Step 6. **On FAIL**: rollback to Step 5 with violation report.

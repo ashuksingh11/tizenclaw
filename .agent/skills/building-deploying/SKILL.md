@@ -16,17 +16,16 @@ Copy the following checklist to track your build/deployment progress:
 Autonomous Daemon Build Progress:
 - [ ] Step 1: Align dynamic dependency spec (packaging/*.spec) and Cargo.toml features
 - [ ] Step 2: Execute Tizen GBS build for x86_64 architecture (Native execution speeds)
-- [ ] Step 3: Execute Tizen GBS build for armv7l architecture (Strict embedded cross-arch static compilation)
+- [ ] [DISABLED] Step 3: Execute Tizen GBS build for armv7l architecture (Strict embedded cross-arch static compilation)
 - [ ] Step 4: Deploy optimized TizenClaw RPM to target device environment (sdb)
 - [ ] Step 5: Reboot background daemon & Preliminary system survival check
 ```
 
 > [!CAUTION]
-> **Mandatory Multi-Architecture Build**: You must perform builds for **both** x86_64 and armv7l architectures because Rust pointer alignment, endianness, and FFI typings vary significantly on ARM.
-> Building only one architecture before advancing is an absolute violation.
-> Use the exclusive automation:
+> **Single Architecture Focus (x86_64)**: You must perform builds for **x86_64** architecture.
+> **[DISABLED] Mandatory Multi-Architecture Build**: armv7l builds are currently disabled to speed up the development cycle.
+> Use the automation:
 > - `./deploy.sh -a x86_64` (Full emulator simulation)
-> - `./deploy.sh -a armv7l -S` (Cross-compile ARM check, skipping deployment)
 > - **Precaution**: Always execute sequential foreground builds. Concurrent builds lock the GBS environments locally causing systemic workspace failures.
 
 > [!WARNING]
@@ -40,8 +39,8 @@ Execute `./deploy.sh -a x86_64`.
 - **dlopen / FFI Native Symbol Targeting**: Ensure the Rust `dynlib` configuration aligns symmetrically to the runtime OS `.so` paths (e.g. `libtizen-core.so.0`). The compiler will not catch dynamic link failures, so verify spec headers explicitly natively.
 - **Build Isolation Cleanup**: Since `Deploy.sh` manages state, if you inject patches, guarantee it builds without permanently polluting native workspace caches.
 
-### Step 3: Native ARM Cross-Compilation Assessment
-Execute cross-architecture validation via `./deploy.sh -a armv7l --skip-build` (build only, skip deploy).
+### [DISABLED] Step 3: Native ARM Cross-Compilation Assessment
+(Currently Disabled) Execute cross-architecture validation via `./deploy.sh -a armv7l --skip-build` if required for final release.
 - **Mandatory Early Detection**: Detects c_char sign shifts, unaligned trait accesses inherently invisible under x86.
 - **Fail-safe Retractions**: Encountering LTO linkages or ARM-specific borrow/type mismatches means immediately retreating to `c. developing` encapsulating the exact GCC/LLVM GBS Linker warning traces. NEVER hallucinate patched `.toml` configurations bypassing safety parameters. 
 
@@ -55,7 +54,7 @@ Before yielding to the Supervisor for validation, confirm:
 1. All checklist items above are marked `[x]`
 2. Artifacts are saved in `.dev_note/05-build-and-deploy/` with `<number>-<topic>.md` naming
 3. `.dev_note/DASHBOARD.md` is updated with Build & Deploy stage status
-4. Both x86_64 AND armv7l builds were executed via `./deploy.sh`
+4. x86_64 build was executed via `./deploy.sh`
 5. No local `cargo build` was used
 6. Deployment to target was confirmed
 

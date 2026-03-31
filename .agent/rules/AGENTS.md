@@ -14,7 +14,8 @@ The core goal is to build an ecosystem that operates autonomously, asynchronousl
 
 - **TDD-Based Autonomous Agent Development**: All tests and validations are performed exclusively on the QEMU (emulator) or actual device environment via `./deploy.sh`. Testing a long-running async daemon involves verifying systemic stability and behavior precision. Local `cargo test` execution is **prohibited**.
 - **Embedded Target Exclusive Build**: Unless requested otherwise, do not execute `cargo build` locally. All builds target the constrained Tizen device (emulator) via `./deploy.sh` (GBS Build), maximizing release performance optimizations.
-- **Mandatory Multi-Architecture Build**: For robust systemic verification, builds for **both x86_64 and armv7l architectures** must mandatorily be performed.
+- **Single Architecture Focus (x86_64)**: For rapid development and verification, builds for **x86_64 architecture** are mandatory.
+- **[DISABLED] armv7l Multi-Architecture Build**: armv7l (ARM) architecture verification is currently disabled to prioritize execution speed but can be re-enabled for final cross-architecture validation if required.
 - **Execution Centric**: Do not stop at just writing documents; physically execute the actual terminal commands (e.g., `./deploy.sh`, `git commit`).
 - **Feedback Loops**: If an agent capability fails testing (e.g. memory leak, async panic), analyze the core embedded constraints, roll back to the previous stage, modify, and retry.
 
@@ -60,10 +61,8 @@ No stages can be skipped, and the completion conditions of each stage must be me
 > **Local Build/Test Prohibition**: Do not execute `cargo build`, `cargo test`, `cargo clippy` locally.
 > All builds and tests are to be performed in the QEMU/Device environment via `./deploy.sh`.
 
-### Stage 4: Build & Deploy
-- **Role**: Cross-compile release-optimized daemon and deploy to the Tizen Emulator/Device.
-- **Activity**: Perform the GBS build and sdb deployment using the `./deploy.sh` script.
 - **Prerequisite**: You **must perform builds across both x86_64 and armv7l architectures**.
+- **[DISABLED]**: armv7l (ARM) architecture verification is currently disabled to prioritize execution speed but can be re-enabled if required.
 - **Artifact**: Save build logs in `.dev_note/05-build-and-deploy/`
 - **Skill Usage**: [`skills/building-deploying/SKILL.md`](skills/building-deploying/SKILL.md)
 

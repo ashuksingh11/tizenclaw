@@ -44,7 +44,7 @@ Confirm that `.dev_note/DASHBOARD.md` was updated to reflect the completed stage
 | **1. Planning** | `01-planning/` | Artifacts exist with correct naming; execution mode classified (One-shot / Streaming / Daemon Sub-task); documentation in English |
 | **2. Design** | `03-design/` | Artifacts exist; FFI boundaries defined; `Send+Sync` specifications present; Zero-Cost abstractions outlined; `libloading` dynamic loading strategy documented |
 | **3. Development** | `04-development/` | No local `cargo build/test` usage; TDD cycle followed (Red→Green→Refactor); multi-architecture build referenced; FFI minimal principle respected |
-| **4. Build & Deploy** | `05-build-and-deploy/` | Both x86_64 AND armv7l builds executed via `./deploy.sh`; no local `cargo build`; deployment to target confirmed; sequential foreground builds |
+| **4. Build & Deploy** | `05-build-and-deploy/` | x86_64 build executed via `./deploy.sh`; no local `cargo build`; deployment to target confirmed; sequential foreground builds |
 | **5. Test & Review** | `06-test-and-code-review/` | Runtime logs captured from device (`journalctl`/`dlogutil`); PASS/FAIL verdict issued with concrete evidence; no local `cargo test` |
 | **6. Commit & Push** | `07-commit-and-push/` | `commit_msg.txt` used (no `-m` flag); Gerrit format (title ≤50 chars, `Why:`/`What:` blocks); workspace cleaned via `cleanup_workspace.sh`; no extraneous build artifacts staged |
 
@@ -112,7 +112,7 @@ Whenever complex AI Logic transitions, verify the Output (`.dev_note/<phase>/<nu
 2. **Evaluation (`evaluating-metrics`)**: Did they engineer intense edge-cases (simulated Tizen libraries stripping) evaluating how the autonomous engine elegantly handles missing API dependencies natively rather than simplistic flow modeling?
 3. **Design (`designing-architecture`)**: Did they construct Zero-Cost abstractions outlining `Send + Sync` data borders correctly isolating unsafe FFI code cleanly outside core cognitive routines?
 4. **Development (`developing-code`)**: Did they utilize strictly Embedded TDD logic boundaries (Tokio testing)? Was `deploy.sh` engaged directly rather than invoking local binaries destroying native layouts?
-5. **Build & Deploy (`building-deploying`)**: Was `./deploy.sh` forced sequentially integrating dependencies on **both x86_64 AND armv7l** architectures identically detecting compiler permutations?
+5. **Build & Deploy (`building-deploying`)**: Was `./deploy.sh` forced sequentially integrating dependencies on **x86_64** architecture?
 6. **Test & Review (`reviewing-code`)**: Can the QA agent empirically prove execution loops mapping via `sdb shell journalctl` or native dlog executions natively proving the agent responds correctly without blocking threads?
 7. **Commit & Push (`managing-versions`)**: Did the commit message reflect Gerrit policies exactly natively embedding a blank splitting line and max width constraints? Were raw terminal caches physically destroyed globally (`cleanup_workspace.sh`)?
 

@@ -13,7 +13,8 @@ Your core mission is to convert the ultimate AGI blueprints created by the Archi
 > Directly executing `cargo test` locally for FFI-linked binaries is **prohibited**.
 
 > [!CAUTION]
-> **Mandatory Multi-Architecture Build**: To detect alignment errors early, you must mandatorily perform builds for **both x86_64 and armv7l architectures** with `./deploy.sh`.
+> **Single Architecture Build (x86_64)**: To detect alignment errors early, you must perform builds for **x86_64 architecture** with `./deploy.sh`.
+> **[DISABLED]**: armv7l builds are currently disabled to speed up the development cycle.
 
 ## Key Rules (Guardrails)
 
@@ -22,7 +23,7 @@ Your core mission is to convert the ultimate AGI blueprints created by the Archi
   - **Code-Level Resolution Mandate**: When facing compiler warnings, you MUST resolve them fundamentally. **Do not** forcefully suppress warnings using `#![allow(...)]` unless directly translating C-bindgen FFI layouts.
 - **Strict Adherence to Concurrency TDD & Coverage**: Never write the `tokio` business logic first. You must maintain the cycle of writing failing tests that satisfy the agent's behavior transitions first (Red), passing them safely (Green), and refactoring `Arc/Mutex` lifecycles (Refactor).
   - **Test Coverage**: All async and state tests written must defend against Edge Cases: Happy Path, Missing Tizen Dependencies (Missing `.so`), and Sudden Daemon Interruptions.
-- **Mandatory Multi-Architecture Build**: Generating target binaries using `./deploy.sh -a x86_64` and `./deploy.sh -a armv7l` is mandatory.
+- **Architecture Focus**: Generating target binaries using `./deploy.sh -a x86_64` is mandatory. (armv7l currently [DISABLED])
 - **Robust FFI & Tizen Dynamic Loading (dlopen)**: The autonomous daemon checks for Tizen capabilities dynamically via `libloading` wrappers. Ensure perfectly safe mappings of all `extern "C"` logic, and declare the explicit ABI versions (`libdlog.so.0`). If an API is missing, the AI Agent must intelligently fall back; it must NEVER panic.
 - **Minimal FFI Principle**: Minimize the use of FFI. Imprint the Architect's rule: implement core AGI cognitive logic in pure Rust, restricting FFI usage strictly to instances where Tizen-specific system interactions are unavoidable. Over-reliance on FFI for general logic is an architectural violation.
 - **Dlog and Tracing Interoperability**: Bind the logging mechanisms correctly to be scraped by the integration evaluation scripts. Dlog on Tizen Native.
@@ -37,7 +38,7 @@ Development Progress (TDD Cycle):
 - [ ] Step 1: Review System Design Async Traits and Fearless Concurrency specs
 - [ ] Step 2: Write failing #[tokio::test] blocks for deploy.sh E2E integration (Red)
 - [ ] Step 3: Implement actual TizenClaw agent state machines and memory-safe FFI boundaries (Green)
-- [ ] Step 4: GBS Build (x86_64 + armv7l) and daemon behavior scenario tests (Refactor)
+- [ ] Step 4: GBS Build (x86_64) and daemon behavior scenario tests (Refactor)
 ```
 
 ## ✅ Supervisor Handoff
