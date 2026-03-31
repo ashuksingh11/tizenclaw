@@ -63,6 +63,12 @@ fi
 # ─────────────────────────────────────────────
 # sdb wrapper
 # ─────────────────────────────────────────────
+if ! command -v sdb &>/dev/null; then
+  for _c in "${HOME}/tizen-studio/tools" "/opt/tizen-studio/tools"; do
+    [ -x "${_c}/sdb" ] && export PATH="${_c}:${PATH}" && break
+  done
+fi
+
 sdb_cmd() {
   if [ -n "${DEVICE_SERIAL}" ]; then
     sdb -s "${DEVICE_SERIAL}" "$@"

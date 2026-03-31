@@ -1,9 +1,0 @@
-prefix=/usr
-libdir=/usr/lib64
-includedir=${prefix}/include
-
-Name: tizenclaw-sdk
-Description: TizenClaw Plugin SDK — LLM handles, HTTP helper, plugin interfaces
-Version: 1.0.0
-Libs: -L${libdir} -ltizenclaw_sdk
-Cflags: -I${includedir}

@@ -72,6 +72,12 @@ journal.txt
 .plan/
 .deploy_success
 
-# Agents
-.agents/
-AGENTS.md
+# Agents (Now tracked in repo)
+# .agent/
+# AGENTS.md
+
+# Dev notes
+.dev_note
+
+# Prompts
+.prompt

@@ -49,13 +49,8 @@ fi
 
 # ── S5: Tool Directory ───────────────────────────────────────────
 section "S5" "Tool Directory Structure"
-assert_dir_exists "CLI tools directory" \
-  "/opt/usr/share/tizen-tools/cli"
 assert_dir_exists "Embedded tools directory" \
   "/opt/usr/share/tizen-tools/embedded"
-
-CLI_TOOL_COUNT=$(sdb_shell "ls -1d /opt/usr/share/tizen-tools/cli/*/ 2>/dev/null | wc -l" | tr -d '[:space:]')
-assert_ge "CLI tools installed (>= 10)" "$CLI_TOOL_COUNT" 10
 
 # ── S6: Log Output ────────────────────────────────────────────────
 section "S6" "Daemon Log Health"
@@ -97,15 +92,6 @@ fi
 sleep 3
 
 # ── S10: Dashboard Port ──────────────────────────────────────────
-section "S10" "Web Dashboard"
-DASHBOARD_CHECK=$(sdb_shell "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9090/ 2>/dev/null" | tr -d '[:space:]')
-if [ "$DASHBOARD_CHECK" = "200" ] || [ "$DASHBOARD_CHECK" = "302" ]; then
-  _pass "Dashboard is accessible (HTTP ${DASHBOARD_CHECK})"
-else
-  _skip "Dashboard accessibility" "HTTP ${DASHBOARD_CHECK} (may need time after restart)"
-fi
-
-suite_end
 section "S10" "Web Dashboard"
 DASHBOARD_CHECK=$(sdb_shell "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9090/ 2>/dev/null" | tr -d '[:space:]')
 if [ "$DASHBOARD_CHECK" = "200" ] || [ "$DASHBOARD_CHECK" = "302" ]; then

@@ -1,9 +1,0 @@
-prefix=/usr
-libdir=/usr/lib64
-includedir=${prefix}/include
-
-Name: tizenclaw
-Description: TizenClaw Agent C API library
-Version: 1.0.0
-Libs: -L${libdir} -ltizenclaw_client
-Cflags: -I${includedir}

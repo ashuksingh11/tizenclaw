@@ -41,18 +41,37 @@ impl PlatformPlugin for GenericLinuxPlatform {
 // StderrLogger — PlatformLogger
 // ─────────────────────────────────────────
 
-/// Logs to stderr with colorized level prefixes.
+/// Logs to Tizen dlog if on Tizen, otherwise stderr.
 pub struct StderrLogger;
 
 impl PlatformLogger for StderrLogger {
     fn log(&self, level: LogLevel, tag: &str, msg: &str) {
-        let (prefix, _color) = match level {
-            LogLevel::Error => ("E", "\x1b[31m"),
-            LogLevel::Warn  => ("W", "\x1b[33m"),
-            LogLevel::Info  => ("I", "\x1b[32m"),
-            LogLevel::Debug => ("D", "\x1b[36m"),
-        };
-        eprintln!("[{}] [{}] {}", prefix, tag, msg);
+        let is_tizen = std::fs::read_to_string("/etc/os-release")
+            .map(|s| s.to_lowercase().contains("tizen"))
+            .unwrap_or(false);
+
+        if is_tizen {
+            let prio = match level {
+                LogLevel::Error => tizen_sys::dlog::DLOG_ERROR,
+                LogLevel::Warn  => tizen_sys::dlog::DLOG_WARN,
+                LogLevel::Info  => tizen_sys::dlog::DLOG_INFO,
+                LogLevel::Debug => tizen_sys::dlog::DLOG_DEBUG,
+            };
+            let tag_c = std::ffi::CString::new(tag).unwrap_or_else(|_| std::ffi::CString::new("TIZENCLAW").unwrap());
+            let safe_msg = msg.replace("%", "%%");
+            let msg_c = std::ffi::CString::new(safe_msg).unwrap_or_else(|_| std::ffi::CString::new("Error in log message").unwrap());
+            unsafe {
+                tizen_sys::dlog::dlog_print(prio, tag_c.as_ptr(), msg_c.as_ptr());
+            }
+        } else {
+            let (prefix, _color) = match level {
+                LogLevel::Error => ("E", "\x1b[31m"),
+                LogLevel::Warn  => ("W", "\x1b[33m"),
+                LogLevel::Info  => ("I", "\x1b[32m"),
+                LogLevel::Debug => ("D", "\x1b[36m"),
+            };
+            eprintln!("[{}] [{}] {}", prefix, tag, msg);
+        }
     }
 }
 

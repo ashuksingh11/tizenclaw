@@ -39,10 +39,6 @@ End-to-end test automation framework for TizenClaw. Runs against real devices
 
 ```
 tests/
-├── unit/                            # gtest/gmock C++ unit tests (ctest)
-│   ├── CMakeLists.txt
-│   ├── *_test.cc  (42 files)
-│   └── mock/
 ├── e2e/                             # E2E smoke tests (deploy.sh -t)
 │   ├── test_smoke.sh
 │   └── test_mcp.sh
@@ -151,6 +147,5 @@ making it suitable for CI pipelines:
 
 | Location | Type | Purpose |
 |----------|------|---------|
-| `tests/unit/` | gtest (C++) | Unit tests — run during `gbs build` via `ctest` |
 | `tests/e2e/` | Shell | E2E smoke tests (used by `deploy.sh -t`) |
 | `tests/verification/` | Shell | Full verification suites (used by `deploy.sh -T`) |

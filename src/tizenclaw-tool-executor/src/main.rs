@@ -248,16 +248,36 @@ fn handle_client(mut stream: UnixStream) {
 // ═══════════════════════════════════════════
 
 fn main() {
-    // Simple stderr logger
-    struct StderrLogger;
-    impl log::Log for StderrLogger {
+    // Simple conditionally dual logger
+    struct PlatformLogger;
+    impl log::Log for PlatformLogger {
         fn enabled(&self, _: &log::Metadata) -> bool { true }
         fn log(&self, record: &log::Record) {
-            eprintln!("[{}] {}", record.level(), record.args());
+            let is_tizen = std::fs::read_to_string("/etc/os-release")
+                .map(|s| s.to_lowercase().contains("tizen"))
+                .unwrap_or(false);
+
+            let msg = format!("[{}] {}", record.level(), record.args());
+
+            if is_tizen {
+                let prio = match record.level() {
+                    log::Level::Error => tizen_sys::dlog::DLOG_ERROR,
+                    log::Level::Warn  => tizen_sys::dlog::DLOG_WARN,
+                    log::Level::Info  => tizen_sys::dlog::DLOG_INFO,
+                    log::Level::Debug | log::Level::Trace => tizen_sys::dlog::DLOG_DEBUG,
+                };
+                let tag_c = std::ffi::CString::new("TIZENCLAW_EXEC").unwrap();
+                let msg_c = std::ffi::CString::new(msg.replace("%", "%%")).unwrap_or_else(|_| std::ffi::CString::new("Log error").unwrap());
+                unsafe {
+                    tizen_sys::dlog::dlog_print(prio, tag_c.as_ptr(), msg_c.as_ptr());
+                }
+            } else {
+                eprintln!("{}", msg);
+            }
         }
         fn flush(&self) {}
     }
-    static LOGGER: StderrLogger = StderrLogger;
+    static LOGGER: PlatformLogger = PlatformLogger;
     let _ = log::set_logger(&LOGGER);
     log::set_max_level(log::LevelFilter::Info);
 

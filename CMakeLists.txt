@@ -1,6 +1,6 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 3.12)
 
-PROJECT(tizenclaw)
+PROJECT(tizenclaw NONE)
 INCLUDE(GNUInstallDirs)
 
 ## Paths
@@ -15,11 +15,16 @@ SET(APP_DATA_DIR "/opt/usr/share/tizenclaw")
 # Strip LTO flags from CFLAGS because rustc's linker doesn't load the GCC LTO plugin automatically,
 # which causes undefined references when linking static C libraries built by the cc crate.
 string(REGEX REPLACE "-flto[^ ]*" "" SAFE_CFLAGS "$ENV{CFLAGS}")
+string(REGEX REPLACE "-flto[^ ]*" "" SAFE_LDFLAGS "$ENV{LDFLAGS}")
+
+# Tizen's armv7l cross-gcc tries to load a mismatched LTO plugin. Force disable it.
+set(SAFE_CFLAGS "${SAFE_CFLAGS} -fno-lto -fno-use-linker-plugin")
+set(SAFE_LDFLAGS "${SAFE_LDFLAGS} -Wl,-fno-use-linker-plugin")
 
 ADD_CUSTOM_TARGET(cargo_build ALL
-  COMMAND env "CFLAGS=${SAFE_CFLAGS} -Wno-error=missing-field-initializers" cargo build --release --offline --manifest-path ${CMAKE_SOURCE_DIR}/Cargo.toml
+  COMMAND env "CFLAGS=${SAFE_CFLAGS} -Wno-error=missing-field-initializers" "LDFLAGS=${SAFE_LDFLAGS}" "RUSTFLAGS=-C link-arg=-fno-use-linker-plugin -C link-arg=-fno-lto" cargo build --release --offline --manifest-path ${CMAKE_SOURCE_DIR}/Cargo.toml
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-  COMMENT "Building Rust workspace with Cargo (LTO disabled for C dependencies)"
+  COMMENT "Building Rust workspace with Cargo (LTO disabled for C dependencies and linker)"
 )
 
 ## ═══════════════════════════════════════════
@@ -66,10 +71,7 @@ INSTALL(FILES
 INSTALL(DIRECTORY "${CMAKE_SOURCE_DIR}/tools/embedded/"
         DESTINATION "/opt/usr/share/tizen-tools/embedded")
 
-# CLI tool scripts
-INSTALL(DIRECTORY "${CMAKE_SOURCE_DIR}/tools/cli/"
-        DESTINATION "/opt/usr/share/tizen-tools/cli"
-        PATTERN "CMakeLists.txt" EXCLUDE)
+# CLI tool scripts removed (per user request)
 
 # System CLI tools — create empty dir
 INSTALL(DIRECTORY DESTINATION "/opt/usr/share/tizen-tools/system_cli")

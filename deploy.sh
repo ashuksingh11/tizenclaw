@@ -57,6 +57,7 @@ ARCH_EXPLICIT=false
 NOINIT=false
 INCREMENTAL=false
 SKIP_BUILD=false
+SKIP_DEPLOY=false
 DRY_RUN=false
 DEBUG_MODE=false
 WITH_NGROK=false
@@ -290,6 +291,7 @@ ${CYAN}Options:${NC}
   -n, --noinit          Skip build-env init (faster rebuild)
   -i, --incremental     Use --incremental and --skip-srcrpm for fast iterative build
   -s, --skip-build      Skip GBS build, deploy existing RPM
+  -S, --skip-deploy     Skip device deployment, build only
   -t, --test            Run E2E smoke tests after deployment
   -T, --full-test       Run all automated test suites after deployment
       --with-assets     Also build and deploy tizenclaw-assets
@@ -327,6 +329,7 @@ parse_args() {
       -n|--noinit)     NOINIT=true; shift ;;
       -i|--incremental) INCREMENTAL=true; shift ;;
       -s|--skip-build) SKIP_BUILD=true; shift ;;
+      -S|--skip-deploy) SKIP_DEPLOY=true; shift ;;
       -t|--test)      RUN_TESTS=true; shift ;;
       -T|--full-test) RUN_FULL_TESTS=true; shift ;;
       --with-assets)   WITH_ASSETS=true; shift ;;
@@ -575,6 +578,11 @@ find_rpm() {
 # Step 3: Deploy via sdb
 # ─────────────────────────────────────────────
 do_deploy() {
+  if [ "${SKIP_DEPLOY}" = true ]; then
+    log "Skipping deployment (--skip-deploy)"
+    return 0
+  fi
+
   header "Step 3/4: Deploy to Device"
 
   # 3-1. Check device connectivity

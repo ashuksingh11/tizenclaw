@@ -94,3 +94,25 @@ impl ToolWatcher {
         Some(handle)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_tool_watcher_new() {
+        let watcher = ToolWatcher::new("/tmp/test_tools".to_string());
+        assert_eq!(watcher.watch_dirs.len(), 1);
+        assert_eq!(watcher.watch_dirs[0], PathBuf::from("/tmp/test_tools"));
+        // callback is private, so we just check it doesn't panic
+    }
+
+    #[test]
+    fn test_add_watch_dir() {
+        let mut watcher = ToolWatcher::new("/tmp/test_tools1".to_string());
+        watcher.add_watch_dir("/tmp/test_tools2");
+        assert_eq!(watcher.watch_dirs.len(), 2);
+        assert_eq!(watcher.watch_dirs[1], PathBuf::from("/tmp/test_tools2"));
+    }
+}
