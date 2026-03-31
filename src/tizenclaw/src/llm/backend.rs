@@ -19,6 +19,8 @@ pub struct LlmMessage {
     pub role: String,
     pub text: String,
     #[serde(default)]
+    pub reasoning_text: String,
+    #[serde(default)]
     pub tool_calls: Vec<LlmToolCall>,
     #[serde(default)]
     pub tool_name: String,
@@ -32,6 +34,7 @@ impl LlmMessage {
     pub fn user(text: &str) -> Self {
         LlmMessage {
             role: "user".into(), text: text.into(),
+            reasoning_text: String::new(),
             tool_calls: vec![], tool_name: String::new(),
             tool_call_id: String::new(), tool_result: Value::Null,
         }
@@ -39,6 +42,7 @@ impl LlmMessage {
     pub fn assistant(text: &str) -> Self {
         LlmMessage {
             role: "assistant".into(), text: text.into(),
+            reasoning_text: String::new(),
             tool_calls: vec![], tool_name: String::new(),
             tool_call_id: String::new(), tool_result: Value::Null,
         }
@@ -46,6 +50,7 @@ impl LlmMessage {
     pub fn tool_result(call_id: &str, name: &str, result: Value) -> Self {
         LlmMessage {
             role: "tool".into(), text: String::new(),
+            reasoning_text: String::new(),
             tool_calls: vec![], tool_name: name.into(),
             tool_call_id: call_id.into(), tool_result: result,
         }
@@ -57,6 +62,7 @@ impl Default for LlmMessage {
         LlmMessage {
             role: String::new(),
             text: String::new(),
+            reasoning_text: String::new(),
             tool_calls: vec![],
             tool_name: String::new(),
             tool_call_id: String::new(),
@@ -70,6 +76,7 @@ impl Default for LlmMessage {
 pub struct LlmResponse {
     pub success: bool,
     pub text: String,
+    pub reasoning_text: String,
     pub error_message: String,
     pub tool_calls: Vec<LlmToolCall>,
     pub prompt_tokens: i32,

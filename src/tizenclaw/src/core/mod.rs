@@ -31,7 +31,8 @@ pub mod swarm_manager;
 pub mod proactive_advisor;
 pub mod auto_skill_agent;
 pub mod context_fusion_engine;
-pub mod perception_engine;
+pub mod fallback_parser;
+pub mod context_engine;
 pub mod device_profiler;
 // Embedding Engine
 pub mod wordpiece_tokenizer;

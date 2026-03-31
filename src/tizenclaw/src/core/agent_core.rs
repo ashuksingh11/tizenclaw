@@ -13,6 +13,8 @@ use crate::infra::key_store::KeyStore;
 use crate::llm::backend::{self, LlmBackend, LlmMessage, LlmResponse};
 use crate::storage::session_store::SessionStore;
 use crate::core::tool_dispatcher::ToolDispatcher;
+use crate::core::fallback_parser::FallbackParser;
+use crate::core::context_engine::{ContextEngine, SimpleContextEngine};
 
 const MAX_TOOL_ROUNDS: usize = 10;
 const MAX_CONTEXT_MESSAGES: usize = 20;
@@ -407,6 +409,13 @@ impl AgentCore {
             builder.build()
         };
 
+        // --- ENHANCEMENT: Proactive Compaction (Step 1: Before loop) ---
+        let context_engine = SimpleContextEngine::new();
+        let budget = 32000; // Default budget (can be made configurable)
+        if context_engine.should_compact(&messages, budget) {
+            messages = context_engine.compact(messages, budget);
+        }
+
         // Agentic loop — no global lock held during LLM calls
         for round in 0..MAX_TOOL_ROUNDS {
             let response = self.chat_with_fallback(&messages, &tools, on_chunk, &system_prompt).await;
@@ -418,6 +427,25 @@ impl AgentCore {
                 );
                 log::error!("{}", err);
                 return err;
+            }
+
+            // --- ENHANCEMENT: Reasoning Extraction ---
+            let mut reasoning_text = response.reasoning_text.clone();
+            if reasoning_text.is_empty() {
+                // Regex fallback for <think> tags
+                let think_re = regex::Regex::new(r"(?s)<think>(.*?)</think>").unwrap();
+                if let Some(cap) = think_re.captures(&response.text) {
+                    reasoning_text = cap[1].trim().to_string();
+                }
+            }
+
+            // --- ENHANCEMENT: Fallback Parsing ---
+            let mut detected_tool_calls = response.tool_calls.clone();
+            if detected_tool_calls.is_empty() {
+                detected_tool_calls = FallbackParser::parse(&response.text);
+                if !detected_tool_calls.is_empty() {
+                    log::info!("FallbackParser: Detected {} tool calls from text", detected_tool_calls.len());
+                }
             }
 
             // Record token usage (short lock on session_store)
@@ -438,21 +466,22 @@ impl AgentCore {
                 }
             }
 
-            if response.has_tool_calls() {
-                log::info!("Round {}: {} tool call(s)", round, response.tool_calls.len());
+            if !detected_tool_calls.is_empty() {
+                log::info!("Round {}: {} tool call(s)", round, detected_tool_calls.len());
 
-                // Add assistant message with tool calls
+                // Add assistant message with tool calls and reasoning
                 messages.push(LlmMessage {
                     role: "assistant".into(),
                     text: response.text.clone(),
-                    tool_calls: response.tool_calls.clone(),
+                    reasoning_text,
+                    tool_calls: detected_tool_calls.clone(),
                     ..Default::default()
                 });
 
                 // Execute tool calls — parallel with tokio join_all
                 let td_guard = self.tool_dispatcher.read().await;
                 let mut futures_list = Vec::new();
-                for tc in response.tool_calls.iter() {
+                for tc in detected_tool_calls.iter() {
                     log::info!("Executing tool (async): {} (id: {})", tc.name, tc.id);
                     let skills_dir = self.platform.paths.skills_dir.clone();
                     let td_guard_ref = &*td_guard;
@@ -500,12 +529,29 @@ impl AgentCore {
             } else {
                 // Final text response
                 let text = response.text;
+                let mut reasoning_text = response.reasoning_text.clone();
+                if reasoning_text.is_empty() {
+                    let think_re = regex::Regex::new(r"(?s)<think>(.*?)</think>").unwrap();
+                    if let Some(cap) = think_re.captures(&text) {
+                        reasoning_text = cap[1].trim().to_string();
+                    }
+                }
+
                 if let Ok(ss) = self.session_store.lock() {
                     if let Some(store) = ss.as_ref() {
+                        // Store reasoning in the message too
+                        let mut msg = LlmMessage::assistant(&text);
+                        msg.reasoning_text = reasoning_text;
                         store.add_message(session_id, "assistant", &text);
+                        // TODO: Update SessionStore to optionally store reasoning_text properly
                     }
                 }
                 return text;
+            }
+
+            // --- ENHANCEMENT: Proactive Compaction (Step 2: During loop) ---
+            if context_engine.should_compact(&messages, budget) {
+                messages = context_engine.compact(messages, budget);
             }
         }
 
