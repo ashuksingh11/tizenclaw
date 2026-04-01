@@ -162,8 +162,13 @@ impl AgentCore {
         let active_name = config.active_backend.clone();
         let fallback_names = config.fallback_backends.clone();
 
+        // Initialize plugin manager
+        let mut plugin_manager = crate::llm::plugin_manager::PluginManager::new();
+        plugin_manager.add_plugin_dir(paths.llm_plugins_dir.clone());
+        plugin_manager.scan_plugins();
+
         // Initialize primary backend
-        let primary = Self::create_and_init_backend_static(&config, &active_name);
+        let primary = Self::create_and_init_backend_static(&plugin_manager, &config, &active_name);
         if primary.is_some() {
             log::info!("Primary LLM backend '{}' initialized", active_name);
         } else {
@@ -178,7 +183,7 @@ impl AgentCore {
         // Initialize fallback backends
         let mut fallbacks = Vec::new();
         for name in &fallback_names {
-            if let Some(be) = Self::create_and_init_backend_static(&config, name) {
+            if let Some(be) = Self::create_and_init_backend_static(&plugin_manager, &config, name) {
                 log::info!("Fallback LLM backend '{}' initialized", name);
                 fallbacks.push(be);
             }
@@ -214,10 +219,11 @@ impl AgentCore {
 
     /// Create and initialize an LLM backend by name using the provided config.
     fn create_and_init_backend_static(
+        plugin_manager: &crate::llm::plugin_manager::PluginManager,
         config: &LlmConfig,
         name: &str,
     ) -> Option<Box<dyn LlmBackend>> {
-        let mut be = backend::create_backend(name)?;
+        let mut be = plugin_manager.create_backend(name)?;
         let cfg = config.backend_config(name);
         if be.initialize(&cfg) {
             Some(be)
