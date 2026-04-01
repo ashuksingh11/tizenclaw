@@ -2,13 +2,10 @@
 resolver = "2"
 members = [
     "src/libtizenclaw",
+    "src/libtizenclaw-core",
     "src/tizenclaw",
     "src/tizenclaw-cli",
-    "src/libtizenclaw-client",
-    "src/libtizenclaw-sdk",
     "src/tizenclaw-tool-executor",
-    "src/tizen-sys",
-    "src/tizenclaw-core",
 ]
 
 [profile.release]

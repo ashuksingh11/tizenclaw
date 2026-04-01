@@ -96,7 +96,7 @@ struct CircuitBreakerState {
 /// - `session_store`: Mutex (SQLite is not Sync)
 /// - `tool_dispatcher`: RwLock (reads are frequent, writes are rare)
 pub struct AgentCore {
-    platform: Arc<libtizenclaw::PlatformContext>,
+    platform: Arc<libtizenclaw_core::framework::PlatformContext>,
     backend: tokio::sync::RwLock<Option<Box<dyn LlmBackend>>>,
     fallback_backends: tokio::sync::RwLock<Vec<Box<dyn LlmBackend>>>,
     session_store: Mutex<Option<SessionStore>>,
@@ -110,7 +110,7 @@ pub struct AgentCore {
 }
 
 impl AgentCore {
-    pub fn new(platform: Arc<libtizenclaw::PlatformContext>) -> Self {
+    pub fn new(platform: Arc<libtizenclaw_core::framework::PlatformContext>) -> Self {
         AgentCore {
             platform,
             backend: tokio::sync::RwLock::new(None),

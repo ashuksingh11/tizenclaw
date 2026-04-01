@@ -14,11 +14,11 @@ const TAG: &str = "TIZENCLAW";
 static INIT: Once = Once::new();
 
 /// Global platform logger reference — set once during init.
-static PLATFORM_LOGGER: Mutex<Option<std::sync::Arc<dyn libtizenclaw::PlatformLogger>>> =
+static PLATFORM_LOGGER: Mutex<Option<std::sync::Arc<dyn libtizenclaw_core::framework::PlatformLogger>>> =
     Mutex::new(None);
 
 /// Initialize with a specific platform logger.
-pub fn init_with_logger(logger: Option<std::sync::Arc<dyn libtizenclaw::PlatformLogger>>) {
+pub fn init_with_logger(logger: Option<std::sync::Arc<dyn libtizenclaw_core::framework::PlatformLogger>>) {
     INIT.call_once(|| {
         if let Some(pl) = logger {
             if let Ok(mut guard) = PLATFORM_LOGGER.lock() {
@@ -43,10 +43,10 @@ impl log::Log for PlatformLogBridge {
         }
 
         let level = match record.level() {
-            log::Level::Error => libtizenclaw::LogLevel::Error,
-            log::Level::Warn  => libtizenclaw::LogLevel::Warn,
-            log::Level::Info  => libtizenclaw::LogLevel::Info,
-            log::Level::Debug | log::Level::Trace => libtizenclaw::LogLevel::Debug,
+            log::Level::Error => libtizenclaw_core::framework::LogLevel::Error,
+            log::Level::Warn  => libtizenclaw_core::framework::LogLevel::Warn,
+            log::Level::Info  => libtizenclaw_core::framework::LogLevel::Info,
+            log::Level::Debug | log::Level::Trace => libtizenclaw_core::framework::LogLevel::Debug,
         };
 
         let msg = format!(
@@ -68,10 +68,10 @@ impl log::Log for PlatformLogBridge {
 
         // Fallback: stderr
         let prefix = match level {
-            libtizenclaw::LogLevel::Error => "E",
-            libtizenclaw::LogLevel::Warn  => "W",
-            libtizenclaw::LogLevel::Info  => "I",
-            libtizenclaw::LogLevel::Debug => "D",
+            libtizenclaw_core::framework::LogLevel::Error => "E",
+            libtizenclaw_core::framework::LogLevel::Warn  => "W",
+            libtizenclaw_core::framework::LogLevel::Info  => "I",
+            libtizenclaw_core::framework::LogLevel::Debug => "D",
         };
         eprintln!("[{}] [{}] {}", prefix, TAG, msg);
         FileLogBackend::write(&msg, level);
@@ -100,14 +100,14 @@ impl FileLogBackend {
         }
     }
 
-    fn write(msg: &str, level: libtizenclaw::LogLevel) {
+    fn write(msg: &str, level: libtizenclaw_core::framework::LogLevel) {
         if let Ok(guard) = FILE_LOG.lock() {
             if let Some(backend) = guard.as_ref() {
                 let level_str = match level {
-                    libtizenclaw::LogLevel::Error => "E",
-                    libtizenclaw::LogLevel::Warn  => "W",
-                    libtizenclaw::LogLevel::Info  => "I",
-                    libtizenclaw::LogLevel::Debug => "D",
+                    libtizenclaw_core::framework::LogLevel::Error => "E",
+                    libtizenclaw_core::framework::LogLevel::Warn  => "W",
+                    libtizenclaw_core::framework::LogLevel::Info  => "I",
+                    libtizenclaw_core::framework::LogLevel::Debug => "D",
                 };
                 let line = format!("[{}] {}\n", level_str, msg);
                 let _ = std::fs::OpenOptions::new()

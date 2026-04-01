@@ -3,9 +3,9 @@
 //! Wraps Tizen native APIs (vconf, pkgmgr, app_control, system_info)
 //! behind the standard platform trait interfaces.
 
-use tizenclaw::{
-    AppControlProvider, PackageInfo, PackageManagerProvider,
-    PlatformPlugin, SystemInfoProvider,
+use crate::framework::{
+    AppControlProvider, LogLevel, PackageInfo, PackageManagerProvider, PlatformLogger,
+    PlatformPlugin, SystemInfoProvider, SystemEventProvider
 };
 use serde_json::{json, Value};
 use std::process::Command;
@@ -31,14 +31,14 @@ impl PlatformPlugin for TizenPlatform {
     fn initialize(&mut self) -> bool {
         // Initialize tizen-core main loop (if needed)
         unsafe {
-            tizen_sys::tizen_core::tizen_core_init();
+            crate::tizen_sys::tizen_core::tizen_core_init();
         }
         true
     }
 
     fn shutdown(&mut self) {
         unsafe {
-            tizen_sys::tizen_core::tizen_core_shutdown();
+            crate::tizen_sys::tizen_core::tizen_core_shutdown();
         }
     }
 }
@@ -194,7 +194,7 @@ pub struct TizenAppControl;
 impl AppControlProvider for TizenAppControl {
     fn launch_app(&self, app_id: &str) -> Result<(), String> {
         unsafe {
-            use tizen_sys::app_control::*;
+            use crate::tizen_sys::app_control::*;
 
             let mut handle: app_control_h = std::ptr::null_mut();
             if app_control_create(&mut handle) != APP_CONTROL_ERROR_NONE {

@@ -35,9 +35,9 @@
 //! 3. `/usr/local/lib/tizenclaw/plugins` (local)
 //! 4. `$TIZENCLAW_DATA_DIR/plugins` (user override)
 
-use crate::generic_linux;
-use crate::paths::PlatformPaths;
-use crate::PlatformContext;
+use crate::framework::generic_linux;
+use crate::framework::paths::PlatformPaths;
+use crate::framework::PlatformContext;
 use std::path::{Path, PathBuf};
 
 /// Metadata about a discovered plugin, parsed from `claw_plugin_info()` JSON.
@@ -206,7 +206,7 @@ fn try_activate_plugin(
         .map(|sym| *sym)
     };
 
-    let logger: std::sync::Arc<dyn crate::PlatformLogger> = if let Some(f) = log_fn {
+    let logger: std::sync::Arc<dyn crate::framework::PlatformLogger> = if let Some(f) = log_fn {
         std::sync::Arc::new(PluginLogger {
             _lib: lib.clone(),
             log_fn: f,
@@ -236,20 +236,20 @@ struct PluginLogger {
     log_fn: unsafe extern "C" fn(i32, *const std::os::raw::c_char, *const std::os::raw::c_char),
 }
 
-impl crate::PlatformLogger for PluginLogger {
-    fn log(&self, level: crate::LogLevel, tag: &str, msg: &str) {
+impl crate::framework::PlatformLogger for PluginLogger {
+    fn log(&self, level: crate::framework::LogLevel, tag: &str, msg: &str) {
         use std::ffi::CString;
-        let lvl = match level {
-            crate::LogLevel::Error => 0,
-            crate::LogLevel::Warn => 1,
-            crate::LogLevel::Info => 2,
-            crate::LogLevel::Debug => 3,
+        let prio = match level {
+            crate::framework::LogLevel::Error => 0,
+            crate::framework::LogLevel::Warn => 1,
+            crate::framework::LogLevel::Info => 2,
+            crate::framework::LogLevel::Debug => 3,
         };
         // Escape '%' to prevent format string attacks in dlog
         let escaped = msg.replace('%', "%%");
         if let (Ok(t), Ok(m)) = (CString::new(tag), CString::new(escaped)) {
             unsafe {
-                (self.log_fn)(lvl, t.as_ptr(), m.as_ptr());
+                (self.log_fn)(prio, t.as_ptr(), m.as_ptr());
             }
         }
     }
@@ -261,7 +261,7 @@ struct PluginPlatform {
     _lib: std::sync::Arc<libloading::Library>,
 }
 
-impl crate::PlatformPlugin for PluginPlatform {
+impl crate::framework::PlatformPlugin for PluginPlatform {
     fn platform_name(&self) -> &str {
         &self.meta.platform_name
     }

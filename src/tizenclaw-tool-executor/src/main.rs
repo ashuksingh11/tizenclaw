@@ -250,15 +250,15 @@ async fn main() {
 
             if is_tizen {
                 let prio = match record.level() {
-                    log::Level::Error => tizen_sys::dlog::DLOG_ERROR,
-                    log::Level::Warn  => tizen_sys::dlog::DLOG_WARN,
-                    log::Level::Info  => tizen_sys::dlog::DLOG_INFO,
-                    log::Level::Debug | log::Level::Trace => tizen_sys::dlog::DLOG_DEBUG,
+                    log::Level::Error => libtizenclaw_core::tizen_sys::dlog::DLOG_ERROR,
+                    log::Level::Warn  => libtizenclaw_core::tizen_sys::dlog::DLOG_WARN,
+                    log::Level::Info  => libtizenclaw_core::tizen_sys::dlog::DLOG_INFO,
+                    log::Level::Debug | log::Level::Trace => libtizenclaw_core::tizen_sys::dlog::DLOG_DEBUG,
                 };
                 let tag_c = std::ffi::CString::new("TIZENCLAW_EXEC").unwrap();
                 let msg_c = std::ffi::CString::new(msg.replace("%", "%%")).unwrap_or_else(|_| std::ffi::CString::new("Log error").unwrap());
                 unsafe {
-                    tizen_sys::dlog::dlog_print(prio, tag_c.as_ptr(), msg_c.as_ptr());
+                    libtizenclaw_core::tizen_sys::dlog::dlog_print(prio, tag_c.as_ptr(), msg_c.as_ptr());
                 }
             } else {
                 eprintln!("{}", msg);

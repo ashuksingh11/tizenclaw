@@ -4,7 +4,7 @@
 //! when no platform-specific plugin (e.g., Tizen) is loaded.
 //! Works on any standard Linux distribution (Ubuntu, Debian, Fedora, etc.)
 
-use crate::{
+use super::{
     AppControlProvider, LogLevel, PackageInfo, PackageManagerProvider,
     PlatformLogger, PlatformPlugin, SystemInfoProvider,
 };
@@ -52,16 +52,16 @@ impl PlatformLogger for StderrLogger {
 
         if is_tizen {
             let prio = match level {
-                LogLevel::Error => tizen_sys::dlog::DLOG_ERROR,
-                LogLevel::Warn  => tizen_sys::dlog::DLOG_WARN,
-                LogLevel::Info  => tizen_sys::dlog::DLOG_INFO,
-                LogLevel::Debug => tizen_sys::dlog::DLOG_DEBUG,
+                LogLevel::Error => crate::tizen_sys::dlog::DLOG_ERROR,
+                LogLevel::Warn  => crate::tizen_sys::dlog::DLOG_WARN,
+                LogLevel::Info  => crate::tizen_sys::dlog::DLOG_INFO,
+                LogLevel::Debug => crate::tizen_sys::dlog::DLOG_DEBUG,
             };
             let tag_c = std::ffi::CString::new(tag).unwrap_or_else(|_| std::ffi::CString::new("TIZENCLAW").unwrap());
             let safe_msg = msg.replace("%", "%%");
             let msg_c = std::ffi::CString::new(safe_msg).unwrap_or_else(|_| std::ffi::CString::new("Error in log message").unwrap());
             unsafe {
-                tizen_sys::dlog::dlog_print(prio, tag_c.as_ptr(), msg_c.as_ptr());
+                crate::tizen_sys::dlog::dlog_print(prio, tag_c.as_ptr(), msg_c.as_ptr());
             }
         } else {
             let (prefix, _color) = match level {

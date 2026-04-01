@@ -130,9 +130,8 @@ fi
 %dir /opt/usr/share/tizenclaw/
 %dir /opt/usr/share/tizenclaw/rag/
 /opt/usr/share/tizenclaw/rag/web.zip
+%{_libdir}/libtizenclaw_core.so
 %{_libdir}/libtizenclaw.so
-%{_libdir}/libtizenclaw_client.so
-%{_libdir}/libtizenclaw_sdk.so
 %dir /opt/usr/share/crash/
 %dir /opt/usr/share/crash/dump/
 
@@ -153,5 +152,5 @@ Header files and pkgconfig for building applications and plugins against TizenCl
 %{_includedir}/tizenclaw/tizenclaw_llm_backend.h
 %{_includedir}/tizenclaw/tizenclaw_curl.h
 %{_libdir}/pkgconfig/tizenclaw.pc
-%{_libdir}/pkgconfig/tizenclaw-sdk.pc
+%{_libdir}/pkgconfig/tizenclaw-core.pc
 

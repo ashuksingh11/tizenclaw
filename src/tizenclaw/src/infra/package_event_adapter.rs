@@ -57,7 +57,7 @@ impl PackageEventAdapter {
         self.callback = Some(Box::new(callback));
         self.running.store(true, Ordering::SeqCst);
 
-        // NOTE: Wire up to tizen_sys::pkgmgr::pkgmgr_client_listen_status
+        // NOTE: Wire up to libtizenclaw_core::tizen_sys::pkgmgr::pkgmgr_client_listen_status
         // when ready for on-device testing.
         log::info!("PackageEventAdapter: started listening for package events");
         true

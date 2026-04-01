@@ -30,7 +30,7 @@ extern "C" fn signal_handler(_sig: libc::c_int) {
 #[tokio::main]
 async fn main() {
     // ── Phase 1: Detect platform & initialize paths ──
-    let platform = libtizenclaw::PlatformContext::detect();
+    let platform = libtizenclaw_core::framework::PlatformContext::detect();
     platform.paths.ensure_dirs();
 
     // Fix OpenSSL vendored TLS handshake on Tizen by explicitly exporting the System CA bundle
