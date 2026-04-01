@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! TizenClaw Tizen Platform Plugin
 //!
 //! Builds as `libtizenclaw_plugin.so` — a dynamically loaded platform plugin

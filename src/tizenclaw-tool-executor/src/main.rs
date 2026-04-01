@@ -135,9 +135,9 @@ async fn handle_client(mut stream: UnixStream) {
 
     let mut stdout = child.stdout.take().expect("Failed to grab stdout");
     let mut stderr = child.stderr.take().expect("Failed to grab stderr");
-    let mut stdin_opt = child.stdin.take();
+    let stdin_opt = child.stdin.take();
 
-    let (mut rx, mut tx) = stream.into_split();
+    let (mut rx, tx) = stream.into_split();
     let tx_mutex = Arc::new(Mutex::new(tx));
     
     let stdout_tx = tx_mutex.clone();
