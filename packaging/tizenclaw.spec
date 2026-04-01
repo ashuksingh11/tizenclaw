@@ -67,7 +67,6 @@ mkdir -p %{buildroot}/opt/usr/share/crash/dump
 
 ln -sf ../tizenclaw.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw.service
 ln -sf ../tizenclaw-tool-executor.socket %{buildroot}%{_unitdir}/sockets.target.wants/tizenclaw-tool-executor.socket
-ln -sf ../tizenclaw-code-sandbox.socket %{buildroot}%{_unitdir}/sockets.target.wants/tizenclaw-code-sandbox.socket
 
 %post
 # Unzip RAG web docs for LLM reference
@@ -86,11 +85,8 @@ fi
 %{_unitdir}/tizenclaw.service
 %{_unitdir}/tizenclaw-tool-executor.service
 %{_unitdir}/tizenclaw-tool-executor.socket
-%{_unitdir}/tizenclaw-code-sandbox.service
-%{_unitdir}/tizenclaw-code-sandbox.socket
 %{_unitdir}/multi-user.target.wants/tizenclaw.service
 %{_unitdir}/sockets.target.wants/tizenclaw-tool-executor.socket
-%{_unitdir}/sockets.target.wants/tizenclaw-code-sandbox.socket
 
 /opt/usr/share/tizenclaw/config/*
 /opt/usr/share/tizen-tools/tools.md

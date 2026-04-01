@@ -53,8 +53,6 @@ INSTALL(FILES
   "${CMAKE_SOURCE_DIR}/packaging/tizenclaw.service"
   "${CMAKE_SOURCE_DIR}/packaging/tizenclaw-tool-executor.service"
   "${CMAKE_SOURCE_DIR}/packaging/tizenclaw-tool-executor.socket"
-  "${CMAKE_SOURCE_DIR}/packaging/tizenclaw-code-sandbox.service"
-  "${CMAKE_SOURCE_DIR}/packaging/tizenclaw-code-sandbox.socket"
   DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/systemd/system")
 
 # Web dashboard static files
