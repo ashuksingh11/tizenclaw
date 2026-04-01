@@ -17,6 +17,7 @@ use super::backend::{LlmBackend, LlmMessage, LlmResponse, LlmToolCall, LlmToolDe
 pub struct PluginLlmBackend {
     name: String,
     plugin_path: String,
+    base_config: Option<Value>,
     lib_handle: Option<*mut libc::c_void>,
 }
 
@@ -33,7 +34,7 @@ type PluginNameFn = unsafe extern "C" fn() -> *const libc::c_char;
 type PluginFreeFn = unsafe extern "C" fn(*mut libc::c_char);
 
 impl PluginLlmBackend {
-    pub fn new(plugin_path: &str) -> Self {
+    pub fn new(plugin_path: &str, base_config: Option<Value>) -> Self {
         PluginLlmBackend {
             name: Path::new(plugin_path)
                 .file_stem()
@@ -41,6 +42,7 @@ impl PluginLlmBackend {
                 .unwrap_or("plugin")
                 .to_string(),
             plugin_path: plugin_path.to_string(),
+            base_config,
             lib_handle: None,
         }
     }
@@ -103,7 +105,22 @@ impl LlmBackend for PluginLlmBackend {
         };
 
         if let Some(init_fn) = self.resolve_symbol::<PluginInitFn>(handle, "llm_plugin_init") {
-            let config_str = config.to_string();
+            let final_config = match self.base_config.as_ref() {
+                Some(bc) => {
+                    let mut merged = bc.clone();
+                    if let Value::Object(ref mut map) = merged {
+                        if let Value::Object(ref c) = config {
+                            for (k, v) in c {
+                                map.insert(k.clone(), v.clone());
+                            }
+                        }
+                    }
+                    merged
+                },
+                None => config.clone()
+            };
+            
+            let config_str = final_config.to_string();
             let c_config = match std::ffi::CString::new(config_str) {
                 Ok(c) => c,
                 Err(_) => return false,

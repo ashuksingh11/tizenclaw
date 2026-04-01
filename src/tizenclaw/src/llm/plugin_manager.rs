@@ -17,8 +17,9 @@ const DEFAULT_PLUGIN_DIRS: &[&str] = &[
 
 /// Manages LLM backend creation with plugin support.
 pub struct PluginManager {
-    /// Map of plugin name → plugin .so path.
     plugin_registry: HashMap<String, PathBuf>,
+    /// Map of plugin name -> default JSON configuration parsed from plugin_llm_config.json.
+    plugin_configs: HashMap<String, Value>,
     /// Directories to scan for plugins.
     plugin_dirs: Vec<PathBuf>,
 }
@@ -33,6 +34,7 @@ impl PluginManager {
     pub fn new() -> Self {
         PluginManager {
             plugin_registry: HashMap::new(),
+            plugin_configs: HashMap::new(),
             plugin_dirs: DEFAULT_PLUGIN_DIRS.iter().map(PathBuf::from).collect(),
         }
     }
@@ -44,11 +46,43 @@ impl PluginManager {
         }
     }
 
-    /// Scan plugin directories and register discovered plugins.
-    pub fn scan_plugins(&mut self) {
+    /// Scan plugin directories and register discovered plugins via local dirs and pkgmgr.
+    pub fn scan_plugins(&mut self, pm: Option<&dyn libtizenclaw_core::framework::PackageManagerProvider>) {
         for dir in self.plugin_dirs.clone() {
             self.scan_directory(&dir);
         }
+
+        if let Some(pkgmgr) = pm {
+            let pkgs = pkgmgr.get_packages_by_metadata_key("http://tizen.org/metadata/tizenclaw/llm-backend");
+            for pkg in pkgs {
+                if let Some(so_name) = pkgmgr.get_package_metadata_value(&pkg.pkg_id, "http://tizen.org/metadata/tizenclaw/llm-backend") {
+                    if let Some(root_path) = pkgmgr.get_package_root_path(&pkg.pkg_id) {
+                        let so_path = PathBuf::from(&root_path).join("lib").join(&so_name);
+                        let cfg_path = PathBuf::from(&root_path).join("res").join("plugin_llm_config.json");
+                        let fallback_cfg_path = PathBuf::from(&root_path).join("plugin_llm_config.json");
+                        
+                        let mut config = serde_json::json!({});
+                        if let Ok(content) = std::fs::read_to_string(&cfg_path).or_else(|_| std::fs::read_to_string(&fallback_cfg_path)) {
+                            if let Ok(parsed) = serde_json::from_str(&content) {
+                                config = parsed;
+                            }
+                        }
+
+                        if so_path.exists() {
+                            let name = so_path.file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or(&pkg.pkg_id)
+                                .replace("lib", "");
+                            
+                            log::info!("PluginManager: pkgmgr discovered plugin '{}' at {:?}", name, so_path);
+                            self.plugin_registry.insert(name.clone(), so_path);
+                            self.plugin_configs.insert(name, config);
+                        }
+                    }
+                }
+            }
+        }
+
         if !self.plugin_registry.is_empty() {
             log::info!(
                 "PluginManager: discovered {} LLM plugin(s): {:?}",
@@ -96,8 +130,9 @@ impl PluginManager {
         // Try plugin backends
         if let Some(plugin_path) = self.plugin_registry.get(name) {
             let path_str = plugin_path.to_string_lossy();
+            let base_config = self.plugin_configs.get(name).cloned();
             log::info!("Creating plugin LLM backend '{}' from {}", name, path_str);
-            return Some(Box::new(PluginLlmBackend::new(&path_str)));
+            return Some(Box::new(PluginLlmBackend::new(&path_str, base_config)));
         }
 
         log::warn!("No LLM backend found for name '{}'", name);

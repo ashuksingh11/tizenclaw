@@ -165,7 +165,7 @@ impl AgentCore {
         // Initialize plugin manager
         let mut plugin_manager = crate::llm::plugin_manager::PluginManager::new();
         plugin_manager.add_plugin_dir(paths.llm_plugins_dir.clone());
-        plugin_manager.scan_plugins();
+        plugin_manager.scan_plugins(Some(self.platform.package_manager.as_ref()));
 
         // Initialize primary backend
         let primary = Self::create_and_init_backend_static(&plugin_manager, &config, &active_name);

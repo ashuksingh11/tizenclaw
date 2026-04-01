@@ -143,6 +143,92 @@ impl PackageManagerProvider for TizenPackageManager {
             _ => None,
         }
     }
+
+    fn get_packages_by_metadata_key(&self, key: &str) -> Vec<PackageInfo> {
+        unsafe {
+            use crate::tizen_sys::pkgmgr_info::*;
+            let mut filter: pkgmgrinfo_pkginfo_metadata_filter_h = std::ptr::null_mut();
+            if pkgmgrinfo_pkginfo_metadata_filter_create(&mut filter) != PMINFO_R_OK {
+                return vec![];
+            }
+            let c_key = std::ffi::CString::new(key).unwrap();
+            pkgmgrinfo_pkginfo_metadata_filter_add(filter, c_key.as_ptr(), std::ptr::null());
+
+            let mut pkg_ids: Vec<String> = Vec::new();
+
+            unsafe extern "C" fn filter_cb(handle: pkgmgrinfo_pkginfo_h, user_data: *mut std::os::raw::c_void) -> std::os::raw::c_int {
+                let vec_ptr = user_data as *mut Vec<String>;
+                let mut c_pkgid: *mut std::os::raw::c_char = std::ptr::null_mut();
+                if pkgmgrinfo_pkginfo_get_pkgid(handle, &mut c_pkgid) == PMINFO_R_OK && !c_pkgid.is_null() {
+                    let s = std::ffi::CStr::from_ptr(c_pkgid).to_string_lossy().into_owned();
+                    (*vec_ptr).push(s);
+                    libc::free(c_pkgid as *mut _);
+                }
+                0
+            }
+
+            pkgmgrinfo_pkginfo_metadata_filter_foreach(
+                filter,
+                filter_cb,
+                &mut pkg_ids as *mut _ as *mut std::os::raw::c_void
+            );
+
+            pkgmgrinfo_pkginfo_metadata_filter_destroy(filter);
+
+            pkg_ids.into_iter().map(|id| PackageInfo {
+                pkg_id: id,
+                installed: true,
+                ..Default::default()
+            }).collect()
+        }
+    }
+
+    fn get_package_metadata_value(&self, pkg_id: &str, key: &str) -> Option<String> {
+        unsafe {
+            use crate::tizen_sys::pkgmgr_info::*;
+            let mut pkginfo: pkgmgrinfo_pkginfo_h = std::ptr::null_mut();
+            let c_pkgid = std::ffi::CString::new(pkg_id).unwrap();
+            
+            if pkgmgrinfo_pkginfo_get_pkginfo(c_pkgid.as_ptr(), &mut pkginfo) != PMINFO_R_OK || pkginfo.is_null() {
+                return None;
+            }
+
+            let mut c_val: *mut std::os::raw::c_char = std::ptr::null_mut();
+            let c_key = std::ffi::CString::new(key).unwrap();
+            let mut result = None;
+
+            if pkgmgrinfo_pkginfo_get_metadata_value(pkginfo, c_key.as_ptr(), &mut c_val) == PMINFO_R_OK && !c_val.is_null() {
+                result = Some(std::ffi::CStr::from_ptr(c_val).to_string_lossy().into_owned());
+                libc::free(c_val as *mut _);
+            }
+
+            pkgmgrinfo_pkginfo_destroy_pkginfo(pkginfo);
+            result
+        }
+    }
+
+    fn get_package_root_path(&self, pkg_id: &str) -> Option<String> {
+        unsafe {
+            use crate::tizen_sys::pkgmgr_info::*;
+            let mut pkginfo: pkgmgrinfo_pkginfo_h = std::ptr::null_mut();
+            let c_pkgid = std::ffi::CString::new(pkg_id).unwrap();
+
+            if pkgmgrinfo_pkginfo_get_pkginfo(c_pkgid.as_ptr(), &mut pkginfo) != PMINFO_R_OK || pkginfo.is_null() {
+                return None;
+            }
+
+            let mut c_val: *mut std::os::raw::c_char = std::ptr::null_mut();
+            let mut result = None;
+
+            if pkgmgrinfo_pkginfo_get_root_path(pkginfo, &mut c_val) == PMINFO_R_OK && !c_val.is_null() {
+                result = Some(std::ffi::CStr::from_ptr(c_val).to_string_lossy().into_owned());
+                libc::free(c_val as *mut _);
+            }
+
+            pkgmgrinfo_pkginfo_destroy_pkginfo(pkginfo);
+            result
+        }
+    }
 }
 
 pub fn parse_tizen_pkg_list(output: &str) -> Vec<PackageInfo> {

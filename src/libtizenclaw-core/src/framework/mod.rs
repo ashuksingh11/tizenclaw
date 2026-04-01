@@ -95,6 +95,22 @@ pub trait PackageManagerProvider: Send + Sync {
     fn is_installed(&self, pkg_id: &str) -> bool {
         self.get_package_info(pkg_id).is_some()
     }
+
+    /// Retrieve packages containing a specific metadata key.
+    /// Default implementation returns an empty vector for generic environments.
+    fn get_packages_by_metadata_key(&self, _key: &str) -> Vec<PackageInfo> {
+        vec![]
+    }
+
+    /// Get a specific metadata value associated with a package.
+    fn get_package_metadata_value(&self, _pkg_id: &str, _key: &str) -> Option<String> {
+        None
+    }
+
+    /// Get the installation root path of a package.
+    fn get_package_root_path(&self, _pkg_id: &str) -> Option<String> {
+        None
+    }
 }
 
 /// Platform-specific application control.

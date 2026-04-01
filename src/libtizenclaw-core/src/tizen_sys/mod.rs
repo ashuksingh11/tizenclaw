@@ -11,6 +11,7 @@ static LIB_DLOG: LazyLock<Option<Library>> = LazyLock::new(|| unsafe { Library::
 static LIB_TIZEN_CORE: LazyLock<Option<Library>> = LazyLock::new(|| unsafe { Library::new("libtizen-core.so.0").or_else(|_| Library::new("libtizen-core.so")).ok() });
 static LIB_VCONF: LazyLock<Option<Library>> = LazyLock::new(|| unsafe { Library::new("libvconf.so.0").or_else(|_| Library::new("libvconf.so")).ok() });
 static LIB_PKGMGR: LazyLock<Option<Library>> = LazyLock::new(|| unsafe { Library::new("libpkgmgr-client.so.0").or_else(|_| Library::new("libpkgmgr-client.so")).ok() });
+static LIB_PKGMGR_INFO: LazyLock<Option<Library>> = LazyLock::new(|| unsafe { Library::new("libpkgmgr-info.so.0").or_else(|_| Library::new("libpkgmgr-info.so")).ok() });
 static LIB_SOUP: LazyLock<Option<Library>> = LazyLock::new(|| unsafe { Library::new("libsoup-2.4.so.1").or_else(|_| Library::new("libsoup-2.4.so")).ok() });
 static LIB_APP_EVENT: LazyLock<Option<Library>> = LazyLock::new(|| unsafe { Library::new("libcapi-appfw-event.so.0").or_else(|_| Library::new("libcapi-appfw-event.so")).ok() });
 static LIB_APP_CONTROL: LazyLock<Option<Library>> = LazyLock::new(|| unsafe { Library::new("libcapi-appfw-app-manager.so.0").or_else(|_| Library::new("libcapi-appfw-app-manager.so")).ok() });
@@ -139,6 +140,62 @@ pub mod pkgmgr {
         dlsym_call!(LIB_PKGMGR, b"pkgmgr_client_listen_status\0", unsafe extern "C" fn(*mut pkgmgr_client, pkgmgr_handler, *mut c_void) -> c_int, 0, client, handler, data)
     }
 }
+
+// ─────────────────────────────────────────
+// pkgmgr-info — Tizen package information
+// ─────────────────────────────────────────
+pub mod pkgmgr_info {
+    use super::*;
+    use std::os::raw::{c_char, c_int, c_void};
+    use std::ptr;
+
+    pub type pkgmgrinfo_pkginfo_h = *mut c_void;
+    pub type pkgmgrinfo_pkginfo_metadata_filter_h = *mut c_void;
+    pub const PMINFO_R_OK: c_int = 0;
+
+    pub unsafe fn pkgmgrinfo_pkginfo_metadata_filter_create(filter: *mut pkgmgrinfo_pkginfo_metadata_filter_h) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_metadata_filter_create\0", unsafe extern "C" fn(*mut pkgmgrinfo_pkginfo_metadata_filter_h) -> c_int, -1, filter)
+    }
+
+    pub unsafe fn pkgmgrinfo_pkginfo_metadata_filter_add(filter: pkgmgrinfo_pkginfo_metadata_filter_h, key: *const c_char, val: *const c_char) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_metadata_filter_add\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_metadata_filter_h, *const c_char, *const c_char) -> c_int, -1, filter, key, val)
+    }
+
+    pub type pkgmgrinfo_pkginfo_metadata_filter_cb = unsafe extern "C" fn(pkgmgrinfo_pkginfo_h, *mut c_void) -> c_int;
+
+    pub unsafe fn pkgmgrinfo_pkginfo_metadata_filter_foreach(filter: pkgmgrinfo_pkginfo_metadata_filter_h, callback: pkgmgrinfo_pkginfo_metadata_filter_cb, user_data: *mut c_void) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_metadata_filter_foreach\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_metadata_filter_h, pkgmgrinfo_pkginfo_metadata_filter_cb, *mut c_void) -> c_int, -1, filter, callback, user_data)
+    }
+
+    pub unsafe fn pkgmgrinfo_pkginfo_metadata_filter_destroy(filter: pkgmgrinfo_pkginfo_metadata_filter_h) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_metadata_filter_destroy\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_metadata_filter_h) -> c_int, -1, filter)
+    }
+
+    pub unsafe fn pkgmgrinfo_pkginfo_get_pkgid(handle: pkgmgrinfo_pkginfo_h, pkgid: *mut *mut c_char) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_get_pkgid\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_h, *mut *mut c_char) -> c_int, -1, handle, pkgid)
+    }
+
+    pub unsafe fn pkgmgrinfo_pkginfo_get_pkginfo(pkgid: *const c_char, pkginfo: *mut pkgmgrinfo_pkginfo_h) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_get_pkginfo\0", unsafe extern "C" fn(*const c_char, *mut pkgmgrinfo_pkginfo_h) -> c_int, -1, pkgid, pkginfo)
+    }
+
+    pub unsafe fn pkgmgrinfo_pkginfo_get_usr_pkginfo(pkgid: *const c_char, uid: c_int, pkginfo: *mut pkgmgrinfo_pkginfo_h) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_get_usr_pkginfo\0", unsafe extern "C" fn(*const c_char, c_int, *mut pkgmgrinfo_pkginfo_h) -> c_int, -1, pkgid, uid, pkginfo)
+    }
+
+    pub unsafe fn pkgmgrinfo_pkginfo_get_root_path(pkginfo: pkgmgrinfo_pkginfo_h, path: *mut *mut c_char) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_get_root_path\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_h, *mut *mut c_char) -> c_int, -1, pkginfo, path)
+    }
+
+    pub unsafe fn pkgmgrinfo_pkginfo_get_metadata_value(pkginfo: pkgmgrinfo_pkginfo_h, key: *const c_char, value: *mut *mut c_char) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_get_metadata_value\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_h, *const c_char, *mut *mut c_char) -> c_int, -1, pkginfo, key, value)
+    }
+
+    pub unsafe fn pkgmgrinfo_pkginfo_destroy_pkginfo(pkginfo: pkgmgrinfo_pkginfo_h) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_destroy_pkginfo\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_h) -> c_int, -1, pkginfo)
+    }
+}
+
 
 // ─────────────────────────────────────────
 // libsoup-2.4 — HTTP Server
