@@ -17,6 +17,9 @@ BuildRequires:  pkgconfig(tizen-core)
 BuildRequires:  pkgconfig(glib-2.0)
 BuildRequires:  pkgconfig(libsoup-2.4)
 BuildRequires:  pkgconfig(pkgmgr)
+BuildRequires:  pkgconfig(pkgmgr-info)
+BuildRequires:  pkgconfig(pkgmgr-installer)
+BuildRequires:  pkgconfig(pkgmgr-parser)
 BuildRequires:  pkgconfig(vconf)
 BuildRequires:  pkgconfig(capi-appfw-event)
 
@@ -134,6 +137,14 @@ fi
 %{_libdir}/libtizenclaw.so
 %dir /opt/usr/share/crash/
 %dir /opt/usr/share/crash/dump/
+
+# pkgmgr metadata parser plugins
+%{_sysconfdir}/package-manager/parserlib/metadata/libtizenclaw-metadata-llm-backend-plugin.so
+%{_datarootdir}/parser-plugins/tizenclaw-metadata-llm-backend-plugin.info
+%{_sysconfdir}/package-manager/parserlib/metadata/libtizenclaw-metadata-skill-plugin.so
+%{_datarootdir}/parser-plugins/tizenclaw-metadata-skill-plugin.info
+%{_sysconfdir}/package-manager/parserlib/metadata/libtizenclaw-metadata-cli-plugin.so
+%{_datarootdir}/parser-plugins/tizenclaw-metadata-cli-plugin.info
 
 ## ═══════════════════════════════════════════
 ##  Development Sub-package

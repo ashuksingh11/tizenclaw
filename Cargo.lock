@@ -747,29 +747,19 @@ name = "libtizenclaw"
 version = "1.0.0"
 dependencies = [
  "libc",
+ "log",
+ "serde_json",
+]
+
+[[package]]
+name = "libtizenclaw-core"
+version = "1.0.0"
+dependencies = [
+ "libc",
  "libloading",
  "log",
- "serde",
- "serde_json",
- "tizen-sys",
-]
-
-[[package]]
-name = "libtizenclaw-client"
-version = "1.0.0"
-dependencies = [
- "libc",
- "log",
- "serde_json",
-]
-
-[[package]]
-name = "libtizenclaw-sdk"
-version = "1.0.0"
-dependencies = [
- "libc",
- "log",
  "reqwest",
+ "serde",
  "serde_json",
 ]
 
@@ -1351,13 +1341,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tizen-sys"
-version = "1.0.0"
-dependencies = [
- "libloading",
-]
-
-[[package]]
 name = "tizenclaw"
 version = "1.0.0"
 dependencies = [
@@ -1365,7 +1348,7 @@ dependencies = [
  "axum",
  "futures-util",
  "libc",
- "libtizenclaw",
+ "libtizenclaw-core",
  "log",
  "regex",
  "reqwest",
@@ -1383,20 +1366,16 @@ name = "tizenclaw-cli"
 version = "1.0.0"
 dependencies = [
  "libc",
+ "libtizenclaw-core",
  "serde",
  "serde_json",
- "tizen-sys",
 ]
 
 [[package]]
-name = "tizenclaw-core"
-version = "1.0.0"
+name = "tizenclaw-metadata-plugin"
+version = "0.1.0"
 dependencies = [
  "libc",
- "libtizenclaw",
- "log",
- "serde_json",
- "tizen-sys",
 ]
 
 [[package]]
@@ -1405,10 +1384,10 @@ version = "1.0.0"
 dependencies = [
  "futures",
  "libc",
+ "libtizenclaw-core",
  "log",
  "serde",
  "serde_json",
- "tizen-sys",
  "tokio",
 ]
 

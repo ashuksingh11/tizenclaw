@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "src/libtizenclaw",
     "src/libtizenclaw-core",
+    "src/pkgmgr-metadata-plugin/rust",
     "src/tizenclaw",
     "src/tizenclaw-cli",
     "src/tizenclaw-tool-executor",

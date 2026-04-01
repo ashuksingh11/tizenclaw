@@ -1,0 +1,11 @@
+[package]
+name = "tizenclaw-metadata-plugin"
+version = "0.1.0"
+edition = "2021"
+description = "TizenClaw pkgmgr metadata parser plugin - Rust core logic"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+libc = "0.2"

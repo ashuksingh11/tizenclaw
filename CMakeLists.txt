@@ -74,6 +74,9 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Mo
 include(ApplyPkgConfig)
 ADD_SUBDIRECTORY(tools/cli)
 
+# pkgmgr metadata parser plugins (C shims + Rust staticlib)
+ADD_SUBDIRECTORY(src/pkgmgr-metadata-plugin)
+
 # System CLI tools — create empty dir
 INSTALL(DIRECTORY DESTINATION "/opt/usr/share/tizen-tools/system_cli")
 
