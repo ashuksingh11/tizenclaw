@@ -5,5 +5,6 @@ includedir=${prefix}/include
 Name: tizenclaw-core
 Description: TizenClaw Plugin SDK — LLM handles, HTTP helper, plugin interfaces
 Version: 1.0.0
-Libs: -L${libdir} -ltizenclaw_core
-Cflags: -I${includedir}
+Libs: -L${libdir} -ltizenclaw-core
+Cflags: -I${includedir}/tizenclaw/core -I${includedir}/tizenclaw
+Requires: tizenclaw, libcurl

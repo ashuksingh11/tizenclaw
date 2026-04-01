@@ -91,14 +91,18 @@ INSTALL(FILES "${CMAKE_SOURCE_DIR}/data/rag/web.zip"
 ##  Install libtizenclaw_core.so (framework & SDK)
 ## ═══════════════════════════════════════════
 INSTALL(FILES "${CMAKE_SOURCE_DIR}/target/release/libtizenclaw_core.so"
-        DESTINATION "${CMAKE_INSTALL_FULL_LIBDIR}")
+        DESTINATION "${CMAKE_INSTALL_FULL_LIBDIR}"
+        RENAME "libtizenclaw-core.so")
 
 # Plugin SDK headers
 INSTALL(FILES
-    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-core/include/tizenclaw_error.h"
     "${CMAKE_SOURCE_DIR}/src/libtizenclaw-core/include/tizenclaw_channel.h"
     "${CMAKE_SOURCE_DIR}/src/libtizenclaw-core/include/tizenclaw_llm_backend.h"
     "${CMAKE_SOURCE_DIR}/src/libtizenclaw-core/include/tizenclaw_curl.h"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}/include/tizenclaw/core")
+
+INSTALL(FILES
+    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-core/include/tizenclaw_error.h"
     DESTINATION "${CMAKE_INSTALL_PREFIX}/include/tizenclaw")
 
 # pkgconfig for tizenclaw-core
