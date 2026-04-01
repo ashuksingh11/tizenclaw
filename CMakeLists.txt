@@ -74,8 +74,25 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Mo
 include(ApplyPkgConfig)
 ADD_SUBDIRECTORY(tools/cli)
 
-# pkgmgr metadata parser plugins (C shims + Rust staticlib)
-ADD_SUBDIRECTORY(src/pkgmgr-metadata-plugin)
+# pkgmgr metadata parser plugins (Rust cdylib — built by cargo_build)
+# Install the Rust-built .so files from target/release/
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/target/release/libtizenclaw_metadata_llm_backend_plugin.so"
+        DESTINATION "/etc/package-manager/parserlib/metadata"
+        RENAME "libtizenclaw-metadata-llm-backend-plugin.so")
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/target/release/libtizenclaw_metadata_skill_plugin.so"
+        DESTINATION "/etc/package-manager/parserlib/metadata"
+        RENAME "libtizenclaw-metadata-skill-plugin.so")
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/target/release/libtizenclaw_metadata_cli_plugin.so"
+        DESTINATION "/etc/package-manager/parserlib/metadata"
+        RENAME "libtizenclaw-metadata-cli-plugin.so")
+
+# Install .info files for pkgmgr parser plugin registration
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/src/tizenclaw-metadata-llm-backend-plugin/data/tizenclaw-metadata-llm-backend-plugin.info"
+        DESTINATION "/usr/share/parser-plugins")
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/src/tizenclaw-metadata-skill-plugin/data/tizenclaw-metadata-skill-plugin.info"
+        DESTINATION "/usr/share/parser-plugins")
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/src/tizenclaw-metadata-cli-plugin/data/tizenclaw-metadata-cli-plugin.info"
+        DESTINATION "/usr/share/parser-plugins")
 
 # System CLI tools — create empty dir
 INSTALL(DIRECTORY DESTINATION "/opt/usr/share/tizen-tools/system_cli")

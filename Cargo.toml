@@ -6,6 +6,10 @@ members = [
     "src/tizenclaw",
     "src/tizenclaw-cli",
     "src/tizenclaw-tool-executor",
+    "src/tizenclaw-metadata-plugin",
+    "src/tizenclaw-metadata-llm-backend-plugin",
+    "src/tizenclaw-metadata-skill-plugin",
+    "src/tizenclaw-metadata-cli-plugin",
 ]
 
 [profile.release]
