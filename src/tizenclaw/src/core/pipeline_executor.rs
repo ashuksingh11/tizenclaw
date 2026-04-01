@@ -147,7 +147,7 @@ mod tests {
             steps: vec![
                 PipelineStep {
                     id: "s1".into(), step_type: "tool".into(),
-                    tool_name: "execute_code".into(), args: json!({}),
+                    tool_name: "test_tool".into(), args: json!({}),
                     prompt: String::new(), output_var: "out".into(),
                     skip_on_failure: false, max_retries: 1,
                 },

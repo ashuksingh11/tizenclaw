@@ -192,7 +192,7 @@ mod tests {
             steps: vec![
                 WorkflowStep {
                     id: "s1".into(), step_type: "tool".into(),
-                    tool_name: "execute_code".into(), args: json!({"code": "print(1)"}),
+                    tool_name: "test_tool".into(), args: json!({"code": "print(1)"}),
                     prompt: String::new(), output_var: "result".into(),
                     condition: String::new(), then_step: String::new(), else_step: String::new(),
                 },

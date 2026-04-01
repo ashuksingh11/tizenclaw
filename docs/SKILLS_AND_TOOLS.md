@@ -15,7 +15,7 @@ TizenClaw uses a **ToolWatch** loop to reload standard scripts gracefully withou
 3. The LLM is granted abstract function declarations via JSON schemas to utilize the tool via JSON-RPC.
 
 **Built-in Preloaded Tools**:
-- `execute_code`: Running arbitrary Python blobs in a sub-process.
+
 - `execute_cli`: Abstract interaction gateway for system binary shelling.
 - Memory handling (`remember`/`forget`).
 

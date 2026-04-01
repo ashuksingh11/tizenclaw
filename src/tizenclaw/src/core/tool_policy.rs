@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn test_check_policy_allows_first_call() {
         let policy = ToolPolicy::new();
-        assert!(policy.check_policy("s1", "execute_code", &json!({"k": "v"})).is_ok());
+        assert!(policy.check_policy("s1", "test_tool", &json!({"k": "v"})).is_ok());
     }
 
     #[test]

@@ -8,19 +8,6 @@ pub struct ToolDeclarationBuilder;
 impl ToolDeclarationBuilder {
     /// Append all built-in tool declarations.
     pub fn append_builtin_tools(tools: &mut Vec<LlmToolDecl>) {
-        // execute_code
-        tools.push(LlmToolDecl {
-            name: "execute_code".into(),
-            description: "Execute arbitrary Shell/Bash code on the Tizen device. The code MUST print a JSON result to stdout as the last line.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "code": {"type": "string", "description": "Shell code to execute on the Tizen device"}
-                },
-                "required": ["code"]
-            }),
-        });
-
         // switch_user
         tools.push(LlmToolDecl {
             name: "switch_user".into(),
@@ -340,18 +327,11 @@ mod tests {
     }
 
     #[test]
-    fn test_builtin_tools_has_execute_code() {
-        let mut tools = vec![];
-        ToolDeclarationBuilder::append_builtin_tools(&mut tools);
-        assert!(tools.iter().any(|t| t.name == "execute_code"));
-    }
-
-    #[test]
     fn test_builtin_tools_has_required_names() {
         let mut tools = vec![];
         ToolDeclarationBuilder::append_builtin_tools(&mut tools);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-        for expected in &["execute_code", "create_task", "remember", "recall",
+        for expected in &["create_task", "remember", "recall",
                           "create_session", "list_sessions", "search_knowledge"] {
             assert!(names.contains(expected), "Missing builtin tool: {}", expected);
         }
@@ -380,13 +360,5 @@ mod tests {
         assert_eq!(tools[0].description, "Manage WiFi");
     }
 
-    #[test]
-    fn test_execute_code_has_required_code_param() {
-        let mut tools = vec![];
-        ToolDeclarationBuilder::append_builtin_tools(&mut tools);
-        let ec = tools.iter().find(|t| t.name == "execute_code").unwrap();
-        assert!(ec.parameters["properties"]["code"].is_object());
-        assert_eq!(ec.parameters["required"][0], "code");
-    }
 }
 
