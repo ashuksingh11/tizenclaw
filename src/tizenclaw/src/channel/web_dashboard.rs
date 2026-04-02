@@ -29,7 +29,7 @@ use tower_http::{
 
 fn get_app_data_dir() -> String {
     std::env::var("TIZENCLAW_DATA_DIR")
-        .unwrap_or_else(|_| "/opt/usr/data/tizenclaw".to_string())
+        .unwrap_or_else(|_| "/opt/usr/share/tizenclaw".to_string())
 }
 
 fn get_share_dir() -> String {
@@ -83,6 +83,7 @@ impl WebDashboard {
             .to_string();
 
         let config_dir = format!("{}/config", &get_share_dir());
+        let _ = std::fs::create_dir_all(&config_dir);
         let default_hash = sha256_hex("admin");
         let pw_hash = load_admin_password(&format!("{}/admin_password.json", config_dir))
             .unwrap_or(default_hash);
@@ -505,6 +506,9 @@ async fn api_config_set(headers: HeaderMap, State(state): State<AppState>, AxumP
 
     let content = payload.get("content").and_then(|v| v.as_str()).unwrap_or("");
     let fpath = state.config_dir.join(&name);
+    if let Some(parent) = fpath.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     if fpath.exists() { let _ = std::fs::copy(&fpath, state.config_dir.join(format!("{}.bak", name))); }
     match std::fs::write(&fpath, content) {
         Ok(()) => {

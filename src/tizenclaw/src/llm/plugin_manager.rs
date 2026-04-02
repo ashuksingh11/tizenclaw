@@ -156,16 +156,8 @@ impl PluginManager {
         self.plugin_configs.get(name).cloned()
     }
 
-    /// List all available backend names (built-in + plugins).
-    pub fn available_backends(&self) -> Vec<String> {
-        let mut names: Vec<String> = vec![
-            "gemini".into(),
-            "openai".into(),
-            "xai".into(),
-            "anthropic".into(),
-            "ollama".into(),
-        ];
-        names.extend(self.plugin_registry.keys().cloned());
-        names
+    /// List all available plugin backend names.
+    pub fn available_plugins(&self) -> Vec<String> {
+        self.plugin_registry.keys().cloned().collect()
     }
 }

@@ -84,7 +84,7 @@ impl log::Log for PlatformLogBridge {
 
 static FILE_LOG: Mutex<Option<FileLogBackend>> = Mutex::new(None);
 
-struct FileLogBackend {
+pub struct FileLogBackend {
     path: String,
     max_size: usize,
 }

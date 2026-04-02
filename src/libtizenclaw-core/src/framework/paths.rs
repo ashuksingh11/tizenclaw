@@ -138,7 +138,7 @@ impl PlatformPaths {
 
     /// Get the session database path.
     pub fn sessions_db_path(&self) -> PathBuf {
-        self.data_dir.join("sessions.db")
+        self.data_dir.join("sessions/sessions.db")
     }
 
     /// Get the app data directory (for web dashboard file-based storage).

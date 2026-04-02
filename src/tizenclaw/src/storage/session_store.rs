@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::fs::{self, OpenOptions};
 use std::io::{Write, Read};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct SessionMessage {
@@ -25,11 +25,12 @@ pub struct TokenUsage {
 #[derive(Clone)]
 pub struct SessionStore {
     base_dir: PathBuf,
+    db: Arc<Mutex<rusqlite::Connection>>,
     lock: Arc<RwLock<()>>,
 }
 
 impl SessionStore {
-    pub fn new(_db_path: &str) -> Result<Self, String> {
+    pub fn new(db_path: &str) -> Result<Self, String> {
         let base_dir = PathBuf::from("/opt/usr/share/tizenclaw");
         let sessions_dir = base_dir.join("sessions");
         let audit_dir = base_dir.join("audit");
@@ -37,8 +38,19 @@ impl SessionStore {
         fs::create_dir_all(&sessions_dir).map_err(|e| e.to_string())?;
         fs::create_dir_all(&audit_dir).map_err(|e| e.to_string())?;
 
+        let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS session_files (
+                id TEXT PRIMARY KEY,
+                file_path TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )",
+            [],
+        ).map_err(|e| e.to_string())?;
+
         Ok(SessionStore {
             base_dir,
+            db: Arc::new(Mutex::new(conn)),
             lock: Arc::new(RwLock::new(())),
         })
     }
@@ -60,6 +72,13 @@ impl SessionStore {
             };
             let frontmatter = format!("---\nid: {}\ntimestamp: {}\n---\n\n", session_id, get_timestamp());
             let _ = file.write_all(frontmatter.as_bytes());
+
+            if let Ok(conn) = self.db.lock() {
+                let _ = conn.execute(
+                    "INSERT OR IGNORE INTO session_files (id, file_path, created_at) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![session_id, path.to_string_lossy().into_owned(), get_timestamp()],
+                );
+            }
         }
     }
 

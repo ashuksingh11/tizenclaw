@@ -53,7 +53,7 @@ __pycache__/
 
 # Gemini agent
 .gemini/
-data/devel/
+# data/devel/
 dlog_dump.txt
 
 # Build logs & warnings
