@@ -164,30 +164,72 @@ impl AgentCore {
 
         // Initialize plugin manager
         let mut plugin_manager = crate::llm::plugin_manager::PluginManager::new();
-        plugin_manager.add_plugin_dir(paths.llm_plugins_dir.clone());
+        // Plugins are exclusively scanned via PackageManager via `scan_plugins`.
         plugin_manager.scan_plugins(Some(self.platform.package_manager.as_ref()));
 
-        // Initialize primary backend
-        let primary = Self::create_and_init_backend_static(&plugin_manager, &config, &active_name);
-        if primary.is_some() {
-            log::info!("Primary LLM backend '{}' initialized", active_name);
-        } else {
-            log::error!("Primary LLM backend '{}' failed to initialize", active_name);
+        struct BackendCandidate {
+            name: String,
+            priority: i64,
         }
+        let mut candidates = Vec::new();
 
-        *self.backend.write().await = primary;
-        if let Ok(mut bn) = self.backend_name.write() {
-            *bn = active_name;
+        // 1. Add active backend
+        let mut active_prio = 1;
+        if let Some(p) = config.backends.get(&active_name).and_then(|v| v.get("priority")).and_then(|v| v.as_i64()) {
+            active_prio = p;
         }
+        candidates.push(BackendCandidate { name: active_name.clone(), priority: active_prio });
 
-        // Initialize fallback backends
-        let mut fallbacks = Vec::new();
+        // 2. Add fallback backends
         for name in &fallback_names {
-            if let Some(be) = Self::create_and_init_backend_static(&plugin_manager, &config, name) {
-                log::info!("Fallback LLM backend '{}' initialized", name);
-                fallbacks.push(be);
+            if name == &active_name { continue; }
+            let prio = config.backends.get(name).and_then(|v| v.get("priority")).and_then(|v| v.as_i64()).unwrap_or(1);
+            if !candidates.iter().any(|c| c.name == *name) {
+                candidates.push(BackendCandidate { name: name.clone(), priority: prio });
             }
         }
+
+        // 3. Add plugin backends and remaining available ones
+        for name in plugin_manager.available_backends() {
+            if candidates.iter().any(|c| c.name == name) { continue; }
+            let prio = if let Some(cfg) = plugin_manager.get_plugin_config(&name) {
+                cfg.get("priority").and_then(|v| v.as_i64()).unwrap_or(0)
+            } else if let Some(p) = config.backends.get(&name).and_then(|v| v.get("priority")).and_then(|v| v.as_i64()) {
+                 p
+            } else {
+                 0
+            };
+            candidates.push(BackendCandidate { name, priority: prio });
+        }
+
+        // 4. Sort descending by priority, so highest priority is first
+        candidates.sort_by(|a, b| b.priority.cmp(&a.priority));
+
+        // 5. Initialize backends iteratively
+        let mut primary_initialized = false;
+        let mut fallbacks = Vec::new();
+
+        for cand in candidates {
+            if let Some(be) = Self::create_and_init_backend_static(&plugin_manager, &config, &cand.name) {
+                if !primary_initialized {
+                    log::info!("Primary LLM backend '{}' initialized (priority {})", cand.name, cand.priority);
+                    *self.backend.write().await = Some(be);
+                    if let Ok(mut bn) = self.backend_name.write() {
+                        *bn = cand.name.clone();
+                    }
+                    primary_initialized = true;
+                } else {
+                    log::info!("Fallback LLM backend '{}' initialized (priority {})", cand.name, cand.priority);
+                    fallbacks.push(be);
+                }
+            }
+        }
+
+        if !primary_initialized {
+            log::error!("Failed to initialize ANY backend from candidates list!");
+            *self.backend.write().await = None;
+        }
+
         *self.fallback_backends.write().await = fallbacks;
 
         // Store config for later use
