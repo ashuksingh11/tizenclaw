@@ -59,6 +59,10 @@ struct ToolsListInner {
 
 unsafe fn set_str(dst: *mut *mut c_char, src: &str) -> i32 {
     if dst.is_null() { return EINVAL; }
+    if src.is_empty() {
+        *dst = std::ptr::null_mut();
+        return OK;
+    }
     match CString::new(src) {
         Ok(cs) => { 
             let ptr = libc::strdup(cs.as_ptr());
