@@ -86,6 +86,53 @@ impl PluginManager {
         }
     }
 
+    /// Load a single plugin by its package ID (used dynamically during installation)
+    pub fn load_plugin_from_pkg(&mut self, pm: Option<&dyn libtizenclaw_core::framework::PackageManagerProvider>, pkgid: &str) -> bool {
+        let Some(pkgmgr) = pm else {
+            return false;
+        };
+
+        let root_path = match pkgmgr.get_package_root_path(pkgid) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        let so_value = match pkgmgr.get_package_metadata_value(pkgid, "http://tizen.org/metadata/tizenclaw/llm-backend") {
+            Some(v) => v,
+            None => return false, // Not an LLM backend plugin
+        };
+
+        let full_so_path = format!("{}/lib/{}", root_path, so_value);
+
+        let mut config = serde_json::json!({});
+        let cfg_path = format!("{}/res/plugin_llm_config.json", root_path);
+        let fallback_cfg_path = format!("{}/plugin_llm_config.json", root_path);
+        if let Ok(content) = std::fs::read_to_string(&cfg_path).or_else(|_| std::fs::read_to_string(&fallback_cfg_path)) {
+            if let Ok(parsed) = serde_json::from_str(&content) {
+                config = parsed;
+            }
+        }
+
+        let so_path = PathBuf::from(&full_so_path);
+        if so_path.exists() {
+            log::info!("PluginManager: dynamically registered plugin '{}' at '{}'", pkgid, full_so_path);
+            self.plugin_registry.insert(pkgid.to_string(), so_path);
+            self.plugin_configs.insert(pkgid.to_string(), config);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn unload_plugin_from_pkg(&mut self, pkgid: &str) -> bool {
+        let removed = self.plugin_registry.remove(pkgid).is_some();
+        self.plugin_configs.remove(pkgid);
+        if removed {
+            log::info!("PluginManager: dynamically unloaded plugin '{}'", pkgid);
+        }
+        removed
+    }
+
     /// Create an LLM backend by name (built-in or plugin).
     pub fn create_backend(&self, name: &str) -> Option<Box<dyn LlmBackend>> {
         // Try built-in backends first

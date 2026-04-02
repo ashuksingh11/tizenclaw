@@ -122,10 +122,11 @@ pub mod pkgmgr {
     use std::os::raw::{c_char, c_int, c_void};
 
     pub type pkgmgr_client = c_void;
-    pub const PC_LISTENING: c_int = 0;
+    pub const PC_LISTENING: c_int = 4;
+    pub const PKGMGR_CLIENT_STATUS_ALL: c_int = 0;
 
     pub type pkgmgr_handler = unsafe extern "C" fn(
-        c_int, *const c_char, *const c_char, *const c_char, *const c_char, *const c_void, *mut c_void
+        u32, c_int, *const c_char, *const c_char, *const c_char, *const c_char, *const c_void, *mut c_void
     ) -> c_int;
 
     pub unsafe fn pkgmgr_client_new(client_type: c_int) -> *mut pkgmgr_client {
@@ -134,6 +135,10 @@ pub mod pkgmgr {
 
     pub unsafe fn pkgmgr_client_free(client: *mut pkgmgr_client) -> c_int {
         dlsym_call!(LIB_PKGMGR, b"pkgmgr_client_free\0", unsafe extern "C" fn(*mut pkgmgr_client) -> c_int, 0, client)
+    }
+
+    pub unsafe fn pkgmgr_client_set_status_type(client: *mut pkgmgr_client, status_type: c_int) -> c_int {
+        dlsym_call!(LIB_PKGMGR, b"pkgmgr_client_set_status_type\0", unsafe extern "C" fn(*mut pkgmgr_client, c_int) -> c_int, -1, client, status_type)
     }
 
     pub unsafe fn pkgmgr_client_listen_status(client: *mut pkgmgr_client, handler: pkgmgr_handler, data: *mut c_void) -> c_int {
@@ -150,25 +155,33 @@ pub mod pkgmgr_info {
     use std::ptr;
 
     pub type pkgmgrinfo_pkginfo_h = *mut c_void;
-    pub type pkgmgrinfo_pkginfo_metadata_filter_h = *mut c_void;
+    pub type pkgmgrinfo_pkginfo_filter_h = *mut c_void;
     pub const PMINFO_R_OK: c_int = 0;
 
-    pub unsafe fn pkgmgrinfo_pkginfo_metadata_filter_create(filter: *mut pkgmgrinfo_pkginfo_metadata_filter_h) -> c_int {
-        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_metadata_filter_create\0", unsafe extern "C" fn(*mut pkgmgrinfo_pkginfo_metadata_filter_h) -> c_int, -1, filter)
+    pub unsafe fn pkgmgrinfo_pkginfo_filter_create(filter: *mut pkgmgrinfo_pkginfo_filter_h) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_filter_create\0", unsafe extern "C" fn(*mut pkgmgrinfo_pkginfo_filter_h) -> c_int, -1, filter)
     }
 
-    pub unsafe fn pkgmgrinfo_pkginfo_metadata_filter_add(filter: pkgmgrinfo_pkginfo_metadata_filter_h, key: *const c_char, val: *const c_char) -> c_int {
-        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_metadata_filter_add\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_metadata_filter_h, *const c_char, *const c_char) -> c_int, -1, filter, key, val)
+    pub unsafe fn pkgmgrinfo_pkginfo_metadata_filter_create(filter: *mut pkgmgrinfo_pkginfo_filter_h) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_metadata_filter_create\0", unsafe extern "C" fn(*mut pkgmgrinfo_pkginfo_filter_h) -> c_int, -1, filter)
+    }
+
+    pub unsafe fn pkgmgrinfo_pkginfo_metadata_filter_add(filter: pkgmgrinfo_pkginfo_filter_h, key: *const c_char, val: *const c_char) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_metadata_filter_add\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_filter_h, *const c_char, *const c_char) -> c_int, -1, filter, key, val)
     }
 
     pub type pkgmgrinfo_pkginfo_metadata_filter_cb = unsafe extern "C" fn(pkgmgrinfo_pkginfo_h, *mut c_void) -> c_int;
 
-    pub unsafe fn pkgmgrinfo_pkginfo_metadata_filter_foreach(filter: pkgmgrinfo_pkginfo_metadata_filter_h, callback: pkgmgrinfo_pkginfo_metadata_filter_cb, user_data: *mut c_void) -> c_int {
-        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_metadata_filter_foreach\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_metadata_filter_h, pkgmgrinfo_pkginfo_metadata_filter_cb, *mut c_void) -> c_int, -1, filter, callback, user_data)
+    pub unsafe fn pkgmgrinfo_pkginfo_metadata_filter_foreach(filter: pkgmgrinfo_pkginfo_filter_h, callback: pkgmgrinfo_pkginfo_metadata_filter_cb, user_data: *mut c_void) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_metadata_filter_foreach\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_filter_h, pkgmgrinfo_pkginfo_metadata_filter_cb, *mut c_void) -> c_int, -1, filter, callback, user_data)
     }
 
-    pub unsafe fn pkgmgrinfo_pkginfo_metadata_filter_destroy(filter: pkgmgrinfo_pkginfo_metadata_filter_h) -> c_int {
-        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_metadata_filter_destroy\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_metadata_filter_h) -> c_int, -1, filter)
+    pub unsafe fn pkgmgrinfo_pkginfo_filter_destroy(filter: pkgmgrinfo_pkginfo_filter_h) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_filter_destroy\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_filter_h) -> c_int, -1, filter)
+    }
+
+    pub unsafe fn pkgmgrinfo_pkginfo_metadata_filter_destroy(filter: pkgmgrinfo_pkginfo_filter_h) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_metadata_filter_destroy\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_filter_h) -> c_int, -1, filter)
     }
 
     pub unsafe fn pkgmgrinfo_pkginfo_get_pkgid(handle: pkgmgrinfo_pkginfo_h, pkgid: *mut *mut c_char) -> c_int {
@@ -185,6 +198,10 @@ pub mod pkgmgr_info {
 
     pub unsafe fn pkgmgrinfo_pkginfo_get_root_path(pkginfo: pkgmgrinfo_pkginfo_h, path: *mut *mut c_char) -> c_int {
         dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_get_root_path\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_h, *mut *mut c_char) -> c_int, -1, pkginfo, path)
+    }
+
+    pub unsafe fn pkgmgrinfo_pkginfo_get_res_path(pkginfo: pkgmgrinfo_pkginfo_h, path: *mut *mut c_char) -> c_int {
+        dlsym_call!(LIB_PKGMGR_INFO, b"pkgmgrinfo_pkginfo_get_res_path\0", unsafe extern "C" fn(pkgmgrinfo_pkginfo_h, *mut *mut c_char) -> c_int, -1, pkginfo, path)
     }
 
     pub unsafe fn pkgmgrinfo_pkginfo_get_metadata_value(pkginfo: pkgmgrinfo_pkginfo_h, key: *const c_char, value: *mut *mut c_char) -> c_int {

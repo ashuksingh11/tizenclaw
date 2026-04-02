@@ -65,6 +65,23 @@ async fn main() {
     }
     let agent = Arc::new(agent);
 
+    // Register pkgmgr listener for runtime plugin injection
+    use libtizenclaw_core::plugin_core::pkgmgr_client::{PkgmgrClient, PkgmgrListener, PkgmgrEventArgs};
+    struct AgentPkgmgrListener(Arc<core::agent_core::AgentCore>);
+    impl PkgmgrListener for AgentPkgmgrListener {
+        fn on_pkgmgr_event(&self, args: Arc<PkgmgrEventArgs>) {
+            if args.event_status == "end" {
+                let agent_clone = self.0.clone();
+                let event_name = args.event_name.clone();
+                let pkgid = args.pkgid.clone();
+                tokio::spawn(async move {
+                    agent_clone.handle_pkgmgr_event(&event_name, &pkgid).await;
+                });
+            }
+        }
+    }
+    PkgmgrClient::global().add_listener(Arc::new(AgentPkgmgrListener(agent.clone())));
+
     // ── Phase 5: Start ToolWatcher ──
     log::info!("[Boot] Starting ToolWatcher...");
     let mut tool_watcher = core::tool_watcher::ToolWatcher::new(

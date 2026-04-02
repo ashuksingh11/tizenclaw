@@ -7,6 +7,9 @@ description: Enforces stable and non-blocking shell command execution strategies
 
 **Environment Context:** You are operating in a **Windows Antigravity** environment, and you MUST access **Ubuntu via WSL (Windows Subsystem for Linux)** to execute any system, build, or deployment commands. You are NOT in a native Linux host.
 
+> [!IMPORTANT]
+> **Shell Detection Rule**: Before executing ANY terminal command, consult the [`shell-detection.md`](../../rules/shell-detection.md) rule to determine whether to use PowerShell or WSL Bash. The decision matrix in that rule is authoritative.
+
 This architectural skillset establishes stringent constraints isolating the continuous compilation tasks safely natively inside the WSL filesystem. Because the workspace spans Windows and WSL environments (via Samba or WSL mounts), you **MUST** respect the following access constraints ensuring target isolation:
 
 ## 1. Mandatory WSL Shell Wrapper

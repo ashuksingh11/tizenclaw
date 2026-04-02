@@ -259,6 +259,105 @@ impl AgentCore {
         true
     }
 
+    /// Dynamically handle package manager events for plugins
+    pub async fn handle_pkgmgr_event(&self, event_name: &str, pkgid: &str) {
+        log::info!("Handling pkgmgr event: {} for pkgid: {}", event_name, pkgid);
+        
+        let mut plugin_manager = crate::llm::plugin_manager::PluginManager::new();
+        let loaded = if event_name == "install" || event_name == "recoverinstall" || event_name == "upgrade" || event_name == "recoverupgrade" {
+            plugin_manager.load_plugin_from_pkg(Some(self.platform.package_manager.as_ref()), pkgid)
+        } else {
+            false
+        };
+
+        let unloaded = if event_name == "uninstall" || event_name == "recoveruninstall" {
+            // Note: PluginManager removes from registry, but we do a full reload of backends anyway
+            true
+        } else {
+            false
+        };
+
+        if loaded || unloaded {
+            log::info!("Triggering LLM backend reload due to plugin changes...");
+            self.reload_backends().await;
+        }
+    }
+
+    /// Reload LLM backends dynamically
+    pub async fn reload_backends(&self) {
+        let paths = &self.platform.paths;
+        let llm_config_path = paths.config_dir.join("llm_config.json");
+        let config = LlmConfig::load(&llm_config_path.to_string_lossy());
+        
+        // Re-scan plugins
+        let mut plugin_manager = crate::llm::plugin_manager::PluginManager::new();
+        plugin_manager.scan_plugins(Some(self.platform.package_manager.as_ref()));
+
+        let active_name = config.active_backend.clone();
+        let fallback_names = config.fallback_backends.clone();
+        
+        struct BackendCandidate {
+            name: String,
+            priority: i64,
+        }
+        let mut candidates = Vec::new();
+
+        let mut active_prio = 1;
+        if let Some(p) = config.backends.get(&active_name).and_then(|v| v.get("priority")).and_then(|v| v.as_i64()) {
+            active_prio = p;
+        }
+        candidates.push(BackendCandidate { name: active_name.clone(), priority: active_prio });
+
+        for name in &fallback_names {
+            if name == &active_name { continue; }
+            let prio = config.backends.get(name).and_then(|v| v.get("priority")).and_then(|v| v.as_i64()).unwrap_or(1);
+            if !candidates.iter().any(|c| c.name == *name) {
+                candidates.push(BackendCandidate { name: name.clone(), priority: prio });
+            }
+        }
+
+        for name in plugin_manager.available_backends() {
+            if candidates.iter().any(|c| c.name == name) { continue; }
+            let prio = if let Some(cfg) = plugin_manager.get_plugin_config(&name) {
+                cfg.get("priority").and_then(|v| v.as_i64()).unwrap_or(0)
+            } else if let Some(p) = config.backends.get(&name).and_then(|v| v.get("priority")).and_then(|v| v.as_i64()) {
+                 p
+            } else {
+                 0
+            };
+            candidates.push(BackendCandidate { name, priority: prio });
+        }
+
+        candidates.sort_by(|a, b| b.priority.cmp(&a.priority));
+
+        let mut primary_initialized = false;
+        let mut fallbacks = Vec::new();
+
+        for cand in candidates {
+            if let Some(be) = Self::create_and_init_backend_static(&plugin_manager, &config, &cand.name) {
+                if !primary_initialized {
+                    log::info!("Dynamically swapped Primary LLM backend to '{}' (priority {})", cand.name, cand.priority);
+                    *self.backend.write().await = Some(be);
+                    if let Ok(mut bn) = self.backend_name.write() {
+                        *bn = cand.name.clone();
+                    }
+                    primary_initialized = true;
+                } else {
+                    fallbacks.push(be);
+                }
+            }
+        }
+
+        if !primary_initialized {
+            log::warn!("Failed to initialize ANY backend during reload!");
+            *self.backend.write().await = None;
+        }
+
+        // Properly update fallback backends
+        *self.fallback_backends.write().await = fallbacks;
+    }
+
+
     /// Create and initialize an LLM backend by name using the provided config.
     fn create_and_init_backend_static(
         plugin_manager: &crate::llm::plugin_manager::PluginManager,

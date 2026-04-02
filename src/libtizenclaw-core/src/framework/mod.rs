@@ -111,6 +111,11 @@ pub trait PackageManagerProvider: Send + Sync {
     fn get_package_root_path(&self, _pkg_id: &str) -> Option<String> {
         None
     }
+
+    /// Get the installation resource path of a package.
+    fn get_package_res_path(&self, _pkg_id: &str) -> Option<String> {
+        None
+    }
 }
 
 /// Platform-specific application control.

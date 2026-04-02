@@ -15,6 +15,7 @@
 
 pub mod logging;
 pub mod adapters;
+pub mod pkgmgr_client;
 
 use std::ffi::CString;
 use std::os::raw::c_char;
