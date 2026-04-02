@@ -37,9 +37,12 @@ pub struct GList {
 }
 
 /// Privilege level constants from `<pkgmgr-info.h>`.
-pub const PM_PRIVILEGE_UNKNOWN: c_int = 0;
+pub const PM_PRIVILEGE_UNKNOWN: c_int = -1;
+pub const PM_PRIVILEGE_UNTRUSTED: c_int = 0;
+pub const PM_PRIVILEGE_PUBLIC: c_int = 1;
+pub const PM_PRIVILEGE_PARTNER: c_int = 2;
 /// Platform-level privilege (highest tier).
-pub const PM_PRIVILEGE_PLATFORM: c_int = 5;
+pub const PM_PRIVILEGE_PLATFORM: c_int = 3;
 
 extern "C" {
     /// Query the privilege level of the current package installer session.
