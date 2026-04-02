@@ -29,8 +29,8 @@ pub struct SessionStore {
 }
 
 impl SessionStore {
-    pub fn new(db_path: &str) -> Result<Self, String> {
-        let base_dir = Path::new(db_path).parent().unwrap_or(Path::new(".")).to_path_buf();
+    pub fn new(_db_path: &str) -> Result<Self, String> {
+        let base_dir = PathBuf::from("/opt/usr/share/tizenclaw");
         let sessions_dir = base_dir.join("sessions");
         let audit_dir = base_dir.join("audit");
         
@@ -44,7 +44,10 @@ impl SessionStore {
     }
 
     fn session_path(&self, session_id: &str) -> PathBuf {
-        self.base_dir.join("sessions").join(format!("{}.md", session_id))
+        let date = today_date_str();
+        let date_dir = self.base_dir.join("sessions").join(&date);
+        let _ = fs::create_dir_all(&date_dir);
+        date_dir.join(format!("{}_{}.md", date, session_id))
     }
 
     pub fn ensure_session(&self, session_id: &str) {
@@ -137,6 +140,19 @@ impl SessionStore {
 fn get_timestamp() -> String {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
     format!("{}", now)
+}
+
+fn today_date_str() -> String {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+    let days = secs / 86400; 
+    let y = (days * 4 + 2) / 1461 + 1970;
+    let mut doy = days - ((y - 1970) * 365 + (y - 1969) / 4);
+    let leap = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 1 } else { 0 };
+    let months = [31, 28 + leap, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mut m = 0;
+    for (i, &ml) in months.iter().enumerate() { if doy < ml { m = i as u64 + 1; break; } doy -= ml; }
+    if m == 0 { m = 12; }
+    format!("{:04}-{:02}-{:02}", y, m, doy + 1)
 }
 
 #[cfg(test)]

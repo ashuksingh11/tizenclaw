@@ -31,6 +31,11 @@ fn get_app_data_dir() -> String {
     std::env::var("TIZENCLAW_DATA_DIR")
         .unwrap_or_else(|_| "/opt/usr/data/tizenclaw".to_string())
 }
+
+fn get_share_dir() -> String {
+    std::env::var("TIZENCLAW_SHARE_DIR")
+        .unwrap_or_else(|_| "/opt/usr/share/tizenclaw".to_string())
+}
 const ALLOWED_CONFIGS: &[&str] = &[
     "llm_config.json",
     "telegram_config.json",
@@ -77,7 +82,7 @@ impl WebDashboard {
             .unwrap_or(&default_web_root)
             .to_string();
 
-        let config_dir = format!("{}/config", &get_app_data_dir());
+        let config_dir = format!("{}/config", &get_share_dir());
         let default_hash = sha256_hex("admin");
         let pw_hash = load_admin_password(&format!("{}/admin_password.json", config_dir))
             .unwrap_or(default_hash);
@@ -362,20 +367,35 @@ fn ipc_send_prompt(session_id: &str, prompt: &str) -> Result<String, String> {
 }
 
 async fn api_sessions() -> Json<Value> {
-    let sessions_dir = format!("{}/sessions", &get_app_data_dir());
+    let sessions_dir = format!("{}/sessions", &get_share_dir());
     Json(Value::Array(list_md_files(&sessions_dir)))
 }
 
 async fn api_session_dates() -> Json<Value> {
-    let sessions_dir = format!("{}/sessions", &get_app_data_dir());
-    Json(json!({"dates": collect_dates(&sessions_dir)}))
+    let sessions_dir = format!("{}/sessions", &get_share_dir());
+    let mut dates = std::collections::BTreeSet::new();
+    if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
+        for entry in entries.flatten() {
+            if entry.path().is_dir() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.len() == 10 { dates.insert(name); }
+            }
+        }
+    }
+    Json(json!({"dates": dates.into_iter().collect::<Vec<_>>()}))
 }
 
 async fn api_session_detail(AxumPath(id): AxumPath<String>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if id.contains("..") || id.contains('/') {
         return Err(json_error(StatusCode::BAD_REQUEST, "Invalid id"));
     }
-    let path = format!("{}/sessions/{}.md", &get_app_data_dir(), id);
+    let parts: Vec<&str> = id.split('_').collect();
+    let path = if parts.len() >= 2 && parts[0].len() == 10 {
+        format!("{}/sessions/{}/{}.md", &get_share_dir(), parts[0], id)
+    } else {
+        format!("{}/sessions/{}.md", &get_share_dir(), id)
+    };
+    
     match std::fs::read_to_string(&path) {
         Ok(content) => Ok(Json(json!({"id": id, "content": content}))),
         Err(_) => Err(json_error(StatusCode::NOT_FOUND, "Session not found")),
@@ -383,12 +403,12 @@ async fn api_session_detail(AxumPath(id): AxumPath<String>) -> Result<Json<Value
 }
 
 async fn api_tasks() -> Json<Value> {
-    let tasks_dir = format!("{}/tasks", &get_app_data_dir());
+    let tasks_dir = format!("{}/tasks", &get_share_dir());
     Json(Value::Array(list_md_files(&tasks_dir)))
 }
 
 async fn api_task_dates() -> Json<Value> {
-    let tasks_dir = format!("{}/tasks", &get_app_data_dir());
+    let tasks_dir = format!("{}/tasks", &get_share_dir());
     Json(json!({"dates": collect_dates(&tasks_dir)}))
 }
 
@@ -397,7 +417,7 @@ async fn api_task_detail(AxumPath(file): AxumPath<String>) -> Result<Json<Value>
         return Err(json_error(StatusCode::BAD_REQUEST, "Invalid file"));
     }
     let fname = if file.ends_with(".md") { file.clone() } else { format!("{}.md", file) };
-    let path = format!("{}/tasks/{}", &get_app_data_dir(), fname);
+    let path = format!("{}/tasks/{}", &get_share_dir(), fname);
     match std::fs::read_to_string(&path) {
         Ok(content) => Ok(Json(json!({"file": fname, "content": content}))),
         Err(_) => Err(json_error(StatusCode::NOT_FOUND, "Task not found")),
@@ -412,7 +432,7 @@ async fn api_logs(Query(q): Query<LogQuery>) -> Result<Json<Value>, (StatusCode,
     if date.len() != 10 || date.as_bytes().get(4) != Some(&b'-') || date.as_bytes().get(7) != Some(&b'-') {
         return Err(json_error(StatusCode::BAD_REQUEST, "Invalid date format"));
     }
-    let log_path = format!("{}/audit/{}.md", &get_app_data_dir(), date);
+    let log_path = format!("{}/audit/{}.md", &get_share_dir(), date);
     let mut logs = vec![];
     if let Ok(content) = std::fs::read_to_string(&log_path) {
         logs.push(json!({"date": date, "content": content}));
@@ -421,7 +441,7 @@ async fn api_logs(Query(q): Query<LogQuery>) -> Result<Json<Value>, (StatusCode,
 }
 
 async fn api_log_dates() -> Json<Value> {
-    let audit_dir = format!("{}/audit", &get_app_data_dir());
+    let audit_dir = format!("{}/audit", &get_share_dir());
     Json(json!({"dates": collect_dates(&audit_dir)}))
 }
 
@@ -628,10 +648,22 @@ fn list_md_files(dir: &str) -> Vec<Value> {
     let mut entries = vec![];
     if let Ok(read_dir) = std::fs::read_dir(dir) {
         for entry in read_dir.flatten() {
-            let path = entry.path(); if !path.is_file() { continue; }
-            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-            if name.starts_with('.') || !name.ends_with(".md") { continue; }
-            entries.push(json!({"id": name.trim_end_matches(".md"), "file": name, "size_bytes": path.metadata().map(|m| m.len()).unwrap_or(0)}));
+            let path = entry.path(); 
+            if path.is_dir() {
+                if let Ok(sub) = std::fs::read_dir(&path) {
+                    for s_entry in sub.flatten() {
+                        let s_path = s_entry.path();
+                        if !s_path.is_file() { continue; }
+                        let name = s_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        if name.starts_with('.') || !name.ends_with(".md") { continue; }
+                        entries.push(json!({"id": name.trim_end_matches(".md"), "file": name, "size_bytes": s_path.metadata().map(|m| m.len()).unwrap_or(0)}));
+                    }
+                }
+            } else if path.is_file() {
+                let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                if name.starts_with('.') || !name.ends_with(".md") { continue; }
+                entries.push(json!({"id": name.trim_end_matches(".md"), "file": name, "size_bytes": path.metadata().map(|m| m.len()).unwrap_or(0)}));
+            }
         }
     }
     entries

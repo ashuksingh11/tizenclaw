@@ -39,6 +39,12 @@ async fn main() {
     }
 
     // ── Phase 2: Initialize logging (platform-aware) ──
+    // Initialize file log backend manually targeting specific directory
+    if let Err(e) = std::fs::create_dir_all("/opt/usr/share/tizenclaw/logs") {
+        eprintln!("Failed to create logs dir: {}", e);
+    }
+    common::logging::FileLogBackend::init("/opt/usr/share/tizenclaw/logs/tizenclaw.log", 10 * 1024 * 1024);
+    
     // The platform logger is loaded dynamically from the platform context
     common::logging::init_with_logger(Some(platform.logger.clone()));
 
@@ -99,8 +105,9 @@ async fn main() {
     // ── Phase 6: Start TaskScheduler ──
     log::info!("[Boot] Starting TaskScheduler...");
     let task_scheduler = core::task_scheduler::TaskScheduler::new();
-    let scheduler_config = platform.paths.config_dir.join("scheduler_config.json");
-    task_scheduler.load_config(&scheduler_config.to_string_lossy());
+    let task_dir = "/opt/usr/share/tizenclaw/tasks";
+    let _ = std::fs::create_dir_all(task_dir);
+    task_scheduler.load_config(task_dir);
     let _scheduler_handle = task_scheduler.start();
 
     // ── Phase 7: Start IPC server ──
