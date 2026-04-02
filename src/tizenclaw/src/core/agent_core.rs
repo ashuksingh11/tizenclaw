@@ -82,6 +82,30 @@ impl LlmConfig {
     }
 }
 
+/// Merge an `api_key` from `KeyStore` into a backend config `Value`.
+///
+/// Priority:
+///  1. Explicit `api_key` in the JSON config block (non-empty) — unchanged.
+///  2. `keys.json` entry keyed by backend name (or env var via `KeyStore::get`).
+///  3. Nothing found — config returned as-is (backend will fail init gracefully).
+fn merge_api_key(mut cfg: Value, name: &str, ks: &crate::infra::key_store::KeyStore) -> Value {
+    // If the config already contains a non-empty api_key, trust it as-is.
+    if cfg.get("api_key")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+    {
+        return cfg;
+    }
+    // Fall back to KeyStore (also checks env vars internally).
+    if let Some(key) = ks.get(name) {
+        if !key.is_empty() {
+            cfg["api_key"] = Value::String(key);
+        }
+    }
+    cfg
+}
+
 #[derive(Debug, Clone)]
 struct CircuitBreakerState {
     consecutive_failures: u32,
@@ -212,7 +236,14 @@ impl AgentCore {
         let mut fallbacks = Vec::new();
 
         for cand in candidates {
-            if let Some(be) = Self::create_and_init_backend_static(&plugin_manager, &config, &cand.name) {
+            // Acquire KeyStore briefly — clone the api_key value, then drop the guard.
+            let merged_cfg = {
+                let ks_guard = self.key_store.lock().unwrap_or_else(|e| e.into_inner());
+                let base = config.backend_config(&cand.name);
+                merge_api_key(base, &cand.name, &ks_guard)
+            };
+
+            if let Some(be) = Self::create_and_init_backend_static(&plugin_manager, &cand.name, merged_cfg) {
                 if !primary_initialized {
                     log::info!("Primary LLM backend '{}' initialized (priority {})", cand.name, cand.priority);
                     *self.backend.write().await = Some(be);
@@ -341,7 +372,14 @@ impl AgentCore {
         let mut fallbacks = Vec::new();
 
         for cand in candidates {
-            if let Some(be) = Self::create_and_init_backend_static(&plugin_manager, &config, &cand.name) {
+            // Acquire KeyStore briefly — merge api_key, then drop guard.
+            let merged_cfg = {
+                let ks_guard = self.key_store.lock().unwrap_or_else(|e| e.into_inner());
+                let base = config.backend_config(&cand.name);
+                merge_api_key(base, &cand.name, &ks_guard)
+            };
+
+            if let Some(be) = Self::create_and_init_backend_static(&plugin_manager, &cand.name, merged_cfg) {
                 if !primary_initialized {
                     log::info!("Dynamically swapped Primary LLM backend to '{}' (priority {})", cand.name, cand.priority);
                     *self.backend.write().await = Some(be);
@@ -365,15 +403,17 @@ impl AgentCore {
     }
 
 
-    /// Create and initialize an LLM backend by name using the provided config.
+    /// Create and initialize an LLM backend by name using the provided merged config.
+    ///
+    /// The caller is responsible for merging the api_key from KeyStore into
+    /// `merged_cfg` before calling this function.
     fn create_and_init_backend_static(
         plugin_manager: &crate::llm::plugin_manager::PluginManager,
-        config: &LlmConfig,
         name: &str,
+        merged_cfg: Value,
     ) -> Option<Box<dyn LlmBackend>> {
         let mut be = plugin_manager.create_backend(name)?;
-        let cfg = config.backend_config(name);
-        if be.initialize(&cfg) {
+        if be.initialize(&merged_cfg) {
             Some(be)
         } else {
             log::warn!("Backend '{}' created but failed to initialize", name);

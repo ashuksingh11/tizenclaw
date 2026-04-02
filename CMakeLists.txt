@@ -48,6 +48,13 @@ INSTALL(FILES "${CMAKE_SOURCE_DIR}/data/sample/tunnel_config.json.sample"
         DESTINATION "${APP_DATA_DIR}/config"
         RENAME "tunnel_config.json")
 
+# Default LLM backend configuration
+# Installed as %config(noreplace) via the RPM spec, so user edits are
+# preserved on upgrade. The file is only written on first install.
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/data/devel/llm_config.json"
+        DESTINATION "${APP_DATA_DIR}/config")
+
+
 # Systemd service/socket units
 INSTALL(FILES
   "${CMAKE_SOURCE_DIR}/packaging/tizenclaw.service"

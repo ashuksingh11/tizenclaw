@@ -60,7 +60,12 @@ impl ToolDispatcher {
         }
     }
 
-    /// Load tools from a directory of tool.md files.
+    /// Load tools from a directory containing sub-directories with tool descriptors.
+    ///
+    /// Each immediate child directory is scanned for either `tool.md` or `index.md`
+    /// (checked in that priority order). This allows any subdirectory layout under
+    /// `<tizen-tools>/` to register tools without requiring a specific naming
+    /// convention for the parent directory.
     pub fn load_tools_from_dir(&mut self, dir: &str) {
         let entries = match std::fs::read_dir(dir) {
             Ok(e) => e,
@@ -69,11 +74,18 @@ impl ToolDispatcher {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                // Look for tool.md inside the directory
-                let tool_md = path.join("tool.md");
-                if tool_md.exists() {
-                    if let Ok(content) = std::fs::read_to_string(&tool_md) {
+                // Accept either tool.md or index.md as the tool descriptor
+                let descriptor = ["tool.md", "index.md"]
+                    .iter()
+                    .map(|name| path.join(name))
+                    .find(|p| p.exists());
+                if let Some(md_path) = descriptor {
+                    if let Ok(content) = std::fs::read_to_string(&md_path) {
                         if let Some(decl) = Self::parse_tool_md(&content, &path) {
+                            log::debug!(
+                                "ToolDispatcher: registered '{}' from {:?}",
+                                decl.name, md_path
+                            );
                             self.register(decl);
                         }
                     }
@@ -129,35 +141,33 @@ impl ToolDispatcher {
             name = "unknown_tool".into();
         }
         if binary.is_empty() {
-            // Priority 1: Check if binary exists inside tool's own directory
+            // Priority 1: co-located executable inside the tool's own directory
             let local_bin = tool_dir.join(&original_name);
             if local_bin.exists() {
                 binary = local_bin.to_string_lossy().to_string();
             } else {
-                // Priority 2: Check Tizen specific CLI path
-                let tizen_bin = format!("/opt/usr/share/tizen-tools/cli/{}", original_name);
-                if std::path::Path::new(&tizen_bin).exists() {
-                    binary = tizen_bin;
-                } else {
-                    // Priority 3: Check system bin
-                    let default_bin = format!("/usr/bin/{}", original_name);
-                    if std::path::Path::new(&default_bin).exists() {
-                        binary = default_bin;
-                    } else {
-                        // Fallback to tool dir name
-                        let dir_name = tool_dir.file_name().unwrap_or_default().to_string_lossy().to_string();
-                        let dir_bin = format!("/usr/bin/{}", dir_name);
-                        let tizen_dir_bin = format!("/opt/usr/share/tizen-tools/cli/{}", dir_name);
-                        
-                        if std::path::Path::new(&tizen_dir_bin).exists() {
-                            binary = tizen_dir_bin;
-                        } else if std::path::Path::new(&dir_bin).exists() {
-                            binary = dir_bin;
-                        } else {
-                            // Fallback to local path string anyway
-                            binary = local_bin.to_string_lossy().to_string();
+                // Priority 2: PATH lookup via `which` — works for any location
+                let which_out = std::process::Command::new("which")
+                    .arg(&original_name)
+                    .output();
+                if let Ok(out) = which_out {
+                    if out.status.success() {
+                        let found = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                        if !found.is_empty() {
+                            binary = found;
                         }
                     }
+                }
+
+                // Priority 3: nothing found — log a warning and leave empty.
+                // The executor will return a descriptive error JSON at call time.
+                if binary.is_empty() {
+                    log::warn!(
+                        "ToolDispatcher: binary not found for tool '{}' — \
+                         no co-located executable and not on PATH. \
+                         Set 'binary: <path>' in the tool descriptor to fix this.",
+                        original_name
+                    );
                 }
             }
         }

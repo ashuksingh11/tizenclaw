@@ -118,7 +118,8 @@ fi
 %{_unitdir}/multi-user.target.wants/tizenclaw.service
 %{_unitdir}/sockets.target.wants/tizenclaw-tool-executor.socket
 
-/opt/usr/share/tizenclaw/config/*
+%config(noreplace) /opt/usr/share/tizenclaw/config/*
+
 /opt/usr/share/tizen-tools/tools.md
 /opt/usr/share/tizenclaw/web/
 /opt/usr/share/tizen-tools/embedded/
