@@ -565,7 +565,26 @@ impl AgentCore {
 
         // Agentic loop — no global lock held during LLM calls
         for round in 0..MAX_TOOL_ROUNDS {
+            log::info!("[LLM Conversation DLOG] ----- Round {} Input -----", round);
+            // System prompt is often huge, let's log length or a preview, or full if requested. The user requested we output the conversation content.
+            log::debug!("[System Prompt]:\n{}", system_prompt);
+            for (i, msg) in messages.iter().enumerate() {
+                log::info!("[Message {}] Role: {}\nText: {}", i, msg.role, msg.text);
+            }
+            log::info!("--------------------------------------------------");
+
             let response = self.chat_with_fallback(&messages, &tools, on_chunk, &system_prompt).await;
+
+            log::info!("[LLM Conversation DLOG] ----- Round {} Output -----", round);
+            log::info!("[Response Success? {}]", response.success);
+            log::info!("[Response Text]:\n{}", response.text);
+            if !response.reasoning_text.is_empty() {
+                log::info!("[Response Reasoning]:\n{}", response.reasoning_text);
+            }
+            for tc in &response.tool_calls {
+                log::info!("[Tool Call]: {} (id: {}) with args: {:?}", tc.name, tc.id, tc.args);
+            }
+            log::info!("---------------------------------------------------");
 
             if !response.success {
                 let err = format!(
