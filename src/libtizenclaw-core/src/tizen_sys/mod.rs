@@ -18,6 +18,7 @@ static LIB_APP_CONTROL: LazyLock<Option<Library>> = LazyLock::new(|| unsafe { Li
 static LIB_SYSTEM_INFO: LazyLock<Option<Library>> = LazyLock::new(|| unsafe { Library::new("libcapi-system-info.so.0").or_else(|_| Library::new("libcapi-system-info.so")).ok() });
 static LIB_ALARM: LazyLock<Option<Library>> = LazyLock::new(|| unsafe { Library::new("libcapi-appfw-alarm.so.0").or_else(|_| Library::new("libcapi-appfw-alarm.so")).ok() });
 static LIB_BUNDLE: LazyLock<Option<Library>> = LazyLock::new(|| unsafe { Library::new("libbundle.so.0").or_else(|_| Library::new("libbundle.so")).ok() });
+static LIB_ACTION: LazyLock<Option<Library>> = LazyLock::new(|| unsafe { Library::new("libaction.so.0").or_else(|_| Library::new("libaction.so")).ok() });
 
 macro_rules! dlsym_call {
     ($lib:expr, $sym:expr, $sig:ty, $fallback:expr $(, $args:expr)*) => {{
@@ -420,7 +421,73 @@ pub mod bundle {
         dlsym_call!(LIB_BUNDLE, b"bundle_add_str\0", unsafe extern "C" fn(*mut bundle, *const c_char, *const c_char) -> c_int, 0, b, key, str_val)
     }
 
-    pub unsafe fn bundle_get_str(b: *mut bundle, key: *const c_char, str_val: *mut *mut c_char) -> c_int {
-        dlsym_call!(LIB_BUNDLE, b"bundle_get_str\0", unsafe extern "C" fn(*mut bundle, *const c_char, *mut *mut c_char) -> c_int, 0, b, key, str_val)
+}
+
+// ─────────────────────────────────────────
+// action — Tizen Action Framework
+// ─────────────────────────────────────────
+pub mod action {
+    use super::*;
+    use std::os::raw::{c_char, c_int, c_void};
+
+    pub type action_client_h = *mut c_void;
+    pub type action_h = *mut c_void;
+    pub type action_event_handler_h = *mut c_void;
+
+    pub const ACTION_ERROR_NONE: c_int = 0;
+
+    #[repr(C)]
+    pub enum action_event_type_e {
+        ACTION_EVENT_TYPE_INSTALL = 0,
+        ACTION_EVENT_TYPE_UNINSTALL = 1,
+        ACTION_EVENT_TYPE_UPDATE = 2,
+    }
+
+    pub type action_foreach_action_cb = unsafe extern "C" fn(action_h, *mut c_void) -> bool;
+    pub type action_result_cb = unsafe extern "C" fn(c_int, *const c_char, *mut c_void);
+    pub type action_event_cb = unsafe extern "C" fn(*const c_char, action_event_type_e, *mut c_void);
+
+    pub unsafe fn action_client_create(client: *mut action_client_h) -> c_int {
+        dlsym_call!(LIB_ACTION, b"action_client_create\0", unsafe extern "C" fn(*mut action_client_h) -> c_int, -1, client)
+    }
+
+    pub unsafe fn action_client_destroy(client: action_client_h) -> c_int {
+        dlsym_call!(LIB_ACTION, b"action_client_destroy\0", unsafe extern "C" fn(action_client_h) -> c_int, -1, client)
+    }
+
+    pub unsafe fn action_client_get_action(client: action_client_h, name: *const c_char, action: *mut action_h) -> c_int {
+        dlsym_call!(LIB_ACTION, b"action_client_get_action\0", unsafe extern "C" fn(action_client_h, *const c_char, *mut action_h) -> c_int, -1, client, name, action)
+    }
+
+    pub unsafe fn action_client_foreach_action(client: action_client_h, cb: action_foreach_action_cb, user_data: *mut c_void) -> c_int {
+        dlsym_call!(LIB_ACTION, b"action_client_foreach_action\0", unsafe extern "C" fn(action_client_h, action_foreach_action_cb, *mut c_void) -> c_int, -1, client, cb, user_data)
+    }
+
+    pub unsafe fn action_client_execute(client: action_client_h, model: *const c_char, cb: action_result_cb, user_data: *mut c_void) -> c_int {
+        dlsym_call!(LIB_ACTION, b"action_client_execute\0", unsafe extern "C" fn(action_client_h, *const c_char, action_result_cb, *mut c_void) -> c_int, -1, client, model, cb, user_data)
+    }
+
+    pub unsafe fn action_client_add_event_handler(client: action_client_h, cb: action_event_cb, user_data: *mut c_void, handler: *mut action_event_handler_h) -> c_int {
+        dlsym_call!(LIB_ACTION, b"action_client_add_event_handler\0", unsafe extern "C" fn(action_client_h, action_event_cb, *mut c_void, *mut action_event_handler_h) -> c_int, -1, client, cb, user_data, handler)
+    }
+
+    pub unsafe fn action_client_remove_event_handler(client: action_client_h, handler: action_event_handler_h) -> c_int {
+        dlsym_call!(LIB_ACTION, b"action_client_remove_event_handler\0", unsafe extern "C" fn(action_client_h, action_event_handler_h) -> c_int, -1, client, handler)
+    }
+
+    pub unsafe fn action_clone(action: action_h, clone: *mut action_h) -> c_int {
+        dlsym_call!(LIB_ACTION, b"action_clone\0", unsafe extern "C" fn(action_h, *mut action_h) -> c_int, -1, action, clone)
+    }
+
+    pub unsafe fn action_get_name(action: action_h, name: *mut *mut c_char) -> c_int {
+        dlsym_call!(LIB_ACTION, b"action_get_name\0", unsafe extern "C" fn(action_h, *mut *mut c_char) -> c_int, -1, action, name)
+    }
+
+    pub unsafe fn action_get_schema(action: action_h, json_schema: *mut *mut c_char) -> c_int {
+        dlsym_call!(LIB_ACTION, b"action_get_schema\0", unsafe extern "C" fn(action_h, *mut *mut c_char) -> c_int, -1, action, json_schema)
+    }
+
+    pub unsafe fn action_destroy(action: action_h) -> c_int {
+        dlsym_call!(LIB_ACTION, b"action_destroy\0", unsafe extern "C" fn(action_h) -> c_int, -1, action)
     }
 }

@@ -250,14 +250,21 @@ async fn api_metrics() -> Json<Value> {
 }
 
 async fn api_chat(Json(payload): Json<Value>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let prompt = payload.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
-    let session_id = payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("web_dashboard");
+    let prompt = payload.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let session_id = payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("web_dashboard").to_string();
 
     if prompt.is_empty() {
         return Err(json_error(StatusCode::BAD_REQUEST, "Empty prompt"));
     }
 
-    match ipc_send_prompt(session_id, prompt) {
+    let session_id_clone = session_id.clone();
+    let prompt_clone = prompt.clone();
+
+    let response = tokio::task::spawn_blocking(move || ipc_send_prompt(&session_id_clone, &prompt_clone))
+        .await
+        .map_err(|e| json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("Tokio error: {}", e)))?;
+
+    match response {
         Ok(response_text) => Ok(Json(json!({
             "status": "ok",
             "session_id": session_id,
@@ -290,12 +297,8 @@ fn ipc_send_prompt(session_id: &str, prompt: &str) -> Result<String, String> {
             return Err("Failed to connect to agent (is tizenclaw running?)".into());
         }
 
-        let timeout = libc::timeval { tv_sec: 30, tv_usec: 0 };
-        libc::setsockopt(
-            fd, libc::SOL_SOCKET, libc::SO_RCVTIMEO,
-            &timeout as *const _ as *const libc::c_void,
-            std::mem::size_of::<libc::timeval>() as libc::socklen_t,
-        );
+        // Removed SO_RCVTIMEO to support infinite wait for long-running LLM generation (No Timeout)
+        // This ensures the frontend doesn't drop early while the core is thinking.
 
         let req = json!({
             "jsonrpc": "2.0",

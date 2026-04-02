@@ -690,12 +690,14 @@
 
         addChatMsg('user', prompt);
         chatInput.value = '';
-        chatSend.disabled = true;
+        
+        // Removed chatSend.disabled = true; to allow concurrent/overlapping requests
 
-        // Show thinking indicator
+        // Show thinking indicator specific to this request
+        const thinkingId = 'think-' + Date.now() + Math.random().toString(36).substr(2, 5);
         const thinking = document.createElement('div');
         thinking.className = 'chat-thinking';
-        thinking.id = 'chat-thinking-indicator';
+        thinking.id = thinkingId;
         thinking.innerHTML =
             '<span class="chat-thinking-dot"></span>' +
             '<span class="chat-thinking-dot"></span>' +
@@ -704,23 +706,26 @@
         chatMessages.scrollTop =
             chatMessages.scrollHeight;
 
-        const resp = await apiPost('chat', {
-            prompt: prompt,
-            session_id: sessionId
-        });
+        try {
+            const resp = await apiPost('chat', {
+                prompt: prompt,
+                session_id: sessionId
+            });
 
-        // Remove thinking indicator
-        const indicator = document.getElementById(
-            'chat-thinking-indicator');
-        if (indicator) indicator.remove();
+            // Remove this specific thinking indicator
+            const indicator = document.getElementById(thinkingId);
+            if (indicator) indicator.remove();
 
-        chatSend.disabled = false;
-
-        if (resp && resp.response) {
-            addChatMsg('assistant', resp.response);
-        } else {
-            addChatMsg('assistant',
-                'Error: no response from agent.');
+            if (resp && resp.response) {
+                addChatMsg('assistant', resp.response);
+            } else {
+                addChatMsg('assistant',
+                    'Error: no response from agent.');
+            }
+        } catch (err) {
+            const indicator = document.getElementById(thinkingId);
+            if (indicator) indicator.remove();
+            addChatMsg('assistant', 'Error: connection failed.');
         }
     }
 
