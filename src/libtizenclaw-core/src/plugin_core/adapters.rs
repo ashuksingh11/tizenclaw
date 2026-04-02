@@ -171,7 +171,7 @@ impl PackageManagerProvider for TizenPackageManager {
                 let mut c_pkgid: *mut std::os::raw::c_char = std::ptr::null_mut();
                 if pkgmgrinfo_pkginfo_get_pkgid(handle, &mut c_pkgid) == PMINFO_R_OK && !c_pkgid.is_null() {
                     let s = std::ffi::CStr::from_ptr(c_pkgid).to_string_lossy().into_owned();
-                    log::info!("Pkgmgr metadata filter matched plugin: {}", s);
+                    log::debug!("Pkgmgr metadata filter matched plugin: {}", s);
                     (*vec_ptr).push(s);
                 }
                 0 // Return 0 to continue traversing
