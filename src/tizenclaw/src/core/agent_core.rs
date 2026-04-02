@@ -112,6 +112,11 @@ struct CircuitBreakerState {
     last_failure_time: Option<std::time::Instant>,
 }
 
+struct BackendCandidate {
+    name: String,
+    priority: i64,
+}
+
 /// Thread-safe AgentCore with fine-grained internal locking.
 ///
 /// Callers share `Arc<AgentCore>` — no outer Mutex needed.
@@ -132,6 +137,7 @@ pub struct AgentCore {
     llm_config: Mutex<LlmConfig>,
     circuit_breakers: RwLock<std::collections::HashMap<String, CircuitBreakerState>>,
     action_bridge: Mutex<crate::core::action_bridge::ActionBridge>,
+    tool_policy: Mutex<crate::core::tool_policy::ToolPolicy>,
 }
 
 impl AgentCore {
@@ -149,6 +155,7 @@ impl AgentCore {
             llm_config: Mutex::new(LlmConfig::default()),
             circuit_breakers: RwLock::new(std::collections::HashMap::new()),
             action_bridge: Mutex::new(crate::core::action_bridge::ActionBridge::new()),
+            tool_policy: Mutex::new(crate::core::tool_policy::ToolPolicy::new()),
         }
     }
 
@@ -160,6 +167,11 @@ impl AgentCore {
         let key_path = paths.config_dir.join("keys.json");
         if let Ok(mut ks) = self.key_store.lock() {
             ks.load(&key_path.to_string_lossy());
+        }
+
+        let policy_path = paths.config_dir.join("tool_policy.json");
+        if let Ok(mut tp) = self.tool_policy.lock() {
+            tp.load_config(&policy_path.to_string_lossy());
         }
 
         // Load system prompt
@@ -193,43 +205,8 @@ impl AgentCore {
         // Plugins are exclusively scanned via PackageManager via `scan_plugins`.
         plugin_manager.scan_plugins(Some(self.platform.package_manager.as_ref()));
 
-        struct BackendCandidate {
-            name: String,
-            priority: i64,
-        }
-        let mut candidates = Vec::new();
-
-        // 1. Add active backend
-        let mut active_prio = 1;
-        if let Some(p) = config.backends.get(&active_name).and_then(|v| v.get("priority")).and_then(|v| v.as_i64()) {
-            active_prio = p;
-        }
-        candidates.push(BackendCandidate { name: active_name.clone(), priority: active_prio });
-
-        // 2. Add fallback backends
-        for name in &fallback_names {
-            if name == &active_name { continue; }
-            let prio = config.backends.get(name).and_then(|v| v.get("priority")).and_then(|v| v.as_i64()).unwrap_or(1);
-            if !candidates.iter().any(|c| c.name == *name) {
-                candidates.push(BackendCandidate { name: name.clone(), priority: prio });
-            }
-        }
-
-        // 3. Add plugin backends and remaining available ones
-        for name in plugin_manager.available_backends() {
-            if candidates.iter().any(|c| c.name == name) { continue; }
-            let prio = if let Some(cfg) = plugin_manager.get_plugin_config(&name) {
-                cfg.get("priority").and_then(|v| v.as_i64()).unwrap_or(0)
-            } else if let Some(p) = config.backends.get(&name).and_then(|v| v.get("priority")).and_then(|v| v.as_i64()) {
-                 p
-            } else {
-                 0
-            };
-            candidates.push(BackendCandidate { name, priority: prio });
-        }
-
-        // 4. Sort descending by priority, so highest priority is first
-        candidates.sort_by(|a, b| b.priority.cmp(&a.priority));
+        // Unified priority-based selection
+        let candidates = self.get_backend_candidates(&config, &plugin_manager);
 
         // 5. Initialize backends iteratively
         let mut primary_initialized = false;
@@ -319,6 +296,14 @@ impl AgentCore {
             log::info!("Triggering LLM backend reload due to plugin changes...");
             self.reload_backends().await;
         }
+
+        // --- NEW: Handle Tool Extensibility Indexing via PkgMgr ---
+        // If a package is installed/uninstalled, we re-evaluate if index.md and tools.md
+        // need to be rebuilt. This removes the need for periodic filesystem polling.
+        if loaded || unloaded {
+            self.reload_tools().await;
+            self.run_startup_indexing().await;
+        }
     }
 
     /// Reload LLM backends dynamically
@@ -334,39 +319,8 @@ impl AgentCore {
         let active_name = config.active_backend.clone();
         let fallback_names = config.fallback_backends.clone();
         
-        struct BackendCandidate {
-            name: String,
-            priority: i64,
-        }
-        let mut candidates = Vec::new();
-
-        let mut active_prio = 1;
-        if let Some(p) = config.backends.get(&active_name).and_then(|v| v.get("priority")).and_then(|v| v.as_i64()) {
-            active_prio = p;
-        }
-        candidates.push(BackendCandidate { name: active_name.clone(), priority: active_prio });
-
-        for name in &fallback_names {
-            if name == &active_name { continue; }
-            let prio = config.backends.get(name).and_then(|v| v.get("priority")).and_then(|v| v.as_i64()).unwrap_or(1);
-            if !candidates.iter().any(|c| c.name == *name) {
-                candidates.push(BackendCandidate { name: name.clone(), priority: prio });
-            }
-        }
-
-        for name in plugin_manager.available_backends() {
-            if candidates.iter().any(|c| c.name == name) { continue; }
-            let prio = if let Some(cfg) = plugin_manager.get_plugin_config(&name) {
-                cfg.get("priority").and_then(|v| v.as_i64()).unwrap_or(0)
-            } else if let Some(p) = config.backends.get(&name).and_then(|v| v.get("priority")).and_then(|v| v.as_i64()) {
-                 p
-            } else {
-                 0
-            };
-            candidates.push(BackendCandidate { name, priority: prio });
-        }
-
-        candidates.sort_by(|a, b| b.priority.cmp(&a.priority));
+        // Unified priority-based selection
+        let candidates = self.get_backend_candidates(&config, &plugin_manager);
 
         let mut primary_initialized = false;
         let mut fallbacks = Vec::new();
@@ -419,6 +373,86 @@ impl AgentCore {
             log::warn!("Backend '{}' created but failed to initialize", name);
             None
         }
+    }
+
+    /// Determine LLM backend candidates and their priorities.
+    fn get_backend_candidates(
+        &self,
+        config: &LlmConfig,
+        plugin_manager: &crate::llm::plugin_manager::PluginManager,
+    ) -> Vec<BackendCandidate> {
+        let mut candidates = Vec::new();
+        let mut all_names: Vec<String> = Vec::new();
+
+        // 1. Gather backend names from llm_config.json
+        if let Some(obj) = config.backends.as_object() {
+            for key in obj.keys() {
+                all_names.push(key.clone());
+            }
+        }
+        if !all_names.contains(&config.active_backend) {
+            all_names.push(config.active_backend.clone());
+        }
+        for fb in &config.fallback_backends {
+            if !all_names.contains(fb) {
+                all_names.push(fb.clone());
+            }
+        }
+
+        // 2. Append plugin backends
+        for plugin_name in plugin_manager.available_plugins() {
+            if !all_names.contains(&plugin_name) {
+                all_names.push(plugin_name);
+            }
+        }
+
+        for name in all_names {
+            let mut priority = 0;
+            let mut is_explicitly_in_config = false;
+
+            // Priority 1 by default if it originates from llm_config.json
+            if name == config.active_backend || config.fallback_backends.contains(&name) || config.backends.get(&name).is_some() {
+                priority = 1;
+                is_explicitly_in_config = true;
+            }
+
+            // Manual priority override from llm_config.json
+            if let Some(p) = config.backends.get(&name).and_then(|v| v.get("priority")).and_then(|v| v.as_i64()) {
+                priority = p;
+                is_explicitly_in_config = true;
+            }
+
+            // Fallback to internal plugin config priority if NOT in llm_config.json
+            if !is_explicitly_in_config {
+                if let Some(cfg) = plugin_manager.get_plugin_config(&name) {
+                    priority = cfg.get("priority").and_then(|v| v.as_i64()).unwrap_or(0);
+                }
+            }
+
+            candidates.push(BackendCandidate { name, priority });
+        }
+
+        // Sort descending by priority, then by configuration precedence
+        candidates.sort_by(|a, b| {
+            let p_res = b.priority.cmp(&a.priority);
+            if p_res != std::cmp::Ordering::Equal {
+                return p_res;
+            }
+
+            // Tie-breaker: active_backend > fallback_backends (in array order) > others
+            let score = |name: &str| -> i32 {
+                if name == config.active_backend {
+                    1000
+                } else if let Some(idx) = config.fallback_backends.iter().position(|r| r == name) {
+                    900 - (idx as i32)
+                } else {
+                    0
+                }
+            };
+            score(&b.name).cmp(&score(&a.name))
+        });
+
+        candidates
     }
 
     fn is_backend_available(&self, name: &str) -> bool {
@@ -679,6 +713,9 @@ impl AgentCore {
                             response.completion_tokens,
                             &be_name,
                         );
+                        let usage = store.load_token_usage(session_id);
+                        log::info!("[LLM Token Usage DLOG] Round Usage: Prompt {} + Completion {} = {}", response.prompt_tokens, response.completion_tokens, response.prompt_tokens + response.completion_tokens);
+                        log::info!("[LLM Token Usage DLOG] Cumulative Session Usage: Prompt {} + Completion {} = {}", usage.total_prompt_tokens, usage.total_completion_tokens, usage.total_prompt_tokens + usage.total_completion_tokens);
                     }
                 }
             }
@@ -707,7 +744,19 @@ impl AgentCore {
                     let tc_id = tc.id.clone();
                     let bridge_ref = &self.action_bridge;
                     
+                    let block_reason = if let Ok(tp) = self.tool_policy.lock() {
+                        match tp.check_policy(session_id, &tc_name, &tc_args) {
+                            Err(reason) => Some(reason),
+                            Ok(_) => None,
+                        }
+                    } else { None };
+
                     futures_list.push(async move {
+                        if let Some(reason) = block_reason {
+                            log::warn!("Tool execution blocked: {}", reason);
+                            return LlmMessage::tool_result(&tc_id, &tc_name, serde_json::json!({"error": reason}));
+                        }
+
                         let result = if tc_name.starts_with("action_") {
                             if let Some(action_id) = tc_name.strip_prefix("action_") {
                                 if let Ok(bridge) = bridge_ref.lock() {
@@ -822,12 +871,61 @@ impl AgentCore {
             return;
         }
 
-        log::info!("[Startup Indexing] LLM connected. Requesting dynamic indexing of /opt/usr/share/tizen-tools/...");
-        
-        let prompt = "Please check the directories under `/opt/usr/share/tizen-tools/` (specifically the `skills/` and `cli/` folders) and update the `tools.md` and `index.md` files located in `/opt/usr/share/tizen-tools/` (or its relevant documentation paths) to reflect the current state of tools exactly. Read the directories first, then overwrite the markdown index files cleanly. Do not ask for permissions, simply execute via your file manager or execution tools.";
-        
-        // We use a predefined system session ID so it doesn't pollute user chats.
+        let base_dir = std::path::Path::new("/opt/usr/share/tizen-tools");
+        let tools_to_check = ["cli", "actions", "skills", "system_cli"];
+        let mut needs_update = false;
+
+        // Check tools.md
+        let tools_md = base_dir.join("tools.md");
+        if !tools_md.exists() {
+            needs_update = true;
+        }
+
+        // Check subdirectory indices
+        for subdir in &tools_to_check {
+            let dir_path = base_dir.join(subdir);
+            if dir_path.exists() && dir_path.is_dir() {
+                let index_path = dir_path.join("index.md");
+                if !index_path.exists() {
+                    needs_update = true;
+                    break;
+                }
+                
+                // Compare contents
+                let index_content = std::fs::read_to_string(&index_path).unwrap_or_default();
+                if let Ok(entries) = std::fs::read_dir(&dir_path) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if name == "index.md" || name == "tools.md" || name == "SKILL.md" {
+                            continue;
+                        }
+                        if !index_content.contains(&name) {
+                            needs_update = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if needs_update { break; }
+        }
+
+        if !needs_update && tools_md.exists() {
+            log::info!("[Startup Indexing] Index files are fully synchronized. Skipping LLM request to avoid token waste.");
+            return;
+        }
+
+        log::info!("[Startup Indexing] Mismatch detected. Requesting dynamic indexing of /opt/usr/share/tizen-tools/...");
+
+        // Ensure we don't accumulate tokens from previous iterations
         let session_id = "system_startup_indexer";
+        if let Ok(ss) = self.session_store.lock() {
+            if let Some(store) = ss.as_ref() {
+                store.clear_session(session_id);
+            }
+        }
+        
+        let prompt = "Please check the directories under `/opt/usr/share/tizen-tools/` (specifically `skills/`, `cli/`, `actions/`, `system_cli/`) and update `tools.md` and their respective `index.md` files to reflect the current state. Read the directories first, then overwrite the markdown files cleanly. Do not ask for permissions, simply execute via your file manager or execution tools.";
+        
         let _ = self.process_prompt(session_id, prompt, None).await;
         
         log::info!("[Startup Indexing] Completed autonomous documentation updates.");

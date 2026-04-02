@@ -115,6 +115,15 @@ impl SessionStore {
         }
     }
 
+    pub fn clear_session(&self, session_id: &str) {
+        let _ = self.db.execute_batch("BEGIN IMMEDIATE");
+        let _ = self.db.execute(
+            "DELETE FROM messages WHERE session_id = ?1",
+            params![session_id],
+        );
+        let _ = self.db.execute_batch("COMMIT");
+    }
+
     pub fn record_usage(&self, session_id: &str, prompt_tokens: i32, completion_tokens: i32, model: &str) {
         let _ = self.db.execute(
             "INSERT INTO token_usage (session_id, prompt_tokens, completion_tokens, model)

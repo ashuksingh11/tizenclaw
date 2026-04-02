@@ -92,21 +92,9 @@ async fn main() {
     }
     PkgmgrClient::global().add_listener(Arc::new(AgentPkgmgrListener(agent.clone())));
 
-    // ── Phase 5: Start ToolWatcher ──
-    log::info!("[Boot] Starting ToolWatcher...");
-    let mut tool_watcher = core::tool_watcher::ToolWatcher::new(
-        platform.paths.tools_dir.to_string_lossy().to_string()
-    );
-    let agent_clone_watcher = agent.clone();
-    tool_watcher.set_change_callback(move || {
-        let agent = agent_clone_watcher.clone();
-        tokio::spawn(async move {
-            agent.reload_tools().await;
-            // Trigger automatic regeneration of tools.md and index.md using system context
-            agent.run_startup_indexing().await;
-        });
-    });
-    let _watcher_handle = tool_watcher.start();
+    // ── Phase 5: Start ToolWatcher (Removed) ──
+    // ToolWatcher polling has been removed to prevent infinite loops and token waste.
+    // Indexing is now driven purely by pkgmgr events and startup existence checks.
 
     // ── Phase 6: Start TaskScheduler ──
     log::info!("[Boot] Starting TaskScheduler...");
