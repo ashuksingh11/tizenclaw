@@ -82,12 +82,11 @@ cli_res.txt
 journal.txt
 .plan/
 
-# Agents (Now tracked in repo)
-# .agent/
-# AGENTS.md
+# Agents
+.agent/
 
 # Dev notes
-.dev_note
+.dev_note/
 
 # Temporary files
 .tmp/
