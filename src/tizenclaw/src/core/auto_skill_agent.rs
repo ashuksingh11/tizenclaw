@@ -12,7 +12,7 @@ impl AutoSkillAgent {
     pub fn new() -> Self { AutoSkillAgent }
 
     pub fn generate_skill(&self, description: &str) -> Result<String, String> {
-        log::info!("AutoSkillAgent: generating skill for: {}", description);
+        log::debug!("AutoSkillAgent: generating skill for: {}", description);
         // Generates a Python skill template
         let code = format!(
             "#!/bin/bash\n\

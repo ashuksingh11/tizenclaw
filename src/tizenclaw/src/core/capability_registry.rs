@@ -26,7 +26,7 @@ impl CapabilityRegistry {
     }
 
     pub fn register(&mut self, cap: Capability) {
-        log::info!("CapabilityRegistry: registered '{}'", cap.name);
+        log::debug!("CapabilityRegistry: registered '{}'", cap.name);
         self.capabilities.insert(cap.name.clone(), cap);
     }
 
@@ -96,7 +96,7 @@ impl CapabilityRegistry {
             enabled: true,
         });
 
-        log::info!("CapabilityRegistry: detected {} system capabilities",
+        log::debug!("CapabilityRegistry: detected {} system capabilities",
             self.capabilities.len());
     }
 }

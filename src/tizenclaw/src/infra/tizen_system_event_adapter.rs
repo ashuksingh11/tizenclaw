@@ -64,7 +64,7 @@ impl TizenSystemEventAdapter {
             return true;
         }
         self.running.store(true, Ordering::SeqCst);
-        // NOTE: Wire up tizen_sys::app_event::event_add_event_handler for
+        // NOTE: Wire up libtizenclaw_core::tizen_sys::app_event::event_add_event_handler for
         // each registered event kind on device.
         log::info!("TizenSystemEventAdapter: started with {} handlers", self.callbacks.len());
         true

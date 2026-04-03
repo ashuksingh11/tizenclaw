@@ -42,7 +42,7 @@ impl OtaUpdater {
         match serde_json::from_str::<UpdateManifest>(&resp.body) {
             Ok(manifest) => {
                 if Self::is_newer(&manifest.version) {
-                    log::info!(
+                    log::debug!(
                         "OTA: update available: {} -> {}",
                         CURRENT_VERSION,
                         manifest.version

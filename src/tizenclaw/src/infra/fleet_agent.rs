@@ -58,7 +58,7 @@ impl FleetAgent {
     /// Start fleet agent (discovery + heartbeat).
     pub fn start(&self) -> bool {
         if !self.config.enabled {
-            log::info!("FleetAgent: disabled by config");
+            log::debug!("FleetAgent: disabled by config");
             return false;
         }
         log::info!("FleetAgent: started (device_id={})", self.device_id);
@@ -78,7 +78,7 @@ impl FleetAgent {
     /// Register a discovered peer.
     pub fn add_peer(&self, peer: FleetPeer) {
         if let Ok(mut peers) = self.peers.lock() {
-            log::info!("FleetAgent: discovered peer {} at {}", peer.device_id, peer.ip_address);
+            log::debug!("FleetAgent: discovered peer {} at {}", peer.device_id, peer.ip_address);
             peers.insert(peer.device_id.clone(), peer);
         }
     }

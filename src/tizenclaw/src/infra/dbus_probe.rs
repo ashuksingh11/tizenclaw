@@ -75,7 +75,7 @@ pub fn is_available() -> bool {
             if ok { STATE_AVAILABLE } else { STATE_UNAVAILABLE },
             Ordering::SeqCst,
         );
-        log::info!(
+        log::debug!(
             "DbusProbe: D-Bus system bus {}",
             if ok { "available" } else { "unavailable" }
         );

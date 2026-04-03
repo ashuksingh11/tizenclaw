@@ -76,7 +76,7 @@ fn recv_response(fd: i32) -> String {
 }
 
 /// Send a JSON-RPC 2.0 request and return the response.
-fn send_jsonrpc(method: &str, params: Value) -> Result<Value, String> {
+fn send_jsonrpc(method: &str, params: Value) -> Result<(Value, bool), String> {
     let fd = connect_daemon()?;
     let req = json!({
         "jsonrpc": "2.0",
@@ -90,19 +90,40 @@ fn send_jsonrpc(method: &str, params: Value) -> Result<Value, String> {
         return Err("Failed to send request".into());
     }
 
-    let resp = recv_response(fd);
-    unsafe { libc::close(fd); }
+    let mut stream_received = false;
 
-    if resp.is_empty() {
-        return Err("Empty response from daemon".into());
+    loop {
+        let resp = recv_response(fd);
+        if resp.is_empty() {
+            unsafe { libc::close(fd); }
+            return Err("Empty response from daemon".into());
+        }
+
+        let parsed: Value = match serde_json::from_str(&resp) {
+            Ok(v) => v,
+            Err(e) => {
+                unsafe { libc::close(fd); }
+                return Err(format!("Invalid JSON: {}", e));
+            }
+        };
+
+        if parsed.get("method").and_then(|v| v.as_str()) == Some("stream_chunk") {
+            stream_received = true;
+            if let Some(chunk) = parsed.get("params").and_then(|p| p.get("chunk")).and_then(|c| c.as_str()) {
+                print!("{}", chunk);
+                std::io::stdout().flush().ok();
+            }
+            continue;
+        }
+
+        unsafe { libc::close(fd); }
+        return Ok((parsed, stream_received));
     }
-
-    serde_json::from_str(&resp).map_err(|e| format!("Invalid JSON: {}", e))
 }
 
 /// Send a prompt and print the response.
 fn send_prompt(session_id: &str, prompt: &str, stream: bool) -> Result<(), String> {
-    let resp = send_jsonrpc("prompt", json!({
+    let (resp, stream_received) = send_jsonrpc("prompt", json!({
         "session_id": session_id,
         "text": prompt,
         "stream": stream
@@ -110,7 +131,11 @@ fn send_prompt(session_id: &str, prompt: &str, stream: bool) -> Result<(), Strin
 
     if let Some(result) = resp.get("result") {
         if let Some(text) = result.get("text").and_then(|v| v.as_str()) {
-            println!("{}", text);
+            if !stream_received {
+                println!("{}", text);
+            } else {
+                println!();
+            }
         } else {
             println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
         }
@@ -168,7 +193,7 @@ fn print_usage() {
     eprintln!("  tizenclaw-cli [options] [prompt]\n");
     eprintln!("Options:");
     eprintln!("  -s <id>       Session ID (default: cli_test)");
-    eprintln!("  --stream      Enable streaming");
+    eprintln!("  --no-stream   Disable real-time streaming (wait for full response)");
     eprintln!("  --usage       Show token usage");
     eprintln!("  -h, --help    Show this help\n");
     eprintln!("If no prompt given, starts interactive mode.");
@@ -176,8 +201,12 @@ fn print_usage() {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mut session_id = "cli_test".to_string();
-    let mut stream = false;
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let mut session_id = format!("cli_{}", ts);
+    let mut stream = true;
     let mut prompt_parts: Vec<String> = vec![];
     let mut i = 1;
 
@@ -191,7 +220,7 @@ fn main() {
                 i += 1;
                 session_id = args[i].clone();
             }
-            "--stream" => stream = true,
+            "--no-stream" => stream = false,
             "--usage" => {
                 match send_jsonrpc("get_usage", json!({})) {
                     Ok(resp) => println!("{}", serde_json::to_string_pretty(&resp).unwrap_or_default()),

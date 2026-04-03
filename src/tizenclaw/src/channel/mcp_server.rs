@@ -56,7 +56,7 @@ impl McpServer {
             }),
         });
 
-        log::info!("MCP: Total tools discovered: {}", self.tools.len());
+        log::debug!("MCP: Total tools discovered: {}", self.tools.len());
     }
 
     /// Run the stdio JSON-RPC 2.0 loop (blocking).
@@ -90,18 +90,18 @@ impl McpServer {
                         "id": null,
                         "error": {"code": -32700, "message": "Parse error"}
                     });
-                    println!("{}", err_resp);
+                    log::info!("{}", err_resp);
                     continue;
                 }
             };
 
             let response = self.process_request(&request, &process_prompt);
             if !response.is_null() {
-                println!("{}", response);
+                log::info!("{}", response);
             }
         }
 
-        log::info!("MCP Server stdio loop ended");
+        log::debug!("MCP Server stdio loop ended");
     }
 
     /// Process a single JSON-RPC 2.0 request.
@@ -181,7 +181,7 @@ impl McpServer {
             }
         };
 
-        log::info!("MCP: Calling tool: {}", tool_name);
+        log::debug!("MCP: Calling tool: {}", tool_name);
 
         // ask_tizenclaw: route through agentic loop
         let prompt = arguments["prompt"].as_str().unwrap_or("");

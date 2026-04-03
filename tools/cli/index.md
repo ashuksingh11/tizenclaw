@@ -8,12 +8,11 @@ CLI tools for the TizenClaw agent. All tools are installed under
 | Tool | Category | Description |
 |------|----------|-------------|
 | [tizen-app-manager-cli](#tizen-app-manager-cli) | App Management | List, launch, terminate apps; query packages; recent apps |
-| [tizen-aurum-cli](#tizen-aurum-cli) | UI Automation | Inspect screen, find UI elements, simulate input, watch UI events |
 | [tizen-control-display-cli](#tizen-control-display-cli) | Display | Get/set display brightness |
 | [tizen-device-info-cli](#tizen-device-info-cli) | Device Info | Battery, CPU, memory, storage, thermal, display, settings |
 | [tizen-file-manager-cli](#tizen-file-manager-cli) | File System | Read, write, copy, move, remove, list, mkdir, download |
 | [tizen-hardware-control-cli](#tizen-hardware-control-cli) | Hardware | Haptic vibration, LED flash, power lock, feedback |
-| [tizen-media-cli](#tizen-media-cli) | Media | Query media DB, extract metadata, MIME type lookup |
+
 | [tizen-network-info-cli](#tizen-network-info-cli) | Network | Wi-Fi, Bluetooth, network status, scan, data usage |
 | [tizen-notification-cli](#tizen-notification-cli) | Notification | Send notifications, schedule alarms |
 | [tizen-sensor-cli](#tizen-sensor-cli) | Sensor | Read accelerometer, gyroscope, light, proximity, etc. |
@@ -37,24 +36,6 @@ Manage applications: list, launch, terminate, query packages, recent apps.
 | `terminate --app-id <id>` | Terminate a running app |
 | `launch --app-id <id> [--operation <op>] [--uri <uri>] [--mime <mime>]` | Launch an app via app_control |
 | `package-info --package-id <id>` | Query package information |
-
-## tizen-aurum-cli
-UI automation via Aurum: inspect screen, find elements, simulate input, watch events.
-
-| Command | Description |
-|---------|-------------|
-| `screen-size` | Get screen dimensions (width, height) |
-| `screenshot --output <file>` | Capture screenshot to file |
-| `get-angle` | Get screen rotation angle |
-| `click --x X --y Y [--duration MS]` | Tap or long-press at coordinates |
-| `flick --sx X --sy Y --ex X --ey Y` | Swipe/flick gesture |
-| `send-key --key <KEY>` | Hardware key press (back, home, menu, volup, voldown, power) |
-| `find-element [--text T] [--type T] [--automation-id ID]` | Find single UI element |
-| `find-elements [search options]` | Find all matching UI elements |
-| `dump-tree` | Dump full UI element tree |
-| `click-element [search options]` | Click a found element |
-| `set-value [search options] --text-value T` | Set element text or value |
-| `watch --event <EVENT> [--timeout MS]` | Monitor UI events (streaming) |
 
 ## tizen-control-display-cli
 Control display brightness directly via device API.
@@ -103,15 +84,7 @@ Control device hardware: vibration, LED, power locks, feedback patterns.
 | `power --action lock\|unlock --resource display\|cpu` | Lock/unlock power state |
 | `feedback --pattern <NAME>` | Play feedback pattern (TAP, MESSAGE, WAKEUP, etc.) |
 
-## tizen-media-cli
-Query media content database, extract file metadata, MIME type lookup.
 
-| Command | Description |
-|---------|-------------|
-| `content [--type image\|video\|sound\|music\|all] [--max N]` | List media files from content DB |
-| `metadata --path <file>` | Extract metadata (duration, bitrate, artist, title, etc.) |
-| `mime --path <file>` | Get MIME type for a file |
-| `mime-ext --mime <type>` | Get file extensions for a MIME type |
 
 ## tizen-network-info-cli
 Query network, Wi-Fi, Bluetooth status and scan devices.

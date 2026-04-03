@@ -79,11 +79,11 @@ impl VoiceChannel {
     fn speak(&self, text: &str) {
         match self.tts_engine {
             TtsEngine::TizenNative => {
-                log::info!("VoiceChannel: TTS(tizen) speak: {}", &text[..text.len().min(50)]);
+                log::debug!("VoiceChannel: TTS(tizen) speak: {}", &text[..text.len().min(50)]);
                 // Tizen TTS FFI call would go here
             }
             TtsEngine::ElevenLabsApi => {
-                log::info!("VoiceChannel: TTS(elevenlabs) speak: {}", &text[..text.len().min(50)]);
+                log::debug!("VoiceChannel: TTS(elevenlabs) speak: {}", &text[..text.len().min(50)]);
                 // ElevenLabs API call would go here
             }
             TtsEngine::None => {
@@ -111,7 +111,7 @@ impl Channel for VoiceChannel {
         let language = self.language.clone();
 
         self.thread = Some(std::thread::spawn(move || {
-            log::info!(
+            log::debug!(
                 "VoiceChannel: audio pipeline started (stt={:?}, rate={}, lang={})",
                 stt_engine, sample_rate, language
             );

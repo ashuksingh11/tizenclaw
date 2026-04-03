@@ -69,7 +69,7 @@ impl AgentRoleRegistry {
     }
 
     pub fn add_dynamic_role(&mut self, role: AgentRole) {
-        log::info!("Added dynamic role: {}", role.name);
+        log::debug!("Added dynamic role: {}", role.name);
         self.dynamic_roles.insert(role.name.clone(), role);
     }
 
@@ -86,7 +86,7 @@ mod tests {
         AgentRole {
             name: name.to_string(),
             system_prompt: format!("You are {}", name),
-            allowed_tools: vec!["execute_code".into()],
+            allowed_tools: vec!["test_tool".into()],
             max_iterations: 10,
             description: format!("{} role", name),
         }
@@ -130,7 +130,7 @@ mod tests {
         reg.add_dynamic_role(sample_role("analyst"));
         let r = reg.get_role("analyst").unwrap();
         assert_eq!(r.max_iterations, 10);
-        assert!(r.allowed_tools.contains(&"execute_code".to_string()));
+        assert!(r.allowed_tools.contains(&"test_tool".to_string()));
     }
 
     #[test]

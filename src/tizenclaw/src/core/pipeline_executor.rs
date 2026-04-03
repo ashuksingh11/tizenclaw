@@ -71,7 +71,7 @@ impl PipelineExecutor {
             None => return json!({"error": format!("Pipeline not found: {}", pipeline_id)}),
         };
 
-        log::info!("Executing pipeline '{}' ({} steps)", pipeline.name, pipeline.steps.len());
+        log::debug!("Executing pipeline '{}' ({} steps)", pipeline.name, pipeline.steps.len());
         let mut vars: HashMap<String, String> = HashMap::new();
         if let Some(obj) = input_vars.as_object() {
             for (k, v) in obj {
@@ -147,7 +147,7 @@ mod tests {
             steps: vec![
                 PipelineStep {
                     id: "s1".into(), step_type: "tool".into(),
-                    tool_name: "execute_code".into(), args: json!({}),
+                    tool_name: "test_tool".into(), args: json!({}),
                     prompt: String::new(), output_var: "out".into(),
                     skip_on_failure: false, max_retries: 1,
                 },

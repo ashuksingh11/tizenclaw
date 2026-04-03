@@ -71,7 +71,7 @@ impl ToolPolicy {
     pub fn load_config(&mut self, path: &str) -> bool {
         let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
-            Err(_) => { log::info!("No tool policy config at {}, using defaults", path); return true; }
+            Err(_) => { log::debug!("No tool policy config at {}, using defaults", path); return true; }
         };
         let j: Value = match serde_json::from_str(&content) {
             Ok(v) => v,
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn test_check_policy_allows_first_call() {
         let policy = ToolPolicy::new();
-        assert!(policy.check_policy("s1", "execute_code", &json!({"k": "v"})).is_ok());
+        assert!(policy.check_policy("s1", "test_tool", &json!({"k": "v"})).is_ok());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 3.12)
 
-PROJECT(tizenclaw)
+PROJECT(tizenclaw NONE)
 INCLUDE(GNUInstallDirs)
 
 ## Paths
@@ -15,11 +15,16 @@ SET(APP_DATA_DIR "/opt/usr/share/tizenclaw")
 # Strip LTO flags from CFLAGS because rustc's linker doesn't load the GCC LTO plugin automatically,
 # which causes undefined references when linking static C libraries built by the cc crate.
 string(REGEX REPLACE "-flto[^ ]*" "" SAFE_CFLAGS "$ENV{CFLAGS}")
+string(REGEX REPLACE "-flto[^ ]*" "" SAFE_LDFLAGS "$ENV{LDFLAGS}")
+
+# Tizen's armv7l cross-gcc tries to load a mismatched LTO plugin. Force disable it.
+set(SAFE_CFLAGS "${SAFE_CFLAGS} -fno-lto -fno-use-linker-plugin")
+set(SAFE_LDFLAGS "${SAFE_LDFLAGS} -Wl,-fno-use-linker-plugin")
 
 ADD_CUSTOM_TARGET(cargo_build ALL
-  COMMAND env "CFLAGS=${SAFE_CFLAGS} -Wno-error=missing-field-initializers" cargo build --release --offline --manifest-path ${CMAKE_SOURCE_DIR}/Cargo.toml
+  COMMAND env "CFLAGS=${SAFE_CFLAGS} -Wno-error=missing-field-initializers" "LDFLAGS=${SAFE_LDFLAGS}" "RUSTFLAGS=-C link-arg=-fno-use-linker-plugin -C link-arg=-fno-lto" cargo build --release --offline --manifest-path ${CMAKE_SOURCE_DIR}/Cargo.toml
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-  COMMENT "Building Rust workspace with Cargo (LTO disabled for C dependencies)"
+  COMMENT "Building Rust workspace with Cargo (LTO disabled for C dependencies and linker)"
 )
 
 ## ═══════════════════════════════════════════
@@ -43,13 +48,13 @@ INSTALL(FILES "${CMAKE_SOURCE_DIR}/data/sample/tunnel_config.json.sample"
         DESTINATION "${APP_DATA_DIR}/config"
         RENAME "tunnel_config.json")
 
+
+
 # Systemd service/socket units
 INSTALL(FILES
   "${CMAKE_SOURCE_DIR}/packaging/tizenclaw.service"
   "${CMAKE_SOURCE_DIR}/packaging/tizenclaw-tool-executor.service"
   "${CMAKE_SOURCE_DIR}/packaging/tizenclaw-tool-executor.socket"
-  "${CMAKE_SOURCE_DIR}/packaging/tizenclaw-code-sandbox.service"
-  "${CMAKE_SOURCE_DIR}/packaging/tizenclaw-code-sandbox.socket"
   DESTINATION "${CMAKE_INSTALL_PREFIX}/lib/systemd/system")
 
 # Web dashboard static files
@@ -58,7 +63,6 @@ INSTALL(DIRECTORY "${CMAKE_SOURCE_DIR}/data/web/"
 
 # Tool routing guides
 INSTALL(FILES
-  "${CMAKE_SOURCE_DIR}/tools/routing_guide.md"
   "${CMAKE_SOURCE_DIR}/tools/tools.md"
   DESTINATION "/opt/usr/share/tizen-tools")
 
@@ -66,10 +70,31 @@ INSTALL(FILES
 INSTALL(DIRECTORY "${CMAKE_SOURCE_DIR}/tools/embedded/"
         DESTINATION "/opt/usr/share/tizen-tools/embedded")
 
-# CLI tool scripts
-INSTALL(DIRECTORY "${CMAKE_SOURCE_DIR}/tools/cli/"
-        DESTINATION "/opt/usr/share/tizen-tools/cli"
-        PATTERN "CMakeLists.txt" EXCLUDE)
+# CLI tool scripts (Enabled)
+enable_language(C CXX)
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/cmake/Modules")
+include(ApplyPkgConfig)
+ADD_SUBDIRECTORY(tools/cli)
+
+# pkgmgr metadata parser plugins (Rust cdylib — built by cargo_build)
+# Install the Rust-built .so files from target/release/
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/target/release/libtizenclaw_metadata_llm_backend_plugin.so"
+        DESTINATION "/etc/package-manager/parserlib/metadata"
+        RENAME "libtizenclaw-metadata-llm-backend-plugin.so")
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/target/release/libtizenclaw_metadata_skill_plugin.so"
+        DESTINATION "/etc/package-manager/parserlib/metadata"
+        RENAME "libtizenclaw-metadata-skill-plugin.so")
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/target/release/libtizenclaw_metadata_cli_plugin.so"
+        DESTINATION "/etc/package-manager/parserlib/metadata"
+        RENAME "libtizenclaw-metadata-cli-plugin.so")
+
+# Install .info files for pkgmgr parser plugin registration
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/src/tizenclaw-metadata-llm-backend-plugin/data/tizenclaw-metadata-llm-backend-plugin.info"
+        DESTINATION "/usr/share/parser-plugins")
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/src/tizenclaw-metadata-skill-plugin/data/tizenclaw-metadata-skill-plugin.info"
+        DESTINATION "/usr/share/parser-plugins")
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/src/tizenclaw-metadata-cli-plugin/data/tizenclaw-metadata-cli-plugin.info"
+        DESTINATION "/usr/share/parser-plugins")
 
 # System CLI tools — create empty dir
 INSTALL(DIRECTORY DESTINATION "/opt/usr/share/tizen-tools/system_cli")
@@ -85,19 +110,40 @@ INSTALL(FILES "${CMAKE_SOURCE_DIR}/data/rag/web.zip"
         DESTINATION "${APP_DATA_DIR}/rag")
 
 ## ═══════════════════════════════════════════
-##  Install libtizenclaw.so (plugin framework)
+##  Install libtizenclaw_core.so (framework & SDK)
+## ═══════════════════════════════════════════
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/target/release/libtizenclaw_core.so"
+        DESTINATION "${CMAKE_INSTALL_FULL_LIBDIR}"
+        RENAME "libtizenclaw-core.so")
+
+# Plugin SDK headers
+INSTALL(FILES
+    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-core/include/tizenclaw_channel.h"
+    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-core/include/tizenclaw_llm_backend.h"
+    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-core/include/tizenclaw_curl.h"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}/include/tizenclaw/core")
+
+INSTALL(FILES
+    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-core/include/tizenclaw_error.h"
+    DESTINATION "${CMAKE_INSTALL_PREFIX}/include/tizenclaw")
+
+# pkgconfig for tizenclaw-core
+CONFIGURE_FILE(
+    "${CMAKE_SOURCE_DIR}/packaging/tizenclaw-core.pc.in"
+    "${CMAKE_BINARY_DIR}/tizenclaw-core.pc"
+    @ONLY
+)
+INSTALL(FILES "${CMAKE_BINARY_DIR}/tizenclaw-core.pc"
+        DESTINATION "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig")
+
+## ═══════════════════════════════════════════
+##  Install libtizenclaw.so (C API Client) & headers
 ## ═══════════════════════════════════════════
 INSTALL(FILES "${CMAKE_SOURCE_DIR}/target/release/libtizenclaw.so"
         DESTINATION "${CMAKE_INSTALL_FULL_LIBDIR}")
 
-## ═══════════════════════════════════════════
-##  Install libtizenclaw_client.so (C API) & headers
-## ═══════════════════════════════════════════
-INSTALL(FILES "${CMAKE_SOURCE_DIR}/target/release/libtizenclaw_client.so"
-        DESTINATION "${CMAKE_INSTALL_FULL_LIBDIR}")
-
 # C header
-INSTALL(FILES "${CMAKE_SOURCE_DIR}/src/libtizenclaw-client/include/tizenclaw.h"
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/src/libtizenclaw/include/tizenclaw.h"
         DESTINATION "${CMAKE_INSTALL_PREFIX}/include/tizenclaw")
 
 # pkgconfig
@@ -108,27 +154,3 @@ CONFIGURE_FILE(
 )
 INSTALL(FILES "${CMAKE_BINARY_DIR}/tizenclaw.pc"
         DESTINATION "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig")
-
-## ═══════════════════════════════════════════
-##  Install libtizenclaw_sdk.so (plugin SDK)
-## ═══════════════════════════════════════════
-INSTALL(FILES "${CMAKE_SOURCE_DIR}/target/release/libtizenclaw_sdk.so"
-        DESTINATION "${CMAKE_INSTALL_FULL_LIBDIR}")
-
-# Plugin SDK headers
-INSTALL(FILES
-    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-sdk/include/tizenclaw_error.h"
-    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-sdk/include/tizenclaw_channel.h"
-    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-sdk/include/tizenclaw_llm_backend.h"
-    "${CMAKE_SOURCE_DIR}/src/libtizenclaw-sdk/include/tizenclaw_curl.h"
-    DESTINATION "${CMAKE_INSTALL_PREFIX}/include/tizenclaw")
-
-# pkgconfig for tizenclaw-sdk
-CONFIGURE_FILE(
-    "${CMAKE_SOURCE_DIR}/packaging/tizenclaw-core.pc.in"
-    "${CMAKE_BINARY_DIR}/tizenclaw-sdk.pc"
-    @ONLY
-)
-INSTALL(FILES "${CMAKE_BINARY_DIR}/tizenclaw-sdk.pc"
-        DESTINATION "${CMAKE_INSTALL_FULL_LIBDIR}/pkgconfig")
-

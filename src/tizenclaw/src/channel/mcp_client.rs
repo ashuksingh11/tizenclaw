@@ -92,7 +92,7 @@ impl McpClient {
         self.child = Some(child);
         self.connected = true;
 
-        log::info!(
+        log::debug!(
             "MCP Client: '{}' started (PID: {})",
             self.server_name, pid
         );
@@ -126,7 +126,7 @@ impl McpClient {
         });
         let _ = self.send_rpc_message(&notif);
 
-        log::info!("MCP Client: Handshake succeeded for '{}'", self.server_name);
+        log::debug!("MCP Client: Handshake succeeded for '{}'", self.server_name);
         true
     }
 
@@ -288,7 +288,7 @@ impl McpClient {
 
             // Handle notifications
             if let Some(m) = resp.get("method").and_then(|v| v.as_str()) {
-                log::info!("MCP Client: notification from '{}': {}", self.server_name, m);
+                log::debug!("MCP Client: notification from '{}': {}", self.server_name, m);
             }
         }
     }
@@ -355,7 +355,7 @@ impl McpClientManager {
                 let mut client = McpClient::new(&name, &command, &args, timeout);
                 if client.connect() {
                     client.discover_tools();
-                    log::info!(
+                    log::debug!(
                         "MCP Client: '{}' connected ({} tools)",
                         name, client.get_tools().len()
                     );

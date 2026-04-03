@@ -29,7 +29,12 @@ use tower_http::{
 
 fn get_app_data_dir() -> String {
     std::env::var("TIZENCLAW_DATA_DIR")
-        .unwrap_or_else(|_| "/opt/usr/data/tizenclaw".to_string())
+        .unwrap_or_else(|_| "/opt/usr/share/tizenclaw".to_string())
+}
+
+fn get_share_dir() -> String {
+    std::env::var("TIZENCLAW_SHARE_DIR")
+        .unwrap_or_else(|_| "/opt/usr/share/tizenclaw".to_string())
 }
 const ALLOWED_CONFIGS: &[&str] = &[
     "llm_config.json",
@@ -77,7 +82,8 @@ impl WebDashboard {
             .unwrap_or(&default_web_root)
             .to_string();
 
-        let config_dir = format!("{}/config", &get_app_data_dir());
+        let config_dir = format!("{}/config", &get_share_dir());
+        let _ = std::fs::create_dir_all(&config_dir);
         let default_hash = sha256_hex("admin");
         let pw_hash = load_admin_password(&format!("{}/admin_password.json", config_dir))
             .unwrap_or(default_hash);
@@ -250,14 +256,21 @@ async fn api_metrics() -> Json<Value> {
 }
 
 async fn api_chat(Json(payload): Json<Value>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let prompt = payload.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
-    let session_id = payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("web_dashboard");
+    let prompt = payload.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let session_id = payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("web_dashboard").to_string();
 
     if prompt.is_empty() {
         return Err(json_error(StatusCode::BAD_REQUEST, "Empty prompt"));
     }
 
-    match ipc_send_prompt(session_id, prompt) {
+    let session_id_clone = session_id.clone();
+    let prompt_clone = prompt.clone();
+
+    let response = tokio::task::spawn_blocking(move || ipc_send_prompt(&session_id_clone, &prompt_clone))
+        .await
+        .map_err(|e| json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("Tokio error: {}", e)))?;
+
+    match response {
         Ok(response_text) => Ok(Json(json!({
             "status": "ok",
             "session_id": session_id,
@@ -290,12 +303,8 @@ fn ipc_send_prompt(session_id: &str, prompt: &str) -> Result<String, String> {
             return Err("Failed to connect to agent (is tizenclaw running?)".into());
         }
 
-        let timeout = libc::timeval { tv_sec: 30, tv_usec: 0 };
-        libc::setsockopt(
-            fd, libc::SOL_SOCKET, libc::SO_RCVTIMEO,
-            &timeout as *const _ as *const libc::c_void,
-            std::mem::size_of::<libc::timeval>() as libc::socklen_t,
-        );
+        // Removed SO_RCVTIMEO to support infinite wait for long-running LLM generation (No Timeout)
+        // This ensures the frontend doesn't drop early while the core is thinking.
 
         let req = json!({
             "jsonrpc": "2.0",
@@ -359,20 +368,35 @@ fn ipc_send_prompt(session_id: &str, prompt: &str) -> Result<String, String> {
 }
 
 async fn api_sessions() -> Json<Value> {
-    let sessions_dir = format!("{}/sessions", &get_app_data_dir());
+    let sessions_dir = format!("{}/sessions", &get_share_dir());
     Json(Value::Array(list_md_files(&sessions_dir)))
 }
 
 async fn api_session_dates() -> Json<Value> {
-    let sessions_dir = format!("{}/sessions", &get_app_data_dir());
-    Json(json!({"dates": collect_dates(&sessions_dir)}))
+    let sessions_dir = format!("{}/sessions", &get_share_dir());
+    let mut dates = std::collections::BTreeSet::new();
+    if let Ok(entries) = std::fs::read_dir(&sessions_dir) {
+        for entry in entries.flatten() {
+            if entry.path().is_dir() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.len() == 10 { dates.insert(name); }
+            }
+        }
+    }
+    Json(json!({"dates": dates.into_iter().collect::<Vec<_>>()}))
 }
 
 async fn api_session_detail(AxumPath(id): AxumPath<String>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if id.contains("..") || id.contains('/') {
         return Err(json_error(StatusCode::BAD_REQUEST, "Invalid id"));
     }
-    let path = format!("{}/sessions/{}.md", &get_app_data_dir(), id);
+    let parts: Vec<&str> = id.split('_').collect();
+    let path = if parts.len() >= 2 && parts[0].len() == 10 {
+        format!("{}/sessions/{}/{}.md", &get_share_dir(), parts[0], id)
+    } else {
+        format!("{}/sessions/{}.md", &get_share_dir(), id)
+    };
+    
     match std::fs::read_to_string(&path) {
         Ok(content) => Ok(Json(json!({"id": id, "content": content}))),
         Err(_) => Err(json_error(StatusCode::NOT_FOUND, "Session not found")),
@@ -380,12 +404,12 @@ async fn api_session_detail(AxumPath(id): AxumPath<String>) -> Result<Json<Value
 }
 
 async fn api_tasks() -> Json<Value> {
-    let tasks_dir = format!("{}/tasks", &get_app_data_dir());
+    let tasks_dir = format!("{}/tasks", &get_share_dir());
     Json(Value::Array(list_md_files(&tasks_dir)))
 }
 
 async fn api_task_dates() -> Json<Value> {
-    let tasks_dir = format!("{}/tasks", &get_app_data_dir());
+    let tasks_dir = format!("{}/tasks", &get_share_dir());
     Json(json!({"dates": collect_dates(&tasks_dir)}))
 }
 
@@ -394,7 +418,7 @@ async fn api_task_detail(AxumPath(file): AxumPath<String>) -> Result<Json<Value>
         return Err(json_error(StatusCode::BAD_REQUEST, "Invalid file"));
     }
     let fname = if file.ends_with(".md") { file.clone() } else { format!("{}.md", file) };
-    let path = format!("{}/tasks/{}", &get_app_data_dir(), fname);
+    let path = format!("{}/tasks/{}", &get_share_dir(), fname);
     match std::fs::read_to_string(&path) {
         Ok(content) => Ok(Json(json!({"file": fname, "content": content}))),
         Err(_) => Err(json_error(StatusCode::NOT_FOUND, "Task not found")),
@@ -409,7 +433,7 @@ async fn api_logs(Query(q): Query<LogQuery>) -> Result<Json<Value>, (StatusCode,
     if date.len() != 10 || date.as_bytes().get(4) != Some(&b'-') || date.as_bytes().get(7) != Some(&b'-') {
         return Err(json_error(StatusCode::BAD_REQUEST, "Invalid date format"));
     }
-    let log_path = format!("{}/audit/{}.md", &get_app_data_dir(), date);
+    let log_path = format!("{}/audit/{}.md", &get_share_dir(), date);
     let mut logs = vec![];
     if let Ok(content) = std::fs::read_to_string(&log_path) {
         logs.push(json!({"date": date, "content": content}));
@@ -418,7 +442,7 @@ async fn api_logs(Query(q): Query<LogQuery>) -> Result<Json<Value>, (StatusCode,
 }
 
 async fn api_log_dates() -> Json<Value> {
-    let audit_dir = format!("{}/audit", &get_app_data_dir());
+    let audit_dir = format!("{}/audit", &get_share_dir());
     Json(json!({"dates": collect_dates(&audit_dir)}))
 }
 
@@ -430,7 +454,7 @@ async fn api_auth_login(State(state): State<AppState>, Json(payload): Json<Value
     if hash == stored {
         let token = generate_token();
         if let Ok(mut t) = state.active_tokens.lock() { t.insert(token.clone()); }
-        log::info!("Admin login successful");
+        log::debug!("Admin login successful");
         Ok(Json(json!({"status": "ok", "token": token})))
     } else {
         log::warn!("Admin login failed");
@@ -450,7 +474,7 @@ async fn api_auth_change_password(headers: HeaderMap, State(state): State<AppSta
     let new_hash = sha256_hex(new_pw);
     if let Ok(mut h) = state.admin_pw_hash.lock() { *h = new_hash.clone(); }
     let _ = std::fs::write(state.config_dir.join("admin_password.json"), json!({"password_hash": new_hash}).to_string());
-    log::info!("Admin password changed");
+    log::debug!("Admin password changed");
     Ok(Json(json!({"status": "ok"})))
 }
 
@@ -482,10 +506,13 @@ async fn api_config_set(headers: HeaderMap, State(state): State<AppState>, AxumP
 
     let content = payload.get("content").and_then(|v| v.as_str()).unwrap_or("");
     let fpath = state.config_dir.join(&name);
+    if let Some(parent) = fpath.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     if fpath.exists() { let _ = std::fs::copy(&fpath, state.config_dir.join(format!("{}.bak", name))); }
     match std::fs::write(&fpath, content) {
         Ok(()) => {
-            log::info!("Config saved: {}", name);
+            log::debug!("Config saved: {}", name);
             Ok(Json(json!({"status":"ok","name":name})))
         }
         Err(_) => Err(json_error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to write config")),
@@ -625,10 +652,22 @@ fn list_md_files(dir: &str) -> Vec<Value> {
     let mut entries = vec![];
     if let Ok(read_dir) = std::fs::read_dir(dir) {
         for entry in read_dir.flatten() {
-            let path = entry.path(); if !path.is_file() { continue; }
-            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-            if name.starts_with('.') || !name.ends_with(".md") { continue; }
-            entries.push(json!({"id": name.trim_end_matches(".md"), "file": name, "size_bytes": path.metadata().map(|m| m.len()).unwrap_or(0)}));
+            let path = entry.path(); 
+            if path.is_dir() {
+                if let Ok(sub) = std::fs::read_dir(&path) {
+                    for s_entry in sub.flatten() {
+                        let s_path = s_entry.path();
+                        if !s_path.is_file() { continue; }
+                        let name = s_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                        if name.starts_with('.') || !name.ends_with(".md") { continue; }
+                        entries.push(json!({"id": name.trim_end_matches(".md"), "file": name, "size_bytes": s_path.metadata().map(|m| m.len()).unwrap_or(0)}));
+                    }
+                }
+            } else if path.is_file() {
+                let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                if name.starts_with('.') || !name.ends_with(".md") { continue; }
+                entries.push(json!({"id": name.trim_end_matches(".md"), "file": name, "size_bytes": path.metadata().map(|m| m.len()).unwrap_or(0)}));
+            }
         }
     }
     entries

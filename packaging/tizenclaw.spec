@@ -17,8 +17,36 @@ BuildRequires:  pkgconfig(tizen-core)
 BuildRequires:  pkgconfig(glib-2.0)
 BuildRequires:  pkgconfig(libsoup-2.4)
 BuildRequires:  pkgconfig(pkgmgr)
+BuildRequires:  pkgconfig(pkgmgr-info)
+BuildRequires:  pkgconfig(pkgmgr-installer)
+BuildRequires:  pkgconfig(pkgmgr-parser)
 BuildRequires:  pkgconfig(vconf)
 BuildRequires:  pkgconfig(capi-appfw-event)
+
+# CLI Tools native libs
+# libcurl missing in x86 gb repository, excluded.
+BuildRequires:  pkgconfig(capi-network-connection)
+BuildRequires:  pkgconfig(capi-network-wifi)
+BuildRequires:  pkgconfig(capi-network-wifi-manager)
+BuildRequires:  pkgconfig(capi-network-bluetooth)
+BuildRequires:  pkgconfig(capi-system-info)
+BuildRequires:  pkgconfig(capi-appfw-alarm)
+BuildRequires:  pkgconfig(capi-appfw-app-control)
+BuildRequires:  pkgconfig(notification)
+BuildRequires:  pkgconfig(capi-appfw-app-manager)
+BuildRequires:  pkgconfig(capi-appfw-package-manager)
+BuildRequires:  pkgconfig(rua)
+BuildRequires:  pkgconfig(capi-system-device)
+BuildRequires:  pkgconfig(capi-system-runtime-info)
+BuildRequires:  pkgconfig(capi-system-system-settings)
+BuildRequires:  pkgconfig(storage)
+BuildRequires:  pkgconfig(feedback)
+
+BuildRequires:  pkgconfig(capi-content-mime-type)
+BuildRequires:  pkgconfig(capi-system-sensor)
+BuildRequires:  pkgconfig(capi-media-sound-manager)
+BuildRequires:  pkgconfig(capi-media-tone-player)
+BuildRequires:  pkgconfig(libcurl)
 
 # OpenSSL is statically linked via Rust vendored build (no system OpenSSL needed)
 
@@ -60,15 +88,15 @@ mkdir -p %{buildroot}%{_unitdir}/sockets.target.wants
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/config
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/rag
 mkdir -p %{buildroot}/opt/usr/share/tizen-tools/embedded
-mkdir -p %{buildroot}/opt/usr/share/tizen-tools/cli
 mkdir -p %{buildroot}/opt/usr/share/tizen-tools/actions
+mkdir -p %{buildroot}/opt/usr/share/tizen-tools/cli
+mkdir -p %{buildroot}/opt/usr/share/tizen-tools/skills
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/sandbox/packages/pip
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/sandbox/packages/npm
 mkdir -p %{buildroot}/opt/usr/share/crash/dump
 
 ln -sf ../tizenclaw.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw.service
 ln -sf ../tizenclaw-tool-executor.socket %{buildroot}%{_unitdir}/sockets.target.wants/tizenclaw-tool-executor.socket
-ln -sf ../tizenclaw-code-sandbox.socket %{buildroot}%{_unitdir}/sockets.target.wants/tizenclaw-code-sandbox.socket
 
 %post
 # Unzip RAG web docs for LLM reference
@@ -79,7 +107,7 @@ fi
 
 %files
 %defattr(-,root,root,-)
-%manifest %{name}.manifest
+# %manifest %{name}.manifest
 %{_bindir}/tizenclaw
 %{_bindir}/tizenclaw-cli
 %{_bindir}/tizenclaw-tool-executor
@@ -87,20 +115,18 @@ fi
 %{_unitdir}/tizenclaw.service
 %{_unitdir}/tizenclaw-tool-executor.service
 %{_unitdir}/tizenclaw-tool-executor.socket
-%{_unitdir}/tizenclaw-code-sandbox.service
-%{_unitdir}/tizenclaw-code-sandbox.socket
 %{_unitdir}/multi-user.target.wants/tizenclaw.service
 %{_unitdir}/sockets.target.wants/tizenclaw-tool-executor.socket
-%{_unitdir}/sockets.target.wants/tizenclaw-code-sandbox.socket
 
-/opt/usr/share/tizenclaw/config/*
-/opt/usr/share/tizen-tools/routing_guide.md
+%config(noreplace) /opt/usr/share/tizenclaw/config/*
+
 /opt/usr/share/tizen-tools/tools.md
 /opt/usr/share/tizenclaw/web/
 /opt/usr/share/tizen-tools/embedded/
-/opt/usr/share/tizen-tools/cli/
-/opt/usr/share/tizen-tools/system_cli/
 %dir /opt/usr/share/tizen-tools/actions/
+%dir /opt/usr/share/tizen-tools/cli/
+%dir /opt/usr/share/tizen-tools/skills/
+/opt/usr/share/tizen-tools/cli/*
 %dir /opt/usr/share/tizen-tools/
 %dir /opt/usr/share/tizenclaw/config/
 %dir /opt/usr/share/tizenclaw/sandbox/
@@ -110,11 +136,18 @@ fi
 %dir /opt/usr/share/tizenclaw/
 %dir /opt/usr/share/tizenclaw/rag/
 /opt/usr/share/tizenclaw/rag/web.zip
+%{_libdir}/libtizenclaw-core.so
 %{_libdir}/libtizenclaw.so
-%{_libdir}/libtizenclaw_client.so
-%{_libdir}/libtizenclaw_sdk.so
 %dir /opt/usr/share/crash/
 %dir /opt/usr/share/crash/dump/
+
+# pkgmgr metadata parser plugins
+%{_sysconfdir}/package-manager/parserlib/metadata/libtizenclaw-metadata-llm-backend-plugin.so
+%{_datarootdir}/parser-plugins/tizenclaw-metadata-llm-backend-plugin.info
+%{_sysconfdir}/package-manager/parserlib/metadata/libtizenclaw-metadata-skill-plugin.so
+%{_datarootdir}/parser-plugins/tizenclaw-metadata-skill-plugin.info
+%{_sysconfdir}/package-manager/parserlib/metadata/libtizenclaw-metadata-cli-plugin.so
+%{_datarootdir}/parser-plugins/tizenclaw-metadata-cli-plugin.info
 
 ## ═══════════════════════════════════════════
 ##  Development Sub-package
@@ -129,9 +162,10 @@ Header files and pkgconfig for building applications and plugins against TizenCl
 %files devel
 %{_includedir}/tizenclaw/tizenclaw.h
 %{_includedir}/tizenclaw/tizenclaw_error.h
-%{_includedir}/tizenclaw/tizenclaw_channel.h
-%{_includedir}/tizenclaw/tizenclaw_llm_backend.h
-%{_includedir}/tizenclaw/tizenclaw_curl.h
+%dir %{_includedir}/tizenclaw/core
+%{_includedir}/tizenclaw/core/tizenclaw_channel.h
+%{_includedir}/tizenclaw/core/tizenclaw_llm_backend.h
+%{_includedir}/tizenclaw/core/tizenclaw_curl.h
 %{_libdir}/pkgconfig/tizenclaw.pc
-%{_libdir}/pkgconfig/tizenclaw-sdk.pc
+%{_libdir}/pkgconfig/tizenclaw-core.pc
 

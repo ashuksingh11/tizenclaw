@@ -37,7 +37,7 @@ fn build_agent(timeout_secs: u64) -> Client {
     // Probe for CA certificate file (matching C++ tizenclaw_curl behavior)
     for path in CA_CERT_PATHS {
         if std::path::Path::new(path).exists() {
-            log::info!("Using CA cert bundle: {}", path);
+            log::debug!("Using CA cert bundle: {}", path);
             match std::fs::read(path) {
                 Ok(pem_data) => {
                     // Parse all certificates from the PEM bundle
@@ -50,7 +50,7 @@ fn build_agent(timeout_secs: u64) -> Client {
                                 count += 1;
                             }
                         }
-                        log::info!("TLS configured with {} CA certs from {}", count, path);
+                        log::debug!("TLS configured with {} CA certs from {}", count, path);
                     }
                 }
                 Err(e) => log::warn!("Failed to read CA bundle {}: {}", path, e),
@@ -145,7 +145,7 @@ pub async fn http_post(
     for attempt in 0..=max_retries {
         if attempt > 0 {
             let delay = std::time::Duration::from_millis(500 * (1 << (attempt - 1)));
-            log::info!("HTTP retry {} after {}ms", attempt, delay.as_millis());
+            log::debug!("HTTP retry {} after {}ms", attempt, delay.as_millis());
             tokio::time::sleep(delay).await;
         }
         match do_post(url, headers, json_body, timeout_secs).await {
@@ -157,7 +157,13 @@ pub async fn http_post(
             }
             Ok(resp) => return resp,
             Err(e) => {
-                log::warn!("HTTP POST failed: {} ({}/{})", e, attempt + 1, max_retries);
+                let err_str = format!("HTTP POST failed: {} ({}/{})\n", e, attempt + 1, max_retries);
+                log::warn!("{}", err_str.trim());
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/http_err.log") {
+                    use std::io::Write;
+                    let _ = f.write_all(err_str.as_bytes());
+                }
+                
                 if attempt == max_retries {
                     return HttpResponse {
                         status_code: 0,
@@ -230,12 +236,21 @@ async fn do_post(url: &str, headers: &[(&str, &str)], body: &str, _timeout_secs:
         Ok(resp) => {
             let status = resp.status();
             match resp.text().await {
-                Ok(body_str) => Ok(HttpResponse {
-                    status_code: status.as_u16(),
-                    body: body_str,
-                    success: status.is_success(),
-                    error: if status.is_success() { String::new() } else { format!("HTTP {}", status.as_u16()) },
-                }),
+                Ok(body_str) => {
+                    if !status.is_success() {
+                        let err_str = format!("HTTP {} from {}:\n{}\n", status.as_u16(), url, body_str);
+                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/http_err.log") {
+                            use std::io::Write;
+                            let _ = f.write_all(err_str.as_bytes());
+                        }
+                    }
+                    Ok(HttpResponse {
+                        status_code: status.as_u16(),
+                        body: body_str,
+                        success: status.is_success(),
+                        error: if status.is_success() { String::new() } else { format!("HTTP {}", status.as_u16()) },
+                    })
+                },
                 Err(e) => Err(format!("Failed to read body: {}", e)),
             }
         }

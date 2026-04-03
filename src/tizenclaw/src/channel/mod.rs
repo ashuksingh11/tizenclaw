@@ -90,15 +90,12 @@ impl ChannelRegistry {
         self.channels.iter().any(|c| c.name() == name)
     }
 
-    pub fn load_config(&mut self, config_path: &str) {
-        let content = match std::fs::read_to_string(config_path) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        let config: Value = match serde_json::from_str(&content) {
-            Ok(v) => v,
-            Err(_) => return,
-        };
+    pub fn load_config(&mut self, config_path: &str, agent: Option<std::sync::Arc<crate::core::agent_core::AgentCore>>) {
+        let content = std::fs::read_to_string(config_path).unwrap_or_else(|_| "{}".to_string());
+        let config: Value = serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+        
+        let mut telegram_loaded = false;
+
         if let Some(channels) = config["channels"].as_array() {
             for ch in channels {
                 let cfg = ChannelConfig {
@@ -107,11 +104,35 @@ impl ChannelRegistry {
                     enabled: ch["enabled"].as_bool().unwrap_or(true),
                     settings: ch.get("settings").cloned().unwrap_or(Value::Null),
                 };
-                if let Some(channel) = channel_factory::create_channel(&cfg) {
+                if cfg.channel_type == "telegram" {
+                    telegram_loaded = true;
+                }
+                if let Some(channel) = channel_factory::create_channel(&cfg, agent.clone()) {
                     self.register(channel);
                 }
             }
         }
+
+        if !telegram_loaded {
+            let tg_config_path = std::path::Path::new(config_path)
+                .parent()
+                .unwrap_or(std::path::Path::new(""))
+                .join("telegram_config.json");
+                
+            if tg_config_path.exists() {
+                log::debug!("ChannelRegistry: Autodiscovered telegram_config.json, dynamically injecting Telegram channel.");
+                let cfg = ChannelConfig {
+                    name: "telegram".into(),
+                    channel_type: "telegram".into(),
+                    enabled: true,
+                    settings: serde_json::json!({}),
+                };
+                if let Some(channel) = channel_factory::create_channel(&cfg, agent) {
+                    self.register(channel);
+                }
+            }
+        }
+
         log::info!("ChannelRegistry: loaded {} channels", self.channels.len());
     }
 }

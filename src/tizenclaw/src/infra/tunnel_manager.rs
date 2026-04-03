@@ -170,11 +170,11 @@ impl TunnelManager {
                         if let Some(first) = tunnels.first() {
                             if let Some(pub_url) = first["public_url"].as_str() {
                                 if !pub_url.is_empty() {
-                                    log::info!("========================================");
-                                    log::info!("Secure Tunnel Established!");
-                                    log::info!("Public URL: {}", pub_url);
-                                    log::info!("Routing to: localhost:{}", port);
-                                    log::info!("========================================");
+                                    log::debug!("========================================");
+                                    log::debug!("Secure Tunnel Established!");
+                                    log::debug!("Public URL: {}", pub_url);
+                                    log::debug!("Routing to: localhost:{}", port);
+                                    log::debug!("========================================");
                                     if let Ok(mut u) = url.lock() {
                                         *u = pub_url.to_string();
                                     }

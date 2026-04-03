@@ -53,8 +53,19 @@ __pycache__/
 
 # Gemini agent
 .gemini/
-data/devel/
+# data/devel/
 dlog_dump.txt
+
+# Build logs & warnings
+build_log*.txt
+build_warnings_summary.txt
+
+# Agent temp files
+.agent_files.txt
+TASKS.md
+progress.txt
+docs/tasks/progress.txt
+PRD.md
 
 # Plans (local only)
 plan/
@@ -70,8 +81,17 @@ tools/skills_backup/
 cli_res.txt
 journal.txt
 .plan/
-.deploy_success
 
 # Agents
-.agents/
-AGENTS.md
+.agent/
+
+# Dev notes
+.dev_note/
+docs/
+
+# Temporary files
+.tmp/
+
+# Prompts
+.prompt
+.analysis/

@@ -1,51 +1,59 @@
 # TizenClaw Tool Catalog
 
-This document provides a consolidated index of all available tools.
-For detailed usage, refer to each category's `index.md` file.
+This document provides a consolidated index of all available tools provided by the TizenClaw system.
+Tools are categorized into **Native CLI Tools** and **Embedded (Built-in) Tools**. 
 
-## CLI Tools
+> **Note:** The previously used `skills`, `system_cli`, and `actions` frameworks are obsolete (e.g., the code sandbox was removed) and are no longer part of the primary tool infrastructure. The agent exclusively relies on native Tizen CLI tools and internal embedded tool capabilities.
 
-See [cli/index.md](cli/index.md) for the full list of native CLI tools.
+---
 
-CLI tools are pre-built native executables installed under
-`/opt/usr/share/tizen-tools/cli/<tool-name>/` that output JSON.
+## 1. Native CLI Tools
+
+**Index:** [`cli/index.md`](cli/index.md)
+
+CLI tools are pre-built, Tizen-native executables installed under `/opt/usr/share/tizen-tools/cli/<tool-name>/`.
+They directly interface with the Tizen OS C-API and return structured JSON responses.
 
 Available CLI tools:
-- **tizen-app-manager-cli** — App Management (list, launch, terminate, packages, recent apps)
-- **tizen-aurum-cli** — UI Automation (screen inspect, element find, input simulation, event watch)
-- **tizen-control-display-cli** — Display brightness control
-- **tizen-device-info-cli** — Device information (battery, CPU, memory, storage, thermal, display, settings)
-- **tizen-file-manager-cli** — File system operations (read, write, copy, move, remove, list, mkdir, download)
-- **tizen-hardware-control-cli** — Hardware control (haptic, LED, power lock, feedback)
-- **tizen-network-info-cli** — Network information (WiFi, Bluetooth, connection, data usage)
-- **tizen-notification-cli** — Notifications and alarms
-- **tizen-sensor-cli** — Sensor data (accelerometer, gyroscope, light, proximity, etc.)
-- **tizen-sound-cli** — Sound control (volume, devices, tones)
-- **tizen-vconf-cli** — VConf key read/write/watch
-- **tizen-web-search-cli** — Multi-engine web search
+- **`tizen-app-manager-cli`**: App Management (list, launch, terminate apps, get package info, query recent apps)
+- **`tizen-control-display-cli`**: Display (get/set display brightness)
+- **`tizen-device-info-cli`**: Device Info (battery, CPU, memory, storage, thermal, display, settings)
+- **`tizen-file-manager-cli`**: File System (read, write, append, copy, move, remove, list, mkdir, stat, download)
+- **`tizen-hardware-control-cli`**: Hardware (haptic vibration, camera flash LED, power lock, feedback)
 
-## Embedded Tools
+- **`tizen-network-info-cli`**: Network (Wi-Fi, Bluetooth, network status, scan, data usage)
+- **`tizen-notification-cli`**: Notification (send notifications, schedule alarms)
+- **`tizen-sensor-cli`**: Sensor (accelerometer, gyroscope, light, proximity, pressure, magnetic, orientation)
+- **`tizen-sound-cli`**: Sound (get/set volume, list devices, play tones)
+- **`tizen-vconf-cli`**: Configuration (read, write, or watch vconf system settings)
+- **`tizen-web-search-cli`**: Web Search (multi-engine web search including Naver, Google, Brave, Gemini, etc.)
 
-See [embedded/index.md](embedded/index.md) for built-in embedded tools.
+---
 
-## Skills
+## 2. Embedded Tools
 
-Skills are Python-based tools executed inside a secure OCI container sandbox.
-The `skills/index.md` file is auto-generated at runtime based on installed skill manifests.
+Embedded tools are internally implemented functionalities within the TizenClaw AI agent. They handle agent cognition, workflow orchestrations, vector database searches, and arbitrary execution. Detailed tool schemas are provided in the individual markdown files in the `embedded/` directory.
 
-## Custom Skills
+### Agent & Workflow Management
+- **[`run_supervisor`](embedded/run_supervisor.md)**: Run an autonomous supervisor to orchestrate tasks.
+- **[`create_workflow`](embedded/create_workflow.md)**: Create a new execution workflow.
+- **[`run_workflow`](embedded/run_workflow.md)**: Execute an existing workflow.
+- **[`list_workflows`](embedded/list_workflows.md)**: Retrieve a list of all workflows.
+- **[`delete_workflow`](embedded/delete_workflow.md)**: Delete an existing workflow.
+- **[`create_pipeline`](embedded/create_pipeline.md)**: Set up an data/execution pipeline.
+- **[`run_pipeline`](embedded/run_pipeline.md)**: Execute a configured pipeline.
+- **[`list_pipelines`](embedded/list_pipelines.md)**: List all pipelines.
+- **[`delete_pipeline`](embedded/delete_pipeline.md)**: Remove a pipeline.
 
-Custom skills are user-defined or AI-generated Python scripts added at runtime.
-The `custom_skills/index.md` file is auto-generated when custom skills are installed.
+### Task & Session Execution
+- **[`create_session`](embedded/create_session.md)**: Establish a context session.
+- **[`create_task`](embedded/create_task.md)**: Add a new task to the queue or current execution context.
+- **[`list_tasks`](embedded/list_tasks.md)**: Show active or persistent tasks.
+- **[`cancel_task`](embedded/cancel_task.md)**: Abort a running task.
 
-## System CLI Tools
+### Knowledge & RAG
+- **[`ingest_document`](embedded/ingest_document.md)**: Ingest a document/text into the vector database.
+- **[`search_knowledge`](embedded/search_knowledge.md)**: Semantic semantic querying against the knowledge base.
 
-System CLI tools are host-level tools registered via `tizenclaw-cli --register-tool`.
-The `system_cli/index.md` file is auto-generated based on registered tools.
-
-## Device Actions
-
-See [actions/index.md](actions/index.md) for the dynamically generated list of native Tizen actions.
-
-Device Actions are native Tizen platform features provided by the Action Framework.
-The `actions/index.md` file and its contents are auto-generated at runtime when action schemas are synced by `ActionBridge`. They handle core device control such as display brightness, volume, network toggles, and more.
+### Generative Execution
+- **[`generate_web_app`](embedded/generate_web_app.md)**: Generate a structured web application (HTML/CSS/JS).

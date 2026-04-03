@@ -20,7 +20,7 @@ impl ToolIndexer {
     /// Update the index with new tool declarations.
     pub fn update(&mut self, tools: Vec<LlmToolDecl>) {
         self.tools = tools;
-        log::info!("ToolIndexer: indexed {} tools", self.tools.len());
+        log::debug!("ToolIndexer: indexed {} tools", self.tools.len());
     }
 
     /// Get all indexed tools.

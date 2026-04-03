@@ -72,7 +72,7 @@ impl WordPieceTokenizer {
         self.unk_id = find_id(&self.vocab, "[UNK]");
         self.pad_id = find_id(&self.vocab, "[PAD]");
 
-        log::info!(
+        log::debug!(
             "Vocab loaded: {} tokens (CLS={} SEP={} UNK={})",
             self.vocab.len(),
             self.cls_id,

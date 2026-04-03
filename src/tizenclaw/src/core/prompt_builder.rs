@@ -6,7 +6,6 @@ pub struct RuntimeContext {
 
 pub struct SystemPromptBuilder {
     base_prompt: String,
-    tool_declarations: Vec<String>,
     runtime_context: Option<RuntimeContext>,
     soul_content: Option<String>,
     available_skills: Vec<(String, String)>,
@@ -16,7 +15,6 @@ impl Default for SystemPromptBuilder {
     fn default() -> Self {
         SystemPromptBuilder {
             base_prompt: "You are TizenClaw, an AI assistant running inside a Tizen OS device.".into(),
-            tool_declarations: Vec::new(),
             runtime_context: None,
             soul_content: None,
             available_skills: Vec::new(),
@@ -39,10 +37,9 @@ impl SystemPromptBuilder {
         self
     }
 
-    pub fn add_tool_names(mut self, tools: Vec<String>) -> Self {
-        self.tool_declarations = tools;
-        self
-    }
+
+
+
 
     pub fn add_available_skills(mut self, skills: Vec<(String, String)>) -> Self {
         self.available_skills = skills;
@@ -73,41 +70,25 @@ impl SystemPromptBuilder {
             lines.push("".into());
         }
 
-        // 2. Tooling Constraints & Execution Rules
-        lines.push("## Tooling".into());
-        lines.push("Tool availability (filtered by policy):".into());
-        lines.push("Tool names are case-sensitive. Call tools exactly as listed.".into());
-        if !self.tool_declarations.is_empty() {
-            for t in &self.tool_declarations {
-                lines.push(format!("- {}", t));
-            }
-        } else {
-            lines.push("(No tools currently loaded)".into());
-        }
-        lines.push("".into());
-        
+
+
+        // 2. Tool Call Style
         lines.push("## Tool Call Style".into());
-        lines.push("Default: do not narrate routine, low-risk tool calls (just call the tool).".into());
-        lines.push("Narrate only when it helps: multi-step work, complex/challenging problems, sensitive actions (e.g., deletions), or when explicitly asked.".into());
-        lines.push("Keep narration brief and value-dense; avoid repeating obvious steps.".into());
-        lines.push("Use plain human language for narration unless in a technical context.".into());
-        lines.push("When a first-class tool exists for an action, use the tool directly instead of asking the user to run equivalent CLI commands.".into());
+        lines.push("Skip narration for routine calls. Narrate only for: multi-step work, sensitive actions (deletions), or when asked. Use direct tool calls — don't ask users to run equivalent CLI commands manually.".into());
         lines.push("".into());
 
-        // 3. Safety (Anthropic style boundaries)
+        // 3. Safety
         lines.push("## Safety".into());
-        lines.push("You have no independent goals: do not pursue self-preservation, replication, resource acquisition, or power-seeking; avoid long-term plans beyond the user's request.".into());
-        lines.push("Prioritize safety and human oversight over completion; if instructions conflict, pause and ask; comply with stop/pause/audit requests and never bypass safeguards.".into());
-        lines.push("Do not manipulate or persuade anyone to expand access or disable safeguards. Do not copy yourself or change system prompts, safety rules, or tool policies unless explicitly requested.".into());
+        lines.push("No self-preservation, replication, or power-seeking. Prioritize safety > completion. Pause and ask if instructions conflict. Never bypass safeguards or modify system prompts/policies without explicit request.".into());
         lines.push("".into());
 
         // 4. Memory & Document Skills Navigation
         lines.push("## Memory & Skills Reference".into());
         lines.push("Before answering anything about prior work, check past memories using available repository tools if any.".into());
         lines.push("Before replying, scan <available_skills> entries below:".into());
-        lines.push("- If exactly one skill clearly applies: read its .md file at the listed location using your file reading tools (`std::fs::read` etc), then follow it.".into());
+        lines.push("- If exactly one skill clearly applies: read its .md file using the `read_skill` tool, then follow it.".into());
         lines.push("- If multiple could apply: choose the most specific one, then read/follow it.".into());
-        lines.push("- To create a new repeatable workflow, simply use your write/create file tools to generate a new `.md` file into the skills directory!".into());
+        lines.push("- To create a new repeatable workflow, simply use your `create_skill` tool to save a new textual skill!".into());
         lines.push("".into());
 
         lines.push("<available_skills>".into());
@@ -143,7 +124,6 @@ mod tests {
         let builder = SystemPromptBuilder::new();
         let prompt = builder.build();
         assert!(prompt.contains("You are TizenClaw"));
-        assert!(prompt.contains("(No tools currently loaded)"));
         assert!(prompt.contains("(No custom textual skills found)"));
     }
 
@@ -159,13 +139,8 @@ mod tests {
     #[test]
     fn test_tool_and_skill_injection() {
         let prompt = SystemPromptBuilder::new()
-            .add_tool_names(vec!["tool_a".into(), "tool_b".into()])
             .add_available_skills(vec![("skills/test/SKILL.md".into(), "A core skill".into())])
             .build();
-        
-        assert!(prompt.contains("- tool_a"));
-        assert!(prompt.contains("- tool_b"));
-        assert!(!prompt.contains("(No tools currently loaded)"));
         
         assert!(prompt.contains("- skills/test/SKILL.md: A core skill"));
         assert!(!prompt.contains("(No custom textual skills found)"));
@@ -180,5 +155,47 @@ mod tests {
         assert!(prompt.contains("Working Directory: /home/user"));
         assert!(prompt.contains("os='Ubuntu'"));
         assert!(prompt.contains("active_model='Claude 3.5'"));
+    }
+
+    #[test]
+    fn test_safety_section_is_compact() {
+        // Safety section must be a SINGLE LINE (concise) after optimization.
+        // Previously it was 3 verbose sentences.
+        let prompt = SystemPromptBuilder::new().build();
+        assert!(prompt.contains("## Safety"));
+        assert!(prompt.contains("No self-preservation"));
+        // Ensure the old verbose phrases are gone
+        assert!(!prompt.contains("resource acquisition"));
+        assert!(!prompt.contains("Do not manipulate or persuade"));
+    }
+
+    #[test]
+    fn test_tool_call_style_is_compact() {
+        let prompt = SystemPromptBuilder::new().build();
+        assert!(prompt.contains("## Tool Call Style"));
+        // Must be a single-line description after optimization
+        assert!(prompt.contains("Skip narration for routine calls"));
+        // Ensure the old verbose multi-line form is gone
+        assert!(!prompt.contains("Keep narration brief and value-dense"));
+    }
+
+    #[test]
+    fn test_prompt_length_reduced() {
+        // Verify that the optimized prompt is shorter than the old reference.
+        // Old Safety+ToolCallStyle = ~6 lines. New = ~2 lines.
+        // Use character count as proxy for token count.
+        let prompt = SystemPromptBuilder::new().build();
+        // Baseline: must contain all key sections
+        assert!(prompt.contains("## Safety"));
+        assert!(prompt.contains("## Memory & Skills Reference"));
+        // The combined Safety + ToolCallStyle sections should be < 400 chars
+        let safety_start = prompt.find("## Tool Call Style").unwrap_or(0);
+        let memory_start = prompt.find("## Memory & Skills Reference").unwrap_or(prompt.len());
+        let section_len = memory_start.saturating_sub(safety_start);
+        assert!(
+            section_len < 400,
+            "Tool Call Style + Safety sections should be < 400 chars, got {}",
+            section_len
+        );
     }
 }

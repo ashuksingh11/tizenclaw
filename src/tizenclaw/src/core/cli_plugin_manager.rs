@@ -80,13 +80,13 @@ impl CliPluginManager {
     }
 
     pub fn on_package_installed(&mut self, package_id: &str) {
-        log::info!("CliPluginManager: package installed: {}", package_id);
+        log::debug!("CliPluginManager: package installed: {}", package_id);
         self.scan_installed_plugins();
         if let Some(cb) = &self.on_change { cb(); }
     }
 
     pub fn on_package_uninstalled(&mut self, package_id: &str) {
-        log::info!("CliPluginManager: package uninstalled: {}", package_id);
+        log::debug!("CliPluginManager: package uninstalled: {}", package_id);
         self.plugins.remove(package_id);
         if let Some(cb) = &self.on_change { cb(); }
     }
