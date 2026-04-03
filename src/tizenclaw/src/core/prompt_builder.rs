@@ -107,6 +107,7 @@ impl SystemPromptBuilder {
             lines.push("## Workspace Context & Runtime Metadata".into());
             lines.push(format!("Working Directory: {}", ctx.working_dir));
             lines.push("Treat this directory as the single global workspace for file operations unless explicitly instructed otherwise.".into());
+            lines.push("If you need to know the current exact date and time, run the 'date' shell command via the exec tool.".into());
             lines.push(format!("Runtime Environment: os='{}' | active_model='{}'", ctx.os_info, ctx.active_model));
             lines.push("".into());
         }

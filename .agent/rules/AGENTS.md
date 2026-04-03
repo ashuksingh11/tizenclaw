@@ -95,15 +95,16 @@ All development tasks for the Autonomous Agent **MUST strictly proceed through t
 > **Commit Message Rules** (enforced by Supervisor):
 > 1. **Language**: All commit messages must be written in **English**.
 > 2. **Line Length**: No single line may exceed **80 characters**.
-> 3. **Format**: Follow the structured two-block format:
+> 3. **Format**: Summarized content style.
 >    ```
 >    <Title: concise imperative sentence, ≤50 chars>
 >
->    <Body: explain the purpose (Why) and the change (What),
->     each line ≤80 chars>
+>    <Body: Summarize the purpose and specific changes in clear prose
+>    or bullet points. Do NOT use explicit 'Why:' or 'What:' headers.
+>    Each line ≤80 characters.>
 >    ```
-> 4. Titles must clearly convey the intent; bodies must explain
->    the motivation and describe the specific changes made.
+> 4. Titles must clearly convey the intent; bodies must provide a
+>    comprehensive summary of the modifications.
 
 ---
 

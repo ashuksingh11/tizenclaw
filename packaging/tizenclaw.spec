@@ -86,6 +86,7 @@ mkdir -p %{buildroot}%{_unitdir}
 mkdir -p %{buildroot}%{_unitdir}/multi-user.target.wants
 mkdir -p %{buildroot}%{_unitdir}/sockets.target.wants
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/config
+mkdir -p %{buildroot}/opt/usr/share/tizenclaw/memory
 mkdir -p %{buildroot}/opt/usr/share/tizen-tools/embedded
 mkdir -p %{buildroot}/opt/usr/share/tizen-tools/actions
 mkdir -p %{buildroot}/opt/usr/share/tizen-tools/cli
@@ -121,6 +122,7 @@ ln -sf ../tizenclaw-tool-executor.socket %{buildroot}%{_unitdir}/sockets.target.
 /opt/usr/share/tizen-tools/cli/*
 %dir /opt/usr/share/tizen-tools/
 %dir /opt/usr/share/tizenclaw/config/
+%dir /opt/usr/share/tizenclaw/memory/
 %dir /opt/usr/share/tizenclaw/
 %{_libdir}/libtizenclaw-core.so
 %{_libdir}/libtizenclaw.so

@@ -288,8 +288,8 @@ impl AgentCore {
         }
 
         // Initialize memory store
-        let mem_dir = paths.data_dir.join("memory");
-        let mem_db = paths.data_dir.join("memories.db");
+        let mem_dir = std::path::PathBuf::from("/opt/usr/share/tizenclaw/memory");
+        let mem_db = mem_dir.join("memories.db");
         let model_dir = paths.data_dir.join("models");
         match crate::storage::memory_store::MemoryStore::new(
             &mem_dir.to_string_lossy(), 

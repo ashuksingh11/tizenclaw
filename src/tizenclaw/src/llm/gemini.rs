@@ -272,7 +272,7 @@ mod tests {
     fn test_build_request_inline_system_prompt() {
         let backend = GeminiBackend::new();
         let msgs = vec![LlmMessage::user("hello")];
-        let req = backend.build_request(&msgs, &[], "You are TizenClaw.", None);
+        let req = backend.build_request(&msgs, &[], "You are TizenClaw.", None, None);
         assert!(req.get("system_instruction").is_some());
         assert!(req.get("cachedContent").is_none());
     }
@@ -286,6 +286,7 @@ mod tests {
             &[],
             "ignored prompt",
             Some("cachedContents/abc123"),
+            None,
         );
         // cachedContent present, system_instruction must NOT be present
         assert!(req.get("cachedContent").is_some());
