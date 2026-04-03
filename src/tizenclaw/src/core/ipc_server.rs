@@ -246,15 +246,17 @@ impl IpcServer {
     }
 
     fn send_response(fd: i32, response: &str) {
-        let len = (response.len() as u32).to_be_bytes();
+        let mut msg_buf = Vec::with_capacity(4 + response.len());
+        msg_buf.extend_from_slice(&(response.len() as u32).to_be_bytes());
+        msg_buf.extend_from_slice(response.as_bytes());
+
         unsafe {
-            libc::write(fd, len.as_ptr() as *const _, 4);
             let mut sent: usize = 0;
-            while sent < response.len() {
+            while sent < msg_buf.len() {
                 let n = libc::write(
                     fd,
-                    response.as_ptr().add(sent) as *const _,
-                    response.len() - sent,
+                    msg_buf.as_ptr().add(sent) as *const _,
+                    msg_buf.len() - sent,
                 );
                 if n <= 0 { break; }
                 sent += n as usize;

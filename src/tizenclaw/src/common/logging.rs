@@ -49,9 +49,12 @@ impl log::Log for PlatformLogBridge {
             log::Level::Debug | log::Level::Trace => libtizenclaw_core::framework::LogLevel::Debug,
         };
 
+        let filepath = record.file().unwrap_or("?");
+        let filename = filepath.rsplit('/').next().unwrap_or(filepath).rsplit('\\').next().unwrap_or(filepath);
+
         let msg = format!(
-            "{:>30}:{} : {}",
-            record.file().unwrap_or("?"),
+            "{}:{} : {}",
+            filename,
             record.line().unwrap_or(0),
             record.args()
         );

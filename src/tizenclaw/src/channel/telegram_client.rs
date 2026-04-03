@@ -132,13 +132,13 @@ impl Channel for TelegramClient {
         let rt_handle = tokio::runtime::Handle::current();
 
         self.thread = Some(std::thread::spawn(move || {
-            log::info!("TelegramClient polling started");
+            log::debug!("TelegramClient polling started");
             let mut offset: i64 = 0;
             let mut backoff_secs = 5u64;
 
             while running.load(Ordering::SeqCst) {
                 let url = format!(
-                    "https://api.telegram.org/bot{}/getUpdates?offset={}&timeout=2",
+                    "https://api.telegram.org/bot{}/getUpdates?offset={}&timeout=50",
                     bot_token, offset
                 );
 
@@ -231,7 +231,7 @@ impl Channel for TelegramClient {
                     }
                 }
             }
-            log::info!("TelegramClient polling stopped");
+            log::debug!("TelegramClient polling stopped");
         }));
 
         log::info!("TelegramClient started");

@@ -645,6 +645,8 @@ impl AgentCore {
 
         // ── Phase 2: ContextLoading ──────────────────────────────────────
         loop_state.transition(AgentPhase::ContextLoading);
+        
+        log::info!("[AgentCore] USER: {}", prompt);
 
         // Store user message
         if let Ok(ss) = self.session_store.lock() {
@@ -792,7 +794,7 @@ impl AgentCore {
 
             log::debug!("[System Prompt]:\n{}", system_prompt);
             for (i, msg) in messages.iter().enumerate() {
-                log::info!("[Message {}] Role: {}\nText: {}", i, msg.role, msg.text);
+                log::debug!("[Message {}] Role: {}\nText: {}", i, msg.role, msg.text);
             }
 
             let response = self.chat_with_fallback(&messages, &tools, on_chunk, &system_prompt).await;
@@ -1041,6 +1043,8 @@ impl AgentCore {
 
                 loop_state.transition(AgentPhase::Complete);
                 loop_state.log_self_inspection();
+                
+                log::info!("[AgentCore] AGENT: {}", text);
                 return text;
             }
 

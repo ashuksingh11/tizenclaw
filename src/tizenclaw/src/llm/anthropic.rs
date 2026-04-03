@@ -35,7 +35,13 @@ impl LlmBackend for AnthropicBackend {
 
     async fn chat(&self, messages: &[LlmMessage], tools: &[LlmToolDecl], _on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>, system_prompt: &str) -> LlmResponse {
         let mut req = json!({"model": self.model, "max_tokens": 4096});
-        if !system_prompt.is_empty() { req["system"] = json!(system_prompt); }
+        if !system_prompt.is_empty() { 
+            req["system"] = json!([{
+                "type": "text", 
+                "text": system_prompt, 
+                "cache_control": {"type": "ephemeral"}
+            }]); 
+        }
 
         let mut msgs = vec![];
         for msg in messages {
@@ -75,7 +81,11 @@ impl LlmBackend for AnthropicBackend {
         }
 
         let url = format!("{}/messages", self.endpoint);
-        let headers = [("x-api-key", self.api_key.as_str()), ("anthropic-version", "2023-06-01")];
+        let headers = [
+            ("x-api-key", self.api_key.as_str()), 
+            ("anthropic-version", "2023-06-01"),
+            ("anthropic-beta", "prompt-caching-2024-07-31")
+        ];
         let http_resp = http_client::http_post(&url, &headers, &req.to_string(), 1, 60).await;
 
         let mut resp = LlmResponse::default();
