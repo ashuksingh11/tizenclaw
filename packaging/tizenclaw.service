@@ -6,6 +6,7 @@ After=network.target
 Type=simple
 EnvironmentFile=-/run/tizen-system-env
 EnvironmentFile=-/run/xdg-root-env
+Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/5000/dbus/user_bus_socket"
 ExecStart=/usr/bin/tizenclaw
 Restart=on-failure
 User=root
