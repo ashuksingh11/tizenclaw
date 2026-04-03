@@ -207,7 +207,9 @@ impl IpcServer {
                                     "chunk": chunk
                                 }
                             }).to_string();
-                            IpcServer::send_response(fd_clone, &stream_resp);
+                            let _ = tokio::task::spawn_blocking(move || {
+                                IpcServer::send_response(fd_clone, &stream_resp);
+                            }).await;
                         }
                     });
 
