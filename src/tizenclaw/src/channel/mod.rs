@@ -90,7 +90,7 @@ impl ChannelRegistry {
         self.channels.iter().any(|c| c.name() == name)
     }
 
-    pub fn load_config(&mut self, config_path: &str) {
+    pub fn load_config(&mut self, config_path: &str, agent: Option<std::sync::Arc<crate::core::agent_core::AgentCore>>) {
         let content = match std::fs::read_to_string(config_path) {
             Ok(c) => c,
             Err(_) => return,
@@ -107,7 +107,7 @@ impl ChannelRegistry {
                     enabled: ch["enabled"].as_bool().unwrap_or(true),
                     settings: ch.get("settings").cloned().unwrap_or(Value::Null),
                 };
-                if let Some(channel) = channel_factory::create_channel(&cfg) {
+                if let Some(channel) = channel_factory::create_channel(&cfg, agent.clone()) {
                     self.register(channel);
                 }
             }

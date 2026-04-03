@@ -17,6 +17,7 @@ pub mod storage;
 pub mod llm;
 pub mod core;
 pub mod channel;
+pub mod network;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -121,7 +122,7 @@ async fn main() {
 
     // Load from config if available
     let channel_config_path = platform.paths.config_dir.join("channel_config.json");
-    channel_registry.load_config(&channel_config_path.to_string_lossy());
+    channel_registry.load_config(&channel_config_path.to_string_lossy(), Some(agent.clone()));
 
     // Always ensure web_dashboard is started on port 9090
     let has_dashboard = channel_registry.has_channel("web_dashboard");
@@ -137,13 +138,18 @@ async fn main() {
                 "web_root": web_root
             }),
         };
-        if let Some(ch) = channel::channel_factory::create_channel(&dashboard_config) {
+        if let Some(ch) = channel::channel_factory::create_channel(&dashboard_config, Some(agent.clone())) {
             channel_registry.register(ch);
             log::info!("[Boot] WebDashboard registered (port 9090)");
         }
     }
 
     channel_registry.start_all();
+
+    // ── Phase 8.5: Start mDNS Scanner ──
+    log::info!("[Boot] Starting mDNS network scanner...");
+    let mdns_scanner = network::mdns_discovery::MdnsScanner::new();
+    mdns_scanner.start();
 
     log::info!("[Boot] TizenClaw daemon ready.");
 

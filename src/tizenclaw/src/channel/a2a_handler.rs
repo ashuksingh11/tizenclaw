@@ -52,13 +52,14 @@ pub struct A2aHandler {
     agent_description: String,
     agent_url: String,
     bearer_tokens: Vec<String>,
-    tasks: Mutex<HashMap<String, A2aTask>>,
+    tasks: std::sync::Arc<Mutex<HashMap<String, A2aTask>>>,
     counter: AtomicI32,
     running: bool,
+    agent: std::sync::Arc<crate::core::agent_core::AgentCore>,
 }
 
 impl A2aHandler {
-    pub fn new(config: &ChannelConfig) -> Self {
+    pub fn new(config: &ChannelConfig, agent: std::sync::Arc<crate::core::agent_core::AgentCore>) -> Self {
         let agent_name = config.settings.get("agent_name")
             .and_then(|v| v.as_str())
             .unwrap_or("TizenClaw Agent")
@@ -83,9 +84,10 @@ impl A2aHandler {
             agent_description: "TizenClaw AI Agent System for Tizen devices".into(),
             agent_url,
             bearer_tokens,
-            tasks: Mutex::new(HashMap::new()),
+            tasks: std::sync::Arc::new(Mutex::new(HashMap::new())),
             counter: AtomicI32::new(0),
             running: false,
+            agent,
         }
     }
 
@@ -189,9 +191,9 @@ impl A2aHandler {
 
         let task = A2aTask {
             id: task_id.clone(),
-            status: TaskStatus::Completed,
+            status: TaskStatus::Working,
             message,
-            artifacts: json!([{"type": "text", "text": format!("Task {} received: {}", task_id, text)}]),
+            artifacts: json!(null),
             session_id: format!("a2a_{}", task_id),
             created_at: now.clone(),
             updated_at: now.clone(),
@@ -201,10 +203,36 @@ impl A2aHandler {
             tasks.insert(task_id.clone(), task);
         }
 
+        let tasks_clone = self.tasks.clone();
+        let agent_clone = self.agent.clone();
+        let text_clone = text.clone();
+        let session_id = format!("a2a_{}", task_id);
+        let task_id_clone = task_id.clone();
+
+        tokio::spawn(async move {
+            let result = agent_clone.process_prompt(&session_id, &text_clone, None).await;
+            
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let s = secs % 60;
+            let m = (secs / 60) % 60;
+            let h = (secs / 3600) % 24;
+            let updated_now = format!("1970-01-01T{:02}:{:02}:{:02}Z", h, m, s);
+
+            if let Ok(mut tasks) = tasks_clone.lock() {
+                if let Some(task) = tasks.get_mut(&task_id_clone) {
+                    task.status = TaskStatus::Completed;
+                    task.artifacts = json!([{"type": "text", "text": result}]);
+                    task.updated_at = updated_now;
+                }
+            }
+        });
+
         json!({
             "id": task_id,
-            "status": "completed",
-            "artifacts": [{"type": "text", "text": format!("Task received: {}", text)}],
+            "status": "working",
             "created_at": now,
             "updated_at": now
         })

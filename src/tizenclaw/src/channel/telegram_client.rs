@@ -19,10 +19,11 @@ pub struct TelegramClient {
     active_handlers: Arc<AtomicI32>,
     update_offset: i64,
     thread: Option<std::thread::JoinHandle<()>>,
+    agent: Option<Arc<crate::core::agent_core::AgentCore>>,
 }
 
 impl TelegramClient {
-    pub fn new(config: &ChannelConfig) -> Self {
+    pub fn new(config: &ChannelConfig, agent: Option<Arc<crate::core::agent_core::AgentCore>>) -> Self {
         let bot_token = config.settings.get("bot_token")
             .and_then(|v| v.as_str())
             .unwrap_or("")
@@ -45,6 +46,7 @@ impl TelegramClient {
             active_handlers: Arc::new(AtomicI32::new(0)),
             update_offset: 0,
             thread: None,
+            agent,
         }
     }
 
@@ -103,6 +105,8 @@ impl Channel for TelegramClient {
         let running = self.running.clone();
         let bot_token = self.bot_token.clone();
         let allowed_chat_ids = self.allowed_chat_ids.clone();
+        let active_handlers = self.active_handlers.clone();
+        let agent = self.agent.clone();
 
         self.thread = Some(std::thread::spawn(move || {
             log::info!("TelegramClient polling started");
@@ -158,8 +162,52 @@ impl Channel for TelegramClient {
                             continue;
                         }
 
+                        let current_handlers = active_handlers.load(Ordering::SeqCst);
+                        if current_handlers >= MAX_CONCURRENT_HANDLERS {
+                            log::warn!("Telegram dropping message: max concurrent handlers ({}) reached", current_handlers);
+                            continue;
+                        }
+
                         log::info!("Telegram received from {}: {}", chat_id, text);
-                        // Note: agent processing integration would go here
+                        
+                        if let Some(agent_core) = agent.clone() {
+                            active_handlers.fetch_add(1, Ordering::SeqCst);
+                            let text_clone = text.to_string();
+                            let bot_token_clone = bot_token.clone();
+                            let session_id = format!("tg_{}", chat_id);
+                            let active_handlers_clone = active_handlers.clone();
+                            
+                            std::thread::spawn(move || {
+                                let worker_rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+                                worker_rt.block_on(async move {
+                                    let result = agent_core.process_prompt(&session_id, &text_clone, None).await;
+                                    
+                                    let safe_text = if result.len() > 4000 {
+                                        format!("{}\n...(truncated)", &result[..4000])
+                                    } else {
+                                        result.to_string()
+                                    };
+
+                                    let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token_clone);
+                                    let payload = serde_json::json!({
+                                        "chat_id": chat_id,
+                                        "text": safe_text,
+                                        "parse_mode": "Markdown"
+                                    }).to_string();
+                                    
+                                    let client = crate::infra::http_client::HttpClient::new();
+                                    match client.post_sync(&url, &payload) {
+                                        Ok(resp) if resp.status_code >= 400 => {
+                                            let plain = serde_json::json!({"chat_id": chat_id, "text": safe_text}).to_string();
+                                            let _ = client.post_sync(&url, &plain);
+                                        }
+                                        Err(e) => log::error!("Telegram sendMessage failed: {}", e),
+                                        _ => {}
+                                    }
+                                });
+                                active_handlers_clone.fetch_sub(1, Ordering::SeqCst);
+                            });
+                        }
                     }
                 }
             }
