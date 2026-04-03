@@ -87,6 +87,7 @@ journal.txt
 
 # Dev notes
 .dev_note/
+docs/
 
 # Temporary files
 .tmp/
