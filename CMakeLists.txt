@@ -105,9 +105,6 @@ INSTALL(DIRECTORY DESTINATION "/opt/usr/share/tizen-tools/system_cli")
 INSTALL(PROGRAMS "${CMAKE_SOURCE_DIR}/scripts/start_mcp_tunnel.sh"
         DESTINATION "${BINDIR}")
 
-# RAG web docs
-INSTALL(FILES "${CMAKE_SOURCE_DIR}/data/rag/web.zip"
-        DESTINATION "${APP_DATA_DIR}/rag")
 
 ## ═══════════════════════════════════════════
 ##  Install libtizenclaw_core.so (framework & SDK)
