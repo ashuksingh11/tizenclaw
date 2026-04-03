@@ -149,6 +149,7 @@ pub struct AgentCore {
     action_bridge: Mutex<crate::core::action_bridge::ActionBridge>,
     tool_policy: Mutex<crate::core::tool_policy::ToolPolicy>,
     memory_store: Mutex<Option<crate::storage::memory_store::MemoryStore>>,
+    workflow_engine: tokio::sync::RwLock<crate::core::workflow_engine::WorkflowEngine>,
     /// Hash of the last system_prompt sent to the backend.
     /// Used to detect when the prompt changes so that the server-side
     /// cached content can be refreshed (e.g. Gemini CachedContent API).
@@ -172,6 +173,7 @@ impl AgentCore {
             action_bridge: Mutex::new(crate::core::action_bridge::ActionBridge::new()),
             tool_policy: Mutex::new(crate::core::tool_policy::ToolPolicy::new()),
             memory_store: Mutex::new(None),
+            workflow_engine: tokio::sync::RwLock::new(crate::core::workflow_engine::WorkflowEngine::new()),
             prompt_hash: tokio::sync::RwLock::new(0),
         }
     }
@@ -309,6 +311,12 @@ impl AgentCore {
             td.load_tools_from_root(&paths.tools_dir.to_string_lossy());
         }
         log::info!("Tools loaded from {:?}", paths.tools_dir);
+
+        // Load workflows
+        {
+            let mut we = self.workflow_engine.write().await;
+            we.load_workflows(); // uses default path "/opt/usr/share/tizenclaw/workflows"
+        }
 
         {
             let mut bridge = self.action_bridge.lock().unwrap();
@@ -815,31 +823,52 @@ impl AgentCore {
         loop_state.transition(AgentPhase::Planning);
         let context_engine = SizedContextEngine::new().with_threshold(loop_state.compact_threshold);
 
-        // Optional LLM Cognitive Step for Complex Prompts
-        if prompt.len() > 100 || prompt.contains(" and ") || prompt.contains(" 그리고 ") || prompt.contains("나머지") || prompt.contains("순서대로") {
-            log::debug!("[AgentLoop] Complex prompt detected. Triggering explicit Plan-and-Solve...");
-            let plan_sys = "You are a precise planner. Outline the distinct steps to solve the user's request. Output only a list of concise steps.";
-            
-            // Release writer locks safely for LLM call
-            let plan_resp_opt = {
-                let be_guard = self.backend.read().await;
-                if let Some(be) = be_guard.as_ref() {
-                    Some(be.chat(&[LlmMessage::user(prompt)], &[], None, plan_sys, Some(1024)).await)
-                } else {
-                    None
+        let mut matched_workflow_id = None;
+        {
+            let we = self.workflow_engine.read().await;
+            for wf_val in we.list_workflows() {
+                if let (Some(w_id), Some(trigger)) = (
+                    wf_val.get("id").and_then(|v| v.as_str()), 
+                    wf_val.get("trigger").and_then(|v| v.as_str())
+                ) {
+                    if trigger != "manual" && (prompt.contains(trigger) || trigger == prompt) {
+                        matched_workflow_id = Some(w_id.to_string());
+                        break;
+                    }
                 }
-            };
+            }
+        }
 
-            if let Some(p_resp) = plan_resp_opt {
-                if p_resp.success {
-                    let steps = p_resp.text.trim().to_string();
-                    loop_state.plan_steps.push(steps.clone());
-                    messages.push(LlmMessage {
-                        role: "system".into(),
-                        text: format!("## Active Plan (Follow these steps):\n{}", steps),
-                        ..Default::default()
-                    });
-                    log::info!("[Planning] Extracted plan steps into context.");
+        if let Some(wf_id) = matched_workflow_id {
+            log::info!("[Planning] Matched workflow trigger '{}', entering Workflow Mode.", wf_id);
+            loop_state.active_workflow_id = Some(wf_id);
+        } else {
+            // Optional LLM Cognitive Step for Complex Prompts
+            if prompt.len() > 100 || prompt.contains(" and ") || prompt.contains(" 그리고 ") || prompt.contains("나머지") || prompt.contains("순서대로") {
+                log::debug!("[AgentLoop] Complex prompt detected. Triggering explicit Plan-and-Solve...");
+                let plan_sys = "You are a precise planner. Outline the distinct steps to solve the user's request. Output only a list of concise steps.";
+                
+                // Release writer locks safely for LLM call
+                let plan_resp_opt = {
+                    let be_guard = self.backend.read().await;
+                    if let Some(be) = be_guard.as_ref() {
+                        Some(be.chat(&[LlmMessage::user(prompt)], &[], None, plan_sys, Some(1024)).await)
+                    } else {
+                        None
+                    }
+                };
+
+                if let Some(p_resp) = plan_resp_opt {
+                    if p_resp.success {
+                        let steps = p_resp.text.trim().to_string();
+                        loop_state.plan_steps.push(steps.clone());
+                        messages.push(LlmMessage {
+                            role: "system".into(),
+                            text: format!("## Active Plan (Follow these steps):\n{}", steps),
+                            ..Default::default()
+                        });
+                        log::info!("[Planning] Extracted plan steps into context.");
+                    }
                 }
             }
         }
@@ -870,7 +899,71 @@ impl AgentCore {
             // Step 6: Set Max Tokens Dynamically
             let dynamic_max_tokens = if prompt.len() < 50 { 1024 } else { 4096 };
 
-            let response = self.chat_with_fallback(&messages, &tools, on_chunk, &system_prompt, Some(dynamic_max_tokens)).await;
+            let mut response = LlmResponse::default();
+            let mut is_workflow_tool = false;
+
+            if let Some(wf_id) = loop_state.active_workflow_id.clone() {
+                let we = self.workflow_engine.read().await;
+                if let Some(wf) = we.get_workflow(&wf_id) {
+                    if loop_state.current_workflow_step >= wf.steps.len() {
+                        log::info!("[Workflow] All steps completed for {}", wf.name);
+                        loop_state.active_workflow_id = None;
+                        loop_state.transition(AgentPhase::ResultReporting);
+                        let text = format!("Workflow '{}' completed successfully.\nVariables:\n{:?}", wf.name, loop_state.workflow_vars.keys().collect::<Vec<_>>());
+                        if let Ok(ss) = self.session_store.lock() {
+                            if let Some(store) = ss.as_ref() {
+                                store.add_message(session_id, "assistant", &text);
+                            }
+                        }
+                        return text;
+                    }
+
+                    let step = &wf.steps[loop_state.current_workflow_step];
+                    
+                    use crate::core::workflow_engine::WorkflowStepType;
+                    match step.step_type {
+                        WorkflowStepType::Condition => {
+                            if crate::core::workflow_engine::WorkflowEngine::eval_condition(&step.condition, &loop_state.workflow_vars) {
+                                log::debug!("Condition evaluated to TRUE. Branching to '{}'", step.then_step);
+                                loop_state.current_workflow_step += 1;
+                            } else {
+                                log::debug!("Condition evaluated to FALSE. Branching to '{}'", step.else_step);
+                                loop_state.current_workflow_step += 1;
+                            }
+                            continue;
+                        }
+                        WorkflowStepType::Tool => {
+                            let resolved_args = crate::core::workflow_engine::WorkflowEngine::interpolate_json(&step.args, &loop_state.workflow_vars);
+                            response.success = true;
+                            // Add randomness so observe_output Doesn't see identical strings and trigger Stuck
+                            response.text = format!("Executing workflow tool '{}' (Round {})", step.tool_name, loop_state.round);
+                            response.tool_calls.push(crate::llm::backend::LlmToolCall {
+                                id: format!("call_{}_{}", step.id, loop_state.round),
+                                name: step.tool_name.clone(),
+                                args: resolved_args,
+                            });
+                            is_workflow_tool = true;
+                        }
+                        WorkflowStepType::Prompt => {
+                            // Only inject the prompt if we haven't already for this step
+                            let step_marker = format!("## [Workflow: {}]", step.id);
+                            let already_injected = messages.iter().any(|m| m.text.contains(&step_marker));
+                            
+                            if !already_injected {
+                                let resolved_instruction = crate::core::workflow_engine::WorkflowEngine::interpolate(&step.instruction, &loop_state.workflow_vars);
+                                messages.push(LlmMessage {
+                                    role: "system".into(),
+                                    text: format!("{}\n{}", step_marker, resolved_instruction),
+                                    ..Default::default()
+                                });
+                            }
+                            response = self.chat_with_fallback(&messages, &tools, on_chunk, &system_prompt, Some(dynamic_max_tokens)).await;
+                        }
+                    }
+                }
+            } else {
+                response = self.chat_with_fallback(&messages, &tools, on_chunk, &system_prompt, Some(dynamic_max_tokens)).await;
+            }
 
             // ── Phase 6: ObservationCollect ──────────────────────────────
             loop_state.transition(AgentPhase::ObservationCollect);
@@ -1103,7 +1196,43 @@ impl AgentCore {
                     }
                 }
 
+                // If it was a workflow tool, we just successfully completed it! Save output and advance.
+                if is_workflow_tool {
+                    let last_msg = messages.last().unwrap();
+                    let output_val = serde_json::from_str(&last_msg.text).unwrap_or(Value::String(last_msg.text.clone()));
+                    
+                    let we = self.workflow_engine.read().await;
+                    if let Some(wf_id) = loop_state.active_workflow_id.clone() {
+                        if let Some(wf) = we.get_workflow(&wf_id) {
+                            let step = &wf.steps[loop_state.current_workflow_step];
+                            loop_state.workflow_vars.insert(step.output_var.clone(), output_val);
+                            loop_state.current_workflow_step += 1;
+                        }
+                    }
+                    continue; // Immediately start next round to pick up next workflow step
+                }
+
             } else {
+                let mut advance_workflow = false;
+                if loop_state.active_workflow_id.is_some() {
+                    let we = self.workflow_engine.read().await;
+                    if let Some(wf) = we.get_workflow(loop_state.active_workflow_id.as_ref().unwrap()) {
+                        let step = &wf.steps[loop_state.current_workflow_step];
+                        loop_state.workflow_vars.insert(step.output_var.clone(), serde_json::Value::String(response.text.clone()));
+                        loop_state.current_workflow_step += 1;
+                        advance_workflow = true;
+                    }
+                }
+                if advance_workflow {
+                    // Push the prompt assistant response so context isn't lost
+                    messages.push(LlmMessage {
+                        role: "assistant".into(),
+                        text: response.text.clone(),
+                        ..Default::default()
+                    });
+                    continue;
+                }
+
                 // ── Phase 7: Evaluating — GoalAchieved ──────────────────
                 loop_state.transition(AgentPhase::Evaluating);
                 loop_state.last_eval_verdict = EvalVerdict::GoalAchieved;

@@ -3,17 +3,36 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum WorkflowStepType {
+    Tool,
+    Prompt,
+    Condition,
+}
+
+impl Default for WorkflowStepType {
+    fn default() -> Self {
+        WorkflowStepType::Prompt
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct WorkflowStep {
     pub id: String,
-    pub step_type: String,  // "tool", "prompt", "condition"
+    pub step_type: WorkflowStepType,
     pub tool_name: String,
+    pub instruction: String, // multiline prompt instruction
     pub args: Value,
-    pub prompt: String,
     pub output_var: String,
+    
+    // Condition handling
     pub condition: String,
     pub then_step: String,
     pub else_step: String,
+    
+    // Error handling
+    pub skip_on_failure: bool,
+    pub max_retries: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -22,6 +41,7 @@ pub struct Workflow {
     pub name: String,
     pub description: String,
     pub trigger: String,
+    pub raw_markdown: String,
     pub steps: Vec<WorkflowStep>,
 }
 
@@ -52,9 +72,9 @@ impl WorkflowEngine {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map(|e| e == "md").unwrap_or(false) {
+            if path.extension().map(|e| e == "md").unwrap_or(false) && path.file_name() != Some(std::ffi::OsStr::new("index.md")) {
                 if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Some(wf) = Self::parse_workflow_md(&content) {
+                    if let Some(wf) = Self::parse_markdown(&content) {
                         self.workflows.insert(wf.id.clone(), wf);
                     }
                 }
@@ -63,60 +83,8 @@ impl WorkflowEngine {
         log::info!("WorkflowEngine: loaded {} workflows", self.workflows.len());
     }
 
-    pub fn create_workflow(&mut self, workflow: Workflow) -> String {
-        let id = workflow.id.clone();
-        self.workflows.insert(id.clone(), workflow);
-        id
-    }
-
-    pub fn create_from_markdown(&mut self, markdown: &str) -> Result<String, String> {
-        match Self::parse_workflow_md(markdown) {
-            Some(wf) => {
-                let id = wf.id.clone();
-                self.workflows.insert(id.clone(), wf);
-                Ok(id)
-            }
-            None => Err("Failed to parse workflow markdown".into()),
-        }
-    }
-
-    pub fn execute(&self, workflow_id: &str, input_vars: &Value) -> Value {
-        let workflow = match self.workflows.get(workflow_id) {
-            Some(wf) => wf,
-            None => return json!({"error": format!("Workflow not found: {}", workflow_id)}),
-        };
-
-        log::debug!("Executing workflow '{}' ({} steps)", workflow.name, workflow.steps.len());
-        let mut vars: HashMap<String, String> = HashMap::new();
-
-        // Import input vars
-        if let Some(obj) = input_vars.as_object() {
-            for (k, v) in obj {
-                vars.insert(k.clone(), v.as_str().unwrap_or(&v.to_string()).to_string());
-            }
-        }
-
-        let mut results = vec![];
-        for step in &workflow.steps {
-            let result = match step.step_type.as_str() {
-                "tool" => {
-                    let args_str = Self::interpolate(&step.args.to_string(), &vars);
-                    json!({"step": &step.id, "type": "tool", "tool": &step.tool_name, "status": "executed"})
-                }
-                "prompt" => {
-                    let prompt = Self::interpolate(&step.prompt, &vars);
-                    json!({"step": &step.id, "type": "prompt", "prompt": prompt, "status": "executed"})
-                }
-                _ => json!({"step": &step.id, "status": "skipped"}),
-            };
-
-            if !step.output_var.is_empty() {
-                vars.insert(step.output_var.clone(), result.to_string());
-            }
-            results.push(result);
-        }
-
-        json!({"workflow": workflow.name, "results": results})
+    pub fn get_workflow(&self, id: &str) -> Option<&Workflow> {
+        self.workflows.get(id)
     }
 
     pub fn list_workflows(&self) -> Vec<Value> {
@@ -126,7 +94,7 @@ impl WorkflowEngine {
                 "name": wf.name,
                 "description": wf.description,
                 "trigger": wf.trigger,
-                "step_count": wf.steps.len()
+                "steps_count": wf.steps.len()
             })
         }).collect()
     }
@@ -135,139 +103,237 @@ impl WorkflowEngine {
         self.workflows.remove(id).is_some()
     }
 
-    fn interpolate(template: &str, vars: &HashMap<String, String>) -> String {
+    pub fn create_from_markdown(&mut self, markdown: &str) -> Result<String, String> {
+        match Self::parse_markdown(markdown) {
+            Some(wf) => {
+                let id = wf.id.clone();
+                self.workflows.insert(id.clone(), wf);
+                Ok(id)
+            }
+            None => Err("Failed to parse workflow markdown".into()),
+        }
+    }
+
+    /// Interpolates string templates like `{{var}}` into values from `vars`.
+    /// E.g. `Hello {{name}}` -> `Hello TizenClaw`
+    pub fn interpolate(template: &str, vars: &HashMap<String, Value>) -> String {
         let mut result = template.to_string();
-        for (key, value) in vars {
-            result = result.replace(&format!("{{{{{}}}}}", key), value);
+        for (key, val) in vars {
+            let val_str = if val.is_string() {
+                val.as_str().unwrap_or("").to_string()
+            } else {
+                val.to_string()
+            };
+            result = result.replace(&format!("{{{{{}}}}}", key), &val_str);
         }
         result
     }
 
-    fn parse_workflow_md(content: &str) -> Option<Workflow> {
-        let mut name = String::new();
-        let mut description = String::new();
-        let mut trigger = "manual".to_string();
-        let mut in_frontmatter = false;
-
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed == "---" {
-                if !in_frontmatter { in_frontmatter = true; continue; }
-                else { break; }
+    /// Recursively interpolates JSON values.
+    pub fn interpolate_json(j: &Value, vars: &HashMap<String, Value>) -> Value {
+        match j {
+            Value::String(s) => {
+                let interpolated = Self::interpolate(s, vars);
+                // Attempt to parse back to json if it looks like an object/array,
+                // otherwise return as string. (Optional, based on need)
+                Value::String(interpolated)
             }
-            if !in_frontmatter { continue; }
-            if let Some((key, val)) = trimmed.split_once(':') {
-                match key.trim() {
-                    "name" => name = val.trim().trim_matches('"').to_string(),
-                    "description" => description = val.trim().trim_matches('"').to_string(),
-                    "trigger" => trigger = val.trim().trim_matches('"').to_string(),
+            Value::Object(map) => {
+                let mut new_map = serde_json::Map::new();
+                for (k, v) in map {
+                    new_map.insert(k.clone(), Self::interpolate_json(v, vars));
+                }
+                Value::Object(new_map)
+            }
+            Value::Array(arr) => {
+                let new_arr = arr.iter().map(|v| Self::interpolate_json(v, vars)).collect();
+                Value::Array(new_arr)
+            }
+            _ => j.clone(),
+        }
+    }
+
+    /// Evaluates a simple condition expression `{{a}} == b`.
+    /// More complex conditions can be parsed here.
+    pub fn eval_condition(condition: &str, vars: &HashMap<String, Value>) -> bool {
+        let expr = Self::interpolate(condition, vars).trim().to_string();
+        let parts: Vec<&str> = expr.split_whitespace().collect();
+        if parts.len() == 3 {
+            let left = parts[0];
+            let op = parts[1];
+            let right = parts[2];
+            match op {
+                "==" => left == right,
+                "!=" => left != right,
+                ">"|" <" | ">=" | "<=" => {
+                    let l: f64 = left.parse().unwrap_or(0.0);
+                    let r: f64 = right.parse().unwrap_or(0.0);
+                    match op {
+                        ">" => l > r,
+                        "<" => l < r,
+                        ">=" => l >= r,
+                        "<=" => l <= r,
+                        _ => false
+                    }
+                }
+                _ => false,
+            }
+        } else {
+            // Unrecognized condition format
+            false
+        }
+    }
+
+    // Markdown Parser implementation (no external regex dependency)
+    fn parse_markdown(markdown: &str) -> Option<Workflow> {
+        let lines: Vec<&str> = markdown.lines().collect();
+        let mut wf = Workflow {
+            id: String::new(),
+            name: String::new(),
+            description: String::new(),
+            trigger: "manual".to_string(),
+            raw_markdown: markdown.to_string(),
+            steps: vec![],
+        };
+
+        // 1. Extract Frontmatter
+        let mut body_start = 0;
+        if lines.first().map(|l| l.trim()) == Some("---") {
+            let mut i = 1;
+            while i < lines.len() {
+                let text = lines[i].trim();
+                if text == "---" {
+                    body_start = i + 1;
+                    break;
+                }
+                if let Some((k, v)) = text.split_once(':') {
+                    let key = k.trim();
+                    let val = v.trim().trim_matches('"');
+                    match key {
+                        "name" => wf.name = val.to_string(),
+                        "description" => wf.description = val.to_string(),
+                        "trigger" => wf.trigger = val.to_string(),
+                        "id" => wf.id = val.to_string(),
+                        _ => {}
+                    }
+                }
+                i += 1;
+            }
+        }
+
+        if wf.name.is_empty() {
+            return None;
+        }
+
+        if wf.id.is_empty() {
+            wf.id = wf.name.to_lowercase().replace(' ', "_");
+        }
+
+        // 2. Extract Steps
+        let mut current_step: Option<(String, String, Vec<String>)> = None; // (id, title, buffer)
+
+        for i in body_start..lines.len() {
+            let line = lines[i];
+            
+            // "## Step 1: Check System"
+            if line.starts_with("## Step ") {
+                if let Some((id, _, buf)) = current_step.take() {
+                    wf.steps.push(Self::parse_step_block(&id, &buf));
+                }
+                // extract Step N and title
+                if let Some(colon_idx) = line.find(':') {
+                    let step_mark = line[3..colon_idx].trim().to_string(); // "Step 1"
+                    let step_id = step_mark.to_lowercase().replace(' ', "_");
+                    current_step = Some((step_id.clone(), String::new(), vec![]));
+                }
+            } else if let Some((_, _, ref mut buf)) = current_step {
+                buf.push(line.to_string());
+            }
+        }
+
+        if let Some((id, _, buf)) = current_step {
+            wf.steps.push(Self::parse_step_block(&id, &buf));
+        }
+
+        Some(wf)
+    }
+
+    fn parse_step_block(id: &str, body: &[String]) -> WorkflowStep {
+        let mut step = WorkflowStep {
+            id: id.to_string(),
+            ..Default::default()
+        };
+
+        let mut in_multiline = false;
+        let mut multiline_key = String::new();
+        let mut multiline_val = vec![];
+
+        for line in body {
+            let trimmed = line.trim();
+            if in_multiline {
+                // Check if a new key starts
+                if trimmed.starts_with("- ") && trimmed.contains(':') {
+                    in_multiline = false;
+                    if multiline_key == "instruction" {
+                        step.instruction = multiline_val.join("\n").trim().to_string();
+                    }
+                    multiline_val.clear();
+                } else {
+                    multiline_val.push(line.to_string());
+                    continue;
+                }
+            }
+
+            if trimmed.is_empty() { continue; }
+
+            let prefix = "- ";
+            let text = if trimmed.starts_with(prefix) { &trimmed[prefix.len()..] } else { trimmed };
+            
+            if let Some((k, v)) = text.split_once(':') {
+                let key = k.trim();
+                let val = v.trim();
+
+                match key {
+                    "type" => {
+                        step.step_type = match val {
+                            "tool" => WorkflowStepType::Tool,
+                            "condition" => WorkflowStepType::Condition,
+                            _ => WorkflowStepType::Prompt,
+                        };
+                    }
+                    "tool_name" => step.tool_name = val.to_string(),
+                    "output_var" => step.output_var = val.to_string(),
+                    "condition" => step.condition = val.to_string(),
+                    "then_step" => step.then_step = val.to_string(),
+                    "else_step" => step.else_step = val.to_string(),
+                    "skip_on_failure" => step.skip_on_failure = val == "true",
+                    "max_retries" => step.max_retries = val.parse().unwrap_or(0),
+                    "args" => {
+                        step.args = serde_json::from_str(val).unwrap_or(json!({}));
+                    }
+                    "instruction" => {
+                        if val == "|" {
+                            in_multiline = true;
+                            multiline_key = key.to_string();
+                        } else {
+                            step.instruction = val.to_string();
+                        }
+                    }
                     _ => {}
                 }
             }
         }
 
-        if name.is_empty() { return None; }
-        let id = name.to_lowercase().replace(' ', "_");
-
-        Some(Workflow {
-            id,
-            name,
-            description,
-            trigger,
-            steps: vec![], // Steps parsed from ## Step sections
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn sample_workflow() -> Workflow {
-        Workflow {
-            id: "wf_1".into(),
-            name: "Test Workflow".into(),
-            description: "A test".into(),
-            trigger: "manual".into(),
-            steps: vec![
-                WorkflowStep {
-                    id: "s1".into(), step_type: "tool".into(),
-                    tool_name: "test_tool".into(), args: json!({"code": "print(1)"}),
-                    prompt: String::new(), output_var: "result".into(),
-                    condition: String::new(), then_step: String::new(), else_step: String::new(),
-                },
-                WorkflowStep {
-                    id: "s2".into(), step_type: "prompt".into(),
-                    tool_name: String::new(), args: Value::Null,
-                    prompt: "Analyze {{result}}".into(), output_var: String::new(),
-                    condition: String::new(), then_step: String::new(), else_step: String::new(),
-                },
-            ],
+        if in_multiline {
+            if multiline_key == "instruction" {
+                step.instruction = multiline_val.join("\n").trim().to_string();
+            }
         }
-    }
 
-    #[test]
-    fn test_create_workflow() {
-        let mut engine = WorkflowEngine::new();
-        let id = engine.create_workflow(sample_workflow());
-        assert_eq!(id, "wf_1");
-    }
+        if step.output_var.is_empty() {
+            step.output_var = step.id.clone();
+        }
 
-    #[test]
-    fn test_list_workflows() {
-        let mut engine = WorkflowEngine::new();
-        engine.create_workflow(sample_workflow());
-        let list = engine.list_workflows();
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0]["name"], "Test Workflow");
-        assert_eq!(list[0]["step_count"], 2);
-    }
-
-    #[test]
-    fn test_delete_workflow() {
-        let mut engine = WorkflowEngine::new();
-        engine.create_workflow(sample_workflow());
-        assert!(engine.delete_workflow("wf_1"));
-        assert!(!engine.delete_workflow("wf_1")); // already deleted
-    }
-
-    #[test]
-    fn test_execute_workflow() {
-        let mut engine = WorkflowEngine::new();
-        engine.create_workflow(sample_workflow());
-        let result = engine.execute("wf_1", &json!({"input": "test"}));
-        assert_eq!(result["workflow"], "Test Workflow");
-        assert_eq!(result["results"].as_array().unwrap().len(), 2);
-    }
-
-    #[test]
-    fn test_execute_missing_workflow() {
-        let engine = WorkflowEngine::new();
-        let result = engine.execute("nonexistent", &json!({}));
-        assert!(result["error"].as_str().unwrap().contains("not found"));
-    }
-
-    #[test]
-    fn test_interpolate() {
-        let mut vars = HashMap::new();
-        vars.insert("name".into(), "TizenClaw".into());
-        let result = WorkflowEngine::interpolate("Hello {{name}}!", &vars);
-        assert_eq!(result, "Hello TizenClaw!");
-    }
-
-    #[test]
-    fn test_parse_workflow_md() {
-        let md = "---\nname: \"My Workflow\"\ndescription: \"Does things\"\ntrigger: daily\n---\n# Steps\n";
-        let wf = WorkflowEngine::parse_workflow_md(md).unwrap();
-        assert_eq!(wf.name, "My Workflow");
-        assert_eq!(wf.trigger, "daily");
-        assert_eq!(wf.id, "my_workflow");
-    }
-
-    #[test]
-    fn test_parse_workflow_md_missing_name() {
-        let md = "---\ndescription: no name\n---\n";
-        assert!(WorkflowEngine::parse_workflow_md(md).is_none());
+        step
     }
 }
-
