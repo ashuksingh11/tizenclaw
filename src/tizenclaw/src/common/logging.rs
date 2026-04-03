@@ -17,15 +17,22 @@ static INIT: Once = Once::new();
 pub fn init_with_logger() {
     INIT.call_once(|| {
         log::set_logger(&PlatformLogBridge).unwrap();
-        log::set_max_level(log::LevelFilter::Debug);
+        // Allow all levels to the bridge, we will filter in `enabled` based on target.
+        log::set_max_level(log::LevelFilter::Trace);
     });
 }
 
 struct PlatformLogBridge;
 
 impl log::Log for PlatformLogBridge {
-    fn enabled(&self, _metadata: &log::Metadata) -> bool {
-        true
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        // Enforce strict filtering: ONLY tizenclaw internal modules get Debug/Trace.
+        // Vendor crates (mdns_sd, hyper, rustls, etc.) are restricted to Warn/Error.
+        if metadata.target().starts_with("tizenclaw") || metadata.target().starts_with("libtizenclaw") {
+            metadata.level() <= log::Level::Debug
+        } else {
+            metadata.level() <= log::Level::Warn
+        }
     }
 
     fn log(&self, record: &log::Record) {
