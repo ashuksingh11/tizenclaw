@@ -454,7 +454,7 @@ async fn api_auth_login(State(state): State<AppState>, Json(payload): Json<Value
     if hash == stored {
         let token = generate_token();
         if let Ok(mut t) = state.active_tokens.lock() { t.insert(token.clone()); }
-        log::info!("Admin login successful");
+        log::debug!("Admin login successful");
         Ok(Json(json!({"status": "ok", "token": token})))
     } else {
         log::warn!("Admin login failed");
@@ -474,7 +474,7 @@ async fn api_auth_change_password(headers: HeaderMap, State(state): State<AppSta
     let new_hash = sha256_hex(new_pw);
     if let Ok(mut h) = state.admin_pw_hash.lock() { *h = new_hash.clone(); }
     let _ = std::fs::write(state.config_dir.join("admin_password.json"), json!({"password_hash": new_hash}).to_string());
-    log::info!("Admin password changed");
+    log::debug!("Admin password changed");
     Ok(Json(json!({"status": "ok"})))
 }
 
@@ -512,7 +512,7 @@ async fn api_config_set(headers: HeaderMap, State(state): State<AppState>, AxumP
     if fpath.exists() { let _ = std::fs::copy(&fpath, state.config_dir.join(format!("{}.bak", name))); }
     match std::fs::write(&fpath, content) {
         Ok(()) => {
-            log::info!("Config saved: {}", name);
+            log::debug!("Config saved: {}", name);
             Ok(Json(json!({"status":"ok","name":name})))
         }
         Err(_) => Err(json_error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to write config")),

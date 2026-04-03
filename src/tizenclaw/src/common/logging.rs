@@ -4,7 +4,7 @@
 //! On generic Linux: stderr + optional file-based logging
 //!
 //! Usage (via standard `log` crate macros):
-//!   log::info!("message {}", value);
+//!   log::debug!("message {}", value);
 //!   log::error!("something failed: {}", err);
 
 use std::sync::{Mutex, Once};
@@ -13,18 +13,9 @@ const TAG: &str = "TIZENCLAW";
 
 static INIT: Once = Once::new();
 
-/// Global platform logger reference — set once during init.
-static PLATFORM_LOGGER: Mutex<Option<std::sync::Arc<dyn libtizenclaw_core::framework::PlatformLogger>>> =
-    Mutex::new(None);
-
-/// Initialize with a specific platform logger.
-pub fn init_with_logger(logger: Option<std::sync::Arc<dyn libtizenclaw_core::framework::PlatformLogger>>) {
+/// Initialize with the TizenClaw global logger.
+pub fn init_with_logger() {
     INIT.call_once(|| {
-        if let Some(pl) = logger {
-            if let Ok(mut guard) = PLATFORM_LOGGER.lock() {
-                *guard = Some(pl);
-            }
-        }
         log::set_logger(&PlatformLogBridge).unwrap();
         log::set_max_level(log::LevelFilter::Debug);
     });
@@ -53,20 +44,30 @@ impl log::Log for PlatformLogBridge {
         let filename = filepath.rsplit('/').next().unwrap_or(filepath).rsplit('\\').next().unwrap_or(filepath);
 
         let msg = format!(
-            "{}:{} : {}",
+            "{}:{} {}",
             filename,
             record.line().unwrap_or(0),
             record.args()
         );
 
-        // Use platform logger if available, otherwise stderr
-        if let Ok(guard) = PLATFORM_LOGGER.lock() {
-            if let Some(pl) = &*guard {
-                pl.log(level, TAG, &msg);
-                // Also write to file log if configured
-                FileLogBackend::write(&msg, level);
-                return;
+        let is_tizen = std::fs::read_to_string("/etc/os-release")
+            .map(|s| s.to_lowercase().contains("tizen"))
+            .unwrap_or(false);
+
+        if is_tizen {
+            let prio = match record.level() {
+                log::Level::Error => libtizenclaw_core::tizen_sys::dlog::DLOG_ERROR,
+                log::Level::Warn  => libtizenclaw_core::tizen_sys::dlog::DLOG_WARN,
+                log::Level::Info  => libtizenclaw_core::tizen_sys::dlog::DLOG_INFO,
+                log::Level::Debug | log::Level::Trace => libtizenclaw_core::tizen_sys::dlog::DLOG_DEBUG,
+            };
+            if let (Ok(tag_c), Ok(msg_c)) = (std::ffi::CString::new(TAG), std::ffi::CString::new(msg.replace('%', "%%"))) {
+                unsafe {
+                    libtizenclaw_core::tizen_sys::dlog::dlog_print(prio, tag_c.as_ptr(), msg_c.as_ptr());
+                }
             }
+            FileLogBackend::write(&msg, level);
+            return;
         }
 
         // Fallback: stderr

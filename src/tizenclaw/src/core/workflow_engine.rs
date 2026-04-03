@@ -86,7 +86,7 @@ impl WorkflowEngine {
             None => return json!({"error": format!("Workflow not found: {}", workflow_id)}),
         };
 
-        log::info!("Executing workflow '{}' ({} steps)", workflow.name, workflow.steps.len());
+        log::debug!("Executing workflow '{}' ({} steps)", workflow.name, workflow.steps.len());
         let mut vars: HashMap<String, String> = HashMap::new();
 
         // Import input vars

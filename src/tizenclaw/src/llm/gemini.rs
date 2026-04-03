@@ -123,7 +123,7 @@ impl GeminiBackend {
             // cachedContentTokenCount shows how many tokens came from cache
             if let Some(cached_t) = usage["cachedContentTokenCount"].as_i64() {
                 if cached_t > 0 {
-                    log::info!(
+                    log::debug!(
                         "[GeminiCache] Cache hit: {} cached tokens (saved ~{} prompt tokens)",
                         cached_t,
                         cached_t
@@ -189,7 +189,7 @@ impl GeminiBackend {
         };
 
         if let Some(name) = parsed["name"].as_str() {
-            log::info!("[GeminiCache] Cache created: {} ({} chars prompt)", name, system_prompt.len());
+            log::debug!("[GeminiCache] Cache created: {} ({} chars prompt)", name, system_prompt.len());
             if let Ok(mut guard) = self.cached_content_name.write() {
                 *guard = Some(name.to_string());
             }

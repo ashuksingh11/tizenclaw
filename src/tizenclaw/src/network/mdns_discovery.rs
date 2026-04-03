@@ -53,7 +53,7 @@ impl MdnsScanner {
                         let addr = addresses.first().cloned().unwrap_or_else(|| "".to_string());
                         let port = info.get_port();
                         
-                        log::info!("Discovered TizenClaw peer: {} at {}:{}", id, addr, port);
+                        log::debug!("Discovered TizenClaw peer: {} at {}:{}", id, addr, port);
                         
                         if let Ok(mut peers) = peers_clone.write() {
                             peers.insert(id.clone(), Peer {
@@ -68,7 +68,7 @@ impl MdnsScanner {
                         }
                     }
                     ServiceEvent::ServiceRemoved(_service_type, fullname) => {
-                        log::info!("TizenClaw peer removed: {}", fullname);
+                        log::debug!("TizenClaw peer removed: {}", fullname);
                         if let Ok(mut peers) = peers_clone.write() {
                             peers.remove(&fullname);
                         }

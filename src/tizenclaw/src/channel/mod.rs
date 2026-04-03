@@ -120,7 +120,7 @@ impl ChannelRegistry {
                 .join("telegram_config.json");
                 
             if tg_config_path.exists() {
-                log::info!("ChannelRegistry: Autodiscovered telegram_config.json, dynamically injecting Telegram channel.");
+                log::debug!("ChannelRegistry: Autodiscovered telegram_config.json, dynamically injecting Telegram channel.");
                 let cfg = ChannelConfig {
                     name: "telegram".into(),
                     channel_type: "telegram".into(),

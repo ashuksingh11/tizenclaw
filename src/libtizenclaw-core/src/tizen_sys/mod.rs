@@ -40,10 +40,10 @@ pub mod dlog {
     use super::*;
     use std::os::raw::{c_char, c_int};
 
-    pub const DLOG_ERROR: c_int = 3;
-    pub const DLOG_WARN: c_int = 4;
-    pub const DLOG_INFO: c_int = 5;
-    pub const DLOG_DEBUG: c_int = 6;
+    pub const DLOG_ERROR: c_int = 6;
+    pub const DLOG_WARN: c_int = 5;
+    pub const DLOG_INFO: c_int = 4;
+    pub const DLOG_DEBUG: c_int = 3;
 
     pub unsafe fn dlog_print(prio: c_int, tag: *const c_char, fmt: *const c_char) -> c_int {
         dlsym_call!(LIB_DLOG, b"dlog_print\0", unsafe extern "C" fn(c_int, *const c_char, *const c_char) -> c_int,

@@ -244,7 +244,7 @@ impl ToolDispatcher {
             }
         }
 
-        log::info!("Executing tool '{}': {} {:?}", tool_name, decl.binary_path, cmd_args);
+        log::debug!("Executing tool '{}': {} {:?}", tool_name, decl.binary_path, cmd_args);
 
         let engine = crate::infra::container_engine::ContainerEngine::new();
         let args_ref: Vec<&str> = cmd_args.iter().map(|s| s.as_str()).collect();

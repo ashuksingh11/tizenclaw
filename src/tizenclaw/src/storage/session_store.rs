@@ -238,7 +238,7 @@ impl SessionStore {
                 .map_err(|e| format!("rename failed: {}", e))?;
         }
 
-        log::info!(
+        log::debug!(
             "[SessionStore] compacted.md saved: session='{}' msgs={}",
             session_id,
             messages.len()

@@ -169,7 +169,7 @@ impl AgentLoopState {
 
     /// Transition to a new phase and log the transition via dlog.
     pub fn transition(&mut self, next: AgentPhase) {
-        log::info!(
+        log::debug!(
             "[AgentLoop] Session '{}' round {} | {} → {}",
             self.session_id,
             self.round,
@@ -218,7 +218,7 @@ impl AgentLoopState {
         } else {
             0
         };
-        log::info!(
+        log::debug!(
             "[SelfInspection] session='{}' round={} phase={} \
              tokens={}/{} ({}%) tools={} errors={} elapsed={}s",
             self.session_id,

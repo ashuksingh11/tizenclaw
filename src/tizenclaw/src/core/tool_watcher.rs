@@ -34,7 +34,7 @@ impl ToolWatcher {
         let watch_dirs = self.watch_dirs.clone();
 
         let handle = tokio::spawn(async move {
-            log::info!("ToolWatcher: Monitoring tool directories for changes...");
+            log::debug!("ToolWatcher: Monitoring tool directories for changes...");
             // Polling interval: 3 seconds
             let mut interval = tokio::time::interval(Duration::from_secs(3));
             let mut last_modified_times: std::collections::HashMap<PathBuf, std::time::SystemTime> =
@@ -150,7 +150,7 @@ impl ToolWatcher {
                 // Fire callback only after DEBOUNCE_SECS of stability
                 if let Some(t) = last_change {
                     if t.elapsed() >= Duration::from_secs(DEBOUNCE_SECS) {
-                        log::info!(
+                        log::debug!(
                             "ToolWatcher: {}s quiet — invoking reload callback.",
                             DEBOUNCE_SECS
                         );

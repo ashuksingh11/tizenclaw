@@ -117,7 +117,7 @@ async fn handle_client(mut stream: UnixStream) {
         return;
     }
 
-    log::info!("Executing [{}]: {} {:?}", mode, bin_path, args);
+    log::debug!("Executing [{}]: {} {:?}", mode, bin_path, args);
 
     let mut child = match Command::new(&bin_path)
         .args(&args)
@@ -246,7 +246,9 @@ async fn main() {
                 .map(|s| s.to_lowercase().contains("tizen"))
                 .unwrap_or(false);
 
-            let msg = format!("[{}] {}", record.level(), record.args());
+            let filepath = record.file().unwrap_or("?");
+            let filename = filepath.rsplit('/').next().unwrap_or(filepath).rsplit('\\').next().unwrap_or(filepath);
+            let msg = format!("{}:{} [{}] {}", filename, record.line().unwrap_or(0), record.level(), record.args());
 
             if is_tizen {
                 let prio = match record.level() {
@@ -307,7 +309,7 @@ fn systemd_socket() -> Option<UnixListener> {
     let fds: i32 = listen_fds.parse().ok()?;
 
     if pid == std::process::id() && fds >= 1 {
-        log::info!("Using systemd socket activation (fd=3)");
+        log::debug!("Using systemd socket activation (fd=3)");
         let std_listener = unsafe { std::os::unix::net::UnixListener::from_raw_fd(3) };
         std_listener.set_nonblocking(true).ok()?;
         UnixListener::from_std(std_listener).ok()

@@ -161,14 +161,14 @@ impl PackageManagerProvider for TizenPackageManager {
             let mut filter: pkgmgrinfo_pkginfo_filter_h = std::ptr::null_mut();
             // CRITICAL: Must use metadata_filter_create, NOT generic filter_create
             let create_ret = pkgmgrinfo_pkginfo_metadata_filter_create(&mut filter);
-            log::info!("metadata_filter_create returned: {} (filter null: {})", create_ret, filter.is_null());
+            log::debug!("metadata_filter_create returned: {} (filter null: {})", create_ret, filter.is_null());
             if create_ret != PMINFO_R_OK {
                 log::error!("pkgmgrinfo_pkginfo_metadata_filter_create failed with code: {}", create_ret);
                 return vec![];
             }
             let c_key = std::ffi::CString::new(key).unwrap();
             let add_ret = pkgmgrinfo_pkginfo_metadata_filter_add(filter, c_key.as_ptr(), std::ptr::null());
-            log::info!("metadata_filter_add returned: {} for key: {}", add_ret, key);
+            log::debug!("metadata_filter_add returned: {} for key: {}", add_ret, key);
             if add_ret != PMINFO_R_OK {
                 log::error!("pkgmgrinfo_pkginfo_metadata_filter_add failed with code: {}", add_ret);
                 pkgmgrinfo_pkginfo_metadata_filter_destroy(filter);
@@ -193,7 +193,7 @@ impl PackageManagerProvider for TizenPackageManager {
                 filter_cb,
                 &mut pkg_ids as *mut _ as *mut std::os::raw::c_void
             );
-            log::info!("metadata_filter_foreach returned: {}, found {} pkgs", foreach_ret, pkg_ids.len());
+            log::debug!("metadata_filter_foreach returned: {}, found {} pkgs", foreach_ret, pkg_ids.len());
             
             if foreach_ret != PMINFO_R_OK {
                 log::error!("pkgmgrinfo_pkginfo_metadata_filter_foreach failed with code: {}", foreach_ret);

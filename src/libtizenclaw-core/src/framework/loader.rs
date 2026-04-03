@@ -86,7 +86,7 @@ pub fn try_load_platform_plugins(
     for meta in &discovered {
         match try_activate_plugin(meta, paths) {
             Ok(ctx) => {
-                log::info!(
+                log::debug!(
                     "Loaded platform plugin: {} v{} (priority {})",
                     meta.platform_name, meta.version, meta.priority
                 );
@@ -127,7 +127,7 @@ fn discover_plugins_in_dir(dir: &Path, out: &mut Vec<PluginMeta>) {
 
         match probe_plugin_info(&path) {
             Ok(meta) => {
-                log::info!(
+                log::debug!(
                     "Discovered plugin: {} ({}) at {:?}",
                     meta.platform_name, meta.plugin_id, path
                 );

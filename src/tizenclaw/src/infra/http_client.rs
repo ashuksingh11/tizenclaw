@@ -37,7 +37,7 @@ fn build_agent(timeout_secs: u64) -> Client {
     // Probe for CA certificate file (matching C++ tizenclaw_curl behavior)
     for path in CA_CERT_PATHS {
         if std::path::Path::new(path).exists() {
-            log::info!("Using CA cert bundle: {}", path);
+            log::debug!("Using CA cert bundle: {}", path);
             match std::fs::read(path) {
                 Ok(pem_data) => {
                     // Parse all certificates from the PEM bundle
@@ -50,7 +50,7 @@ fn build_agent(timeout_secs: u64) -> Client {
                                 count += 1;
                             }
                         }
-                        log::info!("TLS configured with {} CA certs from {}", count, path);
+                        log::debug!("TLS configured with {} CA certs from {}", count, path);
                     }
                 }
                 Err(e) => log::warn!("Failed to read CA bundle {}: {}", path, e),
@@ -145,7 +145,7 @@ pub async fn http_post(
     for attempt in 0..=max_retries {
         if attempt > 0 {
             let delay = std::time::Duration::from_millis(500 * (1 << (attempt - 1)));
-            log::info!("HTTP retry {} after {}ms", attempt, delay.as_millis());
+            log::debug!("HTTP retry {} after {}ms", attempt, delay.as_millis());
             tokio::time::sleep(delay).await;
         }
         match do_post(url, headers, json_body, timeout_secs).await {

@@ -71,7 +71,7 @@ impl PipelineExecutor {
             None => return json!({"error": format!("Pipeline not found: {}", pipeline_id)}),
         };
 
-        log::info!("Executing pipeline '{}' ({} steps)", pipeline.name, pipeline.steps.len());
+        log::debug!("Executing pipeline '{}' ({} steps)", pipeline.name, pipeline.steps.len());
         let mut vars: HashMap<String, String> = HashMap::new();
         if let Some(obj) = input_vars.as_object() {
             for (k, v) in obj {

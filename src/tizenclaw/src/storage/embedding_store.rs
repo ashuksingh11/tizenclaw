@@ -77,7 +77,7 @@ impl EmbeddingStore {
             ).map_err(|e| e.to_string())?;
             count += 1;
         }
-        log::info!("EmbeddingStore: ingested {} chunks from '{}'", count, source);
+        log::debug!("EmbeddingStore: ingested {} chunks from '{}'", count, source);
         Ok(count)
     }
 

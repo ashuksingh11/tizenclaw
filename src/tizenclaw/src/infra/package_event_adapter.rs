@@ -96,7 +96,7 @@ impl PackageEventAdapter {
                 let key_str = if key.is_null() { "" } else { std::ffi::CStr::from_ptr(key).to_str().unwrap_or("") };
                 let val_str = if val.is_null() { "" } else { std::ffi::CStr::from_ptr(val).to_str().unwrap_or("") };
 
-                log::info!("[TIZENCLAW] Package event received - pkgid: {}, key: {}, val: {}", pkgid_str, key_str, val_str);
+                log::debug!("[TIZENCLAW] Package event received - pkgid: {}, key: {}, val: {}", pkgid_str, key_str, val_str);
 
                 adapter.handle_event(pkgid_str, key_str, key_str, val_str);
                 0

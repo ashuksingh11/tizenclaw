@@ -155,7 +155,7 @@ impl IpcServer {
                 break;
             }
 
-            log::info!("IPC msg received ({} bytes)", raw_msg.len());
+            log::debug!("IPC msg received ({} bytes)", raw_msg.len());
 
             let response = Self::dispatch_request(&rt_handle, &raw_msg, &agent, fd);
             Self::send_response(fd, &response);

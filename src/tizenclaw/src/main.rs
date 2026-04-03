@@ -42,12 +42,12 @@ async fn main() {
     // ── Phase 2: Initialize logging (platform-aware) ──
     // Initialize file log backend manually targeting specific directory
     if let Err(e) = std::fs::create_dir_all("/opt/usr/share/tizenclaw/logs") {
-        eprintln!("Failed to create logs dir: {}", e);
+        log::error!("Failed to create logs dir: {}", e);
     }
     common::logging::FileLogBackend::init("/opt/usr/share/tizenclaw/logs/tizenclaw.log", 10 * 1024 * 1024);
     
-    // The platform logger is loaded dynamically from the platform context
-    common::logging::init_with_logger(Some(platform.logger.clone()));
+    // The global logger handles DLOG routing internally and natively.
+    common::logging::init_with_logger();
 
     // ── Phase 2.5: Pre-initialize HTTP Client ──
     // Force initialization of reqwest::Client on the global multi-threaded
@@ -59,9 +59,9 @@ async fn main() {
     infra::http_client::default_client();
 
     log::info!("═══════════════════════════════════════");
-    log::info!("  TizenClaw Daemon v1.0.0");
-    log::info!("  Platform: {}", platform.platform_name());
-    log::info!("  Data dir: {:?}", platform.paths.data_dir);
+    log::debug!("  TizenClaw Daemon v1.0.0");
+    log::debug!("  Platform: {}", platform.platform_name());
+    log::debug!("  Data dir: {:?}", platform.paths.data_dir);
     log::info!("═══════════════════════════════════════");
 
     // ── Phase 3: Set up signal handlers ──

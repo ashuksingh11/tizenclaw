@@ -79,7 +79,7 @@ impl UserProfileStore {
     pub fn switch_user(&mut self, user_id: &str) -> bool {
         if self.profiles.contains_key(user_id) {
             self.active_user = Some(user_id.to_string());
-            log::info!("Switched to user: {}", user_id);
+            log::debug!("Switched to user: {}", user_id);
             true
         } else {
             log::warn!("User not found: {}", user_id);

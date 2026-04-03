@@ -181,7 +181,7 @@ impl Channel for TelegramClient {
                             continue;
                         }
 
-                        log::info!("Telegram received from {}: {}", chat_id, text);
+                        log::debug!("Telegram received from {}: {}", chat_id, text);
                         
                         if let Some(agent_core) = agent.clone() {
                             active_handlers.fetch_add(1, Ordering::SeqCst);

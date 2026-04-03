@@ -32,8 +32,28 @@ extern "C" {
     fn dlog_print(prio: c_int, tag: *const u8, fmt: *const u8, ...) -> c_int;
 }
 
-/// Log an informational message to Tizen dlog.
-pub fn log_info(msg: &str) {
+#[macro_export]
+macro_rules! plugin_log_info {
+    ($($arg:tt)*) => {
+        let filepath = file!();
+        let filename = filepath.rsplit('/').next().unwrap_or(filepath).rsplit('\\').next().unwrap_or(filepath);
+        let msg = format!("{}:{} {}", filename, line!(), format_args!($($arg)*));
+        $crate::logging::log_info_internal(&msg);
+    }
+}
+
+#[macro_export]
+macro_rules! plugin_log_error {
+    ($($arg:tt)*) => {
+        let filepath = file!();
+        let filename = filepath.rsplit('/').next().unwrap_or(filepath).rsplit('\\').next().unwrap_or(filepath);
+        let msg = format!("{}:{} {}", filename, line!(), format_args!($($arg)*));
+        $crate::logging::log_error_internal(&msg);
+    }
+}
+
+/// Log an informational message to Tizen dlog (internal dispatch).
+pub fn log_info_internal(msg: &str) {
     if let Ok(c_msg) = CString::new(msg) {
         unsafe {
             dlog_print(
@@ -46,8 +66,8 @@ pub fn log_info(msg: &str) {
     }
 }
 
-/// Log an error message to Tizen dlog and stderr.
-pub fn log_error(msg: &str) {
+/// Log an error message to Tizen dlog and stderr (internal dispatch).
+pub fn log_error_internal(msg: &str) {
     eprintln!("{}", msg);
     if let Ok(c_msg) = CString::new(msg) {
         unsafe {

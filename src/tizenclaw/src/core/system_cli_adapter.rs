@@ -52,7 +52,7 @@ impl SystemCliAdapter {
         // Also scan /usr/bin/tizenclaw-* for auto-discovered tools
         self.scan_auto_tools();
 
-        log::info!("SystemCliAdapter: {} tools registered", self.tools.len());
+        log::debug!("SystemCliAdapter: {} tools registered", self.tools.len());
     }
 
     fn scan_auto_tools(&mut self) {

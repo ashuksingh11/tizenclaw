@@ -20,7 +20,7 @@ impl AgentFactory {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() % 100000);
-        log::info!("AgentFactory: created session '{}' for role '{}'", session_id, role_name);
+        log::debug!("AgentFactory: created session '{}' for role '{}'", session_id, role_name);
         session_id
     }
 }

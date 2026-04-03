@@ -188,7 +188,7 @@ impl ActionBridge {
         let mut state = state_arc.lock().unwrap();
         let count = actions_map.len();
         state.actions = actions_map;
-        log::info!("ActionBridge: synced {} action schemas", count);
+        log::debug!("ActionBridge: synced {} action schemas", count);
     }
 
     pub fn get_action_declarations(&self) -> Vec<crate::llm::backend::LlmToolDecl> {
@@ -241,7 +241,7 @@ impl ActionBridge {
             let _ret = action_client_execute(state.client, model_str.as_ptr(), on_action_result, std::ptr::null_mut());
         }
 
-        log::info!("ActionBridge: executing action '{}' for pkg '{}'", action_id, schema.pkg_id);
+        log::debug!("ActionBridge: executing action '{}' for pkg '{}'", action_id, schema.pkg_id);
         json!({"status": "launched", "action_id": action_id, "pkg_id": &schema.pkg_id})
     }
 }
@@ -300,7 +300,7 @@ unsafe extern "C" fn on_action_event(action_name: *const c_char, event_type: act
         action_event_type_e::ACTION_EVENT_TYPE_UPDATE => "UPDATE",
     };
 
-    log::info!("[TIZENCLAW] ActionBridge event: {} for '{}'", evt_str, name);
+    log::debug!("[TIZENCLAW] ActionBridge event: {} for '{}'", evt_str, name);
 
     // Instead of doing full sync here, trigger full sync manually for simplicity
     ActionBridge::do_sync_action_schemas(&_state_ptr);
@@ -323,7 +323,7 @@ unsafe extern "C" fn on_action_result(execution_id: c_int, json_result: *const c
     } else {
         CStr::from_ptr(json_result).to_string_lossy().to_string()
     };
-    log::info!("[TIZENCLAW] ActionBridge result for exec_id={}: {}", execution_id, result_str);
+    log::debug!("[TIZENCLAW] ActionBridge result for exec_id={}: {}", execution_id, result_str);
 }
 
 fn convert_v1_to_v2(schema: &mut Value) {

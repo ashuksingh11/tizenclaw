@@ -130,7 +130,7 @@ impl PlatformPaths {
         for dir in &dirs {
             if !dir.exists() {
                 if let Err(e) = std::fs::create_dir_all(dir) {
-                    eprintln!("Warning: failed to create dir {:?}: {}", dir, e);
+                    log::error!("Warning: failed to create dir {:?}: {}", dir, e);
                 }
             }
         }

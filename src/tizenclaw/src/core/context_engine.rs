@@ -95,7 +95,7 @@ impl ContextEngine for SizedContextEngine {
 
     fn compact(&self, messages: Vec<LlmMessage>, budget: usize) -> Vec<LlmMessage> {
         let before = self.estimate_tokens(&messages);
-        log::info!(
+        log::debug!(
             "[ContextEngine] Compacting: ~{} tokens / {} budget ({:.1}%)",
             before,
             budget,
@@ -184,7 +184,7 @@ impl ContextEngine for SizedContextEngine {
         }
 
         let after = self.estimate_tokens(&compacted);
-        log::info!(
+        log::debug!(
             "[ContextEngine] Compacted: {} → {} msgs | ~{} → ~{} tokens ({:.1}% of budget)",
             compacted.len() + prunable_indices.len(),
             compacted.len(),

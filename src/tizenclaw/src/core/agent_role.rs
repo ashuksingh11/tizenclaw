@@ -69,7 +69,7 @@ impl AgentRoleRegistry {
     }
 
     pub fn add_dynamic_role(&mut self, role: AgentRole) {
-        log::info!("Added dynamic role: {}", role.name);
+        log::debug!("Added dynamic role: {}", role.name);
         self.dynamic_roles.insert(role.name.clone(), role);
     }
 

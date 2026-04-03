@@ -52,7 +52,7 @@ pub unsafe fn validate_metadata(
         CStr::from_ptr(pkgid).to_str().unwrap_or("<invalid>")
     };
 
-    logging::log_info(&format!("{} plugin: package={}", plugin_name, pkgid_str));
+    crate::plugin_log_info!("{} plugin: package={}", plugin_name, pkgid_str);
 
     // Strip null terminator for comparison
     let key_bytes = if metadata_key.last() == Some(&0) {
@@ -69,10 +69,10 @@ pub unsafe fn validate_metadata(
             let key = CStr::from_ptr((*md).key);
             if key.to_bytes() == key_bytes {
                 if !has_platform_privilege() {
-                    logging::log_error(&format!(
+                    crate::plugin_log_error!(
                         "Package({}) was not signed by platform level certificate",
                         pkgid_str
-                    ));
+                    );
                     return -1;
                 }
 
@@ -83,10 +83,10 @@ pub unsafe fn validate_metadata(
                         .to_str()
                         .unwrap_or("(invalid)")
                 };
-                logging::log_info(&format!(
+                crate::plugin_log_info!(
                     "Package({}) has valid platform signature for {}: {}",
                     pkgid_str, plugin_name, value
-                ));
+                );
                 break;
             }
         }
@@ -101,7 +101,7 @@ unsafe fn has_platform_privilege() -> bool {
     let mut level: c_int = ffi::PM_PRIVILEGE_UNKNOWN;
     let ret = ffi::pkgmgr_installer_info_get_privilege_level(&mut level);
     if ret != 0 {
-        logging::log_error("Failed to get privilege level");
+        crate::plugin_log_error!("Failed to get privilege level");
         return false;
     }
     level == ffi::PM_PRIVILEGE_PLATFORM

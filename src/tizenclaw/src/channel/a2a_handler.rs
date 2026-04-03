@@ -127,7 +127,7 @@ impl A2aHandler {
         let id = request.get("id").cloned().unwrap_or(Value::Null);
         let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
 
-        log::info!("A2A JSON-RPC: method={}", method);
+        log::debug!("A2A JSON-RPC: method={}", method);
 
         match method {
             "tasks/send" => self.jsonrpc_result(self.task_send(&params), &id),

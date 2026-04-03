@@ -79,7 +79,7 @@ impl Channel for DiscordChannel {
                                         let is_bot = msg["author"]["bot"].as_bool().unwrap_or(false);
 
                                         if !is_bot && !content.is_empty() {
-                                            log::info!("Discord msg from {}: {}", author, content);
+                                            log::debug!("Discord msg from {}: {}", author, content);
                                         }
                                         if !msg_id.is_empty() {
                                             last_message_id = Some(msg_id);

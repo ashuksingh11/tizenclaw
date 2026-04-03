@@ -99,7 +99,7 @@ impl Channel for SlackChannel {
                                             let is_bot = msg.get("bot_id").is_some();
 
                                             if !is_bot && !text.is_empty() {
-                                                log::info!("Slack msg from {}: {}", user, text);
+                                                log::debug!("Slack msg from {}: {}", user, text);
                                             }
                                             if !ts.is_empty() {
                                                 last_ts = ts.to_string();

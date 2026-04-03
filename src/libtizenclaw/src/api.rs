@@ -72,7 +72,7 @@ fn get_process_uptime() -> f64 {
 /// let mut agent = TizenClaw::new();
 /// agent.initialize().unwrap();
 /// let response = agent.process_prompt("default", "Hello!").unwrap();
-/// println!("{}", response);
+/// log::info!("{}", response);
 /// ```
 pub struct TizenClaw {
     initialized: bool,

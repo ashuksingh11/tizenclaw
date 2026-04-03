@@ -37,7 +37,7 @@ impl TaskScheduler {
 
     pub fn add_task(&self, task: ScheduledTask) {
         if let Ok(mut tasks) = self.tasks.lock() {
-            log::info!("Scheduler: added task '{}' (interval={}s)", task.name, task.interval_secs);
+            log::debug!("Scheduler: added task '{}' (interval={}s)", task.name, task.interval_secs);
             tasks.push(task);
         }
     }
@@ -134,7 +134,7 @@ impl TaskScheduler {
                     };
 
                     if should_run {
-                        log::info!("Scheduler: executing task '{}'", task.name);
+                        log::debug!("Scheduler: executing task '{}'", task.name);
                         last_run.insert(task.id.clone(), now);
 
                         if task.one_shot {

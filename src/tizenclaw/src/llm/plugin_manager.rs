@@ -36,13 +36,13 @@ impl PluginManager {
 
         if let Some(pkgmgr) = pm {
             let pkgs = pkgmgr.get_packages_by_metadata_key("http://tizen.org/metadata/tizenclaw/llm-backend");
-            log::info!("PluginManager: scanning pkgmgr for metadata key. Found {} package(s)", pkgs.len());
+            log::debug!("PluginManager: scanning pkgmgr for metadata key. Found {} package(s)", pkgs.len());
             for pkg in pkgs {
-                log::info!("PluginManager: pkgmgr metadata match found for pkg_id '{}'", pkg.pkg_id);
+                log::debug!("PluginManager: pkgmgr metadata match found for pkg_id '{}'", pkg.pkg_id);
                 if let Some(so_name) = pkgmgr.get_package_metadata_value(&pkg.pkg_id, "http://tizen.org/metadata/tizenclaw/llm-backend") {
-                    log::info!("PluginManager: resolved so_name '{}' for pkg_id '{}'", so_name, pkg.pkg_id);
+                    log::debug!("PluginManager: resolved so_name '{}' for pkg_id '{}'", so_name, pkg.pkg_id);
                     if let Some(root_path) = pkgmgr.get_package_root_path(&pkg.pkg_id) {
-                        log::info!("PluginManager: resolved root path '{}' for pkg_id '{}'", root_path, pkg.pkg_id);
+                        log::debug!("PluginManager: resolved root path '{}' for pkg_id '{}'", root_path, pkg.pkg_id);
                         // Match tizenclaw-cpp string concatenation to prevent PathBuf absolute path wiping
                         let so_path_str = format!("{}/lib/{}", root_path, so_name);
                         let so_path = PathBuf::from(&so_path_str);
@@ -60,7 +60,7 @@ impl PluginManager {
                         if so_path.exists() {
                             let name = pkg.pkg_id.clone();
                             
-                            log::info!("PluginManager: successfully discovered valid plugin '{}' at {:?}", name, so_path);
+                            log::debug!("PluginManager: successfully discovered valid plugin '{}' at {:?}", name, so_path);
                             self.plugin_registry.insert(name.clone(), so_path);
                             self.plugin_configs.insert(name, config);
                         } else {
@@ -78,7 +78,7 @@ impl PluginManager {
         }
 
         if !self.plugin_registry.is_empty() {
-            log::info!(
+            log::debug!(
                 "PluginManager: discovered {} LLM plugin(s): {:?}",
                 self.plugin_registry.len(),
                 self.plugin_registry.keys().collect::<Vec<_>>()
@@ -115,7 +115,7 @@ impl PluginManager {
 
         let so_path = PathBuf::from(&full_so_path);
         if so_path.exists() {
-            log::info!("PluginManager: dynamically registered plugin '{}' at '{}'", pkgid, full_so_path);
+            log::debug!("PluginManager: dynamically registered plugin '{}' at '{}'", pkgid, full_so_path);
             self.plugin_registry.insert(pkgid.to_string(), so_path);
             self.plugin_configs.insert(pkgid.to_string(), config);
             true
@@ -144,7 +144,7 @@ impl PluginManager {
         if let Some(plugin_path) = self.plugin_registry.get(name) {
             let path_str = plugin_path.to_string_lossy();
             let base_config = self.plugin_configs.get(name).cloned();
-            log::info!("Creating plugin LLM backend '{}' from {}", name, path_str);
+            log::debug!("Creating plugin LLM backend '{}' from {}", name, path_str);
             return Some(Box::new(PluginLlmBackend::new(&path_str, base_config)));
         }
 

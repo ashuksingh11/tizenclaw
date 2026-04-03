@@ -186,7 +186,7 @@ impl AgentCore {
     }
 
     pub async fn initialize(&self) -> bool {
-        log::info!("AgentCore initializing...");
+        log::debug!("AgentCore initializing...");
         let paths = &self.platform.paths;
 
         // Load API keys
@@ -315,7 +315,7 @@ impl AgentCore {
 
     /// Dynamically handle package manager events for plugins
     pub async fn handle_pkgmgr_event(&self, event_name: &str, pkgid: &str) {
-        log::info!("Handling pkgmgr event: {} for pkgid: {}", event_name, pkgid);
+        log::debug!("Handling pkgmgr event: {} for pkgid: {}", event_name, pkgid);
         
         let mut plugin_manager = crate::llm::plugin_manager::PluginManager::new();
         let loaded = if event_name == "install" || event_name == "recoverinstall" || event_name == "upgrade" || event_name == "recoverupgrade" {
@@ -332,7 +332,7 @@ impl AgentCore {
         };
 
         if loaded || unloaded {
-            log::info!("Triggering LLM backend reload due to plugin changes...");
+            log::debug!("Triggering LLM backend reload due to plugin changes...");
             self.reload_backends().await;
         }
 
@@ -374,7 +374,7 @@ impl AgentCore {
 
             if let Some(be) = Self::create_and_init_backend_static(&plugin_manager, &cand.name, merged_cfg) {
                 if !primary_initialized {
-                    log::info!("Dynamically swapped Primary LLM backend to '{}' (priority {})", cand.name, cand.priority);
+                    log::debug!("Dynamically swapped Primary LLM backend to '{}' (priority {})", cand.name, cand.priority);
                     *self.backend.write().await = Some(be);
                     if let Ok(mut bn) = self.backend_name.write() {
                         *bn = cand.name.clone();
@@ -409,7 +409,7 @@ impl AgentCore {
         if be.initialize(&merged_cfg) {
             Some(be)
         } else {
-            log::info!("Backend '{}' skipped: not configured or initialization failed", name);
+            log::debug!("Backend '{}' skipped: not configured or initialization failed", name);
             None
         }
     }
@@ -567,7 +567,7 @@ impl AgentCore {
             for fb in fbs_guard.iter() {
                 let bn = fb.get_name().to_string();
                 if self.is_backend_available(&bn) {
-                    log::info!("Trying fallback backend '{}'", bn);
+                    log::debug!("Trying fallback backend '{}'", bn);
                     let resp = fb.chat(messages, tools, on_chunk, system_prompt).await;
                     if resp.success {
                         self.record_success(&bn);
@@ -629,7 +629,7 @@ impl AgentCore {
         loop_state.token_budget = budget;
         loop_state.compact_threshold = threshold;
 
-        log::info!(
+        log::debug!(
             "[AgentLoop] Phase=GoalParsing session='{}' goal='{}' budget={}",
             session_id, &prompt[..prompt.len().min(80)], budget
         );
@@ -646,7 +646,7 @@ impl AgentCore {
         // ── Phase 2: ContextLoading ──────────────────────────────────────
         loop_state.transition(AgentPhase::ContextLoading);
         
-        log::info!("[AgentCore] USER: {}", prompt);
+        log::debug!("[AgentCore] USER: {}", prompt);
 
         // Store user message
         if let Ok(ss) = self.session_store.lock() {
@@ -749,7 +749,7 @@ impl AgentCore {
             let new_hash = Self::hash_str(&system_prompt);
             let cached_hash = *self.prompt_hash.read().await;
             if new_hash != cached_hash {
-                log::info!(
+                log::debug!(
                     "[PromptCache] System prompt changed (hash {} → {}), refreshing cache…",
                     cached_hash, new_hash
                 );
@@ -777,7 +777,7 @@ impl AgentCore {
         // Update token_used estimate
         loop_state.token_used = context_engine.estimate_tokens(&messages);
         if loop_state.needs_compaction() {
-            log::info!("[AgentLoop] Pre-loop compaction triggered ({}% used)",
+            log::debug!("[AgentLoop] Pre-loop compaction triggered ({}% used)",
                 (loop_state.token_used as f32 / loop_state.token_budget as f32 * 100.0) as u32);
             messages = context_engine.compact(messages, loop_state.token_budget);
             loop_state.token_used = context_engine.estimate_tokens(&messages);
@@ -787,7 +787,7 @@ impl AgentCore {
         loop {
             // ── Phase 4: DecisionMaking / LLM call ──────────────────────
             loop_state.transition(AgentPhase::DecisionMaking);
-            log::info!(
+            log::debug!(
                 "[AgentLoop] Round {} | session='{}' phase=DecisionMaking msgs={}",
                 loop_state.round, session_id, messages.len()
             );
@@ -801,7 +801,7 @@ impl AgentCore {
 
             // ── Phase 6: ObservationCollect ──────────────────────────────
             loop_state.transition(AgentPhase::ObservationCollect);
-            log::info!("[AgentLoop] Round {} Response: success={} text_len={}",
+            log::debug!("[AgentLoop] Round {} Response: success={} text_len={}",
                 loop_state.round, response.success, response.text.len());
 
             // ── Phase 11: SafetyCheck — handle LLM error ─────────────────
@@ -837,7 +837,7 @@ impl AgentCore {
             if detected_tool_calls.is_empty() {
                 detected_tool_calls = FallbackParser::parse(&response.text);
                 if !detected_tool_calls.is_empty() {
-                    log::info!("[AgentLoop] FallbackParser detected {} tool call(s)",
+                    log::debug!("[AgentLoop] FallbackParser detected {} tool call(s)",
                         detected_tool_calls.len());
                 }
             }
@@ -857,7 +857,7 @@ impl AgentCore {
                             &be_name,
                         );
                         let usage = store.load_token_usage(session_id);
-                        log::info!("[TokenUsage] Round: P{}+C{}={} | Session cumulative: {}",
+                        log::debug!("[TokenUsage] Round: P{}+C{}={} | Session cumulative: {}",
                             response.prompt_tokens, response.completion_tokens,
                             response.prompt_tokens + response.completion_tokens,
                             usage.total_prompt_tokens + usage.total_completion_tokens);
@@ -871,7 +871,7 @@ impl AgentCore {
                 // ── Phase 5: ToolDispatching ─────────────────────────────
                 loop_state.transition(AgentPhase::ToolDispatching);
                 loop_state.total_tool_calls += detected_tool_calls.len();
-                log::info!("[AgentLoop] Round {} dispatching {} tool(s)",
+                log::debug!("[AgentLoop] Round {} dispatching {} tool(s)",
                     loop_state.round, detected_tool_calls.len());
 
                 // Add assistant message
@@ -991,7 +991,7 @@ impl AgentCore {
                             td_guard_ref.execute(&tc_name, &tc_args).await
                         };
 
-                        log::info!("[ObservationCollect] Tool '{}' result: {} chars",
+                        log::debug!("[ObservationCollect] Tool '{}' result: {} chars",
                             tc_name, result.to_string().len());
                         LlmMessage::tool_result(&tc_id, &tc_name, result)
                     });
@@ -1003,7 +1003,7 @@ impl AgentCore {
                 // ── Phase 7: Evaluating (partial progress) ───────────────
                 loop_state.transition(AgentPhase::Evaluating);
                 let verdict = loop_state.observe_output(&response.text);
-                log::info!("[Evaluating] Round {} verdict={}", loop_state.round, verdict.as_str());
+                log::debug!("[Evaluating] Round {} verdict={}", loop_state.round, verdict.as_str());
 
                 if verdict == EvalVerdict::Stuck {
                     log::warn!("[AgentLoop] Idle loop detected (same output {} rounds). Terminating.",
@@ -1025,7 +1025,7 @@ impl AgentCore {
                 loop_state.transition(AgentPhase::Evaluating);
                 loop_state.last_eval_verdict = EvalVerdict::GoalAchieved;
 
-                log::info!("[Evaluating] Round {} verdict=GoalAchieved (no tool calls)",
+                log::debug!("[Evaluating] Round {} verdict=GoalAchieved (no tool calls)",
                     loop_state.round);
 
                 let text = response.text;
@@ -1044,7 +1044,7 @@ impl AgentCore {
                 loop_state.transition(AgentPhase::Complete);
                 loop_state.log_self_inspection();
                 
-                log::info!("[AgentCore] AGENT: {}", text);
+                log::debug!("[AgentCore] AGENT: {}", text);
                 return text;
             }
 
@@ -1058,7 +1058,7 @@ impl AgentCore {
             // In-loop size-based compaction
             loop_state.token_used = context_engine.estimate_tokens(&messages);
             if loop_state.needs_compaction() {
-                log::info!("[ContextEngine] In-loop compaction triggered (round {})",
+                log::debug!("[ContextEngine] In-loop compaction triggered (round {})",
                     loop_state.round);
                 messages = context_engine.compact(messages, loop_state.token_budget);
                 loop_state.token_used = context_engine.estimate_tokens(&messages);
@@ -1076,7 +1076,7 @@ impl AgentCore {
                             })
                             .collect();
                         match store.save_compacted(session_id, &session_msgs) {
-                            Ok(_) => log::info!(
+                            Ok(_) => log::debug!(
                                 "[ContextEngine] compacted.md saved ({} msgs)",
                                 session_msgs.len()
                             ),
@@ -1233,7 +1233,7 @@ If there is nothing new to remember, output exactly: []";
         convo_text.push_str(&format!("assistant: {}\n", final_response));
         msgs.push(LlmMessage::user(&convo_text));
 
-        log::info!("[MemoryExtractor] Triggering LLM extraction sub-task...");
+        log::debug!("[MemoryExtractor] Triggering LLM extraction sub-task...");
         let response = self.chat_with_fallback(&msgs, &[], None, system_prompt).await;
 
         if response.success {
@@ -1248,7 +1248,7 @@ If there is nothing new to remember, output exactly: []";
             };
 
             if clean_json == "[]" || clean_json.is_empty() {
-                log::info!("[MemoryExtractor] No new memories extracted.");
+                log::debug!("[MemoryExtractor] No new memories extracted.");
                 return;
             }
 
@@ -1262,11 +1262,11 @@ If there is nothing new to remember, output exactly: []";
                     ) {
                         store.set(k, v, cat);
                         count += 1;
-                        log::info!("[MemoryExtractor] Saved memory -> {}: {}", k, v);
+                        log::debug!("[MemoryExtractor] Saved memory -> {}: {}", k, v);
                     }
                 }
                 if count > 0 {
-                    log::info!("[MemoryExtractor] Successfully saved {} extracted memories.", count);
+                    log::debug!("[MemoryExtractor] Successfully saved {} extracted memories.", count);
                 }
             } else {
                 log::warn!("[MemoryExtractor] Failed to parse JSON response: {}", clean_json);
