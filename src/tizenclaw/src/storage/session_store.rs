@@ -68,13 +68,20 @@ impl SessionStore {
         fs::create_dir_all(&audit_dir).map_err(|e| e.to_string())?;
 
         let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
-        conn.execute(
+        conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS session_index (
                 id TEXT PRIMARY KEY,
                 created_at TEXT NOT NULL,
                 last_active TEXT NOT NULL
-            )",
-            [],
+            );
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                date TEXT NOT NULL,
+                model TEXT NOT NULL,
+                prompt_tokens INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0
+            );"
         ).map_err(|e| e.to_string())?;
 
         Ok(SessionStore {
@@ -255,24 +262,60 @@ impl SessionStore {
         let _ = fs::remove_file(path);
     }
 
-    // ── Token usage (stub — audit integration pending) ────────────────────────
+    // ── Token usage ──────────────────────────────────────────────────────────
 
     pub fn record_usage(
         &self,
-        _session_id: &str,
-        _prompt_tokens: i32,
-        _completion_tokens: i32,
-        _model: &str,
+        session_id: &str,
+        prompt_tokens: i32,
+        completion_tokens: i32,
+        model: &str,
     ) {
-        // Future: write to audit/{session_id}.json
+        if let Ok(conn) = self.db.lock() {
+            let today = today_date_str();
+            let _ = conn.execute(
+                "INSERT INTO token_usage (session_id, date, model, prompt_tokens, completion_tokens)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![session_id, today, model, prompt_tokens, completion_tokens],
+            );
+        }
     }
 
-    pub fn load_token_usage(&self, _session_id: &str) -> TokenUsage {
-        TokenUsage::default()
+    pub fn load_token_usage(&self, session_id: &str) -> TokenUsage {
+        let mut usage = TokenUsage::default();
+        if let Ok(conn) = self.db.lock() {
+            let mut stmt = conn.prepare("SELECT prompt_tokens, completion_tokens FROM token_usage WHERE session_id = ?1").unwrap();
+            let iter = stmt.query_map(rusqlite::params![session_id], |row| {
+                let p: i64 = row.get(0)?;
+                let c: i64 = row.get(1)?;
+                Ok((p, c))
+            }).unwrap();
+            for item in iter.flatten() {
+                usage.total_prompt_tokens += item.0;
+                usage.total_completion_tokens += item.1;
+                usage.total_requests += 1;
+            }
+        }
+        usage
     }
 
-    pub fn load_daily_usage(&self, _date: &str) -> TokenUsage {
-        TokenUsage::default()
+    pub fn load_daily_usage(&self, date: &str) -> TokenUsage {
+        let mut usage = TokenUsage::default();
+        let target_date = if date.is_empty() { today_date_str() } else { date.to_string() };
+        if let Ok(conn) = self.db.lock() {
+            let mut stmt = conn.prepare("SELECT prompt_tokens, completion_tokens FROM token_usage WHERE date = ?1").unwrap();
+            let iter = stmt.query_map(rusqlite::params![target_date], |row| {
+                let p: i64 = row.get(0)?;
+                let c: i64 = row.get(1)?;
+                Ok((p, c))
+            }).unwrap();
+            for item in iter.flatten() {
+                usage.total_prompt_tokens += item.0;
+                usage.total_completion_tokens += item.1;
+                usage.total_requests += 1;
+            }
+        }
+        usage
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────

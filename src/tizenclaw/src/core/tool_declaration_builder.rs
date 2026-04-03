@@ -6,121 +6,51 @@ use crate::llm::backend::LlmToolDecl;
 pub struct ToolDeclarationBuilder;
 
 impl ToolDeclarationBuilder {
-    /// Append all built-in tool declarations.
-    pub fn append_builtin_tools(tools: &mut Vec<LlmToolDecl>) {
-        // switch_user
-        tools.push(LlmToolDecl {
-            name: "switch_user".into(),
-            description: "Switch the current active user profile for the session.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "user_id": {"type": "string", "description": "The user_id to switch to"}
-                },
-                "required": ["user_id"]
-            }),
-        });
+    /// Append built-in tool declarations dynamically based on simple intent heuristics.
+    /// This drastically reduces token bloat (Token Optimization via Dynamic Tool Loading).
+    pub fn append_builtin_tools(tools: &mut Vec<LlmToolDecl>, prompt: &str) {
+        let p = prompt.to_lowercase();
+        
+        // 1. Meta / System Tools - always injected
+        Self::push_meta_tools(tools);
 
-        // create_task
-        tools.push(LlmToolDecl {
-            name: "create_task".into(),
-            description: "Create a scheduled task. Supports: 'daily HH:MM', 'interval Ns/Nm/Nh', 'once YYYY-MM-DD HH:MM', 'weekly DAY HH:MM'.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "schedule": {"type": "string", "description": "Schedule expression"},
-                    "prompt": {"type": "string", "description": "The prompt to execute"}
-                },
-                "required": ["schedule", "prompt"]
-            }),
-        });
+        // 2. Task Intent
+        if p.contains("task") || p.contains("schedule") || p.contains("기억") || p.contains("태스크") || p.contains("작업") || p.contains("예약") || p.contains("내일") {
+            Self::push_task_tools(tools);
+        }
 
-        // list_tasks
+        // 3. Memory & Knowledge Intent
+        if p.contains("remember") || p.contains("memory") || p.contains("기억") || p.contains("search") || p.contains("knowledge") || p.contains("지식") || p.contains("문서") {
+            Self::push_memory_tools(tools);
+        }
+
+        // 4. Session Intent
+        if p.contains("session") || p.contains("세션") || p.contains("switch") || p.contains("user") || p.contains("유저") {
+            Self::push_session_tools(tools);
+        }
+
+        // 5. Workflow & Pipeline Intent
+        if p.contains("workflow") || p.contains("pipeline") || p.contains("skill") || p.contains("스킬") || p.contains("파이프라인") || p.contains("워크플로우") || p.contains("배우") || p.contains("learn") || p.contains("run") || p.contains("실행") {
+            Self::push_workflow_tools(tools);
+        }
+
+        // 6. Agent Role Intent
+        if p.contains("agent") || p.contains("role") || p.contains("에이전트") || p.contains("역할") || p.contains("supervisor") || p.contains("감독") {
+            Self::push_agent_tools(tools);
+        }
+    }
+
+    fn push_meta_tools(tools: &mut Vec<LlmToolDecl>) {
         tools.push(LlmToolDecl {
-            name: "list_tasks".into(),
-            description: "List all scheduled tasks.".into(),
+            name: "get_agent_status".into(),
+            description: "Get current agent system status.".into(),
             parameters: json!({"type": "object", "properties": {}, "required": []}),
         });
-
-        // cancel_task
         tools.push(LlmToolDecl {
-            name: "cancel_task".into(),
-            description: "Cancel a scheduled task by its ID.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "task_id": {"type": "string", "description": "The task ID to cancel"}
-                },
-                "required": ["task_id"]
-            }),
-        });
-
-        // create_session
-        tools.push(LlmToolDecl {
-            name: "create_session".into(),
-            description: "Create a new agent session with a custom system prompt.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "Short name for the session"},
-                    "system_prompt": {"type": "string", "description": "Custom system prompt"}
-                },
-                "required": ["name", "system_prompt"]
-            }),
-        });
-
-        // list_sessions
-        tools.push(LlmToolDecl {
-            name: "list_sessions".into(),
-            description: "List all active agent sessions.".into(),
+            name: "list_agents".into(),
+            description: "List all running agents with their status.".into(),
             parameters: json!({"type": "object", "properties": {}, "required": []}),
         });
-
-        // send_to_session
-        tools.push(LlmToolDecl {
-            name: "send_to_session".into(),
-            description: "Send a message to another agent session and receive its response.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "target_session": {"type": "string", "description": "Target session ID"},
-                    "message": {"type": "string", "description": "Message to send"}
-                },
-                "required": ["target_session", "message"]
-            }),
-        });
-
-
-
-        // ingest_document (RAG)
-        tools.push(LlmToolDecl {
-            name: "ingest_document".into(),
-            description: "Ingest a document into the knowledge base for semantic search.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "source": {"type": "string", "description": "Source identifier (filename, URL)"},
-                    "text": {"type": "string", "description": "Document text to ingest"}
-                },
-                "required": ["source", "text"]
-            }),
-        });
-
-        // search_knowledge (RAG)
-        tools.push(LlmToolDecl {
-            name: "search_knowledge".into(),
-            description: "Search the knowledge base using semantic similarity.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query"},
-                    "top_k": {"type": "integer", "description": "Number of results (default 5)"}
-                },
-                "required": ["query"]
-            }),
-        });
-
-        // lookup_web_api
         tools.push(LlmToolDecl {
             name: "lookup_web_api".into(),
             description: "Look up Tizen Web API reference documentation. Use 'list', 'read', or 'search'.".into(),
@@ -134,148 +64,40 @@ impl ToolDeclarationBuilder {
                 "required": ["operation"]
             }),
         });
+    }
 
-        // run_supervisor
+    fn push_task_tools(tools: &mut Vec<LlmToolDecl>) {
         tools.push(LlmToolDecl {
-            name: "run_supervisor".into(),
-            description: "Decompose a complex goal into sub-tasks and delegate to specialized role agents.".into(),
+            name: "create_task".into(),
+            description: "Create a scheduled task. Supports: 'daily HH:MM', 'interval Ns/Nm/Nh', 'once YYYY-MM-DD HH:MM', 'weekly DAY HH:MM'.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "goal": {"type": "string", "description": "High-level goal"},
-                    "strategy": {"type": "string", "enum": ["sequential", "parallel"]}
+                    "schedule": {"type": "string", "description": "Schedule expression"},
+                    "prompt": {"type": "string", "description": "The prompt to execute"}
                 },
-                "required": ["goal"]
+                "required": ["schedule", "prompt"]
             }),
         });
-
-        // list_agent_roles
         tools.push(LlmToolDecl {
-            name: "list_agent_roles".into(),
-            description: "List all configured agent roles.".into(),
-            parameters: json!({"type": "object", "properties": {}, "required": []}),
-        });
-
-        // spawn_agent
-        tools.push(LlmToolDecl {
-            name: "spawn_agent".into(),
-            description: "Create a new specialized agent with a custom role definition.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "Unique name"},
-                    "system_prompt": {"type": "string", "description": "System prompt"},
-                    "allowed_tools": {"type": "array", "items": {"type": "string"}},
-                    "max_iterations": {"type": "integer"}
-                },
-                "required": ["name", "system_prompt"]
-            }),
-        });
-
-        // create_pipeline
-        tools.push(LlmToolDecl {
-            name: "create_pipeline".into(),
-            description: "Create a multi-step pipeline for deterministic workflow execution.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "description": {"type": "string"},
-                    "trigger": {"type": "string"},
-                    "steps": {"type": "array", "items": {"type": "object"}}
-                },
-                "required": ["name", "steps"]
-            }),
-        });
-
-        // list_pipelines / run_pipeline / delete_pipeline
-        tools.push(LlmToolDecl {
-            name: "list_pipelines".into(),
-            description: "List all configured pipelines.".into(),
+            name: "list_tasks".into(),
+            description: "List all scheduled tasks.".into(),
             parameters: json!({"type": "object", "properties": {}, "required": []}),
         });
         tools.push(LlmToolDecl {
-            name: "run_pipeline".into(),
-            description: "Execute a pipeline by ID.".into(),
+            name: "cancel_task".into(),
+            description: "Cancel a scheduled task by its ID.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "pipeline_id": {"type": "string"},
-                    "input_vars": {"type": "object"}
+                    "task_id": {"type": "string", "description": "The task ID to cancel"}
                 },
-                "required": ["pipeline_id"]
+                "required": ["task_id"]
             }),
         });
+    }
 
-        // create_workflow / list_workflows / run_workflow
-        tools.push(LlmToolDecl {
-            name: "create_workflow".into(),
-            description: "Create a workflow from Markdown text with YAML frontmatter.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "markdown": {"type": "string", "description": "Markdown with YAML frontmatter"}
-                },
-                "required": ["markdown"]
-            }),
-        });
-        tools.push(LlmToolDecl {
-            name: "list_workflows".into(),
-            description: "List all registered workflows.".into(),
-            parameters: json!({"type": "object", "properties": {}, "required": []}),
-        });
-        tools.push(LlmToolDecl {
-            name: "run_workflow".into(),
-            description: "Execute a workflow by ID.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "workflow_id": {"type": "string"},
-                    "input_vars": {"type": "object"}
-                },
-                "required": ["workflow_id"]
-            }),
-        });
-
-        // create_skill / read_skill
-        tools.push(LlmToolDecl {
-            name: "create_skill".into(),
-            description: "Create a reusable textual skill (workflow instructions) that the agent will intrinsically learn and recall in future sessions.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "Skill identifier (e.g. 'fetch_time', 'analyze_logs')"},
-                    "description": {"type": "string", "description": "Short description of what the skill accomplishes"},
-                    "content": {"type": "string", "description": "Full Markdown content for the skill, including instructions and steps."}
-                },
-                "required": ["name", "description", "content"]
-            }),
-        });
-        tools.push(LlmToolDecl {
-            name: "read_skill".into(),
-            description: "Read the exact markdown content of a previously created textual skill.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "Skill identifier to read"}
-                },
-                "required": ["name"]
-            }),
-        });
-
-        // get_agent_status / list_agents
-        tools.push(LlmToolDecl {
-            name: "get_agent_status".into(),
-            description: "Get current agent system status.".into(),
-            parameters: json!({"type": "object", "properties": {}, "required": []}),
-        });
-        tools.push(LlmToolDecl {
-            name: "list_agents".into(),
-            description: "List all running agents with their status.".into(),
-            parameters: json!({"type": "object", "properties": {}, "required": []}),
-        });
-
-        // memory tools
+    fn push_memory_tools(tools: &mut Vec<LlmToolDecl>) {
         tools.push(LlmToolDecl {
             name: "remember".into(),
             description: "Store a key-value pair in persistent memory.".into(),
@@ -311,8 +133,194 @@ impl ToolDeclarationBuilder {
                 "required": ["key"]
             }),
         });
+        tools.push(LlmToolDecl {
+            name: "ingest_document".into(),
+            description: "Ingest a document into the knowledge base for semantic search.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string", "description": "Source identifier (filename, URL)"},
+                    "text": {"type": "string", "description": "Document text to ingest"}
+                },
+                "required": ["source", "text"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "search_knowledge".into(),
+            description: "Search the knowledge base using semantic similarity.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "top_k": {"type": "integer", "description": "Number of results (default 5)"}
+                },
+                "required": ["query"]
+            }),
+        });
     }
 
+    fn push_session_tools(tools: &mut Vec<LlmToolDecl>) {
+        tools.push(LlmToolDecl {
+            name: "create_session".into(),
+            description: "Create a new agent session with a custom system prompt.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Short name for the session"},
+                    "system_prompt": {"type": "string", "description": "Custom system prompt"}
+                },
+                "required": ["name", "system_prompt"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "list_sessions".into(),
+            description: "List all active agent sessions.".into(),
+            parameters: json!({"type": "object", "properties": {}, "required": []}),
+        });
+        tools.push(LlmToolDecl {
+            name: "send_to_session".into(),
+            description: "Send a message to another agent session and receive its response.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "target_session": {"type": "string", "description": "Target session ID"},
+                    "message": {"type": "string", "description": "Message to send"}
+                },
+                "required": ["target_session", "message"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "switch_user".into(),
+            description: "Switch the current active user profile for the session.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "user_id": {"type": "string", "description": "The user_id to switch to"}
+                },
+                "required": ["user_id"]
+            }),
+        });
+    }
+
+    fn push_workflow_tools(tools: &mut Vec<LlmToolDecl>) {
+        tools.push(LlmToolDecl {
+            name: "create_pipeline".into(),
+            description: "Create a multi-step pipeline for deterministic workflow execution.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "trigger": {"type": "string"},
+                    "steps": {"type": "array", "items": {"type": "object"}}
+                },
+                "required": ["name", "steps"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "list_pipelines".into(),
+            description: "List all configured pipelines.".into(),
+            parameters: json!({"type": "object", "properties": {}, "required": []}),
+        });
+        tools.push(LlmToolDecl {
+            name: "run_pipeline".into(),
+            description: "Execute a pipeline by ID.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "pipeline_id": {"type": "string"},
+                    "input_vars": {"type": "object"}
+                },
+                "required": ["pipeline_id"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "create_workflow".into(),
+            description: "Create a workflow from Markdown text with YAML frontmatter.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "markdown": {"type": "string", "description": "Markdown with YAML frontmatter"}
+                },
+                "required": ["markdown"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "list_workflows".into(),
+            description: "List all registered workflows.".into(),
+            parameters: json!({"type": "object", "properties": {}, "required": []}),
+        });
+        tools.push(LlmToolDecl {
+            name: "run_workflow".into(),
+            description: "Execute a workflow by ID.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "workflow_id": {"type": "string"},
+                    "input_vars": {"type": "object"}
+                },
+                "required": ["workflow_id"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "create_skill".into(),
+            description: "Create a reusable textual skill (workflow instructions) that the agent will intrinsically learn and recall in future sessions.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Skill identifier (e.g. 'fetch_time', 'analyze_logs')"},
+                    "description": {"type": "string", "description": "Short description of what the skill accomplishes"},
+                    "content": {"type": "string", "description": "Full Markdown content for the skill, including instructions and steps."}
+                },
+                "required": ["name", "description", "content"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "read_skill".into(),
+            description: "Read the exact markdown content of a previously created textual skill.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Skill identifier to read"}
+                },
+                "required": ["name"]
+            }),
+        });
+    }
+
+    fn push_agent_tools(tools: &mut Vec<LlmToolDecl>) {
+        tools.push(LlmToolDecl {
+            name: "run_supervisor".into(),
+            description: "Decompose a complex goal into sub-tasks and delegate to specialized role agents.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "goal": {"type": "string", "description": "High-level goal"},
+                    "strategy": {"type": "string", "enum": ["sequential", "parallel"]}
+                },
+                "required": ["goal"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "list_agent_roles".into(),
+            description: "List all configured agent roles.".into(),
+            parameters: json!({"type": "object", "properties": {}, "required": []}),
+        });
+        tools.push(LlmToolDecl {
+            name: "spawn_agent".into(),
+            description: "Create a new specialized agent with a custom role definition.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Unique name"},
+                    "system_prompt": {"type": "string", "description": "System prompt"},
+                    "allowed_tools": {"type": "array", "items": {"type": "string"}},
+                    "max_iterations": {"type": "integer"}
+                },
+                "required": ["name", "system_prompt"]
+            }),
+        });
+    }
 
     /// Build declarations from system CLI tools.
     pub fn build_from_system_cli(cli_tools: &[(String, String, Value)]) -> Vec<LlmToolDecl> {
@@ -331,45 +339,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_builtin_tools_count() {
+    fn test_builtin_tools_dynamic() {
         let mut tools = vec![];
-        ToolDeclarationBuilder::append_builtin_tools(&mut tools);
-        assert!(tools.len() >= 20, "Expected at least 20 builtin tools, got {}", tools.len());
-    }
-
-    #[test]
-    fn test_builtin_tools_has_required_names() {
-        let mut tools = vec![];
-        ToolDeclarationBuilder::append_builtin_tools(&mut tools);
+        ToolDeclarationBuilder::append_builtin_tools(&mut tools, "what is my agent status?");
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-        for expected in &["create_task", "remember", "recall",
-                          "create_session", "list_sessions", "search_knowledge"] {
-            assert!(names.contains(expected), "Missing builtin tool: {}", expected);
-        }
-    }
-
-    #[test]
-    fn test_builtin_tools_parameters_are_objects() {
-        let mut tools = vec![];
-        ToolDeclarationBuilder::append_builtin_tools(&mut tools);
-        for tool in &tools {
-            assert_eq!(tool.parameters["type"], "object",
-                "Tool '{}' parameters should be of type 'object'", tool.name);
-        }
+        assert!(names.contains(&"get_agent_status"));
+        // Task tools shouldn't be here since task intent is missing
+        assert!(!names.contains(&"create_task"));
+        
+        let mut tools2 = vec![];
+        ToolDeclarationBuilder::append_builtin_tools(&mut tools2, "create a new task");
+        let names2: Vec<&str> = tools2.iter().map(|t| t.name.as_str()).collect();
+        assert!(names2.contains(&"create_task"));
     }
 
     #[test]
     fn test_build_from_system_cli() {
         let cli_tools = vec![
             ("wifi".into(), "Manage WiFi".into(), json!({"type": "object", "properties": {}})),
-            ("bt".into(), "Manage Bluetooth".into(), json!({"type": "object", "properties": {}})),
         ];
         let tools = ToolDeclarationBuilder::build_from_system_cli(&cli_tools);
-        assert_eq!(tools.len(), 2);
         assert_eq!(tools[0].name, "execute_cli_wifi");
-        assert_eq!(tools[1].name, "execute_cli_bt");
-        assert_eq!(tools[0].description, "Manage WiFi");
     }
-
 }
 

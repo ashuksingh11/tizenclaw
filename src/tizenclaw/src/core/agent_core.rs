@@ -673,7 +673,7 @@ impl AgentCore {
 
         // Get tool declarations
         let mut tools = self.tool_dispatcher.read().await.get_tool_declarations();
-        crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_builtin_tools(&mut tools);
+        crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_builtin_tools(&mut tools, prompt);
         if let Ok(bridge) = self.action_bridge.lock() {
             tools.extend(bridge.get_action_declarations());
         }
