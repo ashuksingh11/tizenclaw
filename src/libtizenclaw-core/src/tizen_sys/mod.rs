@@ -65,6 +65,7 @@ pub mod tizen_core {
     use std::os::raw::{c_char, c_int, c_void};
 
     pub type tizen_core_task_h = *mut c_void;
+    pub type tizen_core_h = *mut c_void;
 
     pub unsafe fn tizen_core_init() -> c_int {
         dlsym_call!(LIB_TIZEN_CORE, b"tizen_core_init\0", unsafe extern "C" fn() -> c_int, 0)
@@ -88,6 +89,26 @@ pub mod tizen_core {
 
     pub unsafe fn tizen_core_task_quit(task: tizen_core_task_h) -> c_int {
         dlsym_call!(LIB_TIZEN_CORE, b"tizen_core_task_quit\0", unsafe extern "C" fn(tizen_core_task_h) -> c_int, 0, task)
+    }
+
+    pub unsafe fn tizen_core_task_get_tizen_core(task: tizen_core_task_h, core: *mut tizen_core_h) -> c_int {
+        dlsym_call!(LIB_TIZEN_CORE, b"tizen_core_task_get_tizen_core\0", unsafe extern "C" fn(tizen_core_task_h, *mut tizen_core_h) -> c_int, -1, task, core)
+    }
+
+    pub unsafe fn tizen_core_get_glib_context(core: tizen_core_h) -> *mut c_void {
+        dlsym_call!(LIB_TIZEN_CORE, b"tizen_core_get_glib_context\0", unsafe extern "C" fn(tizen_core_h) -> *mut c_void, std::ptr::null_mut(), core)
+    }
+
+    pub type tizen_core_task_cb = unsafe extern "C" fn(*mut c_void) -> bool;
+    pub type tizen_core_source_h = *mut c_void;
+
+    pub unsafe fn tizen_core_add_idle_job(
+        core: tizen_core_h,
+        callback: tizen_core_task_cb,
+        user_data: *mut c_void,
+        source: *mut tizen_core_source_h
+    ) -> c_int {
+        dlsym_call!(LIB_TIZEN_CORE, b"tizen_core_add_idle_job\0", unsafe extern "C" fn(tizen_core_h, tizen_core_task_cb, *mut c_void, *mut tizen_core_source_h) -> c_int, -1, core, callback, user_data, source)
     }
 }
 
@@ -123,7 +144,7 @@ pub mod pkgmgr {
     use std::os::raw::{c_char, c_int, c_void};
 
     pub type pkgmgr_client = c_void;
-    pub const PC_LISTENING: c_int = 4;
+    pub const PC_LISTENING: c_int = 1; // PC_REQUEST=0, PC_LISTENING=1, PC_BROADCAST=2
     pub const PKGMGR_CLIENT_STATUS_ALL: c_int = 0;
 
     pub type pkgmgr_handler = unsafe extern "C" fn(
@@ -216,6 +237,49 @@ pub mod pkgmgr_info {
 
 
 // ─────────────────────────────────────────
+// GLib — Main loop (resolved via libsoup-2.4 which depends on libglib-2.0)
+// ─────────────────────────────────────────
+pub mod glib {
+    use super::*;
+    use std::os::raw::{c_int, c_void};
+
+    pub type GMainLoop = c_void;
+    pub type GMainContext = c_void;
+
+    pub unsafe fn g_main_context_new() -> *mut GMainContext {
+        dlsym_call!(LIB_SOUP, b"g_main_context_new\0", unsafe extern "C" fn() -> *mut GMainContext, std::ptr::null_mut())
+    }
+
+    pub unsafe fn g_main_context_push_thread_default(context: *mut GMainContext) {
+        dlsym_call!(LIB_SOUP, b"g_main_context_push_thread_default\0", unsafe extern "C" fn(*mut GMainContext), (), context)
+    }
+
+    pub unsafe fn g_main_context_pop_thread_default(context: *mut GMainContext) {
+        dlsym_call!(LIB_SOUP, b"g_main_context_pop_thread_default\0", unsafe extern "C" fn(*mut GMainContext), (), context)
+    }
+
+    pub unsafe fn g_main_context_unref(context: *mut GMainContext) {
+        dlsym_call!(LIB_SOUP, b"g_main_context_unref\0", unsafe extern "C" fn(*mut GMainContext), (), context)
+    }
+
+    pub unsafe fn g_main_loop_new(context: *mut GMainContext, is_running: c_int) -> *mut GMainLoop {
+        dlsym_call!(LIB_SOUP, b"g_main_loop_new\0", unsafe extern "C" fn(*mut GMainContext, c_int) -> *mut GMainLoop, std::ptr::null_mut(), context, is_running)
+    }
+
+    pub unsafe fn g_main_loop_run(loop_: *mut GMainLoop) {
+        dlsym_call!(LIB_SOUP, b"g_main_loop_run\0", unsafe extern "C" fn(*mut GMainLoop), (), loop_)
+    }
+
+    pub unsafe fn g_main_loop_quit(loop_: *mut GMainLoop) {
+        dlsym_call!(LIB_SOUP, b"g_main_loop_quit\0", unsafe extern "C" fn(*mut GMainLoop), (), loop_)
+    }
+
+    pub unsafe fn g_main_loop_unref(loop_: *mut GMainLoop) {
+        dlsym_call!(LIB_SOUP, b"g_main_loop_unref\0", unsafe extern "C" fn(*mut GMainLoop), (), loop_)
+    }
+}
+
+// ─────────────────────────────────────────
 // libsoup-2.4 — HTTP Server
 // ─────────────────────────────────────────
 pub mod soup {
@@ -245,6 +309,14 @@ pub mod soup {
 
     pub unsafe fn g_object_new(object_type: GType, first_property_name: *const c_char) -> gpointer {
         dlsym_call!(LIB_SOUP, b"g_object_new\0", unsafe extern "C" fn(GType, *const c_char) -> gpointer, std::ptr::null_mut(), object_type, first_property_name)
+    }
+
+    pub unsafe fn g_main_context_push_thread_default(context: *mut GMainContext) {
+        dlsym_call!(LIB_SOUP, b"g_main_context_push_thread_default\0", unsafe extern "C" fn(*mut GMainContext), (), context)
+    }
+
+    pub unsafe fn g_main_context_new() -> *mut GMainContext {
+        dlsym_call!(LIB_SOUP, b"g_main_context_new\0", unsafe extern "C" fn() -> *mut GMainContext, std::ptr::null_mut())
     }
 
     pub unsafe fn g_main_loop_new(context: *mut GMainContext, is_running: gboolean) -> *mut GMainLoop {
