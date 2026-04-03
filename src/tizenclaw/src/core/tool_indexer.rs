@@ -183,9 +183,7 @@ pub fn scan_tools_metadata(root_dir: &str) -> ToolsMetadata {
                     continue;
                 }
 
-                if let Some(meta) = parse_tool_dir(&sub_path, &cat_name) {
-                    tools.push(meta);
-                }
+                tools.extend(parse_tool_dir(&sub_path, &cat_name));
             }
         }
 
@@ -242,8 +240,9 @@ pub fn scan_tools_metadata(root_dir: &str) -> ToolsMetadata {
 }
 
 /// Parse a single tool directory for metadata.
-fn parse_tool_dir(dir: &Path, category: &str) -> Option<ToolMeta> {
-    let dir_name = dir.file_name()?.to_str()?.to_string();
+fn parse_tool_dir(dir: &Path, category: &str) -> Vec<ToolMeta> {
+    let dir_name_str = dir.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
+    let dir_name = dir_name_str.clone();
 
     // Look for descriptors in priority order
     let descriptor_names = ["tool.md", "SKILL.md", "index.md"];
@@ -263,6 +262,34 @@ fn parse_tool_dir(dir: &Path, category: &str) -> Option<ToolMeta> {
     let mut description = String::new();
     let mut binary_path = None;
     let mut commands = Vec::new();
+
+    if content.is_empty() {
+        // No main descriptor, try parsing all .md files as individual actions/tools
+        let mut results = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_file() {
+                    let fname = p.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    if fname.ends_with(".md") && fname != "index.md" && fname != "tools.md" && !fname.starts_with('.') {
+                        let action_name = fname.trim_end_matches(".md").to_string();
+                        let desc = extract_description_from_md(&p);
+                        results.push(ToolMeta {
+                            name: dir_name.clone(),
+                            description: format!("[Action: {}] {}", action_name, desc),
+                            category: category.to_string(),
+                            dir_path: dir.to_string_lossy().to_string(),
+                            binary_path: None,
+                            commands: vec![action_name],
+                        });
+                    }
+                }
+            }
+        }
+        if !results.is_empty() {
+            return results;
+        }
+    }
 
     // Parse YAML frontmatter and content
     for line in content.lines() {
@@ -311,14 +338,14 @@ fn parse_tool_dir(dir: &Path, category: &str) -> Option<ToolMeta> {
         }
     }
 
-    Some(ToolMeta {
+    vec![ToolMeta {
         name,
         description,
         category: category.to_string(),
         dir_path: dir.to_string_lossy().to_string(),
         binary_path,
         commands,
-    })
+    }]
 }
 
 /// Extract a single-line description from a markdown file.
