@@ -6,22 +6,18 @@ pub struct RuntimeContext {
 
 pub struct SystemPromptBuilder {
     base_prompt: String,
-    tool_declarations: Vec<String>,
     runtime_context: Option<RuntimeContext>,
     soul_content: Option<String>,
     available_skills: Vec<(String, String)>,
-    long_term_memory: Option<String>,
 }
 
 impl Default for SystemPromptBuilder {
     fn default() -> Self {
         SystemPromptBuilder {
             base_prompt: "You are TizenClaw, an AI assistant running inside a Tizen OS device.".into(),
-            tool_declarations: Vec::new(),
             runtime_context: None,
             soul_content: None,
             available_skills: Vec::new(),
-            long_term_memory: None,
         }
     }
 }
@@ -41,15 +37,9 @@ impl SystemPromptBuilder {
         self
     }
 
-    pub fn add_long_term_memory(mut self, memory_str: String) -> Self {
-        self.long_term_memory = Some(memory_str);
-        self
-    }
 
-    pub fn add_tool_names(mut self, tools: Vec<String>) -> Self {
-        self.tool_declarations = tools;
-        self
-    }
+
+
 
     pub fn add_available_skills(mut self, skills: Vec<(String, String)>) -> Self {
         self.available_skills = skills;
@@ -80,31 +70,9 @@ impl SystemPromptBuilder {
             lines.push("".into());
         }
 
-        // Long-Term Memory Injection
-        if let Some(mem) = &self.long_term_memory {
-            if !mem.is_empty() {
-                lines.push("## Long-Term Memory".into());
-                lines.push("Below are persistent memories, facts, and skills you have learned. Use these as primary context.".into());
-                lines.push("<long_term_memory>".into());
-                lines.push(mem.clone());
-                lines.push("</long_term_memory>".into());
-                lines.push("".into());
-            }
-        }
 
-        // 2. Tooling Constraints & Execution Rules
-        lines.push("## Tooling".into());
-        lines.push("Tool availability (filtered by policy):".into());
-        lines.push("Tool names are case-sensitive. Call tools exactly as listed.".into());
-        if !self.tool_declarations.is_empty() {
-            for t in &self.tool_declarations {
-                lines.push(format!("- {}", t));
-            }
-        } else {
-            lines.push("(No tools currently loaded)".into());
-        }
-        lines.push("".into());
-        
+
+        // 2. Tool Call Style
         lines.push("## Tool Call Style".into());
         lines.push("Skip narration for routine calls. Narrate only for: multi-step work, sensitive actions (deletions), or when asked. Use direct tool calls — don't ask users to run equivalent CLI commands manually.".into());
         lines.push("".into());
@@ -156,7 +124,6 @@ mod tests {
         let builder = SystemPromptBuilder::new();
         let prompt = builder.build();
         assert!(prompt.contains("You are TizenClaw"));
-        assert!(prompt.contains("(No tools currently loaded)"));
         assert!(prompt.contains("(No custom textual skills found)"));
     }
 
@@ -172,13 +139,8 @@ mod tests {
     #[test]
     fn test_tool_and_skill_injection() {
         let prompt = SystemPromptBuilder::new()
-            .add_tool_names(vec!["tool_a".into(), "tool_b".into()])
             .add_available_skills(vec![("skills/test/SKILL.md".into(), "A core skill".into())])
             .build();
-        
-        assert!(prompt.contains("- tool_a"));
-        assert!(prompt.contains("- tool_b"));
-        assert!(!prompt.contains("(No tools currently loaded)"));
         
         assert!(prompt.contains("- skills/test/SKILL.md: A core skill"));
         assert!(!prompt.contains("(No custom textual skills found)"));
@@ -224,7 +186,6 @@ mod tests {
         // Use character count as proxy for token count.
         let prompt = SystemPromptBuilder::new().build();
         // Baseline: must contain all key sections
-        assert!(prompt.contains("## Tooling"));
         assert!(prompt.contains("## Safety"));
         assert!(prompt.contains("## Memory & Skills Reference"));
         // The combined Safety + ToolCallStyle sections should be < 400 chars

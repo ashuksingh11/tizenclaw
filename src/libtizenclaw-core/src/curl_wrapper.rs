@@ -173,11 +173,11 @@ pub unsafe extern "C" fn tizenclaw_curl_get_response_code(h: *mut libc::c_void, 
 #[no_mangle]
 pub unsafe extern "C" fn tizenclaw_curl_get_error_message(h: *mut libc::c_void) -> *const c_char {
     if h.is_null() {
-        return b"Unknown or no error\0".as_ptr() as *const c_char;
+        return c"Unknown or no error".as_ptr();
     }
     let inner = &*(h as *mut CurlInner);
     if inner.error_message.is_empty() {
-        b"Unknown or no error\0".as_ptr() as *const c_char
+        c"Unknown or no error".as_ptr()
     } else {
         // Store as CString in the struct to keep it alive
         // For simplicity, return a static-ish pointer

@@ -750,8 +750,6 @@ impl AgentCore {
                     builder = builder.set_soul_content(soul.clone());
                 }
             }
-            let tool_names = tools.iter().map(|t| t.name.clone()).collect();
-            builder = builder.add_tool_names(tool_names);
 
             let skills_dir = self.platform.paths.skills_dir.to_string_lossy().to_string();
             let textual_skills = crate::core::textual_skill_scanner::scan_textual_skills(&skills_dir);
@@ -765,18 +763,23 @@ impl AgentCore {
             let data_dir = self.platform.paths.data_dir.to_string_lossy().to_string();
             builder = builder.set_runtime_context(platform_name, model_name, data_dir);
 
-            // Load long term memory
-            if let Ok(ms) = self.memory_store.lock() {
-                if let Some(store) = ms.as_ref() {
-                    let mem_str = store.load_relevant_for_prompt(prompt, 5, 0.1);
-                    if !mem_str.is_empty() {
-                        builder = builder.add_long_term_memory(mem_str);
+            builder.build()
+        };
+
+        // Load long term memory dynamically and inject into messages (preserves system_prompt cache)
+        if let Ok(ms) = self.memory_store.lock() {
+            if let Some(store) = ms.as_ref() {
+                let mem_str = store.load_relevant_for_prompt(prompt, 5, 0.1);
+                if !mem_str.is_empty() {
+                    let memory_context = format!("## Context from Long-Term Memory\n<long_term_memory>\n{}\n</long_term_memory>", mem_str);
+                    if !messages.is_empty() {
+                        let last_idx = messages.len() - 1;
+                        messages.insert(last_idx, LlmMessage::user(&memory_context));
                     }
                 }
             }
+        }
 
-            builder.build()
-        };
 
         // ── Phase 2.5: Prompt Cache Preparation ─────────────────────────
         // Compute hash of system_prompt; refresh server-side cache only when

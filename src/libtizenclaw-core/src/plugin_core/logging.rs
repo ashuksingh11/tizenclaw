@@ -31,7 +31,7 @@ impl PlatformLogger for DlogLogger {
 
 /// C ABI for platform plugin logger (called by the main daemon via dlopen)
 #[no_mangle]
-pub extern "C" fn claw_plugin_log(level: i32, tag: *const std::os::raw::c_char, msg: *const std::os::raw::c_char) {
+pub unsafe extern "C" fn claw_plugin_log(level: i32, tag: *const std::os::raw::c_char, msg: *const std::os::raw::c_char) {
     let prio = match level {
         0 => crate::tizen_sys::dlog::DLOG_ERROR,
         1 => crate::tizen_sys::dlog::DLOG_WARN,

@@ -27,6 +27,12 @@ pub struct PkgmgrClient {
 unsafe impl Send for PkgmgrClient {}
 unsafe impl Sync for PkgmgrClient {}
 
+impl Default for PkgmgrClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PkgmgrClient {
     pub fn new() -> Self {
         Self {

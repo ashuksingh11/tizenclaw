@@ -220,11 +220,10 @@ impl PackageManagerProvider for TizenPackageManager {
             let c_pkgid = std::ffi::CString::new(pkg_id).unwrap();
             let uid = libc::getuid() as std::os::raw::c_int;
             
-            if pkgmgrinfo_pkginfo_get_usr_pkginfo(c_pkgid.as_ptr(), uid, &mut pkginfo) != PMINFO_R_OK || pkginfo.is_null() {
-                // Fallback to system package info if user-specific info fails
-                if pkgmgrinfo_pkginfo_get_pkginfo(c_pkgid.as_ptr(), &mut pkginfo) != PMINFO_R_OK || pkginfo.is_null() {
-                    return None;
-                }
+            if (pkgmgrinfo_pkginfo_get_usr_pkginfo(c_pkgid.as_ptr(), uid, &mut pkginfo) != PMINFO_R_OK || pkginfo.is_null())
+                && (pkgmgrinfo_pkginfo_get_pkginfo(c_pkgid.as_ptr(), &mut pkginfo) != PMINFO_R_OK || pkginfo.is_null())
+            {
+                return None;
             }
 
             let mut c_val: *mut std::os::raw::c_char = std::ptr::null_mut();
@@ -250,11 +249,10 @@ impl PackageManagerProvider for TizenPackageManager {
             let c_pkgid = std::ffi::CString::new(pkg_id).unwrap();
             let uid = libc::getuid() as std::os::raw::c_int;
 
-            if pkgmgrinfo_pkginfo_get_usr_pkginfo(c_pkgid.as_ptr(), uid, &mut pkginfo) != PMINFO_R_OK || pkginfo.is_null() {
-                // Fallback to system package info if user-specific info fails
-                if pkgmgrinfo_pkginfo_get_pkginfo(c_pkgid.as_ptr(), &mut pkginfo) != PMINFO_R_OK || pkginfo.is_null() {
-                    return None;
-                }
+            if (pkgmgrinfo_pkginfo_get_usr_pkginfo(c_pkgid.as_ptr(), uid, &mut pkginfo) != PMINFO_R_OK || pkginfo.is_null())
+                && (pkgmgrinfo_pkginfo_get_pkginfo(c_pkgid.as_ptr(), &mut pkginfo) != PMINFO_R_OK || pkginfo.is_null())
+            {
+                return None;
             }
 
             let mut c_val: *mut std::os::raw::c_char = std::ptr::null_mut();
@@ -279,10 +277,10 @@ impl PackageManagerProvider for TizenPackageManager {
             let c_pkgid = std::ffi::CString::new(pkg_id).unwrap();
             let uid = libc::getuid() as std::os::raw::c_int;
 
-            if pkgmgrinfo_pkginfo_get_usr_pkginfo(c_pkgid.as_ptr(), uid, &mut pkginfo) != PMINFO_R_OK || pkginfo.is_null() {
-                if pkgmgrinfo_pkginfo_get_pkginfo(c_pkgid.as_ptr(), &mut pkginfo) != PMINFO_R_OK || pkginfo.is_null() {
-                    return None;
-                }
+            if (pkgmgrinfo_pkginfo_get_usr_pkginfo(c_pkgid.as_ptr(), uid, &mut pkginfo) != PMINFO_R_OK || pkginfo.is_null())
+                && (pkgmgrinfo_pkginfo_get_pkginfo(c_pkgid.as_ptr(), &mut pkginfo) != PMINFO_R_OK || pkginfo.is_null())
+            {
+                return None;
             }
 
             let mut c_val: *mut std::os::raw::c_char = std::ptr::null_mut();
