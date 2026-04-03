@@ -14,3 +14,4 @@ pub mod tizen_system_event_adapter;
 pub mod fleet_agent;
 pub mod ota_updater;
 pub mod canvas_ipc_server;
+pub mod onnx_runtime;

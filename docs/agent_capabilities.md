@@ -12,11 +12,11 @@
 - **Outputs**: Web Dashboard HTTP chunks (SSE) or C-FFI callbacks.
 - **Mitigation/Resource constraint**: Replaces blocking memory allocations (buffering entirely) with zero-cost asynchronous forwarding streams.
 
-## 3. RAG/Long-term Memory
-- **Goal**: Allow the autonomous agent to recall historical sessions safely.
+## 3. RAG/Long-term Memory (Dynamic ONNX Async Limits)
+- **Goal**: Allow the autonomous agent to recall historical sessions safely, scaling vectors via on-device AI.
 - **Inputs**: User prompts, embedded session history from SQLite.
 - **Outputs**: Augmented context for LLM.
-- **Mitigation/Resource constraint**: Runs the `onnx` operations explicitly on an isolation thread pool so as not to stall the primary `AgentCore` tokio worker threads.
+- **Mitigation/Resource constraint**: **EXTREME MEMORY PRESERVATION.** Employs `libloading` crate for isolated `dlopen` & `dlclose` logic. The heavy `libonnxruntime.so` is loaded directly into process space *only* when RAG embedding calculation runs, then dropped instantly. Runs strictly on an async `tokio` isolation thread pool to avoid blocking `AgentCore`.
 
 ## 4. Context Summarization
 - **Goal**: Retain long-term logic by compressing old context.
