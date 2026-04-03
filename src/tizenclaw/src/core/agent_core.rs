@@ -811,9 +811,38 @@ impl AgentCore {
             }
         }
 
-        // ── Phase 3: Planning (pre-loop compaction) ──────────────────────
+        // ── Phase 3: Planning (Cognitive Plan-and-Solve & compaction) ────
         loop_state.transition(AgentPhase::Planning);
         let context_engine = SizedContextEngine::new().with_threshold(loop_state.compact_threshold);
+
+        // Optional LLM Cognitive Step for Complex Prompts
+        if prompt.len() > 100 || prompt.contains(" and ") || prompt.contains(" 그리고 ") || prompt.contains("나머지") || prompt.contains("순서대로") {
+            log::debug!("[AgentLoop] Complex prompt detected. Triggering explicit Plan-and-Solve...");
+            let plan_sys = "You are a precise planner. Outline the distinct steps to solve the user's request. Output only a list of concise steps.";
+            
+            // Release writer locks safely for LLM call
+            let plan_resp_opt = {
+                let be_guard = self.backend.read().await;
+                if let Some(be) = be_guard.as_ref() {
+                    Some(be.chat(&[LlmMessage::user(prompt)], &[], None, plan_sys, Some(1024)).await)
+                } else {
+                    None
+                }
+            };
+
+            if let Some(p_resp) = plan_resp_opt {
+                if p_resp.success {
+                    let steps = p_resp.text.trim().to_string();
+                    loop_state.plan_steps.push(steps.clone());
+                    messages.push(LlmMessage {
+                        role: "system".into(),
+                        text: format!("## Active Plan (Follow these steps):\n{}", steps),
+                        ..Default::default()
+                    });
+                    log::info!("[Planning] Extracted plan steps into context.");
+                }
+            }
+        }
 
         // Update token_used estimate
         loop_state.token_used = context_engine.estimate_tokens(&messages);
@@ -1050,18 +1079,28 @@ impl AgentCore {
                 log::debug!("[Evaluating] Round {} verdict={}", loop_state.round, verdict.as_str());
 
                 if verdict == EvalVerdict::Stuck {
-                    log::warn!("[AgentLoop] Idle loop detected (same output {} rounds). Terminating.",
-                        AgentLoopState::IDLE_WINDOW);
-                    loop_state.transition(AgentPhase::TerminationCheck);
-                    loop_state.transition(AgentPhase::ResultReporting);
+                    loop_state.stuck_retry_count += 1;
+                    if loop_state.stuck_retry_count > 2 {
+                        log::warn!("[AgentLoop] Idle loop detected (round {}) - Terminating.", loop_state.round);
+                        loop_state.transition(AgentPhase::TerminationCheck);
+                        loop_state.transition(AgentPhase::ResultReporting);
 
-                    if let Ok(ss) = self.session_store.lock() {
-                        if let Some(store) = ss.as_ref() {
-                            store.add_message(session_id, "assistant",
-                                "Task completed (idle loop detected).");
+                        if let Ok(ss) = self.session_store.lock() {
+                            if let Some(store) = ss.as_ref() {
+                                store.add_message(session_id, "assistant",
+                                    "Task aborted (terminal idle loop).");
+                            }
                         }
+                        return "Error: Agent is stuck in an execution loop.".into();
+                    } else {
+                        log::warn!("[AgentLoop] Idle loop detected (round {}) - Triggering Dynamic Fallback RePlanning.", loop_state.round);
+                        messages.push(LlmMessage {
+                            role: "user".into(),
+                            text: "System Error: You are stuck in a loop. Re-evaluate your plan and try a completely different approach using different tools. Do not repeat the previous action.".into(),
+                            ..Default::default()
+                        });
+                        loop_state.transition(AgentPhase::RePlanning);
                     }
-                    return response.text;
                 }
 
             } else {

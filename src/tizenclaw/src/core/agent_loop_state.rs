@@ -128,6 +128,9 @@ pub struct AgentLoopState {
     // Self-inspection telemetry
     pub started_at:         Instant,
     pub total_tool_calls:   usize,
+    
+    // Fallback strategy telemetry
+    pub stuck_retry_count:  usize,
 }
 
 impl AgentLoopState {
@@ -157,6 +160,7 @@ impl AgentLoopState {
             last_error:         None,
             started_at:         Instant::now(),
             total_tool_calls:   0,
+            stuck_retry_count:  0,
         }
     }
 
