@@ -1,8 +1,18 @@
 //! Gemini LLM backend (Google AI) — uses serde_json + ureq.
+//!
+//! ## Prompt Caching
+//! Supports Gemini `CachedContent` API to avoid re-sending the system prompt
+//! on every round. Call `prepare_cache()` before `chat()` to create/refresh
+//! the cache. The `cached_content_name` is stored in a `RwLock` so multiple
+//! concurrent sessions share a single cached system prompt reference.
+//!
+//! Fallback: if cache creation fails, `chat()` falls back to inline
+//! `system_instruction` transparently.
 
 #![allow(clippy::all)]
 
 use serde_json::{json, Value};
+use std::sync::RwLock;
 use crate::infra::http_client;
 use super::backend::*;
 
@@ -10,6 +20,9 @@ pub struct GeminiBackend {
     api_key: String,
     model: String,
     endpoint: String,
+    /// Cached system-prompt name returned by Gemini CachedContent API.
+    /// `None` means no cache is active; fall back to inline system_instruction.
+    cached_content_name: RwLock<Option<String>>,
 }
 
 impl Default for GeminiBackend {
@@ -24,13 +37,29 @@ impl GeminiBackend {
             api_key: String::new(),
             model: "gemini-2.5-flash".into(),
             endpoint: "https://generativelanguage.googleapis.com/v1beta".into(),
+            cached_content_name: RwLock::new(None),
         }
     }
 
-    fn build_request(&self, messages: &[LlmMessage], tools: &[LlmToolDecl], system_prompt: &str) -> Value {
+    /// Build the generateContent request body.
+    ///
+    /// If `cached_name` is `Some`, the request references the cached system
+    /// prompt instead of embedding it inline. Otherwise, `system_instruction`
+    /// is inlined as before.
+    fn build_request(
+        &self,
+        messages: &[LlmMessage],
+        tools: &[LlmToolDecl],
+        system_prompt: &str,
+        cached_name: Option<&str>,
+    ) -> Value {
         let mut req = json!({});
 
-        if !system_prompt.is_empty() {
+        if let Some(name) = cached_name {
+            // Reference the server-side cached content (avoids re-sending
+            // the full system prompt, which is the largest token cost).
+            req["cachedContent"] = json!(name);
+        } else if !system_prompt.is_empty() {
             req["system_instruction"] = json!({
                 "parts": [{"text": system_prompt}]
             });
@@ -91,9 +120,91 @@ impl GeminiBackend {
             resp.prompt_tokens = usage["promptTokenCount"].as_i64().unwrap_or(0) as i32;
             resp.completion_tokens = usage["candidatesTokenCount"].as_i64().unwrap_or(0) as i32;
             resp.total_tokens = usage["totalTokenCount"].as_i64().unwrap_or(0) as i32;
+            // cachedContentTokenCount shows how many tokens came from cache
+            if let Some(cached_t) = usage["cachedContentTokenCount"].as_i64() {
+                if cached_t > 0 {
+                    log::info!(
+                        "[GeminiCache] Cache hit: {} cached tokens (saved ~{} prompt tokens)",
+                        cached_t,
+                        cached_t
+                    );
+                }
+            }
         }
         resp.success = true;
         resp
+    }
+
+    /// Create or refresh a Gemini CachedContent for the given system prompt.
+    ///
+    /// On success, stores the cache resource name in `self.cached_content_name`
+    /// and returns `true`. On failure, clears the cache name and returns `false`
+    /// so that chat() falls back to inline system_instruction.
+    pub async fn create_or_refresh_cache(&self, system_prompt: &str) -> bool {
+        if self.api_key.is_empty() || system_prompt.is_empty() {
+            return false;
+        }
+
+        // Gemini requires at least 32,768 tokens in the cached content to be
+        // eligible for caching. For shorter prompts we skip the cache.
+        // Rough heuristic: < 1,000 chars ≈ < 300 tokens — skip cache.
+        if system_prompt.len() < 1_000 {
+            log::debug!("[GeminiCache] System prompt too short for caching ({} chars), skipping", system_prompt.len());
+            return false;
+        }
+
+        let url = format!(
+            "{}/cachedContents?key={}",
+            self.endpoint, self.api_key
+        );
+
+        // TTL: 1 hour (3600 seconds). Gemini supports up to 1 hour by default.
+        let body = json!({
+            "model": format!("models/{}", self.model),
+            "system_instruction": {
+                "parts": [{"text": system_prompt}]
+            },
+            "ttl": "3600s"
+        }).to_string();
+
+        let http_resp = http_client::http_post(&url, &[], &body, 1, 30).await;
+
+        if !http_resp.success {
+            log::warn!(
+                "[GeminiCache] Cache creation failed (HTTP {}): {}",
+                http_resp.status_code, http_resp.error
+            );
+            if let Ok(mut guard) = self.cached_content_name.write() {
+                *guard = None;
+            }
+            return false;
+        }
+
+        let parsed: Value = match serde_json::from_str(&http_resp.body) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("[GeminiCache] Cache response parse error: {}", e);
+                return false;
+            }
+        };
+
+        if let Some(name) = parsed["name"].as_str() {
+            log::info!("[GeminiCache] Cache created: {} ({} chars prompt)", name, system_prompt.len());
+            if let Ok(mut guard) = self.cached_content_name.write() {
+                *guard = Some(name.to_string());
+            }
+            true
+        } else {
+            log::warn!("[GeminiCache] No 'name' field in cache response: {}", http_resp.body);
+            false
+        }
+    }
+
+    /// Clear the cached content reference (does NOT delete it server-side).
+    pub fn clear_cache(&self) {
+        if let Ok(mut guard) = self.cached_content_name.write() {
+            *guard = None;
+        }
     }
 }
 
@@ -106,16 +217,86 @@ impl LlmBackend for GeminiBackend {
         !self.api_key.is_empty()
     }
 
-    async fn chat(&self, messages: &[LlmMessage], tools: &[LlmToolDecl], _on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>, system_prompt: &str) -> LlmResponse {
-        let body = self.build_request(messages, tools, system_prompt).to_string();
-        let url = format!("{}/models/{}:generateContent?key={}", self.endpoint, self.model, self.api_key);
+    async fn chat(
+        &self,
+        messages: &[LlmMessage],
+        tools: &[LlmToolDecl],
+        _on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
+        system_prompt: &str,
+    ) -> LlmResponse {
+        // Read cached content name (non-blocking shared read)
+        let cached_name_opt: Option<String> = self
+            .cached_content_name
+            .read()
+            .ok()
+            .and_then(|g| g.clone());
+
+        let body = self
+            .build_request(messages, tools, system_prompt, cached_name_opt.as_deref())
+            .to_string();
+
+        let url = format!(
+            "{}/models/{}:generateContent?key={}",
+            self.endpoint, self.model, self.api_key
+        );
         let http_resp = http_client::http_post(&url, &[], &body, 1, 60).await;
-        let mut resp = if http_resp.success { self.parse_response(&http_resp.body) } else {
-            let mut r = LlmResponse::default(); r.error_message = http_resp.error; r
+        let mut resp = if http_resp.success {
+            self.parse_response(&http_resp.body)
+        } else {
+            let mut r = LlmResponse::default();
+            r.error_message = http_resp.error;
+            r
         };
         resp.http_status = http_resp.status_code;
         resp
     }
 
+    async fn prepare_cache(&self, system_prompt: &str) -> bool {
+        self.create_or_refresh_cache(system_prompt).await
+    }
+
     fn get_name(&self) -> &str { "gemini" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_request_inline_system_prompt() {
+        let backend = GeminiBackend::new();
+        let msgs = vec![LlmMessage::user("hello")];
+        let req = backend.build_request(&msgs, &[], "You are TizenClaw.", None);
+        assert!(req.get("system_instruction").is_some());
+        assert!(req.get("cachedContent").is_none());
+    }
+
+    #[test]
+    fn test_build_request_with_cached_name() {
+        let backend = GeminiBackend::new();
+        let msgs = vec![LlmMessage::user("hello")];
+        let req = backend.build_request(
+            &msgs,
+            &[],
+            "ignored prompt",
+            Some("cachedContents/abc123"),
+        );
+        // cachedContent present, system_instruction must NOT be present
+        assert!(req.get("cachedContent").is_some());
+        assert!(req.get("system_instruction").is_none());
+        assert_eq!(req["cachedContent"].as_str(), Some("cachedContents/abc123"));
+    }
+
+    #[test]
+    fn test_clear_cache() {
+        let backend = GeminiBackend::new();
+        // Manually set the cache name
+        {
+            let mut g = backend.cached_content_name.write().unwrap();
+            *g = Some("cachedContents/test".into());
+        }
+        backend.clear_cache();
+        let guard = backend.cached_content_name.read().unwrap();
+        assert!(guard.is_none());
+    }
 }

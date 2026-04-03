@@ -107,6 +107,16 @@ pub trait LlmBackend: Send + Sync {
     ) -> LlmResponse;
     fn get_name(&self) -> &str;
     fn shutdown(&mut self) {}
+
+    /// Optionally pre-cache the system prompt server-side before the first
+    /// `chat()` call. Returns `true` if a cache was successfully prepared
+    /// (subsequent `chat()` calls may then omit the inline system prompt).
+    ///
+    /// Default: no-op returning `false`. Only backends that support
+    /// server-side prompt caching (e.g. Gemini) should override this.
+    async fn prepare_cache(&self, _system_prompt: &str) -> bool {
+        false
+    }
 }
 
 /// Create an LLM backend by name.

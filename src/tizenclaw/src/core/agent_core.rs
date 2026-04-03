@@ -3,6 +3,13 @@
 //! Manages LLM interaction, tool calling, session management,
 //! and the agentic loop (prompt → LLM → tool call → result → LLM → ...).
 //!
+//! ## Prompt Caching
+//! After building the system_prompt, `process_prompt()` computes a simple
+//! hash and compares it to `prompt_hash`. On change, it calls
+//! `backend.prepare_cache()` (no-op for non-Gemini backends). GeminiBackend
+//! creates/refreshes a `CachedContent` resource; subsequent `chat()` calls
+//! reference that resource instead of re-sending the full text.
+//!
 //! Thread-safety: uses fine-grained internal locking so callers can
 //! share `Arc<AgentCore>` without an outer Mutex.
 
@@ -142,6 +149,10 @@ pub struct AgentCore {
     action_bridge: Mutex<crate::core::action_bridge::ActionBridge>,
     tool_policy: Mutex<crate::core::tool_policy::ToolPolicy>,
     memory_store: Mutex<Option<crate::storage::memory_store::MemoryStore>>,
+    /// Hash of the last system_prompt sent to the backend.
+    /// Used to detect when the prompt changes so that the server-side
+    /// cached content can be refreshed (e.g. Gemini CachedContent API).
+    prompt_hash: tokio::sync::RwLock<u64>,
 }
 
 impl AgentCore {
@@ -161,7 +172,17 @@ impl AgentCore {
             action_bridge: Mutex::new(crate::core::action_bridge::ActionBridge::new()),
             tool_policy: Mutex::new(crate::core::tool_policy::ToolPolicy::new()),
             memory_store: Mutex::new(None),
+            prompt_hash: tokio::sync::RwLock::new(0),
         }
+    }
+
+    /// Compute a fast 64-bit hash of an arbitrary string slice.
+    /// Used to detect system_prompt changes without storing the full text.
+    fn hash_str(s: &str) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        s.hash(&mut h);
+        h.finish()
     }
 
     pub async fn initialize(&self) -> bool {
@@ -716,6 +737,36 @@ impl AgentCore {
 
             builder.build()
         };
+
+        // ── Phase 2.5: Prompt Cache Preparation ─────────────────────────
+        // Compute hash of system_prompt; refresh server-side cache only when
+        // the prompt actually changed. For GeminiBackend this creates/refreshes
+        // a CachedContent resource so subsequent rounds skip re-sending the
+        // full system_instruction text (~60-80% prompt token savings).
+        {
+            let new_hash = Self::hash_str(&system_prompt);
+            let cached_hash = *self.prompt_hash.read().await;
+            if new_hash != cached_hash {
+                log::info!(
+                    "[PromptCache] System prompt changed (hash {} → {}), refreshing cache…",
+                    cached_hash, new_hash
+                );
+                let be_guard = self.backend.read().await;
+                if let Some(be) = be_guard.as_ref() {
+                    let cached = be.prepare_cache(&system_prompt).await;
+                    if cached {
+                        log::info!("[PromptCache] Cache ready — subsequent rounds will reference cached content");
+                    } else {
+                        log::debug!("[PromptCache] Backend does not support caching or prompt too short; using inline system_instruction");
+                    }
+                }
+                drop(be_guard);
+                // Always update the stored hash so we do not retry on every call
+                *self.prompt_hash.write().await = new_hash;
+            } else {
+                log::debug!("[PromptCache] Prompt unchanged (hash={}), reusing cached content", cached_hash);
+            }
+        }
 
         // ── Phase 3: Planning (pre-loop compaction) ──────────────────────
         loop_state.transition(AgentPhase::Planning);
