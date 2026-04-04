@@ -959,6 +959,8 @@ impl AgentCore {
 
         let skills_dir = self.platform.paths.skills_dir.to_string_lossy().to_string();
         let textual_skills = crate::core::textual_skill_scanner::scan_textual_skills(&skills_dir);
+        let skill_reference_docs =
+            crate::core::skill_support::list_skill_reference_docs(&self.platform.paths.docs_dir);
         let prefetched_skills =
             select_relevant_skills(prompt, &textual_skills, MAX_PREFETCHED_SKILLS);
         loop_state.record_prefetch_skills(
@@ -1015,6 +1017,11 @@ impl AgentCore {
                 .map(|s| (s.absolute_path, s.description))
                 .collect();
             builder = builder.add_available_skills(formatted_skills);
+            let formatted_skill_references = skill_reference_docs
+                .iter()
+                .map(|doc| (doc.absolute_path.clone(), doc.description.clone()))
+                .collect();
+            builder = builder.add_available_skill_references(formatted_skill_references);
 
             let model_name = {
                 let bn = self.backend_name.read().unwrap_or_else(|e| e.into_inner());
@@ -1408,6 +1415,7 @@ impl AgentCore {
 
                 for tc in detected_tool_calls.iter() {
                     let skills_dir = self.platform.paths.skills_dir.clone();
+                    let docs_dir = self.platform.paths.docs_dir.clone();
                     let td_guard_ref = &*td_guard;
                     let tc_name = tc.name.clone();
                     let tc_args = tc.args.clone();
@@ -1463,32 +1471,75 @@ impl AgentCore {
                             }
                         } else if tc_name == "create_skill" {
                             let name = tc_args.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed_skill");
+                            let description = tc_args
+                                .get("description")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
                             let content = tc_args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-                            let sanitized_name = name.replace(|c: char| !c.is_ascii_alphanumeric() && c != '_', "");
-                            if sanitized_name.is_empty() {
-                                serde_json::json!({"error": "Invalid skill name"})
-                            } else {
-                                let skill_dir_path = skills_dir.join(&sanitized_name);
-                                if let Err(e) = std::fs::create_dir_all(&skill_dir_path) {
-                                    serde_json::json!({"error": format!("Failed to create skill directory: {}", e)})
-                                } else {
-                                    let skill_md_path = skill_dir_path.join("SKILL.md");
-                                    if skill_md_path.is_dir() {
-                                        let _ = std::fs::remove_dir_all(&skill_md_path);
-                                    }
-                                    match std::fs::write(&skill_md_path, content) {
-                                        Ok(_) => serde_json::json!({"status": "success", "message": format!("Skill '{}' created at {:?}", sanitized_name, skill_md_path)}),
-                                        Err(e) => serde_json::json!({"error": format!("Failed to write skill: {}", e)})
+                            match crate::core::skill_support::prepare_skill_document(
+                                name,
+                                description,
+                                content,
+                            ) {
+                                Ok(prepared) => {
+                                    let skill_dir_path = skills_dir.join(&prepared.normalized_name);
+                                    if let Err(e) = std::fs::create_dir_all(&skill_dir_path) {
+                                        serde_json::json!({"error": format!("Failed to create skill directory: {}", e)})
+                                    } else {
+                                        let skill_md_path = skill_dir_path.join("SKILL.md");
+                                        if skill_md_path.is_dir() {
+                                            let _ = std::fs::remove_dir_all(&skill_md_path);
+                                        }
+                                        match std::fs::write(&skill_md_path, prepared.document) {
+                                            Ok(_) => serde_json::json!({
+                                                "status": "success",
+                                                "name": prepared.normalized_name,
+                                                "path": skill_md_path.to_string_lossy().to_string(),
+                                                "warnings": prepared.warnings,
+                                            }),
+                                            Err(e) => serde_json::json!({"error": format!("Failed to write skill: {}", e)})
+                                        }
                                     }
                                 }
+                                Err(err) => serde_json::json!({"error": err}),
                             }
                         } else if tc_name == "read_skill" {
                             let name = tc_args.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                            let sanitized_name = name.replace(|c: char| !c.is_ascii_alphanumeric() && c != '_', "");
-                            let skill_md_path = skills_dir.join(&sanitized_name).join("SKILL.md");
-                            match std::fs::read_to_string(&skill_md_path) {
-                                Ok(content) => serde_json::json!({"status": "success", "content": content}),
-                                Err(e) => serde_json::json!({"error": format!("Failed to read skill '{}': {}", sanitized_name, e)})
+                            match crate::core::skill_support::normalize_skill_name(name) {
+                                Ok(normalized_name) => {
+                                    let skill_md_path = skills_dir.join(&normalized_name).join("SKILL.md");
+                                    match std::fs::read_to_string(&skill_md_path) {
+                                        Ok(content) => serde_json::json!({
+                                            "status": "success",
+                                            "name": normalized_name,
+                                            "path": skill_md_path.to_string_lossy().to_string(),
+                                            "content": content
+                                        }),
+                                        Err(e) => serde_json::json!({"error": format!("Failed to read skill '{}': {}", normalized_name, e)})
+                                    }
+                                }
+                                Err(err) => serde_json::json!({"error": err}),
+                            }
+                        } else if tc_name == "list_skill_references" {
+                            let docs = crate::core::skill_support::list_skill_reference_docs(&docs_dir);
+                            serde_json::json!({
+                                "status": "success",
+                                "references": docs.into_iter().map(|doc| serde_json::json!({
+                                    "name": doc.name,
+                                    "path": doc.absolute_path,
+                                    "description": doc.description,
+                                })).collect::<Vec<_>>()
+                            })
+                        } else if tc_name == "read_skill_reference" {
+                            let name = tc_args.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                            match crate::core::skill_support::read_skill_reference_doc(&docs_dir, name) {
+                                Ok(doc) => serde_json::json!({
+                                    "status": "success",
+                                    "name": doc.name,
+                                    "path": doc.absolute_path,
+                                    "content": doc.description,
+                                }),
+                                Err(err) => serde_json::json!({"error": err}),
                             }
                         } else if tc_name == "remember" {
                             if let Some(store) = ms_clone {

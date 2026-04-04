@@ -23,6 +23,8 @@ pub struct PlatformPaths {
     pub skills_dir: PathBuf,
     /// Plugin .so files directory
     pub plugins_dir: PathBuf,
+    /// Packaged reference docs directory
+    pub docs_dir: PathBuf,
     /// Web dashboard static files
     pub web_root: PathBuf,
     /// Workflows directory
@@ -72,6 +74,7 @@ impl PlatformPaths {
             tools_dir,
             skills_dir,
             plugins_dir: base.join("plugins"),
+            docs_dir: base.join("docs"),
             web_root: base.join("web"),
             workflows_dir: base.join("workflows"),
             actions_dir: base.join("actions"),
@@ -96,6 +99,7 @@ impl PlatformPaths {
             tools_dir,
             skills_dir,
             plugins_dir: PathBuf::from(TIZEN_DATA_DIR).join("plugins"),
+            docs_dir: PathBuf::from(TIZEN_DATA_DIR).join("docs"),
             web_root: PathBuf::from(TIZEN_DATA_DIR).join("web"),
             workflows_dir: PathBuf::from(TIZEN_DATA_DIR).join("workflows"),
             actions_dir: PathBuf::from(TIZEN_DATA_DIR).join("actions"),
@@ -124,6 +128,7 @@ impl PlatformPaths {
             &self.tools_dir,
             &self.skills_dir,
             &self.plugins_dir,
+            &self.docs_dir,
             &self.web_root,
             &self.workflows_dir,
         ];

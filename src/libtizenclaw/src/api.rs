@@ -67,7 +67,7 @@ fn get_process_uptime() -> f64 {
 ///
 /// # Example (Rust)
 /// ```rust,no_run
-/// use tizenclaw_client::api::TizenClaw;
+/// use tizenclaw::api::TizenClaw;
 ///
 /// let mut agent = TizenClaw::new();
 /// agent.initialize().unwrap();

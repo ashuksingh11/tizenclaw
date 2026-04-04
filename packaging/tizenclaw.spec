@@ -4,6 +4,7 @@ Version:    1.0.0
 Release:    3
 Group:      System/Service
 License:    Apache-2.0
+%undefine _debugsource_packages
 Source0:    %{name}-%{version}.tar.gz
 Source1001: %{name}.manifest
 
@@ -86,6 +87,7 @@ mkdir -p %{buildroot}%{_unitdir}
 mkdir -p %{buildroot}%{_unitdir}/multi-user.target.wants
 mkdir -p %{buildroot}%{_unitdir}/sockets.target.wants
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/config
+mkdir -p %{buildroot}/opt/usr/share/tizenclaw/docs
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/memory
 mkdir -p %{buildroot}/opt/usr/share/tizen-tools/embedded
 # actions/ dir removed — tools are discovered dynamically
@@ -100,7 +102,7 @@ ln -sf ../tizenclaw-tool-executor.socket %{buildroot}%{_unitdir}/sockets.target.
 
 %files
 %defattr(-,root,root,-)
-# %manifest %{name}.manifest
+# package manifest intentionally omitted
 %{_bindir}/tizenclaw
 %{_bindir}/tizenclaw-cli
 %{_bindir}/tizenclaw-tool-executor
@@ -115,6 +117,7 @@ ln -sf ../tizenclaw-tool-executor.socket %{buildroot}%{_unitdir}/sockets.target.
 
 # tools.md is generated at runtime by the daemon startup indexer
 /opt/usr/share/tizenclaw/web/
+/opt/usr/share/tizenclaw/docs/
 /opt/usr/share/tizen-tools/embedded/
 # actions/ dir removed
 %dir /opt/usr/share/tizen-tools/cli/
@@ -156,4 +159,3 @@ Header files and pkgconfig for building applications and plugins against TizenCl
 %{_includedir}/tizenclaw/core/tizenclaw_curl.h
 %{_libdir}/pkgconfig/tizenclaw.pc
 %{_libdir}/pkgconfig/tizenclaw-core.pc
-

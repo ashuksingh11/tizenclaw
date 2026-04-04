@@ -11,6 +11,7 @@ pub struct SystemPromptBuilder {
     runtime_context: Option<RuntimeContext>,
     soul_content: Option<String>,
     available_skills: Vec<(String, String)>,
+    available_skill_references: Vec<(String, String)>,
     available_tools: Vec<crate::llm::backend::LlmToolDecl>,
 }
 
@@ -22,6 +23,7 @@ impl Default for SystemPromptBuilder {
             runtime_context: None,
             soul_content: None,
             available_skills: Vec::new(),
+            available_skill_references: Vec::new(),
             available_tools: Vec::new(),
         }
     }
@@ -49,6 +51,14 @@ impl SystemPromptBuilder {
 
     pub fn add_available_skills(mut self, skills: Vec<(String, String)>) -> Self {
         self.available_skills = skills;
+        self
+    }
+
+    pub fn add_available_skill_references(
+        mut self,
+        references: Vec<(String, String)>,
+    ) -> Self {
+        self.available_skill_references = references;
         self
     }
 
@@ -139,12 +149,15 @@ impl SystemPromptBuilder {
         lines.push("## Memory & Skills Reference".into());
         lines.push("Before answering anything about prior work, check past memories using available repository tools if any.".into());
         lines.push("Use any prefetched skill snapshot in the conversation as the first routing hint before reading a full skill file.".into());
+        lines.push("Textual skills must follow Anthropic's SKILL.md conventions.".into());
+        lines.push("When asked to create or revise a skill, read the most relevant packaged guide with `read_skill_reference` before calling `create_skill`.".into());
+        lines.push("Skill execution is document-driven: read the relevant skill with `read_skill`, then follow its workflow with the available tools.".into());
         lines.push("Before replying, scan <available_skills> entries below:".into());
         lines.push("- If exactly one skill clearly applies: read its .md file using the `read_skill` tool, then follow it.".into());
         lines.push(
             "- If multiple could apply: choose the most specific one, then read/follow it.".into(),
         );
-        lines.push("- To create a new repeatable workflow, simply use your `create_skill` tool to save a new textual skill!".into());
+        lines.push("- To create a new repeatable workflow, use `create_skill`; it will save a canonical Anthropic-style `SKILL.md` file.".into());
         lines.push("".into());
 
         lines.push("<available_skills>".into());
@@ -156,6 +169,17 @@ impl SystemPromptBuilder {
             lines.push("(No custom textual skills found)".into());
         }
         lines.push("</available_skills>".into());
+        lines.push("".into());
+
+        lines.push("<available_skill_references>".into());
+        if !self.available_skill_references.is_empty() {
+            for (name, desc) in &self.available_skill_references {
+                lines.push(format!("- {}: {}", name, desc));
+            }
+        } else {
+            lines.push("(No packaged skill reference docs found)".into());
+        }
+        lines.push("</available_skill_references>".into());
         lines.push("".into());
 
         // 5. Platform Runtime Metadata
@@ -200,9 +224,15 @@ mod tests {
     fn test_tool_and_skill_injection() {
         let prompt = SystemPromptBuilder::new()
             .add_available_skills(vec![("skills/test/SKILL.md".into(), "A core skill".into())])
+            .add_available_skill_references(vec![(
+                "/opt/usr/share/tizenclaw/docs/SKILL_BEST_PRACTICE.md".into(),
+                "Skill authoring best practices".into(),
+            )])
             .build();
 
         assert!(prompt.contains("- skills/test/SKILL.md: A core skill"));
+        assert!(prompt.contains("available_skill_references"));
+        assert!(prompt.contains("SKILL_BEST_PRACTICE.md"));
         assert!(!prompt.contains("(No custom textual skills found)"));
     }
 

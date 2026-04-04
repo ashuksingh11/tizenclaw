@@ -264,13 +264,13 @@ impl ToolDeclarationBuilder {
         });
         tools.push(LlmToolDecl {
             name: "create_skill".into(),
-            description: "Create a reusable textual skill (workflow instructions) that the agent will intrinsically learn and recall in future sessions.".into(),
+            description: "Create a reusable Anthropic-style textual skill. The daemon normalizes the skill name and writes a canonical SKILL.md workflow document.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "Skill identifier (e.g. 'fetch_time', 'analyze_logs')"},
-                    "description": {"type": "string", "description": "Short description of what the skill accomplishes"},
-                    "content": {"type": "string", "description": "Full Markdown content for the skill, including instructions and steps."}
+                    "name": {"type": "string", "description": "Requested skill identifier; it will be normalized to lowercase letters, numbers, and hyphens."},
+                    "description": {"type": "string", "description": "Third-person discovery description for Anthropic skill selection."},
+                    "content": {"type": "string", "description": "Markdown body for the skill. The daemon will rebuild the YAML frontmatter."}
                 },
                 "required": ["name", "description", "content"]
             }),
@@ -284,6 +284,22 @@ impl ToolDeclarationBuilder {
                     "name": {"type": "string", "description": "Skill identifier to read"}
                 },
                 "required": ["name"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "list_skill_references".into(),
+            description: "List the packaged Anthropic skill-reference documents installed on the device.".into(),
+            parameters: json!({"type": "object", "properties": {}, "required": []}),
+        });
+        tools.push(LlmToolDecl {
+            name: "read_skill_reference".into(),
+            description: "Read a packaged Anthropic skill-reference document such as SKILL_BEST_PRACTICE.md before creating or revising a skill.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Reference document file name or stem. Empty uses the default best-practice guide."}
+                },
+                "required": []
             }),
         });
     }
@@ -362,4 +378,3 @@ mod tests {
         assert_eq!(tools[0].name, "execute_cli_wifi");
     }
 }
-

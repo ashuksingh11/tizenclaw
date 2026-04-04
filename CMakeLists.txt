@@ -3,6 +3,29 @@ CMAKE_MINIMUM_REQUIRED(VERSION 3.12)
 PROJECT(tizenclaw NONE)
 INCLUDE(GNUInstallDirs)
 
+# Consume rpmbuild-provided install variables so CMake configure stays warning-free.
+if(DEFINED INCLUDE_INSTALL_DIR)
+  set(CMAKE_INSTALL_INCLUDEDIR "${INCLUDE_INSTALL_DIR}")
+endif()
+if(DEFINED LIB_INSTALL_DIR)
+  set(CMAKE_INSTALL_LIBDIR "${LIB_INSTALL_DIR}")
+endif()
+if(DEFINED SHARE_INSTALL_PREFIX)
+  set(CMAKE_INSTALL_DATAROOTDIR "${SHARE_INSTALL_PREFIX}")
+endif()
+if(DEFINED SYSCONF_INSTALL_DIR)
+  set(CMAKE_INSTALL_SYSCONFDIR "${SYSCONF_INSTALL_DIR}")
+endif()
+if(DEFINED LIB_SUFFIX)
+  set(TIZENCLAW_LIB_SUFFIX "${LIB_SUFFIX}")
+endif()
+option(BUILD_SHARED_LIBS "Build shared libraries when supported." ON)
+if(BUILD_SHARED_LIBS)
+  set(TIZENCLAW_BUILD_MODE "shared")
+else()
+  set(TIZENCLAW_BUILD_MODE "static")
+endif()
+
 ## Paths
 SET(PREFIX ${CMAKE_INSTALL_PREFIX})
 SET(BINDIR "${CMAKE_INSTALL_PREFIX}/bin")
@@ -60,6 +83,10 @@ INSTALL(FILES
 # Web dashboard static files
 INSTALL(DIRECTORY "${CMAKE_SOURCE_DIR}/data/web/"
         DESTINATION "${APP_DATA_DIR}/web")
+
+# Packaged skill reference docs
+INSTALL(DIRECTORY "${CMAKE_SOURCE_DIR}/data/docs/"
+        DESTINATION "${APP_DATA_DIR}/docs")
 
 # tools.md is generated at runtime by the daemon's startup indexer
 
