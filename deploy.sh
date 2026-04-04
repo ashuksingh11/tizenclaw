@@ -471,7 +471,7 @@ do_deploy() {
   # 3-5.5. Install Web Dashboard frontend files
   log "Installing Web Dashboard frontend..."
   local web_src="${PROJECT_DIR}/data/web"
-  local web_dst="/opt/usr/data/tizenclaw/web"
+  local web_dst="/opt/usr/share/tizenclaw/web"
   if [ -d "${web_src}" ]; then
     if [ "${DRY_RUN}" = false ]; then
       sdb_shell "mkdir -p ${web_dst}/img ${web_dst}/sdk ${web_dst}/apps"

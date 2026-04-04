@@ -62,6 +62,9 @@ INSTALL(PROGRAMS "${CMAKE_SOURCE_DIR}/target/release/tizenclaw-cli"
 INSTALL(PROGRAMS "${CMAKE_SOURCE_DIR}/target/release/tizenclaw-tool-executor"
         DESTINATION "${BINDIR}")
 
+INSTALL(PROGRAMS "${CMAKE_SOURCE_DIR}/target/release/tizenclaw-web-dashboard"
+        DESTINATION "${BINDIR}")
+
 ## ═══════════════════════════════════════════
 ##  Install data & config files
 ## ═══════════════════════════════════════════

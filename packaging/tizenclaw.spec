@@ -109,6 +109,7 @@ fi
 %{_bindir}/tizenclaw
 %{_bindir}/tizenclaw-cli
 %{_bindir}/tizenclaw-tool-executor
+%{_bindir}/tizenclaw-web-dashboard
 %{_bindir}/start_mcp_tunnel.sh
 %{_unitdir}/tizenclaw.service
 %{_unitdir}/tizenclaw-tool-executor.service
