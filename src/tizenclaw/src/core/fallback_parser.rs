@@ -30,6 +30,26 @@ impl FallbackParser {
             });
         }
 
+        // 1.5. Pure XML Model-Agnostic parser: <CallTool name="..." args="{...}" />
+        let calltool_re = Regex::new(r#"(?s)<CallTool\s+name="([^"]+)"\s+args='([^']*)'\s*/>|<CallTool\s+name="([^"]+)"\s+args="([^"]*)"\s*/>"#).unwrap();
+        for cap in calltool_re.captures_iter(text) {
+            let (name, args_raw) = if let Some(n) = cap.get(1) {
+                (n.as_str().to_string(), cap.get(2).map_or("", |m| m.as_str()))
+            } else {
+                (cap.get(3).unwrap().as_str().to_string(), cap.get(4).map_or("", |m| m.as_str()))
+            };
+            
+            // Clean up escaped quotes if any
+            let clean_args = args_raw.replace("\\\"", "\"");
+            let args: Value = serde_json::from_str(&clean_args).unwrap_or(json!({}));
+            tool_calls.push(LlmToolCall {
+                id: format!("call_xml_{}", uuid::Uuid::new_v4().to_string()[..8].to_string()),
+                name,
+                args,
+            });
+        }
+
+
         // 2. JSON block parser: ```json {"tool": "name", "arguments": {...}} ```
         if tool_calls.is_empty() {
              let json_re = Regex::new(r"(?s)```json\s*(\{.*?\})\s*```").unwrap();
@@ -54,6 +74,12 @@ impl FallbackParser {
         }
 
         tool_calls
+    }
+
+    /// Extract <NewSummary>...</NewSummary> from the text for Fact-based Compaction
+    pub fn extract_summary(text: &str) -> Option<String> {
+        let re = Regex::new(r"(?s)<NewSummary>(.*?)</NewSummary>").unwrap();
+        re.captures(text).map(|cap| cap[1].trim().to_string())
     }
 }
 

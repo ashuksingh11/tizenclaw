@@ -747,9 +747,23 @@ impl AgentCore {
             tools.extend(bridge.get_action_declarations());
         }
 
+        // Add search_tools meta-tool for Two-Tier router
+        tools.push(crate::llm::backend::LlmToolDecl {
+            name: "search_tools".into(),
+            description: "전체 또는 특정 카테고리의 사용가능한 도구들을 검색합니다. 필요한 기능이 컨텍스트에 없을 때 필수적으로 사용하세요.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Keyword to search tools, or 'ALL'."}
+                },
+                "required": ["query"]
+            })
+        });
+
         // Build System Prompt
         let system_prompt = {
-            let mut builder = crate::core::prompt_builder::SystemPromptBuilder::new();
+            let mut builder = crate::core::prompt_builder::SystemPromptBuilder::new()
+                .add_available_tools(tools.clone()); // XML Inject
             if let Ok(base) = self.system_prompt.read() {
                 builder = builder.set_base_prompt(base.clone());
             }
@@ -957,12 +971,12 @@ impl AgentCore {
                                     ..Default::default()
                                 });
                             }
-                            response = self.chat_with_fallback(&messages, &tools, on_chunk, &system_prompt, Some(dynamic_max_tokens)).await;
+                            response = self.chat_with_fallback(&messages, &[], on_chunk, &system_prompt, Some(dynamic_max_tokens)).await;
                         }
                     }
                 }
             } else {
-                response = self.chat_with_fallback(&messages, &tools, on_chunk, &system_prompt, Some(dynamic_max_tokens)).await;
+                response = self.chat_with_fallback(&messages, &[], on_chunk, &system_prompt, Some(dynamic_max_tokens)).await;
             }
 
             // ── Phase 6: ObservationCollect ──────────────────────────────
@@ -1087,6 +1101,20 @@ impl AgentCore {
                                 }
                             } else {
                                 json!({"error": "Invalid action format"})
+                            }
+                        } else if tc_name == "search_tools" {
+                            let query = tc_args.get("query").and_then(|v| v.as_str()).unwrap_or("ALL");
+                            let all_tools = td_guard_ref.get_tool_declarations();
+                            let mut results = Vec::new();
+                            for t in all_tools {
+                                if query == "ALL" || t.name.to_lowercase().contains(&query.to_lowercase()) || t.description.to_lowercase().contains(&query.to_lowercase()) {
+                                    results.push(format!("- name: {}, desc: {}", t.name, t.description));
+                                }
+                            }
+                            if results.is_empty() {
+                                serde_json::json!({"error": format!("No tools found matching '{}'", query)})
+                            } else {
+                                serde_json::json!({"tools": results})
                             }
                         } else if tc_name == "create_skill" {
                             let name = tc_args.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed_skill");

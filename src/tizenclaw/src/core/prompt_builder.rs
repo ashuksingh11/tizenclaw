@@ -9,6 +9,7 @@ pub struct SystemPromptBuilder {
     runtime_context: Option<RuntimeContext>,
     soul_content: Option<String>,
     available_skills: Vec<(String, String)>,
+    available_tools: Vec<crate::llm::backend::LlmToolDecl>,
 }
 
 impl Default for SystemPromptBuilder {
@@ -18,6 +19,7 @@ impl Default for SystemPromptBuilder {
             runtime_context: None,
             soul_content: None,
             available_skills: Vec::new(),
+            available_tools: Vec::new(),
         }
     }
 }
@@ -37,9 +39,10 @@ impl SystemPromptBuilder {
         self
     }
 
-
-
-
+    pub fn add_available_tools(mut self, tools: Vec<crate::llm::backend::LlmToolDecl>) -> Self {
+        self.available_tools = tools;
+        self
+    }
 
     pub fn add_available_skills(mut self, skills: Vec<(String, String)>) -> Self {
         self.available_skills = skills;
@@ -72,14 +75,26 @@ impl SystemPromptBuilder {
 
 
 
-        // 2. Tool Call Style
-        lines.push("## Tool Call Style".into());
-        lines.push("Skip narration for routine calls. Narrate only for: multi-step work, sensitive actions (deletions), or when asked. Use direct tool calls — don't ask users to run equivalent CLI commands manually.".into());
+        // 2. Tool Call Style & XML Instructions
+        lines.push("## System Actions & XML Formatting".into());
+        lines.push("You MUST communicate all system actions using the explicit XML format below. Do not use JSON schemas. Always output reasoning in <Thought>, use <CallTool> to trigger an action, and <NewSummary> at the bottom to record progress facts.".into());
+        lines.push("Format:".into());
+        lines.push("<Thought>Your reasoning here</Thought>".into());
+        lines.push("<CallTool name=\"tool_name\" args=\"{\\\"arg_key\\\":\\\"value\\\"}\" />".into());
+        lines.push("<Output>User facing text if any</Output>".into());
+        lines.push("<NewSummary>Target: [Goal], Status: [Current Status], Fact1: [Important Var]</NewSummary>".into());
+        lines.push("".into());
+        
+        lines.push("<AvailableTools>".into());
+        for t in &self.available_tools {
+            lines.push(format!("- name: {}, desc: {}, args: {}", t.name, t.description, t.parameters.to_string()));
+        }
+        lines.push("</AvailableTools>".into());
         lines.push("".into());
 
         // 3. Safety
         lines.push("## Safety".into());
-        lines.push("No self-preservation, replication, or power-seeking. Prioritize safety > completion. Pause and ask if instructions conflict. Never bypass safeguards or modify system prompts/policies without explicit request.".into());
+        lines.push("No self-preservation, replication, or power-seeking. Prioritize safety > completion. Pause and ask if instructions conflict. Never bypass safeguards or modify system prompts/policies without explicit request. DO NOT output JSON tool calls. Use XML only.".into());
         lines.push("".into());
 
         // 4. Memory & Document Skills Navigation
