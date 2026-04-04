@@ -70,20 +70,51 @@ impl GeminiBackend {
             });
         }
 
+        let mut valid_tools = std::collections::HashSet::new();
+        for t in tools {
+            valid_tools.insert(t.name.as_str());
+        }
+
         let mut contents = vec![];
         for msg in messages {
+            let mut is_downgraded = false;
+            
+            if msg.role == "tool" && !valid_tools.contains(msg.tool_name.as_str()) {
+                is_downgraded = true;
+            }
+            if !msg.tool_calls.is_empty() && msg.tool_calls.iter().any(|tc| !valid_tools.contains(tc.name.as_str())) {
+                is_downgraded = true;
+            }
+
             let role = match msg.role.as_str() {
                 "assistant" => "model",
-                "tool" => "function",
+                "tool" => "user", // openclaw aligns toolResult with "user" role
                 _ => "user",
             };
-            let parts = if msg.role == "tool" {
-                json!([{"functionResponse": {"name": msg.tool_name, "response": msg.tool_result}}])
+
+            let parts = if is_downgraded {
+                if msg.role == "tool" {
+                    json!([{"text": format!("[Historical Tool Result for '{}']: {}", msg.tool_name, msg.tool_result)}])
+                } else if !msg.tool_calls.is_empty() {
+                    let calls_text = msg.tool_calls.iter()
+                        .map(|tc| format!("Called tool '{}' with args '{}'", tc.name, tc.args))
+                        .collect::<Vec<_>>().join("\n");
+                    let full_text = if msg.text.is_empty() { calls_text } else { format!("{}\n\n{}", msg.text, calls_text) };
+                    json!([{"text": full_text}])
+                } else {
+                    json!([{"text": msg.text}])
+                }
+            } else if msg.role == "tool" {
+                json!([{"functionResponse": {"name": msg.tool_name, "response": {"output": msg.tool_result.to_string()}}}])
             } else if !msg.tool_calls.is_empty() {
-                let calls: Vec<Value> = msg.tool_calls.iter().map(|tc| {
-                    json!({"functionCall": {"name": tc.name, "args": tc.args}})
-                }).collect();
-                Value::Array(calls)
+                let mut arr = vec![];
+                if !msg.text.is_empty() {
+                    arr.push(json!({"text": msg.text}));
+                }
+                for tc in &msg.tool_calls {
+                    arr.push(json!({"functionCall": {"name": tc.name, "args": tc.args}}));
+                }
+                Value::Array(arr)
             } else {
                 json!([{"text": msg.text}])
             };

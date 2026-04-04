@@ -75,27 +75,16 @@ impl SystemPromptBuilder {
 
 
 
-        // 2. Tool Call Style & XML Instructions
-        lines.push("## System Actions & XML Formatting".into());
-        lines.push("You MUST communicate all system actions using the explicit XML format below. Do not use JSON schemas. Always output reasoning in <Thought>, use <CallTool> to trigger an action, and <NewSummary> at the bottom to record progress facts.".into());
-        lines.push("Format:".into());
-        lines.push("<Thought>Your reasoning here</Thought>".into());
-        lines.push("<CallTool name=\"tool_name\" args=\"{\\\"arg_key\\\":\\\"value\\\"}\" />".into());
-        lines.push("<Output>User facing text if any</Output>".into());
-        lines.push("<NewSummary>Target: [Goal], Status: [Current Status], Fact1: [Important Var]</NewSummary>".into());
-        lines.push("You will receive the tool's execution result in the next turn as: <ToolResult name=\"tool_name\">[Result Data]</ToolResult>. Analyze this data in your next <Thought>.".into());
-        lines.push("".into());
-        
-        lines.push("<AvailableTools>".into());
-        for t in &self.available_tools {
-            lines.push(format!("- name: {}, desc: {}, args: {}", t.name, t.description, t.parameters.to_string()));
-        }
-        lines.push("</AvailableTools>".into());
+        // 2. Action Formatting
+        lines.push("## System Output Formatting".into());
+        lines.push("Always output your step-by-step reasoning wrapped in <Thought>...</Thought> tags before making any function calls or displaying output to the user.".into());
+        lines.push("Use the native tool calling schema to execute system actions.".into());
+        lines.push("If appropriate, provide a state summary via <NewSummary>Target: [Goal], Status: [Current Status], Fact1: [Important Var]</NewSummary> at the bottom of your text output.".into());
         lines.push("".into());
 
         // 3. Safety
         lines.push("## Safety".into());
-        lines.push("No self-preservation, replication, or power-seeking. Prioritize safety > completion. Pause and ask if instructions conflict. Never bypass safeguards or modify system prompts/policies without explicit request. DO NOT output JSON tool calls. Use XML only.".into());
+        lines.push("No self-preservation, replication, or power-seeking. Prioritize safety > completion. Pause and ask if instructions conflict. Never bypass safeguards or modify system prompts/policies without explicit request.".into());
         lines.push("".into());
 
         // 4. Memory & Document Skills Navigation

@@ -1057,7 +1057,7 @@ impl AgentCore {
                     role: "assistant".into(),
                     text: response.text.clone(),
                     reasoning_text: reasoning_text.clone(),
-                    tool_calls: vec![],
+                    tool_calls: detected_tool_calls.clone(),
                     ..Default::default()
                 });
 
@@ -1086,8 +1086,7 @@ impl AgentCore {
                     futures_list.push(async move {
                         if let Some(reason) = block_reason {
                             log::warn!("[SafetyCheck] Tool '{}' blocked: {}", tc_name, reason);
-                            let error_xml = format!("<ToolResult name=\"{}\">\n{}\n</ToolResult>", tc_name, serde_json::json!({"error": reason}).to_string());
-                            return LlmMessage::user(&error_xml);
+                            return LlmMessage::tool_result(&tc_id, &tc_name, serde_json::json!({"error": reason}));
                         }
 
                         let result = if tc_name.starts_with("action_") {
@@ -1192,8 +1191,7 @@ impl AgentCore {
                         log::debug!("[ObservationCollect] Tool '{}' result: {} chars",
                             tc_name, result.to_string().len());
                             
-                        let result_xml = format!("<ToolResult name=\"{}\">\n{}\n</ToolResult>", tc_name, result.to_string());
-                        LlmMessage::user(&result_xml)
+                        LlmMessage::tool_result(&tc_id, &tc_name, result)
                     });
                 }
 
