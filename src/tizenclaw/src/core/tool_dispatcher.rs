@@ -14,6 +14,7 @@ pub struct ToolDecl {
     pub description: String,
     pub parameters: Value,
     pub binary_path: String,
+    pub prepend_args: Vec<String>,
     pub timeout_secs: u64,
     pub side_effect: String,
 }
@@ -100,6 +101,8 @@ impl ToolDispatcher {
         let mut name = String::new();
         let mut description = String::new();
         let mut binary = String::new();
+        let mut runtime = String::new();
+        let mut script = String::new();
         let mut timeout: u64 = 30;
 
         for line in &lines {
@@ -110,6 +113,10 @@ impl ToolDispatcher {
                 description = line[12..].trim().trim_matches('"').to_string();
             } else if line.starts_with("binary:") {
                 binary = line[7..].trim().trim_matches('"').to_string();
+            } else if line.starts_with("runtime:") {
+                runtime = line[8..].trim().trim_matches('"').to_string();
+            } else if line.starts_with("script:") {
+                script = line[7..].trim().trim_matches('"').to_string();
             } else if line.starts_with("timeout:") {
                 timeout = line[8..].trim().parse().unwrap_or(30);
             } else if line.starts_with("# ") && name.is_empty() {
@@ -140,46 +147,193 @@ impl ToolDispatcher {
         if name.is_empty() {
             name = "unknown_tool".into();
         }
-        if binary.is_empty() {
-            // Priority 1: co-located executable inside the tool's own directory
-            let local_bin = tool_dir.join(&original_name);
-            if local_bin.exists() {
-                binary = local_bin.to_string_lossy().to_string();
-            } else {
-                // Priority 2: PATH lookup via `which` — works for any location
-                let which_out = std::process::Command::new("which")
-                    .arg(&original_name)
-                    .output();
-                if let Ok(out) = which_out {
-                    if out.status.success() {
-                        let found = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                        if !found.is_empty() {
-                            binary = found;
-                        }
-                    }
-                }
+        let (binary, prepend_args) =
+            Self::resolve_tool_command(tool_dir, &original_name, &binary, &runtime, &script);
 
-                // Priority 3: nothing found — log a warning and leave empty.
-                // The executor will return a descriptive error JSON at call time.
-                if binary.is_empty() {
-                    log::warn!(
-                        "ToolDispatcher: binary not found for tool '{}' — \
-                         no co-located executable and not on PATH. \
-                         Set 'binary: <path>' in the tool descriptor to fix this.",
-                        original_name
-                    );
-                }
-            }
+        if binary.is_empty() {
+            log::warn!(
+                "ToolDispatcher: binary not found for tool '{}' — \
+                 no co-located executable and not on PATH. \
+                 Set 'binary: <path>' in the tool descriptor to fix this.",
+                original_name
+            );
         }
 
         Some(ToolDecl {
             name,
             description,
             binary_path: binary,
+            prepend_args,
             timeout_secs: timeout,
             parameters: json!({"type": "object", "properties": {"args": {"type": "string"}}}),
             side_effect: "reversible".into(),
         })
+    }
+
+    fn resolve_tool_command(
+        tool_dir: &std::path::Path,
+        original_name: &str,
+        binary: &str,
+        runtime: &str,
+        script: &str,
+    ) -> (String, Vec<String>) {
+        let explicit_script = Self::resolve_relative_path(tool_dir, script);
+        let inferred_script = Self::find_local_tool_candidate(tool_dir, original_name);
+        let selected_script = explicit_script.or(inferred_script);
+
+        if !runtime.trim().is_empty() {
+            let runtime_bin = Self::resolve_runtime_binary(runtime);
+            let prepend_args = selected_script
+                .map(|path| vec![path.to_string_lossy().to_string()])
+                .unwrap_or_default();
+            return (runtime_bin, prepend_args);
+        }
+
+        if !binary.trim().is_empty() {
+            return (
+                Self::resolve_binary_path(tool_dir, binary),
+                Vec::new(),
+            );
+        }
+
+        if let Some(script_path) = selected_script {
+            if let Some(inferred_runtime) = Self::infer_runtime_for_path(&script_path) {
+                return (
+                    Self::resolve_runtime_binary(&inferred_runtime),
+                    vec![script_path.to_string_lossy().to_string()],
+                );
+            }
+
+            if script_path.extension().is_some() {
+                return (script_path.to_string_lossy().to_string(), Vec::new());
+            }
+        }
+
+        (Self::resolve_binary_path(tool_dir, original_name), Vec::new())
+    }
+
+    fn resolve_relative_path(tool_dir: &std::path::Path, value: &str) -> Option<std::path::PathBuf> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        let path = std::path::Path::new(trimmed);
+        Some(if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            tool_dir.join(path)
+        })
+    }
+
+    fn find_local_tool_candidate(
+        tool_dir: &std::path::Path,
+        original_name: &str,
+    ) -> Option<std::path::PathBuf> {
+        let candidates = [
+            original_name.to_string(),
+            format!("{}.py", original_name),
+            format!("{}.js", original_name),
+            format!("{}.mjs", original_name),
+            format!("{}.cjs", original_name),
+            format!("{}.sh", original_name),
+            format!("{}.bash", original_name),
+        ];
+
+        candidates
+            .iter()
+            .map(|candidate| tool_dir.join(candidate))
+            .find(|path| path.is_file())
+    }
+
+    fn resolve_binary_path(tool_dir: &std::path::Path, binary: &str) -> String {
+        let trimmed = binary.trim();
+        if trimmed.is_empty() {
+            return String::new();
+        }
+
+        let path = std::path::Path::new(trimmed);
+        if path.is_absolute() {
+            return trimmed.to_string();
+        }
+
+        let local_path = tool_dir.join(path);
+        if local_path.exists() {
+            return local_path.to_string_lossy().to_string();
+        }
+
+        Self::lookup_on_path(trimmed)
+    }
+
+    fn resolve_runtime_binary(runtime: &str) -> String {
+        let trimmed = runtime.trim();
+        if trimmed.is_empty() {
+            return String::new();
+        }
+
+        let mapped = match trimmed.to_ascii_lowercase().as_str() {
+            "python" | "python3" => "python3",
+            "node" | "nodejs" => "node",
+            "bash" => "bash",
+            "sh" => "sh",
+            _ => trimmed,
+        };
+
+        Self::lookup_on_path(mapped)
+    }
+
+    fn lookup_on_path(name: &str) -> String {
+        let which_out = std::process::Command::new("which").arg(name).output();
+        if let Ok(out) = which_out {
+            if out.status.success() {
+                let found = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !found.is_empty() {
+                    return found;
+                }
+            }
+        }
+        name.to_string()
+    }
+
+    fn infer_runtime_for_path(path: &std::path::Path) -> Option<String> {
+        if let Some(runtime) = Self::infer_runtime_from_shebang(path) {
+            return Some(runtime);
+        }
+        Self::infer_runtime_from_extension(path)
+    }
+
+    fn infer_runtime_from_shebang(path: &std::path::Path) -> Option<String> {
+        let first_line = std::fs::read_to_string(path)
+            .ok()?
+            .lines()
+            .next()?
+            .trim()
+            .to_ascii_lowercase();
+
+        if !first_line.starts_with("#!") {
+            return None;
+        }
+
+        if first_line.contains("python") {
+            Some("python3".into())
+        } else if first_line.contains("node") {
+            Some("node".into())
+        } else if first_line.contains("bash") {
+            Some("bash".into())
+        } else if first_line.contains("/sh") || first_line.ends_with(" sh") {
+            Some("sh".into())
+        } else {
+            None
+        }
+    }
+
+    fn infer_runtime_from_extension(path: &std::path::Path) -> Option<String> {
+        match path.extension().and_then(|ext| ext.to_str()) {
+            Some("py") => Some("python3".into()),
+            Some("js") | Some("mjs") | Some("cjs") => Some("node".into()),
+            Some("sh") | Some("bash") => Some("bash".into()),
+            _ => None,
+        }
     }
 
     /// Get all tool declarations for LLM function calling.
@@ -266,14 +420,77 @@ impl ToolDispatcher {
             }
         }
 
-        log::debug!("Executing tool '{}': {} {:?}", tool_name, decl.binary_path, cmd_args);
+        let mut exec_args = decl.prepend_args.clone();
+        exec_args.extend(cmd_args);
+
+        log::debug!("Executing tool '{}': {} {:?}", tool_name, decl.binary_path, exec_args);
 
         let engine = crate::infra::container_engine::ContainerEngine::new();
-        let args_ref: Vec<&str> = cmd_args.iter().map(|s| s.as_str()).collect();
+        let args_ref: Vec<&str> = exec_args.iter().map(|s| s.as_str()).collect();
 
         match engine.execute_oneshot(&decl.binary_path, &args_ref).await {
             Ok(val) => val,
             Err(e) => json!({"error": format!("Failed to execute via IPC: {}", e)}),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ToolDispatcher;
+    use std::fs;
+
+    #[test]
+    fn parse_tool_md_infers_python_runtime_from_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("demo.py"), "print('ok')\n").unwrap();
+
+        let content = "# demo\n";
+        let decl = ToolDispatcher::parse_tool_md(content, dir.path()).unwrap();
+
+        assert!(decl.binary_path.ends_with("python3"));
+        assert_eq!(
+            decl.prepend_args,
+            vec![dir.path().join("demo.py").to_string_lossy().to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_tool_md_infers_node_runtime_from_shebang() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("demo"),
+            "#!/usr/bin/env node\nconsole.log('ok');\n",
+        )
+        .unwrap();
+
+        let content = "# demo\n";
+        let decl = ToolDispatcher::parse_tool_md(content, dir.path()).unwrap();
+
+        assert!(decl.binary_path.ends_with("node"));
+        assert_eq!(
+            decl.prepend_args,
+            vec![dir.path().join("demo").to_string_lossy().to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_tool_md_prefers_explicit_runtime_and_script() {
+        let dir = tempfile::tempdir().unwrap();
+        let script_path = dir.path().join("worker.sh");
+        fs::write(&script_path, "echo ok\n").unwrap();
+
+        let content = "\
+name: demo
+runtime: bash
+script: worker.sh
+";
+        let decl = ToolDispatcher::parse_tool_md(content, dir.path()).unwrap();
+
+        assert!(decl.binary_path.ends_with("bash"));
+        assert_eq!(
+            decl.prepend_args,
+            vec![script_path.to_string_lossy().to_string()]
+        );
     }
 }
