@@ -196,7 +196,7 @@ impl ToolDispatcher {
     /// Get tool declarations filtered by intent keywords.
     pub fn get_tool_declarations_filtered(&self, keywords: &[String]) -> Vec<crate::llm::backend::LlmToolDecl> {
         if keywords.is_empty() {
-            return self.get_tool_declarations();
+            return vec![];
         }
         
         self.tools.values().filter(|t| {

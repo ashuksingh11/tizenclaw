@@ -624,12 +624,10 @@ impl AgentCore {
         if p.contains("일정") || p.contains("알람") || p.contains("task") || p.contains("schedule") {
             keywords.extend(["task", "sched", "alarm"].map(String::from));
         }
-        
-        for word in p.split_whitespace() {
-            if word.len() >= 4 {
-                keywords.push(word.into());
-            }
+        if p.contains("툴") || p.contains("도구") || p.contains("list") || p.contains("목록") || p.contains("명령어") {
+            keywords.extend(["ALL"].map(String::from));
         }
+        
         keywords
     }
 
@@ -1104,7 +1102,13 @@ impl AgentCore {
                             }
                         } else if tc_name == "search_tools" {
                             let query = tc_args.get("query").and_then(|v| v.as_str()).unwrap_or("ALL");
-                            let all_tools = td_guard_ref.get_tool_declarations();
+                            
+                            let mut all_tools = td_guard_ref.get_tool_declarations();
+                            crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_builtin_tools(&mut all_tools, "ALL");
+                            if let Ok(bridge) = bridge_ref.lock() {
+                                all_tools.extend(bridge.get_action_declarations());
+                            }
+                            
                             let mut results = Vec::new();
                             for t in all_tools {
                                 if query == "ALL" || t.name.to_lowercase().contains(&query.to_lowercase()) || t.description.to_lowercase().contains(&query.to_lowercase()) {
