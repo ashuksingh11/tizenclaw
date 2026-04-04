@@ -83,6 +83,7 @@ impl SystemPromptBuilder {
         lines.push("<CallTool name=\"tool_name\" args=\"{\\\"arg_key\\\":\\\"value\\\"}\" />".into());
         lines.push("<Output>User facing text if any</Output>".into());
         lines.push("<NewSummary>Target: [Goal], Status: [Current Status], Fact1: [Important Var]</NewSummary>".into());
+        lines.push("You will receive the tool's execution result in the next turn as: <ToolResult name=\"tool_name\">[Result Data]</ToolResult>. Analyze this data in your next <Thought>.".into());
         lines.push("".into());
         
         lines.push("<AvailableTools>".into());
