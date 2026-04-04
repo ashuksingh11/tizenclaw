@@ -16,18 +16,134 @@
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex, RwLock};
 
+use crate::core::agent_loop_state::{AgentLoopState, AgentPhase, EvalVerdict};
+use crate::core::context_engine::{
+    ContextEngine, SizedContextEngine, DEFAULT_TOOL_RESULT_BUDGET_CHARS,
+};
+use crate::core::fallback_parser::FallbackParser;
+use crate::core::textual_skill_scanner::TextualSkill;
+use crate::core::tool_dispatcher::ToolDispatcher;
 use crate::infra::key_store::KeyStore;
 use crate::llm::backend::{self, LlmBackend, LlmMessage, LlmResponse};
 use crate::storage::session_store::SessionStore;
-use crate::core::tool_dispatcher::ToolDispatcher;
-use crate::core::fallback_parser::FallbackParser;
-use crate::core::context_engine::{ContextEngine, SizedContextEngine};
-use crate::core::agent_loop_state::{AgentLoopState, AgentPhase, EvalVerdict};
 
-const MAX_CONTEXT_MESSAGES: usize = 20;
+const MAX_CONTEXT_MESSAGES: usize = 100;
 const CONTEXT_TOKEN_BUDGET: usize = 256_000;
 const CONTEXT_COMPACT_THRESHOLD: f32 = 0.90;
 const MAX_TOOL_RETRY: usize = 3;
+const MAX_PREFETCHED_SKILLS: usize = 3;
+
+fn utf8_safe_preview(text: &str, max_chars: usize) -> &str {
+    if max_chars == 0 {
+        return "";
+    }
+
+    match text.char_indices().nth(max_chars) {
+        Some((idx, _)) => &text[..idx],
+        None => text,
+    }
+}
+
+fn inject_context_message(messages: &mut Vec<LlmMessage>, text: String) {
+    let context_message = LlmMessage::user(&text);
+    if let Some(last_user_idx) = messages.iter().rposition(|message| message.role == "user") {
+        messages.insert(last_user_idx, context_message);
+    } else {
+        messages.push(context_message);
+    }
+}
+
+fn skill_relevance_score(prompt: &str, skill: &TextualSkill) -> usize {
+    let prompt_lower = prompt.to_lowercase();
+    let searchable = format!(
+        "{} {}",
+        skill.file_name.to_lowercase(),
+        skill.description.to_lowercase()
+    );
+
+    let mut score = 0;
+    if prompt_lower.len() >= 3 && searchable.contains(&prompt_lower) {
+        score += 4;
+    }
+
+    for token in prompt_lower.split(|c: char| !c.is_alphanumeric()) {
+        if token.len() >= 2 && searchable.contains(token) {
+            score += 1;
+        }
+    }
+
+    score
+}
+
+fn select_relevant_skills(
+    prompt: &str,
+    skills: &[TextualSkill],
+    limit: usize,
+) -> Vec<TextualSkill> {
+    let mut scored: Vec<(usize, TextualSkill)> = skills
+        .iter()
+        .cloned()
+        .filter_map(|skill| {
+            let score = skill_relevance_score(prompt, &skill);
+            (score > 0).then_some((score, skill))
+        })
+        .collect();
+
+    scored.sort_by(|(left_score, left_skill), (right_score, right_skill)| {
+        right_score
+            .cmp(left_score)
+            .then_with(|| left_skill.file_name.cmp(&right_skill.file_name))
+    });
+
+    scored
+        .into_iter()
+        .take(limit)
+        .map(|(_, skill)| skill)
+        .collect()
+}
+
+fn build_skill_prefetch_message(skills: &[TextualSkill]) -> Option<String> {
+    if skills.is_empty() {
+        return None;
+    }
+
+    let mut lines = vec![
+        "## Prefetched Skill Snapshot".to_string(),
+        "These skills look relevant to the current request. Read the full skill only if you need its exact workflow.".to_string(),
+    ];
+    for skill in skills {
+        lines.push(format!("- {}: {}", skill.file_name, skill.description));
+    }
+
+    Some(lines.join("\n"))
+}
+
+fn build_progress_marker(
+    response_text: &str,
+    reasoning_text: &str,
+    tool_calls: &[backend::LlmToolCall],
+) -> String {
+    if !tool_calls.is_empty() {
+        let signatures = tool_calls
+            .iter()
+            .map(|tool_call| format!("{}:{}", tool_call.name, tool_call.args))
+            .collect::<Vec<_>>()
+            .join("|");
+        return format!("<tool_calls>{}</tool_calls>", signatures);
+    }
+
+    let trimmed_text = response_text.trim();
+    if !trimmed_text.is_empty() {
+        return trimmed_text.to_string();
+    }
+
+    let trimmed_reasoning = reasoning_text.trim();
+    if !trimmed_reasoning.is_empty() {
+        return format!("<reasoning>{}</reasoning>", trimmed_reasoning);
+    }
+
+    "<empty-response>".into()
+}
 
 /// LLM backend configuration loaded from `llm_config.json`.
 #[derive(Debug)]
@@ -85,10 +201,7 @@ impl LlmConfig {
 
     /// Get config for a specific backend.
     fn backend_config(&self, name: &str) -> Value {
-        self.backends
-            .get(name)
-            .cloned()
-            .unwrap_or(json!({}))
+        self.backends.get(name).cloned().unwrap_or(json!({}))
     }
 }
 
@@ -100,7 +213,8 @@ impl LlmConfig {
 ///  3. Nothing found — config returned as-is (backend will fail init gracefully).
 fn merge_api_key(mut cfg: Value, name: &str, ks: &crate::infra::key_store::KeyStore) -> Value {
     // If the config already contains a non-empty api_key, trust it as-is.
-    if cfg.get("api_key")
+    if cfg
+        .get("api_key")
         .and_then(|v| v.as_str())
         .map(|s| !s.is_empty())
         .unwrap_or(false)
@@ -173,7 +287,9 @@ impl AgentCore {
             action_bridge: Mutex::new(crate::core::action_bridge::ActionBridge::new()),
             tool_policy: Mutex::new(crate::core::tool_policy::ToolPolicy::new()),
             memory_store: Mutex::new(None),
-            workflow_engine: tokio::sync::RwLock::new(crate::core::workflow_engine::WorkflowEngine::new()),
+            workflow_engine: tokio::sync::RwLock::new(
+                crate::core::workflow_engine::WorkflowEngine::new(),
+            ),
             prompt_hash: tokio::sync::RwLock::new(0),
         }
     }
@@ -248,16 +364,26 @@ impl AgentCore {
                 merge_api_key(base, &cand.name, &ks_guard)
             };
 
-            if let Some(be) = Self::create_and_init_backend_static(&plugin_manager, &cand.name, merged_cfg) {
+            if let Some(be) =
+                Self::create_and_init_backend_static(&plugin_manager, &cand.name, merged_cfg)
+            {
                 if !primary_initialized {
-                    log::info!("Primary LLM backend '{}' initialized (priority {})", cand.name, cand.priority);
+                    log::info!(
+                        "Primary LLM backend '{}' initialized (priority {})",
+                        cand.name,
+                        cand.priority
+                    );
                     *self.backend.write().await = Some(be);
                     if let Ok(mut bn) = self.backend_name.write() {
                         *bn = cand.name.clone();
                     }
                     primary_initialized = true;
                 } else {
-                    log::info!("Fallback LLM backend '{}' initialized (priority {})", cand.name, cand.priority);
+                    log::info!(
+                        "Fallback LLM backend '{}' initialized (priority {})",
+                        cand.name,
+                        cand.priority
+                    );
                     fallbacks.push(be);
                 }
             }
@@ -292,9 +418,9 @@ impl AgentCore {
         let mem_db = mem_dir.join("memories.db");
         let model_dir = paths.data_dir.join("models");
         match crate::storage::memory_store::MemoryStore::new(
-            &mem_dir.to_string_lossy(), 
+            &mem_dir.to_string_lossy(),
             &mem_db.to_string_lossy(),
-            &model_dir.to_string_lossy()
+            &model_dir.to_string_lossy(),
         ) {
             Ok(store) => {
                 log::info!("Memory store initialized");
@@ -329,9 +455,13 @@ impl AgentCore {
     /// Dynamically handle package manager events for plugins
     pub async fn handle_pkgmgr_event(&self, event_name: &str, pkgid: &str) {
         log::debug!("Handling pkgmgr event: {} for pkgid: {}", event_name, pkgid);
-        
+
         let mut plugin_manager = crate::llm::plugin_manager::PluginManager::new();
-        let loaded = if event_name == "install" || event_name == "recoverinstall" || event_name == "upgrade" || event_name == "recoverupgrade" {
+        let loaded = if event_name == "install"
+            || event_name == "recoverinstall"
+            || event_name == "upgrade"
+            || event_name == "recoverupgrade"
+        {
             plugin_manager.load_plugin_from_pkg(Some(self.platform.package_manager.as_ref()), pkgid)
         } else {
             false
@@ -363,14 +493,14 @@ impl AgentCore {
         let paths = &self.platform.paths;
         let llm_config_path = paths.config_dir.join("llm_config.json");
         let config = LlmConfig::load(&llm_config_path.to_string_lossy());
-        
+
         // Re-scan plugins
         let mut plugin_manager = crate::llm::plugin_manager::PluginManager::new();
         plugin_manager.scan_plugins(Some(self.platform.package_manager.as_ref()));
 
         let active_name = config.active_backend.clone();
         let fallback_names = config.fallback_backends.clone();
-        
+
         // Unified priority-based selection
         let candidates = self.get_backend_candidates(&config, &plugin_manager);
 
@@ -385,9 +515,15 @@ impl AgentCore {
                 merge_api_key(base, &cand.name, &ks_guard)
             };
 
-            if let Some(be) = Self::create_and_init_backend_static(&plugin_manager, &cand.name, merged_cfg) {
+            if let Some(be) =
+                Self::create_and_init_backend_static(&plugin_manager, &cand.name, merged_cfg)
+            {
                 if !primary_initialized {
-                    log::debug!("Dynamically swapped Primary LLM backend to '{}' (priority {})", cand.name, cand.priority);
+                    log::debug!(
+                        "Dynamically swapped Primary LLM backend to '{}' (priority {})",
+                        cand.name,
+                        cand.priority
+                    );
                     *self.backend.write().await = Some(be);
                     if let Ok(mut bn) = self.backend_name.write() {
                         *bn = cand.name.clone();
@@ -408,7 +544,6 @@ impl AgentCore {
         *self.fallback_backends.write().await = fallbacks;
     }
 
-
     /// Create and initialize an LLM backend by name using the provided merged config.
     ///
     /// The caller is responsible for merging the api_key from KeyStore into
@@ -422,7 +557,10 @@ impl AgentCore {
         if be.initialize(&merged_cfg) {
             Some(be)
         } else {
-            log::debug!("Backend '{}' skipped: not configured or initialization failed", name);
+            log::debug!(
+                "Backend '{}' skipped: not configured or initialization failed",
+                name
+            );
             None
         }
     }
@@ -463,13 +601,21 @@ impl AgentCore {
             let mut is_explicitly_in_config = false;
 
             // Priority 1 by default if it originates from llm_config.json
-            if name == config.active_backend || config.fallback_backends.contains(&name) || config.backends.get(&name).is_some() {
+            if name == config.active_backend
+                || config.fallback_backends.contains(&name)
+                || config.backends.get(&name).is_some()
+            {
                 priority = 1;
                 is_explicitly_in_config = true;
             }
 
             // Manual priority override from llm_config.json
-            if let Some(p) = config.backends.get(&name).and_then(|v| v.get("priority")).and_then(|v| v.as_i64()) {
+            if let Some(p) = config
+                .backends
+                .get(&name)
+                .and_then(|v| v.get("priority"))
+                .and_then(|v| v.as_i64())
+            {
                 priority = p;
                 is_explicitly_in_config = true;
             }
@@ -523,20 +669,24 @@ impl AgentCore {
 
     fn record_success(&self, name: &str) {
         let mut cb_guard = self.circuit_breakers.write().unwrap();
-        let state = cb_guard.entry(name.to_string()).or_insert(CircuitBreakerState {
-            consecutive_failures: 0,
-            last_failure_time: None,
-        });
+        let state = cb_guard
+            .entry(name.to_string())
+            .or_insert(CircuitBreakerState {
+                consecutive_failures: 0,
+                last_failure_time: None,
+            });
         state.consecutive_failures = 0;
         state.last_failure_time = None;
     }
 
     fn record_failure(&self, name: &str) {
         let mut cb_guard = self.circuit_breakers.write().unwrap();
-        let state = cb_guard.entry(name.to_string()).or_insert(CircuitBreakerState {
-            consecutive_failures: 0,
-            last_failure_time: None,
-        });
+        let state = cb_guard
+            .entry(name.to_string())
+            .or_insert(CircuitBreakerState {
+                consecutive_failures: 0,
+                last_failure_time: None,
+            });
         state.consecutive_failures += 1;
         state.last_failure_time = Some(std::time::Instant::now());
     }
@@ -554,11 +704,17 @@ impl AgentCore {
     ) -> LlmResponse {
         // Try primary backend — lock is held only during chat()
         {
-            let bn = self.backend_name.read().map(|n| n.clone()).unwrap_or_default();
+            let bn = match self.backend_name.read() {
+                Ok(guard) => (*guard).clone(),
+                Err(p) => (*p.into_inner()).clone(),
+            };
+
             if self.is_backend_available(&bn) {
                 let be_guard = self.backend.read().await;
                 if let Some(be) = be_guard.as_ref() {
-                    let resp = be.chat(messages, tools, on_chunk, system_prompt, max_tokens).await;
+                    let resp = be
+                        .chat(messages, tools, on_chunk, system_prompt, max_tokens)
+                        .await;
                     if resp.success {
                         self.record_success(&bn);
                         return resp;
@@ -566,7 +722,9 @@ impl AgentCore {
                     self.record_failure(&bn);
                     log::warn!(
                         "Primary backend '{}' failed (HTTP {}): {}",
-                        bn, resp.http_status, resp.error_message
+                        bn,
+                        resp.http_status,
+                        resp.error_message
                     );
                 }
             } else {
@@ -582,16 +740,15 @@ impl AgentCore {
                 let bn = fb.get_name().to_string();
                 if self.is_backend_available(&bn) {
                     log::debug!("Trying fallback backend '{}'", bn);
-                    let resp = fb.chat(messages, tools, on_chunk, system_prompt, max_tokens).await;
+                    let resp = fb
+                        .chat(messages, tools, on_chunk, system_prompt, max_tokens)
+                        .await;
                     if resp.success {
                         self.record_success(&bn);
                         return resp;
                     }
                     self.record_failure(&bn);
-                    log::warn!(
-                        "Fallback '{}' also failed: {}",
-                        bn, resp.error_message
-                    );
+                    log::warn!("Fallback '{}' also failed: {}", bn, resp.error_message);
                 } else {
                     log::warn!("Fallback backend '{}' skipped due to Circuit Breaker", bn);
                 }
@@ -609,25 +766,77 @@ impl AgentCore {
         let p = prompt.to_lowercase();
         let mut keywords = Vec::new();
 
-        if p.contains("파일") || p.contains("읽어") || p.contains("열어") || p.contains("file") || p.contains("read") {
-            keywords.extend(["fs", "file", "read", "write"].map(String::from));
+        if p.contains("파일")
+            || p.contains("읽어")
+            || p.contains("열어")
+            || p.contains("내용")
+            || p.contains("file")
+            || p.contains("read")
+            || p.contains("cat")
+        {
+            keywords.extend(["fs", "file", "read", "write", "content"].map(String::from));
         }
-        if p.contains("설치") || p.contains("앱") || p.contains("패키지") || p.contains("install") || p.contains("package") || p.contains("app") {
-            keywords.extend(["pkg", "app", "install"].map(String::from));
+        if p.contains("설치")
+            || p.contains("앱")
+            || p.contains("패키지")
+            || p.contains("실행")
+            || p.contains("install")
+            || p.contains("package")
+            || p.contains("app")
+            || p.contains("run")
+        {
+            keywords.extend(["pkg", "app", "install", "exec", "shell", "run"].map(String::from));
         }
-        if p.contains("기억") || p.contains("저장") || p.contains("remember") || p.contains("memory") || p.contains("search") || p.contains("knowledge") {
-            keywords.extend(["mem", "remember", "forget", "recall", "search"].map(String::from));
+        if p.contains("기억")
+            || p.contains("저장")
+            || p.contains("알려")
+            || p.contains("remember")
+            || p.contains("memory")
+            || p.contains("search")
+            || p.contains("knowledge")
+            || p.contains("recall")
+        {
+            keywords.extend(
+                ["mem", "remember", "forget", "recall", "search", "know"].map(String::from),
+            );
         }
-        if p.contains("실행") || p.contains("명령") || p.contains("run") || p.contains("exec") || p.contains("shell") {
-            keywords.extend(["exec", "shell", "run"].map(String::from));
+        if p.contains("일정")
+            || p.contains("알람")
+            || p.contains("시간")
+            || p.contains("task")
+            || p.contains("schedule")
+            || p.contains("alarm")
+            || p.contains("time")
+        {
+            keywords.extend(["task", "sched", "alarm", "time", "date"].map(String::from));
         }
-        if p.contains("일정") || p.contains("알람") || p.contains("task") || p.contains("schedule") {
-            keywords.extend(["task", "sched", "alarm"].map(String::from));
+        if p.contains("시스템")
+            || p.contains("정보")
+            || p.contains("상태")
+            || p.contains("system")
+            || p.contains("info")
+            || p.contains("status")
+            || p.contains("battery")
+            || p.contains("wifi")
+        {
+            keywords.extend(
+                [
+                    "sys", "info", "status", "battery", "wifi", "network", "device",
+                ]
+                .map(String::from),
+            );
         }
-        if p.contains("툴") || p.contains("도구") || p.contains("list") || p.contains("목록") || p.contains("명령어") {
+        if p.contains("툴")
+            || p.contains("도구")
+            || p.contains("명령어")
+            || p.contains("help")
+            || p.contains("list")
+            || p.contains("도와")
+            || p.contains("뭐")
+        {
             keywords.extend(["ALL"].map(String::from));
         }
-        
+
         keywords
     }
 
@@ -655,12 +864,14 @@ impl AgentCore {
         // Load context token budget from config if available
         let (budget, threshold) = {
             let cfg = self.llm_config.lock().ok();
-            let b = cfg.as_ref()
+            let b = cfg
+                .as_ref()
                 .and_then(|c| c.backends.get("context_token_budget"))
                 .and_then(|v| v.as_u64())
                 .map(|v| v as usize)
                 .unwrap_or(CONTEXT_TOKEN_BUDGET);
-            let t = cfg.as_ref()
+            let t = cfg
+                .as_ref()
                 .and_then(|c| c.backends.get("context_compact_threshold"))
                 .and_then(|v| v.as_f64())
                 .map(|v| v as f32)
@@ -672,7 +883,9 @@ impl AgentCore {
 
         log::debug!(
             "[AgentLoop] Phase=GoalParsing session='{}' goal='{}' budget={}",
-            session_id, &prompt[..prompt.len().min(80)], budget
+            session_id,
+            utf8_safe_preview(prompt, 80),
+            budget
         );
 
         // Quick check: do we have any backend?
@@ -686,7 +899,7 @@ impl AgentCore {
 
         // ── Phase 2: ContextLoading ──────────────────────────────────────
         loop_state.transition(AgentPhase::ContextLoading);
-        
+
         log::debug!("[AgentCore] USER: {}", prompt);
 
         // Store user message
@@ -701,17 +914,23 @@ impl AgentCore {
             let ss = self.session_store.lock();
             if let Some(Ok(guard)) = ss.ok().map(|s| {
                 // Returns (Vec<SessionMessage>, bool)
-                Ok::<_, ()>(s.as_ref().map(|store| {
-                    store.load_session_context(session_id, MAX_CONTEXT_MESSAGES)
-                }))
+                Ok::<_, ()>(
+                    s.as_ref()
+                        .map(|store| store.load_session_context(session_id, MAX_CONTEXT_MESSAGES)),
+                )
             }) {
                 if let Some((msgs, from_compact)) = guard {
                     if from_compact {
-                        log::info!("[ContextLoading] session='{}' loaded from compacted.md",
-                            session_id);
+                        log::info!(
+                            "[ContextLoading] session='{}' loaded from compacted.md",
+                            session_id
+                        );
                     } else {
-                        log::info!("[ContextLoading] session='{}' loaded {} msgs from history",
-                            session_id, msgs.len());
+                        log::info!(
+                            "[ContextLoading] session='{}' loaded {} msgs from history",
+                            session_id,
+                            msgs.len()
+                        );
                     }
                     msgs
                 } else {
@@ -738,9 +957,29 @@ impl AgentCore {
         // Extract intent keywords for optimal tool injection
         let intent_keywords = Self::extract_intent_keywords(prompt);
 
+        let skills_dir = self.platform.paths.skills_dir.to_string_lossy().to_string();
+        let textual_skills = crate::core::textual_skill_scanner::scan_textual_skills(&skills_dir);
+        let prefetched_skills =
+            select_relevant_skills(prompt, &textual_skills, MAX_PREFETCHED_SKILLS);
+        loop_state.record_prefetch_skills(
+            prefetched_skills
+                .iter()
+                .map(|skill| skill.file_name.clone())
+                .collect(),
+        );
+        if let Some(skill_context) = build_skill_prefetch_message(&prefetched_skills) {
+            inject_context_message(&mut messages, skill_context);
+        }
+
         // Get tool declarations
-        let mut tools = self.tool_dispatcher.read().await.get_tool_declarations_filtered(&intent_keywords);
-        crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_builtin_tools(&mut tools, prompt);
+        let mut tools = self
+            .tool_dispatcher
+            .read()
+            .await
+            .get_tool_declarations_filtered(&intent_keywords);
+        crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_builtin_tools(
+            &mut tools, prompt,
+        );
         if let Ok(bridge) = self.action_bridge.lock() {
             tools.extend(bridge.get_action_declarations());
         }
@@ -771,17 +1010,26 @@ impl AgentCore {
                 }
             }
 
-            let skills_dir = self.platform.paths.skills_dir.to_string_lossy().to_string();
-            let textual_skills = crate::core::textual_skill_scanner::scan_textual_skills(&skills_dir);
-            let formatted_skills = textual_skills.into_iter()
+            let formatted_skills = textual_skills
+                .into_iter()
                 .map(|s| (s.absolute_path, s.description))
                 .collect();
             builder = builder.add_available_skills(formatted_skills);
 
-            let model_name = self.backend_name.read().unwrap().clone();
+            let model_name = {
+                let bn = self.backend_name.read().unwrap_or_else(|e| e.into_inner());
+                (*bn).clone()
+            };
             let platform_name = self.platform.platform_name().to_string();
             let data_dir = self.platform.paths.data_dir.to_string_lossy().to_string();
-            builder = builder.set_runtime_context(platform_name, model_name, data_dir);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| {
+                    let secs = d.as_secs();
+                    format!("UNIX:{}", secs) // Simple enough for now
+                })
+                .unwrap_or_else(|_| "unknown".into());
+            builder = builder.set_runtime_context(platform_name, model_name, data_dir, now);
 
             builder.build()
         };
@@ -792,14 +1040,14 @@ impl AgentCore {
                 let mem_str = store.load_relevant_for_prompt(prompt, 5, 0.1);
                 if !mem_str.is_empty() {
                     let memory_context = format!("## Context from Long-Term Memory\n<long_term_memory>\n{}\n</long_term_memory>", mem_str);
-                    if !messages.is_empty() {
-                        let last_idx = messages.len() - 1;
-                        messages.insert(last_idx, LlmMessage::user(&memory_context));
-                    }
+                    loop_state
+                        .record_prefetch_memory(Some(utf8_safe_preview(&mem_str, 240).to_string()));
+                    inject_context_message(&mut messages, memory_context);
+                } else {
+                    loop_state.record_prefetch_memory(None);
                 }
             }
         }
-
 
         // ── Phase 2.5: Prompt Cache Preparation ─────────────────────────
         // Compute hash of system_prompt; refresh server-side cache only when
@@ -812,7 +1060,8 @@ impl AgentCore {
             if new_hash != cached_hash {
                 log::debug!(
                     "[PromptCache] System prompt changed (hash {} → {}), refreshing cache…",
-                    cached_hash, new_hash
+                    cached_hash,
+                    new_hash
                 );
                 let be_guard = self.backend.read().await;
                 if let Some(be) = be_guard.as_ref() {
@@ -827,7 +1076,10 @@ impl AgentCore {
                 // Always update the stored hash so we do not retry on every call
                 *self.prompt_hash.write().await = new_hash;
             } else {
-                log::debug!("[PromptCache] Prompt unchanged (hash={}), reusing cached content", cached_hash);
+                log::debug!(
+                    "[PromptCache] Prompt unchanged (hash={}), reusing cached content",
+                    cached_hash
+                );
             }
         }
 
@@ -840,8 +1092,8 @@ impl AgentCore {
             let we = self.workflow_engine.read().await;
             for wf_val in we.list_workflows() {
                 if let (Some(w_id), Some(trigger)) = (
-                    wf_val.get("id").and_then(|v| v.as_str()), 
-                    wf_val.get("trigger").and_then(|v| v.as_str())
+                    wf_val.get("id").and_then(|v| v.as_str()),
+                    wf_val.get("trigger").and_then(|v| v.as_str()),
                 ) {
                     if trigger != "manual" && (prompt.contains(trigger) || trigger == prompt) {
                         matched_workflow_id = Some(w_id.to_string());
@@ -852,19 +1104,27 @@ impl AgentCore {
         }
 
         if let Some(wf_id) = matched_workflow_id {
-            log::info!("[Planning] Matched workflow trigger '{}', entering Workflow Mode.", wf_id);
+            log::info!(
+                "[Planning] Matched workflow trigger '{}', entering Workflow Mode.",
+                wf_id
+            );
             loop_state.active_workflow_id = Some(wf_id);
         } else {
             // Optional LLM Cognitive Step for Complex Prompts
             if crate::core::intent_analyzer::IntentAnalyzer::is_complex_task(prompt) {
-                log::debug!("[AgentLoop] Complex prompt detected. Triggering explicit Plan-and-Solve...");
+                log::debug!(
+                    "[AgentLoop] Complex prompt detected. Triggering explicit Plan-and-Solve..."
+                );
                 let plan_sys = "You are a precise planner. Outline the distinct steps to solve the user's request. Output only a list of concise steps.";
-                
+
                 // Release writer locks safely for LLM call
                 let plan_resp_opt = {
                     let be_guard = self.backend.read().await;
                     if let Some(be) = be_guard.as_ref() {
-                        Some(be.chat(&[LlmMessage::user(prompt)], &[], None, plan_sys, Some(1024)).await)
+                        Some(
+                            be.chat(&[LlmMessage::user(prompt)], &[], None, plan_sys, Some(1024))
+                                .await,
+                        )
                     } else {
                         None
                     }
@@ -888,8 +1148,10 @@ impl AgentCore {
         // Update token_used estimate
         loop_state.token_used = context_engine.estimate_tokens(&messages);
         if loop_state.needs_compaction() {
-            log::debug!("[AgentLoop] Pre-loop compaction triggered ({}% used)",
-                (loop_state.token_used as f32 / loop_state.token_budget as f32 * 100.0) as u32);
+            log::debug!(
+                "[AgentLoop] Pre-loop compaction triggered ({}% used)",
+                (loop_state.token_used as f32 / loop_state.token_budget as f32 * 100.0) as u32
+            );
             messages = context_engine.compact(messages, loop_state.token_budget);
             loop_state.token_used = context_engine.estimate_tokens(&messages);
         }
@@ -900,7 +1162,9 @@ impl AgentCore {
             loop_state.transition(AgentPhase::DecisionMaking);
             log::debug!(
                 "[AgentLoop] Round {} | session='{}' phase=DecisionMaking msgs={}",
-                loop_state.round, session_id, messages.len()
+                loop_state.round,
+                session_id,
+                messages.len()
             );
 
             log::debug!("[System Prompt]:\n{}", system_prompt);
@@ -921,7 +1185,11 @@ impl AgentCore {
                         log::info!("[Workflow] All steps completed for {}", wf.name);
                         loop_state.active_workflow_id = None;
                         loop_state.transition(AgentPhase::ResultReporting);
-                        let text = format!("Workflow '{}' completed successfully.\nVariables:\n{:?}", wf.name, loop_state.workflow_vars.keys().collect::<Vec<_>>());
+                        let text = format!(
+                            "Workflow '{}' completed successfully.\nVariables:\n{:?}",
+                            wf.name,
+                            loop_state.workflow_vars.keys().collect::<Vec<_>>()
+                        );
                         if let Ok(ss) = self.session_store.lock() {
                             if let Some(store) = ss.as_ref() {
                                 store.add_message(session_id, "assistant", &text);
@@ -931,24 +1199,40 @@ impl AgentCore {
                     }
 
                     let step = &wf.steps[loop_state.current_workflow_step];
-                    
+
                     use crate::core::workflow_engine::WorkflowStepType;
                     match step.step_type {
                         WorkflowStepType::Condition => {
-                            if crate::core::workflow_engine::WorkflowEngine::eval_condition(&step.condition, &loop_state.workflow_vars) {
-                                log::debug!("Condition evaluated to TRUE. Branching to '{}'", step.then_step);
+                            if crate::core::workflow_engine::WorkflowEngine::eval_condition(
+                                &step.condition,
+                                &loop_state.workflow_vars,
+                            ) {
+                                log::debug!(
+                                    "Condition evaluated to TRUE. Branching to '{}'",
+                                    step.then_step
+                                );
                                 loop_state.current_workflow_step += 1;
                             } else {
-                                log::debug!("Condition evaluated to FALSE. Branching to '{}'", step.else_step);
+                                log::debug!(
+                                    "Condition evaluated to FALSE. Branching to '{}'",
+                                    step.else_step
+                                );
                                 loop_state.current_workflow_step += 1;
                             }
                             continue;
                         }
                         WorkflowStepType::Tool => {
-                            let resolved_args = crate::core::workflow_engine::WorkflowEngine::interpolate_json(&step.args, &loop_state.workflow_vars);
+                            let resolved_args =
+                                crate::core::workflow_engine::WorkflowEngine::interpolate_json(
+                                    &step.args,
+                                    &loop_state.workflow_vars,
+                                );
                             response.success = true;
                             // Add randomness so observe_output Doesn't see identical strings and trigger Stuck
-                            response.text = format!("Executing workflow tool '{}' (Round {})", step.tool_name, loop_state.round);
+                            response.text = format!(
+                                "Executing workflow tool '{}' (Round {})",
+                                step.tool_name, loop_state.round
+                            );
                             response.tool_calls.push(crate::llm::backend::LlmToolCall {
                                 id: format!("call_{}_{}", step.id, loop_state.round),
                                 name: step.tool_name.clone(),
@@ -959,28 +1243,53 @@ impl AgentCore {
                         WorkflowStepType::Prompt => {
                             // Only inject the prompt if we haven't already for this step
                             let step_marker = format!("## [Workflow: {}]", step.id);
-                            let already_injected = messages.iter().any(|m| m.text.contains(&step_marker));
-                            
+                            let already_injected =
+                                messages.iter().any(|m| m.text.contains(&step_marker));
+
                             if !already_injected {
-                                let resolved_instruction = crate::core::workflow_engine::WorkflowEngine::interpolate(&step.instruction, &loop_state.workflow_vars);
+                                let resolved_instruction =
+                                    crate::core::workflow_engine::WorkflowEngine::interpolate(
+                                        &step.instruction,
+                                        &loop_state.workflow_vars,
+                                    );
                                 messages.push(LlmMessage {
                                     role: "system".into(),
                                     text: format!("{}\n{}", step_marker, resolved_instruction),
                                     ..Default::default()
                                 });
                             }
-                            response = self.chat_with_fallback(&messages, &[], on_chunk, &system_prompt, Some(dynamic_max_tokens)).await;
+                            response = self
+                                .chat_with_fallback(
+                                    &messages,
+                                    &tools,
+                                    on_chunk,
+                                    &system_prompt,
+                                    Some(dynamic_max_tokens),
+                                )
+                                .await;
                         }
                     }
                 }
             } else {
-                response = self.chat_with_fallback(&messages, &[], on_chunk, &system_prompt, Some(dynamic_max_tokens)).await;
+                response = self
+                    .chat_with_fallback(
+                        &messages,
+                        &tools,
+                        on_chunk,
+                        &system_prompt,
+                        Some(dynamic_max_tokens),
+                    )
+                    .await;
             }
 
             // ── Phase 6: ObservationCollect ──────────────────────────────
             loop_state.transition(AgentPhase::ObservationCollect);
-            log::debug!("[AgentLoop] Round {} Response: success={} text_len={}",
-                loop_state.round, response.success, response.text.len());
+            log::debug!(
+                "[AgentLoop] Round {} Response: success={} text_len={}",
+                loop_state.round,
+                response.success,
+                response.text.len()
+            );
 
             // ── Phase 11: SafetyCheck — handle LLM error ─────────────────
             if !response.success {
@@ -1015,14 +1324,19 @@ impl AgentCore {
             if detected_tool_calls.is_empty() {
                 detected_tool_calls = FallbackParser::parse(&response.text);
                 if !detected_tool_calls.is_empty() {
-                    log::debug!("[AgentLoop] FallbackParser detected {} tool call(s)",
-                        detected_tool_calls.len());
+                    log::debug!(
+                        "[AgentLoop] FallbackParser detected {} tool call(s)",
+                        detected_tool_calls.len()
+                    );
                 }
             }
 
             // Record token usage
             {
-                let be_name = self.backend.read().await
+                let be_name = self
+                    .backend
+                    .read()
+                    .await
                     .as_ref()
                     .map(|be| be.get_name().to_string())
                     .unwrap_or_else(|| "unknown".into());
@@ -1035,10 +1349,13 @@ impl AgentCore {
                             &be_name,
                         );
                         let usage = store.load_token_usage(session_id);
-                        log::debug!("[TokenUsage] Round: P{}+C{}={} | Session cumulative: {}",
-                            response.prompt_tokens, response.completion_tokens,
+                        log::debug!(
+                            "[TokenUsage] Round: P{}+C{}={} | Session cumulative: {}",
+                            response.prompt_tokens,
+                            response.completion_tokens,
                             response.prompt_tokens + response.completion_tokens,
-                            usage.total_prompt_tokens + usage.total_completion_tokens);
+                            usage.total_prompt_tokens + usage.total_completion_tokens
+                        );
                         loop_state.token_used = usage.total_prompt_tokens as usize
                             + context_engine.estimate_tokens(&messages);
                     }
@@ -1049,13 +1366,32 @@ impl AgentCore {
                 // ── Phase 5: ToolDispatching ─────────────────────────────
                 loop_state.transition(AgentPhase::ToolDispatching);
                 loop_state.total_tool_calls += detected_tool_calls.len();
-                log::debug!("[AgentLoop] Round {} dispatching {} tool(s)",
-                    loop_state.round, detected_tool_calls.len());
+                loop_state.set_follow_up(true);
+                log::debug!(
+                    "[AgentLoop] Round {} dispatching {} tool(s)",
+                    loop_state.round,
+                    detected_tool_calls.len()
+                );
+
+                // Enforce reasoning extraction if not provided by backend
+                let final_text = if let Some(start) = response.text.find("<final>") {
+                    if let Some(end) = response.text.rfind("</final>") {
+                        if end > start + 7 {
+                            response.text[start + 7..end].trim().to_string()
+                        } else {
+                            response.text[start + 7..].trim().to_string()
+                        }
+                    } else {
+                        response.text[start + 7..].trim().to_string()
+                    }
+                } else {
+                    response.text.clone()
+                };
 
                 // Add assistant message
                 messages.push(LlmMessage {
                     role: "assistant".into(),
-                    text: response.text.clone(),
+                    text: final_text,
                     reasoning_text: reasoning_text.clone(),
                     tool_calls: detected_tool_calls.clone(),
                     ..Default::default()
@@ -1064,7 +1400,11 @@ impl AgentCore {
                 // Parallel tool execution
                 let td_guard = self.tool_dispatcher.read().await;
                 let mut futures_list = Vec::new();
-                let mem_store_opt = self.memory_store.lock().ok().and_then(|ms| ms.as_ref().cloned());
+                let mem_store_opt = self
+                    .memory_store
+                    .lock()
+                    .ok()
+                    .and_then(|ms| ms.as_ref().cloned());
 
                 for tc in detected_tool_calls.iter() {
                     let skills_dir = self.platform.paths.skills_dir.clone();
@@ -1081,7 +1421,9 @@ impl AgentCore {
                             Err(reason) => Some(reason),
                             Ok(_) => None,
                         }
-                    } else { None };
+                    } else {
+                        None
+                    };
 
                     futures_list.push(async move {
                         if let Some(reason) = block_reason {
@@ -1101,13 +1443,13 @@ impl AgentCore {
                             }
                         } else if tc_name == "search_tools" {
                             let query = tc_args.get("query").and_then(|v| v.as_str()).unwrap_or("ALL");
-                            
+
                             let mut all_tools = td_guard_ref.get_tool_declarations();
                             crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_builtin_tools(&mut all_tools, "ALL");
                             if let Ok(bridge) = bridge_ref.lock() {
                                 all_tools.extend(bridge.get_action_declarations());
                             }
-                            
+
                             let mut results = Vec::new();
                             for t in all_tools {
                                 if query == "ALL" || t.name.to_lowercase().contains(&query.to_lowercase()) || t.description.to_lowercase().contains(&query.to_lowercase()) {
@@ -1190,35 +1532,58 @@ impl AgentCore {
 
                         log::debug!("[ObservationCollect] Tool '{}' result: {} chars",
                             tc_name, result.to_string().len());
-                            
+
                         LlmMessage::tool_result(&tc_id, &tc_name, result)
                     });
                 }
 
                 let results = futures_util::future::join_all(futures_list).await;
-                messages.extend(results);
+                let (budgeted_results, budgeted_count) = context_engine
+                    .budget_tool_result_messages(results, DEFAULT_TOOL_RESULT_BUDGET_CHARS);
+                if budgeted_count > 0 {
+                    loop_state.record_budget_events(budgeted_count);
+                    log::info!(
+                        "[ToolBudget] Round {} budgeted {} oversized tool result(s)",
+                        loop_state.round,
+                        budgeted_count
+                    );
+                }
+                messages.extend(budgeted_results);
 
                 // ── Phase 7: Evaluating (partial progress) ───────────────
                 loop_state.transition(AgentPhase::Evaluating);
-                let verdict = loop_state.observe_output(&response.text);
-                log::debug!("[Evaluating] Round {} verdict={}", loop_state.round, verdict.as_str());
+                let progress_marker =
+                    build_progress_marker(&response.text, &reasoning_text, &detected_tool_calls);
+                let verdict = loop_state.observe_output(&progress_marker);
+                log::debug!(
+                    "[Evaluating] Round {} verdict={}",
+                    loop_state.round,
+                    verdict.as_str()
+                );
 
                 if verdict == EvalVerdict::Stuck {
                     loop_state.stuck_retry_count += 1;
                     if loop_state.stuck_retry_count > 2 {
-                        log::warn!("[AgentLoop] Idle loop detected (round {}) - Terminating.", loop_state.round);
+                        log::warn!(
+                            "[AgentLoop] Idle loop detected (round {}) - Terminating.",
+                            loop_state.round
+                        );
                         loop_state.transition(AgentPhase::TerminationCheck);
                         loop_state.transition(AgentPhase::ResultReporting);
 
                         if let Ok(ss) = self.session_store.lock() {
                             if let Some(store) = ss.as_ref() {
-                                store.add_message(session_id, "assistant",
-                                    "Task aborted (terminal idle loop).");
+                                store.add_message(
+                                    session_id,
+                                    "assistant",
+                                    "Task aborted (terminal idle loop).",
+                                );
                             }
                         }
                         return "Error: Agent is stuck in an execution loop.".into();
                     } else {
                         log::warn!("[AgentLoop] Idle loop detected (round {}) - Triggering Dynamic Fallback RePlanning.", loop_state.round);
+                        loop_state.set_follow_up(true);
                         messages.push(LlmMessage {
                             role: "user".into(),
                             text: "System Error: You are stuck in a loop. Re-evaluate your plan and try a completely different approach using different tools. Do not repeat the previous action.".into(),
@@ -1231,31 +1596,43 @@ impl AgentCore {
                 // If it was a workflow tool, we just successfully completed it! Save output and advance.
                 if is_workflow_tool {
                     let last_msg = messages.last().unwrap();
-                    let output_val = serde_json::from_str(&last_msg.text).unwrap_or(Value::String(last_msg.text.clone()));
-                    
+                    let output_val = if last_msg.role == "tool" {
+                        last_msg.tool_result.clone()
+                    } else {
+                        serde_json::from_str(&last_msg.text)
+                            .unwrap_or(Value::String(last_msg.text.clone()))
+                    };
+
                     let we = self.workflow_engine.read().await;
                     if let Some(wf_id) = loop_state.active_workflow_id.clone() {
                         if let Some(wf) = we.get_workflow(&wf_id) {
                             let step = &wf.steps[loop_state.current_workflow_step];
-                            loop_state.workflow_vars.insert(step.output_var.clone(), output_val);
+                            loop_state
+                                .workflow_vars
+                                .insert(step.output_var.clone(), output_val);
                             loop_state.current_workflow_step += 1;
                         }
                     }
                     continue; // Immediately start next round to pick up next workflow step
                 }
-
             } else {
                 let mut advance_workflow = false;
                 if loop_state.active_workflow_id.is_some() {
                     let we = self.workflow_engine.read().await;
-                    if let Some(wf) = we.get_workflow(loop_state.active_workflow_id.as_ref().unwrap()) {
+                    if let Some(wf) =
+                        we.get_workflow(loop_state.active_workflow_id.as_ref().unwrap())
+                    {
                         let step = &wf.steps[loop_state.current_workflow_step];
-                        loop_state.workflow_vars.insert(step.output_var.clone(), serde_json::Value::String(response.text.clone()));
+                        loop_state.workflow_vars.insert(
+                            step.output_var.clone(),
+                            serde_json::Value::String(response.text.clone()),
+                        );
                         loop_state.current_workflow_step += 1;
                         advance_workflow = true;
                     }
                 }
                 if advance_workflow {
+                    loop_state.set_follow_up(true);
                     // Push the prompt assistant response so context isn't lost
                     messages.push(LlmMessage {
                         role: "assistant".into(),
@@ -1269,10 +1646,28 @@ impl AgentCore {
                 loop_state.transition(AgentPhase::Evaluating);
                 loop_state.last_eval_verdict = EvalVerdict::GoalAchieved;
 
-                log::debug!("[Evaluating] Round {} verdict=GoalAchieved (no tool calls)",
-                    loop_state.round);
+                log::debug!(
+                    "[Evaluating] Round {} verdict=GoalAchieved (no tool calls)",
+                    loop_state.round
+                );
+                loop_state.set_follow_up(false);
 
-                let text = response.text;
+                // Enforce reasoning extraction for final user response
+                let final_text = if let Some(start) = response.text.find("<final>") {
+                    if let Some(end) = response.text.rfind("</final>") {
+                        if end > start + 7 {
+                            response.text[start + 7..end].trim().to_string()
+                        } else {
+                            response.text[start + 7..].trim().to_string()
+                        }
+                    } else {
+                        response.text[start + 7..].trim().to_string()
+                    }
+                } else {
+                    response.text.clone()
+                };
+
+                let text = final_text;
                 if let Ok(ss) = self.session_store.lock() {
                     if let Some(store) = ss.as_ref() {
                         store.add_message(session_id, "assistant", &text);
@@ -1281,13 +1676,13 @@ impl AgentCore {
 
                 // ── Phase 14: ResultReporting ────────────────────────────
                 loop_state.transition(AgentPhase::ResultReporting);
-                
+
                 // Trigger auto-extraction (small overhead at end of conversation)
                 self.extract_and_save_memory(&messages, &text).await;
 
                 loop_state.transition(AgentPhase::Complete);
                 loop_state.log_self_inspection();
-                
+
                 log::debug!("[AgentCore] AGENT: {}", text);
                 return text;
             }
@@ -1302,8 +1697,10 @@ impl AgentCore {
             // In-loop size-based compaction
             loop_state.token_used = context_engine.estimate_tokens(&messages);
             if loop_state.needs_compaction() {
-                log::debug!("[ContextEngine] In-loop compaction triggered (round {})",
-                    loop_state.round);
+                log::debug!(
+                    "[ContextEngine] In-loop compaction triggered (round {})",
+                    loop_state.round
+                );
                 messages = context_engine.compact(messages, loop_state.token_budget);
                 loop_state.token_used = context_engine.estimate_tokens(&messages);
 
@@ -1324,9 +1721,9 @@ impl AgentCore {
                                 "[ContextEngine] compacted.md saved ({} msgs)",
                                 session_msgs.len()
                             ),
-                            Err(e) => log::warn!(
-                                "[ContextEngine] Failed to save compacted.md: {}", e
-                            ),
+                            Err(e) => {
+                                log::warn!("[ContextEngine] Failed to save compacted.md: {}", e)
+                            }
                         }
                     }
                 }
@@ -1337,8 +1734,12 @@ impl AgentCore {
             loop_state.transition(AgentPhase::TerminationCheck);
 
             if loop_state.is_round_limit_reached() {
-                log::warn!("[AgentLoop] Max rounds ({}) reached for session '{}'",
-                    loop_state.max_tool_rounds, session_id);
+                log::warn!(
+                    "[AgentLoop] Max rounds ({}) reached for session '{}'",
+                    loop_state.max_tool_rounds,
+                    session_id
+                );
+                loop_state.set_follow_up(false);
                 break;
             }
 
@@ -1350,7 +1751,6 @@ impl AgentCore {
         loop_state.log_self_inspection();
         "Error: Maximum tool call rounds exceeded".into()
     }
-
 
     pub async fn shutdown(&self) {
         log::info!("AgentCore shutting down");
@@ -1387,14 +1787,15 @@ impl AgentCore {
 
         // Phase 1: Hash-based change detection (fast, no I/O beyond stat)
         if !tool_indexer::needs_reindex(root_dir) {
-            log::info!(
-                "[Startup Indexing] No changes detected (hash match). Skipping."
-            );
+            log::info!("[Startup Indexing] No changes detected (hash match). Skipping.");
             return;
         }
 
         // Phase 2: Local filesystem scan — collect all tool metadata
-        log::info!("[Startup Indexing] Scanning tool metadata from {}...", root_dir);
+        log::info!(
+            "[Startup Indexing] Scanning tool metadata from {}...",
+            root_dir
+        );
         let metadata = tool_indexer::scan_tools_metadata(root_dir);
 
         if metadata.total_tools() == 0 {
@@ -1419,20 +1820,15 @@ impl AgentCore {
                 Output ONLY the requested JSON. No extra commentary.";
 
             let msgs = vec![LlmMessage::user(&prompt)];
-            let response = self.chat_with_fallback(
-                &msgs, &[], None, system_prompt, Some(8192),
-            ).await;
+            let response = self
+                .chat_with_fallback(&msgs, &[], None, system_prompt, Some(8192))
+                .await;
 
             if response.success {
-                let written = tool_indexer::apply_llm_index_result(
-                    &response.text, root_dir,
-                );
+                let written = tool_indexer::apply_llm_index_result(&response.text, root_dir);
                 if written > 0 {
                     tool_indexer::save_index_hash(root_dir);
-                    log::info!(
-                        "[Startup Indexing] LLM generated {} index files.",
-                        written,
-                    );
+                    log::info!("[Startup Indexing] LLM generated {} index files.", written,);
                 } else {
                     log::warn!(
                         "[Startup Indexing] LLM response parsed but 0 files \
@@ -1442,17 +1838,13 @@ impl AgentCore {
                     tool_indexer::save_index_hash(root_dir);
                 }
             } else {
-                log::warn!(
-                    "[Startup Indexing] LLM call failed. Using fallback template."
-                );
+                log::warn!("[Startup Indexing] LLM call failed. Using fallback template.");
                 tool_indexer::generate_fallback_index(&metadata, root_dir);
                 tool_indexer::save_index_hash(root_dir);
             }
         } else {
             // No LLM available — generate a basic template
-            log::info!(
-                "[Startup Indexing] No LLM available. Generating fallback index."
-            );
+            log::info!("[Startup Indexing] No LLM available. Generating fallback index.");
             tool_indexer::generate_fallback_index(&metadata, root_dir);
             tool_indexer::save_index_hash(root_dir);
         }
@@ -1462,7 +1854,11 @@ impl AgentCore {
 
     /// Extractor sub-task logic. Invokes the LLM to glean long-term knowledge.
     async fn extract_and_save_memory(&self, history: &[LlmMessage], final_response: &str) {
-        let ms_clone = self.memory_store.lock().ok().and_then(|ms| ms.as_ref().cloned());
+        let ms_clone = self
+            .memory_store
+            .lock()
+            .ok()
+            .and_then(|ms| ms.as_ref().cloned());
         if ms_clone.is_none() {
             return;
         }
@@ -1490,15 +1886,21 @@ If there is nothing new to remember, output exactly: []";
         msgs.push(LlmMessage::user(&convo_text));
 
         log::debug!("[MemoryExtractor] Triggering LLM extraction sub-task...");
-        let response = self.chat_with_fallback(&msgs, &[], None, system_prompt, Some(8192)).await;
+        let response = self
+            .chat_with_fallback(&msgs, &[], None, system_prompt, Some(8192))
+            .await;
 
         if response.success {
             let text = response.text.trim();
             // clean potential markdown code block
             let clean_json = if text.starts_with("```json") {
-                text.trim_start_matches("```json").trim_end_matches("```").trim()
+                text.trim_start_matches("```json")
+                    .trim_end_matches("```")
+                    .trim()
             } else if text.starts_with("```") {
-                text.trim_start_matches("```").trim_end_matches("```").trim()
+                text.trim_start_matches("```")
+                    .trim_end_matches("```")
+                    .trim()
             } else {
                 text
             };
@@ -1514,7 +1916,7 @@ If there is nothing new to remember, output exactly: []";
                     if let (Some(cat), Some(k), Some(v)) = (
                         item.get("category").and_then(|v| v.as_str()),
                         item.get("key").and_then(|v| v.as_str()),
-                        item.get("value").and_then(|v| v.as_str())
+                        item.get("value").and_then(|v| v.as_str()),
                     ) {
                         store.set(k, v, cat);
                         count += 1;
@@ -1522,10 +1924,16 @@ If there is nothing new to remember, output exactly: []";
                     }
                 }
                 if count > 0 {
-                    log::debug!("[MemoryExtractor] Successfully saved {} extracted memories.", count);
+                    log::debug!(
+                        "[MemoryExtractor] Successfully saved {} extracted memories.",
+                        count
+                    );
                 }
             } else {
-                log::warn!("[MemoryExtractor] Failed to parse JSON response: {}", clean_json);
+                log::warn!(
+                    "[MemoryExtractor] Failed to parse JSON response: {}",
+                    clean_json
+                );
             }
         } else {
             log::warn!("[MemoryExtractor] Extractor LLM call failed.");
@@ -1541,5 +1949,87 @@ pub struct SessionStoreRef<'a> {
 impl<'a> SessionStoreRef<'a> {
     pub fn store(&self) -> &SessionStore {
         self.guard.as_ref().unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_progress_marker, build_skill_prefetch_message, select_relevant_skills,
+        utf8_safe_preview,
+    };
+    use crate::core::textual_skill_scanner::TextualSkill;
+    use crate::llm::backend::LlmToolCall;
+    use serde_json::json;
+
+    #[test]
+    fn utf8_safe_preview_returns_full_short_ascii_text() {
+        let text = "battery";
+        assert_eq!(utf8_safe_preview(text, 80), text);
+    }
+
+    #[test]
+    fn utf8_safe_preview_truncates_on_char_boundary() {
+        let text = "배터리 상태를 확인해서 한 줄로 알려줘. 필요하면 도구를 사용해.";
+        let preview = utf8_safe_preview(text, 12);
+
+        assert_eq!(preview.chars().count(), 12);
+        assert!(text.starts_with(preview));
+    }
+
+    #[test]
+    fn utf8_safe_preview_handles_zero_length() {
+        assert_eq!(utf8_safe_preview("안녕하세요", 0), "");
+    }
+
+    #[test]
+    fn select_relevant_skills_prefers_matching_entries() {
+        let skills = vec![
+            TextualSkill {
+                file_name: "battery_monitor".into(),
+                absolute_path: "/tmp/battery/SKILL.md".into(),
+                description: "Inspect battery and power telemetry".into(),
+            },
+            TextualSkill {
+                file_name: "calendar_sync".into(),
+                absolute_path: "/tmp/calendar/SKILL.md".into(),
+                description: "Handle schedule sync tasks".into(),
+            },
+        ];
+
+        let selected = select_relevant_skills("배터리 상태를 확인해줘 battery", &skills, 2);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].file_name, "battery_monitor");
+    }
+
+    #[test]
+    fn build_skill_prefetch_message_returns_snapshot_block() {
+        let skills = vec![TextualSkill {
+            file_name: "battery_monitor".into(),
+            absolute_path: "/tmp/battery/SKILL.md".into(),
+            description: "Inspect battery and power telemetry".into(),
+        }];
+
+        let message = build_skill_prefetch_message(&skills).unwrap_or_default();
+
+        assert!(message.contains("Prefetched Skill Snapshot"));
+        assert!(message.contains("battery_monitor"));
+    }
+
+    #[test]
+    fn build_progress_marker_uses_tool_calls_for_tool_only_rounds() {
+        let marker = build_progress_marker(
+            "",
+            "",
+            &[LlmToolCall {
+                id: "call_1".into(),
+                name: "search_tools".into(),
+                args: json!({"query": "ALL"}),
+            }],
+        );
+
+        assert!(marker.contains("search_tools"));
+        assert!(marker.contains("\"ALL\""));
     }
 }
