@@ -11,6 +11,17 @@ use super::{Channel, ChannelConfig};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+fn utf8_safe_preview(text: &str, max_chars: usize) -> &str {
+    if max_chars == 0 {
+        return "";
+    }
+
+    match text.char_indices().nth(max_chars) {
+        Some((idx, _)) => &text[..idx],
+        None => text,
+    }
+}
+
 /// STT engine type.
 #[derive(Clone, Debug, PartialEq)]
 enum SttEngine {
@@ -79,15 +90,15 @@ impl VoiceChannel {
     fn speak(&self, text: &str) {
         match self.tts_engine {
             TtsEngine::TizenNative => {
-                log::debug!("VoiceChannel: TTS(tizen) speak: {}", &text[..text.len().min(50)]);
+                log::debug!("VoiceChannel: TTS(tizen) speak: {}", utf8_safe_preview(text, 50));
                 // Tizen TTS FFI call would go here
             }
             TtsEngine::ElevenLabsApi => {
-                log::debug!("VoiceChannel: TTS(elevenlabs) speak: {}", &text[..text.len().min(50)]);
+                log::debug!("VoiceChannel: TTS(elevenlabs) speak: {}", utf8_safe_preview(text, 50));
                 // ElevenLabs API call would go here
             }
             TtsEngine::None => {
-                log::debug!("VoiceChannel: TTS disabled, text: {}", &text[..text.len().min(50)]);
+                log::debug!("VoiceChannel: TTS disabled, text: {}", utf8_safe_preview(text, 50));
             }
         }
     }
@@ -158,5 +169,30 @@ impl Channel for VoiceChannel {
 
     fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::utf8_safe_preview;
+
+    #[test]
+    fn utf8_safe_preview_returns_empty_for_zero_length() {
+        assert_eq!(utf8_safe_preview("안녕하세요", 0), "");
+    }
+
+    #[test]
+    fn utf8_safe_preview_preserves_short_text() {
+        let text = "voice ready";
+        assert_eq!(utf8_safe_preview(text, 50), text);
+    }
+
+    #[test]
+    fn utf8_safe_preview_truncates_on_char_boundary() {
+        let text = "안녕하세요 TizenClaw";
+        let preview = utf8_safe_preview(text, 5);
+
+        assert_eq!(preview, "안녕하세요");
+        assert!(text.is_char_boundary(preview.len()));
     }
 }
