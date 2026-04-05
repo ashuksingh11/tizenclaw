@@ -188,6 +188,7 @@ impl GeminiBackend {
             resp.total_tokens = usage["totalTokenCount"].as_i64().unwrap_or(0) as i32;
             // cachedContentTokenCount shows how many tokens came from cache
             if let Some(cached_t) = usage["cachedContentTokenCount"].as_i64() {
+                resp.cache_read_input_tokens = cached_t as i32;
                 if cached_t > 0 {
                     log::debug!(
                         "[GeminiCache] Cache hit: {} cached tokens (saved ~{} prompt tokens)",

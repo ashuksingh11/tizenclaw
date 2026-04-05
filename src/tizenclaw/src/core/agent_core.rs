@@ -1683,16 +1683,31 @@ impl AgentCore {
                             session_id,
                             response.prompt_tokens,
                             response.completion_tokens,
+                            response.cache_creation_input_tokens,
+                            response.cache_read_input_tokens,
                             &be_name,
                         );
                         let usage = store.load_token_usage(session_id);
                         log::debug!(
-                            "[TokenUsage] Round: P{}+C{}={} | Session cumulative: {}",
+                            "[TokenUsage] Round: P{}+C{}={} | Cache write/read: {}/{} | Session cumulative: {} | Session cache read: {}",
                             response.prompt_tokens,
                             response.completion_tokens,
                             response.prompt_tokens + response.completion_tokens,
-                            usage.total_prompt_tokens + usage.total_completion_tokens
+                            response.cache_creation_input_tokens,
+                            response.cache_read_input_tokens,
+                            usage.total_prompt_tokens + usage.total_completion_tokens,
+                            usage.total_cache_read_input_tokens
                         );
+                        if response.cache_read_input_tokens > 0
+                            || response.cache_creation_input_tokens > 0
+                        {
+                            log::info!(
+                                "[TokenUsage] Cache telemetry for {}: write={} read={}",
+                                be_name,
+                                response.cache_creation_input_tokens,
+                                response.cache_read_input_tokens
+                            );
+                        }
                         loop_state.token_used = usage.total_prompt_tokens as usize
                             + context_engine.estimate_tokens(&messages);
                     }

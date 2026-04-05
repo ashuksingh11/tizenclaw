@@ -30,6 +30,28 @@ impl AnthropicBackend {
             default_max_tokens: Some(4096),
         }
     }
+
+    fn apply_usage(resp: &mut LlmResponse, usage: &Value) {
+        resp.prompt_tokens = usage["input_tokens"].as_i64().unwrap_or(0) as i32;
+        resp.completion_tokens = usage["output_tokens"].as_i64().unwrap_or(0) as i32;
+        resp.total_tokens = resp.prompt_tokens + resp.completion_tokens;
+        resp.cache_creation_input_tokens =
+            usage["cache_creation_input_tokens"].as_i64().unwrap_or(0) as i32;
+        resp.cache_read_input_tokens =
+            usage["cache_read_input_tokens"].as_i64().unwrap_or(0) as i32;
+        if resp.cache_read_input_tokens > 0 {
+            log::info!(
+                "[AnthropicCache] Cache hit: {} cached input tokens reused",
+                resp.cache_read_input_tokens
+            );
+        }
+        if resp.cache_creation_input_tokens > 0 {
+            log::debug!(
+                "[AnthropicCache] Cache write: {} input tokens added to cache",
+                resp.cache_creation_input_tokens
+            );
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -189,9 +211,7 @@ impl LlmBackend for AnthropicBackend {
                 }
             }
             if let Some(u) = json.get("usage") {
-                resp.prompt_tokens = u["input_tokens"].as_i64().unwrap_or(0) as i32;
-                resp.completion_tokens = u["output_tokens"].as_i64().unwrap_or(0) as i32;
-                resp.total_tokens = resp.prompt_tokens + resp.completion_tokens;
+                Self::apply_usage(&mut resp, u);
             }
             resp.success = true;
         }
@@ -200,5 +220,29 @@ impl LlmBackend for AnthropicBackend {
 
     fn get_name(&self) -> &str {
         "anthropic"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_usage_reads_cache_counters() {
+        let mut resp = LlmResponse::default();
+        let usage = json!({
+            "input_tokens": 1000,
+            "output_tokens": 250,
+            "cache_creation_input_tokens": 800,
+            "cache_read_input_tokens": 640
+        });
+
+        AnthropicBackend::apply_usage(&mut resp, &usage);
+
+        assert_eq!(resp.prompt_tokens, 1000);
+        assert_eq!(resp.completion_tokens, 250);
+        assert_eq!(resp.total_tokens, 1250);
+        assert_eq!(resp.cache_creation_input_tokens, 800);
+        assert_eq!(resp.cache_read_input_tokens, 640);
     }
 }

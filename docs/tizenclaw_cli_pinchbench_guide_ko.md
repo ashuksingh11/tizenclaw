@@ -207,7 +207,28 @@ tizenclaw-cli config get benchmark.pinchbench.target
 tizenclaw-cli config reload
 ```
 
-## 8. 설정 삭제
+## 8. 캐시 토큰 사용량 확인
+
+`--usage` 출력에는 누적 프롬프트/완성 토큰과 함께 캐시 관련 토큰도
+포함됩니다.
+
+```bash
+tizenclaw-cli --usage
+```
+
+주요 필드:
+
+- `prompt_tokens`: 전체 입력 토큰
+- `completion_tokens`: 전체 출력 토큰
+- `cache_creation_input_tokens`: 캐시 생성에 사용된 입력 토큰
+- `cache_read_input_tokens`: 캐시 재사용으로 절감 추적되는 입력 토큰
+- `total_requests`: 누적 요청 수
+
+Anthropic 또는 Gemini에서 캐시가 실제로 동작한 뒤에는
+`cache_creation_input_tokens` 또는 `cache_read_input_tokens` 값이
+0보다 크게 보일 수 있습니다.
+
+## 9. 설정 삭제
 
 더 이상 필요 없는 benchmark 메모를 제거할 때:
 
@@ -215,7 +236,7 @@ tizenclaw-cli config reload
 tizenclaw-cli config unset benchmark.pinchbench.target.summary
 ```
 
-## 9. OpenClaw/ZeroClaw 식 대응 예시
+## 10. OpenClaw/ZeroClaw 식 대응 예시
 
 OpenClaw 식:
 

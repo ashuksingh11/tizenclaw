@@ -41,6 +41,8 @@ pub struct SessionMessage {
 pub struct TokenUsage {
     pub total_prompt_tokens: i64,
     pub total_completion_tokens: i64,
+    pub total_cache_creation_input_tokens: i64,
+    pub total_cache_read_input_tokens: i64,
     pub total_requests: i64,
     pub entries: Vec<Value>,
 }
@@ -80,10 +82,13 @@ impl SessionStore {
                 date TEXT NOT NULL,
                 model TEXT NOT NULL,
                 prompt_tokens INTEGER DEFAULT 0,
-                completion_tokens INTEGER DEFAULT 0
+                completion_tokens INTEGER DEFAULT 0,
+                cache_creation_input_tokens INTEGER DEFAULT 0,
+                cache_read_input_tokens INTEGER DEFAULT 0
             );",
         )
         .map_err(|e| e.to_string())?;
+        Self::ensure_token_usage_columns(&conn).map_err(|e| e.to_string())?;
 
         Ok(SessionStore {
             base_dir,
@@ -274,14 +279,31 @@ impl SessionStore {
         session_id: &str,
         prompt_tokens: i32,
         completion_tokens: i32,
+        cache_creation_input_tokens: i32,
+        cache_read_input_tokens: i32,
         model: &str,
     ) {
         if let Ok(conn) = self.db.lock() {
             let today = today_date_str();
             let _ = conn.execute(
-                "INSERT INTO token_usage (session_id, date, model, prompt_tokens, completion_tokens)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![session_id, today, model, prompt_tokens, completion_tokens],
+                "INSERT INTO token_usage (
+                    session_id,
+                    date,
+                    model,
+                    prompt_tokens,
+                    completion_tokens,
+                    cache_creation_input_tokens,
+                    cache_read_input_tokens
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    session_id,
+                    today,
+                    model,
+                    prompt_tokens,
+                    completion_tokens,
+                    cache_creation_input_tokens,
+                    cache_read_input_tokens
+                ],
             );
         }
     }
@@ -289,17 +311,31 @@ impl SessionStore {
     pub fn load_token_usage(&self, session_id: &str) -> TokenUsage {
         let mut usage = TokenUsage::default();
         if let Ok(conn) = self.db.lock() {
-            let mut stmt = conn.prepare("SELECT prompt_tokens, completion_tokens FROM token_usage WHERE session_id = ?1").unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT
+                        prompt_tokens,
+                        completion_tokens,
+                        cache_creation_input_tokens,
+                        cache_read_input_tokens
+                     FROM token_usage
+                     WHERE session_id = ?1",
+                )
+                .unwrap();
             let iter = stmt
                 .query_map(rusqlite::params![session_id], |row| {
                     let p: i64 = row.get(0)?;
                     let c: i64 = row.get(1)?;
-                    Ok((p, c))
+                    let cache_create: i64 = row.get(2)?;
+                    let cache_read: i64 = row.get(3)?;
+                    Ok((p, c, cache_create, cache_read))
                 })
                 .unwrap();
             for item in iter.flatten() {
                 usage.total_prompt_tokens += item.0;
                 usage.total_completion_tokens += item.1;
+                usage.total_cache_creation_input_tokens += item.2;
+                usage.total_cache_read_input_tokens += item.3;
                 usage.total_requests += 1;
             }
         }
@@ -315,22 +351,65 @@ impl SessionStore {
         };
         if let Ok(conn) = self.db.lock() {
             let mut stmt = conn
-                .prepare("SELECT prompt_tokens, completion_tokens FROM token_usage WHERE date = ?1")
+                .prepare(
+                    "SELECT
+                        prompt_tokens,
+                        completion_tokens,
+                        cache_creation_input_tokens,
+                        cache_read_input_tokens
+                     FROM token_usage
+                     WHERE date = ?1",
+                )
                 .unwrap();
             let iter = stmt
                 .query_map(rusqlite::params![target_date], |row| {
                     let p: i64 = row.get(0)?;
                     let c: i64 = row.get(1)?;
-                    Ok((p, c))
+                    let cache_create: i64 = row.get(2)?;
+                    let cache_read: i64 = row.get(3)?;
+                    Ok((p, c, cache_create, cache_read))
                 })
                 .unwrap();
             for item in iter.flatten() {
                 usage.total_prompt_tokens += item.0;
                 usage.total_completion_tokens += item.1;
+                usage.total_cache_creation_input_tokens += item.2;
+                usage.total_cache_read_input_tokens += item.3;
                 usage.total_requests += 1;
             }
         }
         usage
+    }
+
+    fn ensure_token_usage_columns(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(token_usage)")?;
+        let column_names: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .flatten()
+            .collect();
+
+        if !column_names
+            .iter()
+            .any(|name| name == "cache_creation_input_tokens")
+        {
+            conn.execute(
+                "ALTER TABLE token_usage
+                 ADD COLUMN cache_creation_input_tokens INTEGER DEFAULT 0",
+                [],
+            )?;
+        }
+        if !column_names
+            .iter()
+            .any(|name| name == "cache_read_input_tokens")
+        {
+            conn.execute(
+                "ALTER TABLE token_usage
+                 ADD COLUMN cache_read_input_tokens INTEGER DEFAULT 0",
+                [],
+            )?;
+        }
+
+        Ok(())
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -686,5 +765,21 @@ mod tests {
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, "user");
         assert_eq!(msgs[0].text, "Hello");
+    }
+
+    #[test]
+    fn test_token_usage_tracks_cache_counters() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+
+        store.record_usage("cache_s1", 100, 20, 300, 240, "anthropic");
+        store.record_usage("cache_s1", 50, 10, 0, 128, "gemini");
+
+        let usage = store.load_token_usage("cache_s1");
+        assert_eq!(usage.total_prompt_tokens, 150);
+        assert_eq!(usage.total_completion_tokens, 30);
+        assert_eq!(usage.total_cache_creation_input_tokens, 300);
+        assert_eq!(usage.total_cache_read_input_tokens, 368);
+        assert_eq!(usage.total_requests, 2);
     }
 }

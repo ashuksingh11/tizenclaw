@@ -259,6 +259,8 @@ impl IpcServer {
                     json!({
                         "prompt_tokens": usage.total_prompt_tokens,
                         "completion_tokens": usage.total_completion_tokens,
+                        "cache_creation_input_tokens": usage.total_cache_creation_input_tokens,
+                        "cache_read_input_tokens": usage.total_cache_read_input_tokens,
                         "total_requests": usage.total_requests
                     })
                 } else {

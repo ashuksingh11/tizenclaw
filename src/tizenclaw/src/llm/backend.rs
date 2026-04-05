@@ -91,6 +91,8 @@ pub struct LlmResponse {
     pub prompt_tokens: i32,
     pub completion_tokens: i32,
     pub total_tokens: i32,
+    pub cache_creation_input_tokens: i32,
+    pub cache_read_input_tokens: i32,
     pub http_status: u16,
 }
 
