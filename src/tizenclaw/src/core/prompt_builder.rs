@@ -80,25 +80,55 @@ impl SystemPromptBuilder {
             return "No tools currently available.".into();
         }
 
-        let mut lines = Vec::new();
-        lines.push("| Tool Name | Description | Parameters |".into());
-        lines.push("| :--- | :--- | :--- |".into());
+        let mut tool_names: Vec<String> = self
+            .available_tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect();
+        tool_names.sort();
+        tool_names.dedup();
 
-        for tool in &self.available_tools {
-            let desc = tool.description.replace("\n", " ");
-            let params = tool.parameters.to_string();
-            let short_params = if params.len() > 100 {
-                format!("{}...", &params[..100])
-            } else {
-                params
-            };
-            lines.push(format!(
-                "| `{}` | {} | `{}` |",
-                tool.name, desc, short_params
-            ));
+        let preview_len = 16usize;
+        let preview = tool_names
+            .iter()
+            .take(preview_len)
+            .map(|name| format!("`{}`", name))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        if tool_names.len() > preview_len {
+            format!(
+                "Native tool schemas are attached separately. Prefer the provided tool-calling interface. Tool name preview: {} (+{} more).",
+                preview,
+                tool_names.len() - preview_len
+            )
+        } else {
+            format!(
+                "Native tool schemas are attached separately. Prefer the provided tool-calling interface. Tool name preview: {}.",
+                preview
+            )
+        }
+    }
+
+    pub fn build_dynamic_context(&self) -> Option<String> {
+        let ctx = self.runtime_context.as_ref()?;
+        let mut lines = Vec::new();
+        lines.push("## Runtime Context".into());
+
+        if !ctx.os_info.trim().is_empty() {
+            lines.push(format!("Platform: {}", ctx.os_info.trim()));
+        }
+        if !ctx.active_model.trim().is_empty() {
+            lines.push(format!("Active Backend: {}", ctx.active_model.trim()));
+        }
+        if !ctx.working_dir.trim().is_empty() {
+            lines.push(format!("Working Data Dir: {}", ctx.working_dir.trim()));
+        }
+        if !ctx.current_time.trim().is_empty() {
+            lines.push(format!("Current Time: {}", ctx.current_time.trim()));
         }
 
-        lines.join("\n")
+        (lines.len() > 1).then(|| lines.join("\n"))
     }
 
     pub fn build(self) -> String {
@@ -179,19 +209,6 @@ impl SystemPromptBuilder {
         lines.push("</available_skill_references>".into());
         lines.push("".into());
 
-        // 5. Platform Runtime Metadata
-        if let Some(ctx) = self.runtime_context {
-            lines.push("## Workspace Context & Runtime Metadata".into());
-            lines.push(format!("Working Directory: {}", ctx.working_dir));
-            lines.push(format!("Current Time: {}", ctx.current_time));
-            lines.push("Treat this directory as the single global workspace for file operations unless explicitly instructed otherwise.".into());
-            lines.push(format!(
-                "Runtime Environment: os='{}' | active_model='{}'",
-                ctx.os_info, ctx.active_model
-            ));
-            lines.push("".into());
-        }
-
         lines.join("\n")
     }
 }
@@ -235,19 +252,22 @@ mod tests {
 
     #[test]
     fn test_runtime_context() {
-        let prompt = SystemPromptBuilder::new()
+        let builder = SystemPromptBuilder::new()
             .set_runtime_context(
                 "Ubuntu".into(),
                 "Claude 3.5".into(),
                 "/home/user".into(),
                 "2024-04-01 12:00:00".into(),
-            )
-            .build();
+            );
+        let dynamic = builder.build_dynamic_context().unwrap();
+        let prompt = builder.build();
 
-        assert!(prompt.contains("Working Directory: /home/user"));
-        assert!(prompt.contains("os='Ubuntu'"));
-        assert!(prompt.contains("active_model='Claude 3.5'"));
-        assert!(prompt.contains("Current Time: 2024-04-01 12:00:00"));
+        assert!(!prompt.contains("Working Directory: /home/user"));
+        assert!(!prompt.contains("Current Time: 2024-04-01 12:00:00"));
+        assert!(dynamic.contains("Platform: Ubuntu"));
+        assert!(dynamic.contains("Active Backend: Claude 3.5"));
+        assert!(dynamic.contains("Working Data Dir: /home/user"));
+        assert!(dynamic.contains("Current Time: 2024-04-01 12:00:00"));
     }
 
     #[test]
@@ -269,5 +289,27 @@ mod tests {
         assert!(prompt.contains("<think>"));
         assert!(prompt.contains("<final>"));
         assert!(prompt.contains("Budget Awareness"));
+    }
+
+    #[test]
+    fn test_tool_catalog_is_compact() {
+        let prompt = SystemPromptBuilder::new()
+            .add_available_tools(vec![
+                crate::llm::backend::LlmToolDecl {
+                    name: "tool_a".into(),
+                    description: "A".into(),
+                    parameters: serde_json::json!({"type": "object"}),
+                },
+                crate::llm::backend::LlmToolDecl {
+                    name: "tool_b".into(),
+                    description: "B".into(),
+                    parameters: serde_json::json!({"type": "object"}),
+                },
+            ])
+            .build();
+        assert!(prompt.contains("Native tool schemas are attached separately"));
+        assert!(prompt.contains("`tool_a`"));
+        assert!(prompt.contains("`tool_b`"));
+        assert!(!prompt.contains("| Tool Name | Description | Parameters |"));
     }
 }

@@ -52,6 +52,10 @@ impl AnthropicBackend {
             );
         }
     }
+
+    fn trimmed_text(text: &str) -> String {
+        text.trim().to_string()
+    }
 }
 
 #[async_trait::async_trait]
@@ -105,6 +109,7 @@ impl LlmBackend for AnthropicBackend {
 
         let mut msgs = vec![];
         for msg in messages {
+            let text = Self::trimmed_text(&msg.text);
             let mut is_downgraded = false;
             if msg.role == "tool" && !valid_tools.contains(msg.tool_name.as_str()) {
                 is_downgraded = true;
@@ -128,14 +133,14 @@ impl LlmBackend for AnthropicBackend {
                         .map(|tc| format!("Called tool '{}' with args '{}'", tc.name, tc.args))
                         .collect::<Vec<_>>()
                         .join("\n");
-                    let full_text = if msg.text.is_empty() {
+                    let full_text = if text.is_empty() {
                         calls_text
                     } else {
-                        format!("{}\n\n{}", msg.text, calls_text)
+                        format!("{}\n\n{}", text, calls_text)
                     };
                     msgs.push(json!({"role": "assistant", "content": full_text}));
-                } else {
-                    msgs.push(json!({"role": msg.role, "content": msg.text}));
+                } else if !text.is_empty() {
+                    msgs.push(json!({"role": msg.role, "content": text}));
                 }
             } else if msg.role == "tool" {
                 let content_str = match msg.tool_result.as_str() {
@@ -148,8 +153,8 @@ impl LlmBackend for AnthropicBackend {
                 }]}));
             } else if msg.role == "assistant" && !msg.tool_calls.is_empty() {
                 let mut content = vec![];
-                if !msg.text.is_empty() {
-                    content.push(json!({"type": "text", "text": msg.text}));
+                if !text.is_empty() {
+                    content.push(json!({"type": "text", "text": text}));
                 }
                 for tc in &msg.tool_calls {
                     content.push(json!({
@@ -160,8 +165,8 @@ impl LlmBackend for AnthropicBackend {
                     }));
                 }
                 msgs.push(json!({"role": "assistant", "content": content}));
-            } else {
-                msgs.push(json!({"role": msg.role, "content": msg.text}));
+            } else if !text.is_empty() {
+                msgs.push(json!({"role": msg.role, "content": text}));
             }
         }
         req["messages"] = Value::Array(msgs);

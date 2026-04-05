@@ -26,6 +26,10 @@ impl OpenAiBackend {
             provider_name: provider.into(),
         }
     }
+
+    fn trimmed_text(text: &str) -> String {
+        text.trim().to_string()
+    }
 }
 
 #[async_trait::async_trait]
@@ -61,6 +65,7 @@ impl LlmBackend for OpenAiBackend {
             msgs.push(json!({"role": "system", "content": system_prompt}));
         }
         for msg in messages {
+            let text = Self::trimmed_text(&msg.text);
             let mut is_downgraded = false;
             if msg.role == "tool" && !valid_tools.contains(msg.tool_name.as_str()) {
                 is_downgraded = true;
@@ -84,14 +89,14 @@ impl LlmBackend for OpenAiBackend {
                         .map(|tc| format!("Called tool '{}' with args '{}'", tc.name, tc.args))
                         .collect::<Vec<_>>()
                         .join("\n");
-                    let full_text = if msg.text.is_empty() {
+                    let full_text = if text.is_empty() {
                         calls_text
                     } else {
-                        format!("{}\n\n{}", msg.text, calls_text)
+                        format!("{}\n\n{}", text, calls_text)
                     };
                     msgs.push(json!({"role": "assistant", "content": full_text}));
-                } else {
-                    msgs.push(json!({"role": msg.role, "content": msg.text}));
+                } else if !text.is_empty() {
+                    msgs.push(json!({"role": msg.role, "content": text}));
                 }
             } else if msg.role == "tool" {
                 msgs.push(json!({"role": "tool", "content": msg.tool_result.to_string(), "tool_call_id": msg.tool_call_id}));
@@ -107,12 +112,12 @@ impl LlmBackend for OpenAiBackend {
                     })
                     .collect();
                 let mut m = json!({"role": "assistant", "tool_calls": tcs});
-                if !msg.text.is_empty() {
-                    m["content"] = json!(msg.text);
+                if !text.is_empty() {
+                    m["content"] = json!(text);
                 }
                 msgs.push(m);
-            } else {
-                msgs.push(json!({"role": msg.role, "content": msg.text}));
+            } else if !text.is_empty() {
+                msgs.push(json!({"role": msg.role, "content": text}));
             }
         }
         let mut req = json!({"model": self.model, "messages": msgs});

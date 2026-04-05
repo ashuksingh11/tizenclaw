@@ -156,11 +156,15 @@ impl SessionStore {
 
     /// Append a message to today's session file.
     pub fn add_message(&self, session_id: &str, role: &str, content: &str) {
+        let trimmed = content.trim();
+        if trimmed.is_empty() {
+            return;
+        }
         self.ensure_session(session_id);
         let path = self.session_file_today(session_id);
         let _g = self.lock.write().unwrap();
         if let Ok(mut file) = OpenOptions::new().append(true).open(&path) {
-            let block = format!("## {}\n{}\n\n", role, content);
+            let block = format!("## {}\n{}\n\n", role, trimmed);
             let _ = file.write_all(block.as_bytes());
         }
     }
@@ -237,7 +241,11 @@ impl SessionStore {
             messages.len()
         );
         for msg in messages {
-            content.push_str(&format!("## {}\n{}\n\n", msg.role, msg.text));
+            let trimmed = msg.text.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            content.push_str(&format!("## {}\n{}\n\n", msg.role, trimmed));
         }
 
         // Write temp → rename (atomic on POSIX/Tizen)
@@ -582,15 +590,25 @@ mod tests {
         // Create tables
         {
             let conn = store.db.lock().unwrap();
-            conn.execute(
+            conn.execute_batch(
                 "CREATE TABLE IF NOT EXISTS session_index (
                     id TEXT PRIMARY KEY,
                     created_at TEXT NOT NULL,
                     last_active TEXT NOT NULL
-                )",
-                [],
+                );
+                CREATE TABLE IF NOT EXISTS token_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    prompt_tokens INTEGER DEFAULT 0,
+                    completion_tokens INTEGER DEFAULT 0,
+                    cache_creation_input_tokens INTEGER DEFAULT 0,
+                    cache_read_input_tokens INTEGER DEFAULT 0
+                );",
             )
             .unwrap();
+            SessionStore::ensure_token_usage_columns(&conn).unwrap();
         }
         store
     }

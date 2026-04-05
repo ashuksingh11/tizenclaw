@@ -52,12 +52,40 @@ fn utf8_safe_preview(text: &str, max_chars: usize) -> &str {
 }
 
 fn inject_context_message(messages: &mut Vec<LlmMessage>, text: String) {
+    if text.trim().is_empty() {
+        return;
+    }
     let context_message = LlmMessage::user(&text);
     if let Some(last_user_idx) = messages.iter().rposition(|message| message.role == "user") {
         messages.insert(last_user_idx, context_message);
     } else {
         messages.push(context_message);
     }
+}
+
+fn sanitize_message_for_transport(mut message: LlmMessage) -> Option<LlmMessage> {
+    message.text = message.text.trim().to_string();
+    message.reasoning_text = message.reasoning_text.trim().to_string();
+    message.tool_name = message.tool_name.trim().to_string();
+    message.tool_call_id = message.tool_call_id.trim().to_string();
+
+    let has_text = !message.text.is_empty();
+    let has_reasoning = !message.reasoning_text.is_empty();
+    let has_tool_calls = !message.tool_calls.is_empty();
+    let has_tool_payload = message.role == "tool";
+
+    if has_text || has_reasoning || has_tool_calls || has_tool_payload {
+        Some(message)
+    } else {
+        None
+    }
+}
+
+fn sanitize_messages_for_transport(messages: Vec<LlmMessage>) -> Vec<LlmMessage> {
+    messages
+        .into_iter()
+        .filter_map(sanitize_message_for_transport)
+        .collect()
 }
 
 fn skill_relevance_score(prompt: &str, skill: &TextualSkill) -> usize {
@@ -1277,6 +1305,7 @@ impl AgentCore {
                 text: m.text.clone(),
                 ..Default::default()
             })
+            .filter_map(sanitize_message_for_transport)
             .collect();
 
         if messages.is_empty() || messages.last().map(|m| m.role.as_str()) != Some("user") {
@@ -1331,7 +1360,7 @@ impl AgentCore {
         });
 
         // Build System Prompt
-        let system_prompt = {
+        let (system_prompt, dynamic_context) = {
             let mut builder = crate::core::prompt_builder::SystemPromptBuilder::new()
                 .add_available_tools(tools.clone()); // XML Inject
             if let Ok(base) = self.system_prompt.read() {
@@ -1369,8 +1398,14 @@ impl AgentCore {
                 .unwrap_or_else(|_| "unknown".into());
             builder = builder.set_runtime_context(platform_name, model_name, data_dir, now);
 
-            builder.build()
+            let dynamic_context = builder.build_dynamic_context();
+            let system_prompt = builder.build();
+            (system_prompt, dynamic_context)
         };
+
+        if let Some(dynamic_context) = dynamic_context {
+            inject_context_message(&mut messages, dynamic_context);
+        }
 
         // Load long term memory dynamically and inject into messages (preserves system_prompt cache)
         if let Ok(ms) = self.memory_store.lock() {
@@ -1386,6 +1421,8 @@ impl AgentCore {
                 }
             }
         }
+
+        messages = sanitize_messages_for_transport(messages);
 
         // ── Phase 2.5: Prompt Cache Preparation ─────────────────────────
         // Compute hash of system_prompt; refresh server-side cache only when
@@ -1460,8 +1497,14 @@ impl AgentCore {
                     let be_guard = self.backend.read().await;
                     if let Some(be) = be_guard.as_ref() {
                         Some(
-                            be.chat(&[LlmMessage::user(prompt)], &[], None, plan_sys, Some(1024))
-                                .await,
+                            be.chat(
+                                &sanitize_messages_for_transport(vec![LlmMessage::user(prompt)]),
+                                &[],
+                                None,
+                                plan_sys,
+                                Some(1024),
+                            )
+                            .await,
                         )
                     } else {
                         None
@@ -1598,7 +1641,7 @@ impl AgentCore {
                             }
                             response = self
                                 .chat_with_fallback(
-                                    &messages,
+                                    &sanitize_messages_for_transport(messages.clone()),
                                     &tools,
                                     on_chunk,
                                     &system_prompt,
@@ -1611,7 +1654,7 @@ impl AgentCore {
             } else {
                 response = self
                     .chat_with_fallback(
-                        &messages,
+                        &sanitize_messages_for_transport(messages.clone()),
                         &tools,
                         on_chunk,
                         &system_prompt,

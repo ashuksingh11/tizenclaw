@@ -45,6 +45,10 @@ impl GeminiBackend {
         }
     }
 
+    fn trimmed_text(text: &str) -> String {
+        text.trim().to_string()
+    }
+
     /// Build the generateContent request body.
     ///
     /// If `cached_name` is `Some`, the request references the cached system
@@ -89,6 +93,7 @@ impl GeminiBackend {
 
         let mut contents = vec![];
         for msg in messages {
+            let text = Self::trimmed_text(&msg.text);
             let mut is_downgraded = false;
 
             if msg.role == "tool" && !valid_tools.contains(msg.tool_name.as_str()) {
@@ -119,29 +124,36 @@ impl GeminiBackend {
                         .map(|tc| format!("Called tool '{}' with args '{}'", tc.name, tc.args))
                         .collect::<Vec<_>>()
                         .join("\n");
-                    let full_text = if msg.text.is_empty() {
+                    let full_text = if text.is_empty() {
                         calls_text
                     } else {
-                        format!("{}\n\n{}", msg.text, calls_text)
+                        format!("{}\n\n{}", text, calls_text)
                     };
                     json!([{"text": full_text}])
+                } else if !text.is_empty() {
+                    json!([{"text": text}])
                 } else {
-                    json!([{"text": msg.text}])
+                    json!([])
                 }
             } else if msg.role == "tool" {
                 json!([{"functionResponse": {"name": msg.tool_name, "response": {"output": msg.tool_result.to_string()}}}])
             } else if !msg.tool_calls.is_empty() {
                 let mut arr = vec![];
-                if !msg.text.is_empty() {
-                    arr.push(json!({"text": msg.text}));
+                if !text.is_empty() {
+                    arr.push(json!({"text": text}));
                 }
                 for tc in &msg.tool_calls {
                     arr.push(json!({"functionCall": {"name": tc.name, "args": tc.args}}));
                 }
                 Value::Array(arr)
+            } else if !text.is_empty() {
+                json!([{"text": text}])
             } else {
-                json!([{"text": msg.text}])
+                json!([])
             };
+            if parts.as_array().map(|items| items.is_empty()).unwrap_or(false) {
+                continue;
+            }
             contents.push(json!({"role": role, "parts": parts}));
         }
         req["contents"] = Value::Array(contents);
