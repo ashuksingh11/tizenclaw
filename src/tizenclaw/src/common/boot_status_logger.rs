@@ -5,7 +5,7 @@ use std::time::Instant;
 
 pub struct BootStatusLogger {
     start_time: Instant,
-    entries: Vec<(String, u64, bool)>,  // (name, duration_ms, success)
+    entries: Vec<(String, u64, bool)>, // (name, duration_ms, success)
 }
 
 impl Default for BootStatusLogger {
@@ -39,10 +39,17 @@ impl BootStatusLogger {
     }
 
     pub fn summary(&self) -> String {
-        let mut parts: Vec<String> = self.entries.iter()
-            .map(|(name, dur, ok)| format!("  {} {}ms {}", name, dur, if *ok { "OK" } else { "FAIL" }))
+        let mut parts: Vec<String> = self
+            .entries
+            .iter()
+            .map(|(name, dur, ok)| {
+                format!("  {} {}ms {}", name, dur, if *ok { "OK" } else { "FAIL" })
+            })
             .collect();
-        parts.insert(0, format!("Boot completed in {}ms:", self.total_boot_time_ms()));
+        parts.insert(
+            0,
+            format!("Boot completed in {}ms:", self.total_boot_time_ms()),
+        );
         parts.join("\n")
     }
 }
@@ -62,6 +69,11 @@ impl BootTracker {
 impl Drop for BootTracker {
     fn drop(&mut self) {
         let duration = self.start.elapsed().as_millis() as u64;
-        log::info!("Boot [{}]: {}ms {}", self.name, duration, if self.failed { "FAIL" } else { "OK" });
+        log::info!(
+            "Boot [{}]: {}ms {}",
+            self.name,
+            duration,
+            if self.failed { "FAIL" } else { "OK" }
+        );
     }
 }

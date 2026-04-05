@@ -43,17 +43,27 @@ impl AgentRoleRegistry {
         if let Some(roles) = config["roles"].as_array() {
             for r in roles {
                 let name = r["name"].as_str().unwrap_or("").to_string();
-                if name.is_empty() { continue; }
-                let allowed: Vec<String> = r["allowed_tools"].as_array()
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                if name.is_empty() {
+                    continue;
+                }
+                let allowed: Vec<String> = r["allowed_tools"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    })
                     .unwrap_or_default();
-                self.roles.insert(name.clone(), AgentRole {
-                    name,
-                    system_prompt: r["system_prompt"].as_str().unwrap_or("").to_string(),
-                    allowed_tools: allowed,
-                    max_iterations: r["max_iterations"].as_u64().unwrap_or(10) as usize,
-                    description: r["description"].as_str().unwrap_or("").to_string(),
-                });
+                self.roles.insert(
+                    name.clone(),
+                    AgentRole {
+                        name,
+                        system_prompt: r["system_prompt"].as_str().unwrap_or("").to_string(),
+                        allowed_tools: allowed,
+                        max_iterations: r["max_iterations"].as_u64().unwrap_or(10) as usize,
+                        description: r["description"].as_str().unwrap_or("").to_string(),
+                    },
+                );
             }
         }
         log::info!("AgentRoleRegistry: loaded {} roles", self.roles.len());
@@ -61,11 +71,17 @@ impl AgentRoleRegistry {
     }
 
     pub fn get_role(&self, name: &str) -> Option<&AgentRole> {
-        self.roles.get(name).or_else(|| self.dynamic_roles.get(name))
+        self.roles
+            .get(name)
+            .or_else(|| self.dynamic_roles.get(name))
     }
 
     pub fn get_role_names(&self) -> Vec<String> {
-        self.roles.keys().chain(self.dynamic_roles.keys()).cloned().collect()
+        self.roles
+            .keys()
+            .chain(self.dynamic_roles.keys())
+            .cloned()
+            .collect()
     }
 
     pub fn add_dynamic_role(&mut self, role: AgentRole) {
@@ -139,4 +155,3 @@ mod tests {
         assert!(reg.get_role_names().is_empty());
     }
 }
-

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -21,18 +22,18 @@ pub fn scan_textual_skills(skills_dir: &str) -> Vec<TextualSkill> {
     if let Ok(entries) = fs::read_dir(root) {
         for entry in entries.flatten() {
             let skill_folder = entry.path();
-            
+
             // OpenClaw skills are strictly directories containing a SKILL.md
             if skill_folder.is_dir() {
                 let skill_md_path = skill_folder.join("SKILL.md");
-                
+
                 if skill_md_path.exists() && skill_md_path.is_file() {
                     let skill_name = skill_folder
                         .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("unknown_skill")
                         .to_string();
-                        
+
                     let absolute_path = skill_md_path.to_string_lossy().to_string();
                     let content = fs::read_to_string(&skill_md_path).unwrap_or_default();
                     let description = extract_description(&content, &skill_name);
@@ -49,6 +50,19 @@ pub fn scan_textual_skills(skills_dir: &str) -> Vec<TextualSkill> {
     skills
 }
 
+pub fn scan_textual_skills_from_roots<'a, I>(roots: I) -> Vec<TextualSkill>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut deduped = BTreeMap::new();
+    for root in roots {
+        for skill in scan_textual_skills(root) {
+            deduped.entry(skill.file_name.clone()).or_insert(skill);
+        }
+    }
+    deduped.into_values().collect()
+}
+
 /// Extract 'description:' from YAML frontmatter strictly as supported by Anthropic OpenClaw.
 /// Does NOT implement custom specs or random heading fallbacks.
 fn extract_description(content: &str, skill_name: &str) -> String {
@@ -60,13 +74,17 @@ fn extract_description(content: &str, skill_name: &str) -> String {
             continue;
         }
         if in_yaml && trimmed.starts_with("description:") {
-            let val = trimmed.trim_start_matches("description:").trim().trim_matches('"').trim_matches('\'');
+            let val = trimmed
+                .trim_start_matches("description:")
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'');
             if !val.is_empty() {
                 return val.to_string();
             }
         }
     }
-    
+
     // If no description exists in YAML, return a generic fallback matching the skill name
     format!("Custom skill: {}", skill_name)
 }
@@ -82,7 +100,7 @@ mod tests {
         let skill_dir = dir.path().join("hello_world");
         fs::create_dir_all(&skill_dir).unwrap();
         let skill_file = skill_dir.join("SKILL.md");
-        
+
         let content = "---\ndescription: \"A test skill\"\n---\n# Hello\nBody text";
         fs::write(&skill_file, content).unwrap();
 
@@ -109,12 +127,37 @@ mod tests {
         let skill_dir = dir.path().join("no_desc");
         fs::create_dir_all(&skill_dir).unwrap();
         let skill_file = skill_dir.join("SKILL.md");
-        
+
         let content = "# No Frontmatter\nJust text.";
         fs::write(&skill_file, content).unwrap();
 
         let skills = scan_textual_skills(&dir.path().to_string_lossy());
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].description, "Custom skill: no_desc");
+    }
+
+    #[test]
+    fn scan_textual_skills_from_roots_deduplicates_names() {
+        let dir1 = tempfile::tempdir().unwrap();
+        let dir2 = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir1.path().join("helper")).unwrap();
+        fs::create_dir_all(dir2.path().join("helper")).unwrap();
+        fs::write(
+            dir1.path().join("helper/SKILL.md"),
+            "---\ndescription: \"First\"\n---",
+        )
+        .unwrap();
+        fs::write(
+            dir2.path().join("helper/SKILL.md"),
+            "---\ndescription: \"Second\"\n---",
+        )
+        .unwrap();
+
+        let skills = scan_textual_skills_from_roots([
+            dir1.path().to_string_lossy().as_ref(),
+            dir2.path().to_string_lossy().as_ref(),
+        ]);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].description, "First");
     }
 }

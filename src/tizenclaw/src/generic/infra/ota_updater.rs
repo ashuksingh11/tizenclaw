@@ -67,11 +67,7 @@ impl OtaUpdater {
 
     fn is_newer(new_version: &str) -> bool {
         // Simple semver comparison
-        let parse = |v: &str| -> Vec<u32> {
-            v.split('.')
-                .filter_map(|s| s.parse().ok())
-                .collect()
-        };
+        let parse = |v: &str| -> Vec<u32> { v.split('.').filter_map(|s| s.parse().ok()).collect() };
         let current = parse(CURRENT_VERSION);
         let new = parse(new_version);
 

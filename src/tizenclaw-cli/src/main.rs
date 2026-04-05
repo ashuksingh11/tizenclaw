@@ -47,7 +47,9 @@ fn send_payload(fd: i32, data: &str) -> bool {
         let mut sent: usize = 0;
         while sent < data.len() {
             let n = libc::write(fd, data.as_ptr().add(sent) as *const _, data.len() - sent);
-            if n <= 0 { return false; }
+            if n <= 0 {
+                return false;
+            }
             sent += n as usize;
         }
     }
@@ -70,10 +72,10 @@ fn recv_response(fd: i32) -> String {
     let mut buf = vec![0u8; resp_len];
     let mut got: usize = 0;
     while got < resp_len {
-        let n = unsafe {
-            libc::read(fd, buf.as_mut_ptr().add(got) as *mut _, resp_len - got)
-        };
-        if n <= 0 { break; }
+        let n = unsafe { libc::read(fd, buf.as_mut_ptr().add(got) as *mut _, resp_len - got) };
+        if n <= 0 {
+            break;
+        }
         got += n as usize;
     }
     String::from_utf8_lossy(&buf[..got]).to_string()
@@ -90,7 +92,9 @@ fn send_jsonrpc(method: &str, params: Value) -> Result<(Value, bool), String> {
     });
 
     if !send_payload(fd, &req.to_string()) {
-        unsafe { libc::close(fd); }
+        unsafe {
+            libc::close(fd);
+        }
         return Err("Failed to send request".into());
     }
 
@@ -99,14 +103,18 @@ fn send_jsonrpc(method: &str, params: Value) -> Result<(Value, bool), String> {
     loop {
         let resp = recv_response(fd);
         if resp.is_empty() {
-            unsafe { libc::close(fd); }
+            unsafe {
+                libc::close(fd);
+            }
             return Err("Empty response from daemon".into());
         }
 
         let parsed: Value = match serde_json::from_str(&resp) {
             Ok(v) => v,
             Err(e) => {
-                unsafe { libc::close(fd); }
+                unsafe {
+                    libc::close(fd);
+                }
                 return Err(format!("Invalid JSON: {}", e));
             }
         };
@@ -124,7 +132,9 @@ fn send_jsonrpc(method: &str, params: Value) -> Result<(Value, bool), String> {
             continue;
         }
 
-        unsafe { libc::close(fd); }
+        unsafe {
+            libc::close(fd);
+        }
         return Ok((parsed, stream_received));
     }
 }
@@ -138,12 +148,22 @@ fn send_prompt(session_id: &str, prompt: &str, stream: bool) -> Result<(), Strin
 
     if let Some(result) = resp.get("result") {
         if let Some(text) = result.get("text").and_then(|v| v.as_str()) {
-            if !stream_received { println!("{}", text); } else { println!(); }
+            if !stream_received {
+                println!("{}", text);
+            } else {
+                println!();
+            }
         } else {
-            println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&result).unwrap_or_default()
+            );
         }
     } else if let Some(err) = resp.get("error") {
-        let msg = err.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+        let msg = err
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
         eprintln!("Error: {}", msg);
     }
     Ok(())
@@ -152,48 +172,72 @@ fn send_prompt(session_id: &str, prompt: &str, stream: bool) -> Result<(), Strin
 /// Handle `tizenclaw-cli dashboard <action>`.
 fn cmd_dashboard(action: &str) {
     match action {
-        "start" => {
-            match send_jsonrpc("start_channel", json!({"name": "web_dashboard"})) {
-                Ok((resp, _)) => {
-                    if resp.get("result").is_some() {
-                        println!("Dashboard started.");
-                    } else if let Some(err) = resp.get("error") {
-                        eprintln!("Error: {}", err.get("message").and_then(|v| v.as_str()).unwrap_or("unknown"));
-                        std::process::exit(1);
-                    }
+        "start" => match send_jsonrpc("start_channel", json!({"name": "web_dashboard"})) {
+            Ok((resp, _)) => {
+                if resp.get("result").is_some() {
+                    println!("Dashboard started.");
+                } else if let Some(err) = resp.get("error") {
+                    eprintln!(
+                        "Error: {}",
+                        err.get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                    );
+                    std::process::exit(1);
                 }
-                Err(e) => { eprintln!("{}", e); std::process::exit(1); }
             }
-        }
-        "stop" => {
-            match send_jsonrpc("stop_channel", json!({"name": "web_dashboard"})) {
-                Ok((resp, _)) => {
-                    if resp.get("result").is_some() {
-                        println!("Dashboard stopped.");
-                    } else if let Some(err) = resp.get("error") {
-                        eprintln!("Error: {}", err.get("message").and_then(|v| v.as_str()).unwrap_or("unknown"));
-                        std::process::exit(1);
-                    }
+            Err(e) => {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
+        },
+        "stop" => match send_jsonrpc("stop_channel", json!({"name": "web_dashboard"})) {
+            Ok((resp, _)) => {
+                if resp.get("result").is_some() {
+                    println!("Dashboard stopped.");
+                } else if let Some(err) = resp.get("error") {
+                    eprintln!(
+                        "Error: {}",
+                        err.get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                    );
+                    std::process::exit(1);
                 }
-                Err(e) => { eprintln!("{}", e); std::process::exit(1); }
             }
-        }
-        "status" => {
-            match send_jsonrpc("channel_status", json!({"name": "web_dashboard"})) {
-                Ok((resp, _)) => {
-                    if let Some(result) = resp.get("result") {
-                        let running = result.get("running").and_then(|v| v.as_bool()).unwrap_or(false);
-                        println!("Dashboard: {}", if running { "running" } else { "stopped" });
-                    } else if let Some(err) = resp.get("error") {
-                        eprintln!("Error: {}", err.get("message").and_then(|v| v.as_str()).unwrap_or("unknown"));
-                        std::process::exit(1);
-                    }
+            Err(e) => {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
+        },
+        "status" => match send_jsonrpc("channel_status", json!({"name": "web_dashboard"})) {
+            Ok((resp, _)) => {
+                if let Some(result) = resp.get("result") {
+                    let running = result
+                        .get("running")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    println!("Dashboard: {}", if running { "running" } else { "stopped" });
+                } else if let Some(err) = resp.get("error") {
+                    eprintln!(
+                        "Error: {}",
+                        err.get("message")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown")
+                    );
+                    std::process::exit(1);
                 }
-                Err(e) => { eprintln!("{}", e); std::process::exit(1); }
             }
-        }
+            Err(e) => {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
+        },
         _ => {
-            eprintln!("Unknown dashboard action '{}'. Use: start | stop | status", action);
+            eprintln!(
+                "Unknown dashboard action '{}'. Use: start | stop | status",
+                action
+            );
             std::process::exit(1);
         }
     }
@@ -214,7 +258,9 @@ fn interactive_mode(session_id: &str, stream: bool) {
             break;
         }
         let line = line.trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
 
         match line {
             "quit" | "exit" => break,
@@ -228,12 +274,13 @@ fn interactive_mode(session_id: &str, stream: bool) {
                 println!("  quit, exit        Exit");
                 println!("  <text>            Send prompt");
             }
-            cmd if cmd.starts_with("/usage") => {
-                match send_jsonrpc("get_usage", json!({})) {
-                    Ok(resp) => println!("{}", serde_json::to_string_pretty(&resp).unwrap_or_default()),
-                    Err(e) => eprintln!("Error: {}", e),
-                }
-            }
+            cmd if cmd.starts_with("/usage") => match send_jsonrpc("get_usage", json!({})) {
+                Ok(resp) => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&resp).unwrap_or_default()
+                ),
+                Err(e) => eprintln!("Error: {}", e),
+            },
             cmd if cmd.starts_with("/dashboard ") => {
                 let action = cmd.trim_start_matches("/dashboard ").trim();
                 cmd_dashboard(action);
@@ -260,7 +307,88 @@ fn print_usage() {
     eprintln!("  tizenclaw-cli dashboard start   Start the web dashboard");
     eprintln!("  tizenclaw-cli dashboard stop    Stop the web dashboard");
     eprintln!("  tizenclaw-cli dashboard status  Show dashboard status\n");
+    eprintln!("Registration commands:");
+    eprintln!("  tizenclaw-cli register tool <path>");
+    eprintln!("  tizenclaw-cli register skill <path>");
+    eprintln!("  tizenclaw-cli unregister tool <path>");
+    eprintln!("  tizenclaw-cli unregister skill <path>");
+    eprintln!("  tizenclaw-cli list registrations\n");
     eprintln!("If no prompt given, starts interactive mode.");
+}
+
+fn cmd_register(kind: &str, path: &str) {
+    match send_jsonrpc("register_path", json!({"kind": kind, "path": path})) {
+        Ok((resp, _)) => {
+            if let Some(result) = resp.get("result") {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(result).unwrap_or_default()
+                );
+            } else if let Some(err) = resp.get("error") {
+                eprintln!(
+                    "Error: {}",
+                    err.get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                );
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_unregister(kind: &str, path: &str) {
+    match send_jsonrpc("unregister_path", json!({"kind": kind, "path": path})) {
+        Ok((resp, _)) => {
+            if let Some(result) = resp.get("result") {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(result).unwrap_or_default()
+                );
+            } else if let Some(err) = resp.get("error") {
+                eprintln!(
+                    "Error: {}",
+                    err.get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                );
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_list_registrations() {
+    match send_jsonrpc("list_registered_paths", json!({})) {
+        Ok((resp, _)) => {
+            if let Some(result) = resp.get("result") {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(result).unwrap_or_default()
+                );
+            } else if let Some(err) = resp.get("error") {
+                eprintln!(
+                    "Error: {}",
+                    err.get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                );
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    }
 }
 
 fn main() {
@@ -287,7 +415,10 @@ fn main() {
             "--no-stream" => stream = false,
             "--usage" => {
                 match send_jsonrpc("get_usage", json!({})) {
-                    Ok(resp) => println!("{}", serde_json::to_string_pretty(&resp).unwrap_or_default()),
+                    Ok(resp) => println!(
+                        "{}",
+                        serde_json::to_string_pretty(&resp).unwrap_or_default()
+                    ),
                     Err(e) => eprintln!("Error: {}", e),
                 }
                 return;
@@ -297,8 +428,28 @@ fn main() {
                 cmd_dashboard(&args[i]);
                 return;
             }
+            "register" if i + 2 < args.len() => {
+                cmd_register(&args[i + 1], &args[i + 2]);
+                return;
+            }
+            "unregister" if i + 2 < args.len() => {
+                cmd_unregister(&args[i + 1], &args[i + 2]);
+                return;
+            }
+            "list" if i + 1 < args.len() && args[i + 1] == "registrations" => {
+                cmd_list_registrations();
+                return;
+            }
             "dashboard" => {
                 eprintln!("Usage: tizenclaw-cli dashboard <start|stop|status>");
+                std::process::exit(1);
+            }
+            "register" => {
+                eprintln!("Usage: tizenclaw-cli register <tool|skill> <path>");
+                std::process::exit(1);
+            }
+            "unregister" => {
+                eprintln!("Usage: tizenclaw-cli unregister <tool|skill> <path>");
                 std::process::exit(1);
             }
             _ => {

@@ -22,7 +22,9 @@ impl Default for CapabilityRegistry {
 
 impl CapabilityRegistry {
     pub fn new() -> Self {
-        CapabilityRegistry { capabilities: HashMap::new() }
+        CapabilityRegistry {
+            capabilities: HashMap::new(),
+        }
     }
 
     pub fn register(&mut self, cap: Capability) {
@@ -35,7 +37,10 @@ impl CapabilityRegistry {
     }
 
     pub fn is_available(&self, name: &str) -> bool {
-        self.capabilities.get(name).map(|c| c.enabled).unwrap_or(false)
+        self.capabilities
+            .get(name)
+            .map(|c| c.enabled)
+            .unwrap_or(false)
     }
 
     pub fn get_all(&self) -> Vec<&Capability> {
@@ -48,14 +53,20 @@ impl CapabilityRegistry {
 
     pub fn enable(&mut self, name: &str) -> bool {
         if let Some(c) = self.capabilities.get_mut(name) {
-            c.enabled = true; true
-        } else { false }
+            c.enabled = true;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn disable(&mut self, name: &str) -> bool {
         if let Some(c) = self.capabilities.get_mut(name) {
-            c.enabled = false; true
-        } else { false }
+            c.enabled = false;
+            true
+        } else {
+            false
+        }
     }
 
     /// Auto-register capabilities based on available system features.
@@ -96,8 +107,10 @@ impl CapabilityRegistry {
             enabled: true,
         });
 
-        log::debug!("CapabilityRegistry: detected {} system capabilities",
-            self.capabilities.len());
+        log::debug!(
+            "CapabilityRegistry: detected {} system capabilities",
+            self.capabilities.len()
+        );
     }
 }
 
@@ -167,4 +180,3 @@ mod tests {
         assert_eq!(reg.get_enabled().len(), 2);
     }
 }
-

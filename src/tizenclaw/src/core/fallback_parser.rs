@@ -3,9 +3,9 @@
 //! Handles cases where the LLM fails to use the structured tool calling API
 //! but produces valid tool call patterns in its response text.
 
+use crate::llm::backend::LlmToolCall;
 use regex::Regex;
 use serde_json::{json, Value};
-use crate::llm::backend::LlmToolCall;
 
 pub struct FallbackParser;
 
@@ -34,11 +34,17 @@ impl FallbackParser {
         let calltool_re = Regex::new(r#"(?s)<CallTool\s+name="([^"]+)"\s+args='([^']*)'\s*/>|<CallTool\s+name="([^"]+)"\s+args="([^"]*)"\s*/>"#).unwrap();
         for cap in calltool_re.captures_iter(text) {
             let (name, args_raw) = if let Some(n) = cap.get(1) {
-                (n.as_str().to_string(), cap.get(2).map_or("", |m| m.as_str()))
+                (
+                    n.as_str().to_string(),
+                    cap.get(2).map_or("", |m| m.as_str()),
+                )
             } else {
-                (cap.get(3).unwrap().as_str().to_string(), cap.get(4).map_or("", |m| m.as_str()))
+                (
+                    cap.get(3).unwrap().as_str().to_string(),
+                    cap.get(4).map_or("", |m| m.as_str()),
+                )
             };
-            
+
             // Clean up escaped quotes if any
             let clean_args = args_raw.replace("\\\"", "\"");
             let args: Value = serde_json::from_str(&clean_args).unwrap_or(json!({}));
@@ -49,28 +55,27 @@ impl FallbackParser {
             });
         }
 
-
         // 2. JSON block parser: ```json {"tool": "name", "arguments": {...}} ```
         if tool_calls.is_empty() {
-             let json_re = Regex::new(r"(?s)```json\s*(\{.*?\})\s*```").unwrap();
-             for cap in json_re.captures_iter(text) {
-                 if let Ok(v) = serde_json::from_str::<Value>(&cap[1]) {
-                     if let (Some(name), Some(args)) = (v["tool"].as_str(), v.get("arguments")) {
-                         tool_calls.push(LlmToolCall {
-                             id: format!("call_fb_j_{}", &uuid::Uuid::new_v4().to_string()[..8]),
-                             name: name.to_string(),
-                             args: args.clone(),
-                         });
-                     } else if let (Some(name), Some(args)) = (v["name"].as_str(), v.get("args")) {
-                         // Alternative naming
-                         tool_calls.push(LlmToolCall {
-                             id: format!("call_fb_j_{}", &uuid::Uuid::new_v4().to_string()[..8]),
-                             name: name.to_string(),
-                             args: args.clone(),
-                         });
-                     }
-                 }
-             }
+            let json_re = Regex::new(r"(?s)```json\s*(\{.*?\})\s*```").unwrap();
+            for cap in json_re.captures_iter(text) {
+                if let Ok(v) = serde_json::from_str::<Value>(&cap[1]) {
+                    if let (Some(name), Some(args)) = (v["tool"].as_str(), v.get("arguments")) {
+                        tool_calls.push(LlmToolCall {
+                            id: format!("call_fb_j_{}", &uuid::Uuid::new_v4().to_string()[..8]),
+                            name: name.to_string(),
+                            args: args.clone(),
+                        });
+                    } else if let (Some(name), Some(args)) = (v["name"].as_str(), v.get("args")) {
+                        // Alternative naming
+                        tool_calls.push(LlmToolCall {
+                            id: format!("call_fb_j_{}", &uuid::Uuid::new_v4().to_string()[..8]),
+                            name: name.to_string(),
+                            args: args.clone(),
+                        });
+                    }
+                }
+            }
         }
 
         tool_calls

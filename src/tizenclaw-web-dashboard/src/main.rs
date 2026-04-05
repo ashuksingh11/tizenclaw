@@ -36,18 +36,35 @@ extern "C" fn signal_handler(_: libc::c_int) {
 struct StderrLogger;
 
 impl log::Log for StderrLogger {
-    fn enabled(&self, _: &log::Metadata) -> bool { true }
+    fn enabled(&self, _: &log::Metadata) -> bool {
+        true
+    }
     fn log(&self, record: &log::Record) {
-        eprintln!("[{}] [WEB-DASHBOARD] {}:{} — {}",
+        eprintln!(
+            "[{}] [WEB-DASHBOARD] {}:{} — {}",
             record.level(),
             record.file().unwrap_or("?"),
             record.line().unwrap_or(0),
-            record.args());
+            record.args()
+        );
     }
     fn flush(&self) {}
 }
 
 static LOGGER: StderrLogger = StderrLogger;
+
+fn default_data_dir() -> PathBuf {
+    if let Ok(path) = std::env::var("TIZENCLAW_DATA_DIR") {
+        return PathBuf::from(path);
+    }
+    if std::path::Path::new("/etc/tizen-release").exists()
+        || std::path::Path::new("/opt/usr/share/tizenclaw").exists()
+    {
+        return PathBuf::from("/opt/usr/share/tizenclaw");
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(home).join(".tizenclaw")
+}
 
 // ─── Config ───────────────────────────────────────────────────
 
@@ -82,8 +99,14 @@ async fn main() {
     log::set_max_level(log::LevelFilter::Debug);
 
     unsafe {
-        libc::signal(libc::SIGINT,  signal_handler as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, signal_handler as *const () as libc::sighandler_t);
+        libc::signal(
+            libc::SIGINT,
+            signal_handler as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGTERM,
+            signal_handler as *const () as libc::sighandler_t,
+        );
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
 
@@ -117,7 +140,9 @@ async fn main() {
                 localhost_only = true;
                 i += 1;
             }
-            _ => { i += 1; }
+            _ => {
+                i += 1;
+            }
         }
     }
 
@@ -125,8 +150,7 @@ async fn main() {
     let data_dir = if !data_dir_str.is_empty() {
         PathBuf::from(&data_dir_str)
     } else {
-        PathBuf::from(std::env::var("TIZENCLAW_DATA_DIR")
-            .unwrap_or_else(|_| "/opt/usr/share/tizenclaw".to_string()))
+        default_data_dir()
     };
     let config_dir = if !config_dir_str.is_empty() {
         PathBuf::from(&config_dir_str)
@@ -142,8 +166,13 @@ async fn main() {
     let _ = std::fs::create_dir_all(&config_dir);
 
     let default_hash = sha256_hex("admin");
-    let pw_hash = load_admin_password(config_dir.join("admin_password.json").to_str().unwrap_or(""))
-        .unwrap_or(default_hash);
+    let pw_hash = load_admin_password(
+        config_dir
+            .join("admin_password.json")
+            .to_str()
+            .unwrap_or(""),
+    )
+    .unwrap_or(default_hash);
 
     let state = AppState {
         web_root: web_root.clone(),
@@ -180,7 +209,10 @@ async fn main() {
         .route("/api/auth/login", post(api_auth_login))
         .route("/api/auth/change_password", post(api_auth_change_password))
         .route("/api/config/list", get(api_config_list))
-        .route("/api/config/:name", get(api_config_get).post(api_config_set))
+        .route(
+            "/api/config/:name",
+            get(api_config_get).post(api_config_set),
+        )
         .route("/api/apps", get(api_apps_list))
         .route("/api/apps/:id", get(api_app_detail))
         .route("/api/a2a", post(api_a2a));
@@ -222,10 +254,17 @@ fn json_error(status: StatusCode, msg: &str) -> (StatusCode, Json<Value>) {
 }
 
 async fn validate_token(headers: &HeaderMap, state: &AppState) -> bool {
-    headers.get(header::AUTHORIZATION)
+    headers
+        .get(header::AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "))
-        .map(|token| state.active_tokens.lock().map(|t| t.contains(token)).unwrap_or(false))
+        .map(|token| {
+            state
+                .active_tokens
+                .lock()
+                .map(|t| t.contains(token))
+                .unwrap_or(false)
+        })
         .unwrap_or(false)
 }
 
@@ -253,9 +292,16 @@ async fn api_metrics() -> Json<Value> {
 }
 
 async fn api_chat(Json(payload): Json<Value>) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    let prompt = payload.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let session_id = payload.get("session_id").and_then(|v| v.as_str())
-        .unwrap_or("web_dashboard").to_string();
+    let prompt = payload
+        .get("prompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let session_id = payload
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("web_dashboard")
+        .to_string();
     if prompt.is_empty() {
         return Err(json_error(StatusCode::BAD_REQUEST, "Empty prompt"));
     }
@@ -265,8 +311,13 @@ async fn api_chat(Json(payload): Json<Value>) -> Result<Json<Value>, (StatusCode
         .await
         .map_err(|e| json_error(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()))?;
     match response {
-        Ok(text) => Ok(Json(json!({"status": "ok", "session_id": session_id, "response": text}))),
-        Err(e) => Err(json_error(StatusCode::BAD_GATEWAY, &format!("Agent error: {}", e))),
+        Ok(text) => Ok(Json(
+            json!({"status": "ok", "session_id": session_id, "response": text}),
+        )),
+        Err(e) => Err(json_error(
+            StatusCode::BAD_GATEWAY,
+            &format!("Agent error: {}", e),
+        )),
     }
 }
 
@@ -282,22 +333,29 @@ async fn api_session_dates(State(state): State<AppState>) -> Json<Value> {
         for entry in entries.flatten() {
             if entry.path().is_dir() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if name.len() == 10 { dates.insert(name); }
+                if name.len() == 10 {
+                    dates.insert(name);
+                }
             }
         }
     }
     Json(json!({"dates": dates.into_iter().collect::<Vec<_>>()}))
 }
 
-async fn api_session_detail(State(state): State<AppState>, AxumPath(id): AxumPath<String>)
-    -> Result<Json<Value>, (StatusCode, Json<Value>)>
-{
+async fn api_session_detail(
+    State(state): State<AppState>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if id.contains("..") || id.contains('/') {
         return Err(json_error(StatusCode::BAD_REQUEST, "Invalid id"));
     }
     let parts: Vec<&str> = id.split('_').collect();
     let path = if parts.len() >= 2 && parts[0].len() == 10 {
-        state.data_dir.join("sessions").join(&parts[0]).join(format!("{}.md", id))
+        state
+            .data_dir
+            .join("sessions")
+            .join(&parts[0])
+            .join(format!("{}.md", id))
     } else {
         state.data_dir.join("sessions").join(format!("{}.md", id))
     };
@@ -317,13 +375,18 @@ async fn api_task_dates(State(state): State<AppState>) -> Json<Value> {
     Json(json!({"dates": collect_dates(dir.to_str().unwrap_or(""))}))
 }
 
-async fn api_task_detail(State(state): State<AppState>, AxumPath(file): AxumPath<String>)
-    -> Result<Json<Value>, (StatusCode, Json<Value>)>
-{
+async fn api_task_detail(
+    State(state): State<AppState>,
+    AxumPath(file): AxumPath<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if file.contains("..") || file.contains('/') {
         return Err(json_error(StatusCode::BAD_REQUEST, "Invalid file"));
     }
-    let fname = if file.ends_with(".md") { file.clone() } else { format!("{}.md", file) };
+    let fname = if file.ends_with(".md") {
+        file.clone()
+    } else {
+        format!("{}.md", file)
+    };
     let path = state.data_dir.join("tasks").join(&fname);
     match std::fs::read_to_string(&path) {
         Ok(content) => Ok(Json(json!({"file": fname, "content": content}))),
@@ -332,11 +395,14 @@ async fn api_task_detail(State(state): State<AppState>, AxumPath(file): AxumPath
 }
 
 #[derive(serde::Deserialize)]
-struct LogQuery { date: Option<String> }
+struct LogQuery {
+    date: Option<String>,
+}
 
-async fn api_logs(State(state): State<AppState>, Query(q): Query<LogQuery>)
-    -> Result<Json<Value>, (StatusCode, Json<Value>)>
-{
+async fn api_logs(
+    State(state): State<AppState>,
+    Query(q): Query<LogQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     let date = q.date.unwrap_or_else(today_date_str);
     if date.len() != 10 || date.as_bytes().get(4) != Some(&b'-') {
         return Err(json_error(StatusCode::BAD_REQUEST, "Invalid date format"));
@@ -354,32 +420,65 @@ async fn api_log_dates(State(state): State<AppState>) -> Json<Value> {
     Json(json!({"dates": collect_dates(dir.to_str().unwrap_or(""))}))
 }
 
-async fn api_auth_login(State(state): State<AppState>, Json(payload): Json<Value>)
-    -> Result<Json<Value>, (StatusCode, Json<Value>)>
-{
-    let password = payload.get("password").and_then(|v| v.as_str()).unwrap_or("");
+async fn api_auth_login(
+    State(state): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let password = payload
+        .get("password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let hash = sha256_hex(password);
-    let stored = state.admin_pw_hash.lock().map(|h| h.clone()).unwrap_or_default();
+    let stored = state
+        .admin_pw_hash
+        .lock()
+        .map(|h| h.clone())
+        .unwrap_or_default();
     if hash == stored {
         let token = generate_token();
-        if let Ok(mut t) = state.active_tokens.lock() { t.insert(token.clone()); }
+        if let Ok(mut t) = state.active_tokens.lock() {
+            t.insert(token.clone());
+        }
         Ok(Json(json!({"status": "ok", "token": token})))
     } else {
         Err(json_error(StatusCode::UNAUTHORIZED, "Invalid password"))
     }
 }
 
-async fn api_auth_change_password(headers: HeaderMap, State(state): State<AppState>, Json(payload): Json<Value>)
-    -> Result<Json<Value>, (StatusCode, Json<Value>)>
-{
-    if !validate_token(&headers, &state).await { return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized")); }
-    let current = payload.get("current_password").and_then(|v| v.as_str()).unwrap_or("");
-    let new_pw = payload.get("new_password").and_then(|v| v.as_str()).unwrap_or("");
-    let stored = state.admin_pw_hash.lock().map(|h| h.clone()).unwrap_or_default();
-    if sha256_hex(current) != stored { return Err(json_error(StatusCode::FORBIDDEN, "Current password incorrect")); }
-    if new_pw.is_empty() { return Err(json_error(StatusCode::BAD_REQUEST, "New password empty")); }
+async fn api_auth_change_password(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !validate_token(&headers, &state).await {
+        return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+    }
+    let current = payload
+        .get("current_password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let new_pw = payload
+        .get("new_password")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let stored = state
+        .admin_pw_hash
+        .lock()
+        .map(|h| h.clone())
+        .unwrap_or_default();
+    if sha256_hex(current) != stored {
+        return Err(json_error(
+            StatusCode::FORBIDDEN,
+            "Current password incorrect",
+        ));
+    }
+    if new_pw.is_empty() {
+        return Err(json_error(StatusCode::BAD_REQUEST, "New password empty"));
+    }
     let new_hash = sha256_hex(new_pw);
-    if let Ok(mut h) = state.admin_pw_hash.lock() { *h = new_hash.clone(); }
+    if let Ok(mut h) = state.admin_pw_hash.lock() {
+        *h = new_hash.clone();
+    }
     let _ = std::fs::write(
         state.config_dir.join("admin_password.json"),
         json!({"password_hash": new_hash}).to_string(),
@@ -387,42 +486,72 @@ async fn api_auth_change_password(headers: HeaderMap, State(state): State<AppSta
     Ok(Json(json!({"status": "ok"})))
 }
 
-async fn api_config_list(headers: HeaderMap, State(state): State<AppState>)
-    -> Result<Json<Value>, (StatusCode, Json<Value>)>
-{
-    if !validate_token(&headers, &state).await { return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized")); }
-    let configs: Vec<Value> = ALLOWED_CONFIGS.iter().map(|name| {
-        json!({"name": name, "exists": state.config_dir.join(name).exists()})
-    }).collect();
+async fn api_config_list(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !validate_token(&headers, &state).await {
+        return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+    }
+    let configs: Vec<Value> = ALLOWED_CONFIGS
+        .iter()
+        .map(|name| json!({"name": name, "exists": state.config_dir.join(name).exists()}))
+        .collect();
     Ok(Json(json!({"status": "ok", "configs": configs})))
 }
 
-async fn api_config_get(headers: HeaderMap, State(state): State<AppState>, AxumPath(name): AxumPath<String>)
-    -> Result<Json<Value>, (StatusCode, Json<Value>)>
-{
-    if !validate_token(&headers, &state).await { return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized")); }
-    if !ALLOWED_CONFIGS.contains(&name.as_str()) { return Err(json_error(StatusCode::FORBIDDEN, "Not allowed")); }
+async fn api_config_get(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    AxumPath(name): AxumPath<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !validate_token(&headers, &state).await {
+        return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+    }
+    if !ALLOWED_CONFIGS.contains(&name.as_str()) {
+        return Err(json_error(StatusCode::FORBIDDEN, "Not allowed"));
+    }
     let fpath = state.config_dir.join(&name);
     match std::fs::read_to_string(&fpath) {
-        Ok(content) => Ok(Json(json!({"status": "ok", "name": name, "content": content}))),
+        Ok(content) => Ok(Json(
+            json!({"status": "ok", "name": name, "content": content}),
+        )),
         Err(_) => {
-            let sample = std::fs::read_to_string(state.config_dir.join(format!("{}.sample", name))).unwrap_or_default();
-            Ok(Json(json!({"status": "not_found", "name": name, "error": "Config not found", "sample": sample})))
+            let sample = std::fs::read_to_string(state.config_dir.join(format!("{}.sample", name)))
+                .unwrap_or_default();
+            Ok(Json(
+                json!({"status": "not_found", "name": name, "error": "Config not found", "sample": sample}),
+            ))
         }
     }
 }
 
-async fn api_config_set(headers: HeaderMap, State(state): State<AppState>, AxumPath(name): AxumPath<String>, Json(payload): Json<Value>)
-    -> Result<Json<Value>, (StatusCode, Json<Value>)>
-{
-    if !validate_token(&headers, &state).await { return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized")); }
-    if !ALLOWED_CONFIGS.contains(&name.as_str()) { return Err(json_error(StatusCode::FORBIDDEN, "Not allowed")); }
-    let content = payload.get("content").and_then(|v| v.as_str()).unwrap_or("");
+async fn api_config_set(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    AxumPath(name): AxumPath<String>,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !validate_token(&headers, &state).await {
+        return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+    }
+    if !ALLOWED_CONFIGS.contains(&name.as_str()) {
+        return Err(json_error(StatusCode::FORBIDDEN, "Not allowed"));
+    }
+    let content = payload
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let fpath = state.config_dir.join(&name);
-    if fpath.exists() { let _ = std::fs::copy(&fpath, state.config_dir.join(format!("{}.bak", name))); }
+    if fpath.exists() {
+        let _ = std::fs::copy(&fpath, state.config_dir.join(format!("{}.bak", name)));
+    }
     match std::fs::write(&fpath, content) {
         Ok(()) => Ok(Json(json!({"status": "ok", "name": name}))),
-        Err(_) => Err(json_error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to write config")),
+        Err(_) => Err(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to write config",
+        )),
     }
 }
 
@@ -432,9 +561,17 @@ async fn api_apps_list(State(state): State<AppState>) -> Json<Value> {
     if let Ok(entries) = std::fs::read_dir(&apps_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_dir() { continue; }
-            let dirname = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-            if dirname.starts_with('.') { continue; }
+            if !path.is_dir() {
+                continue;
+            }
+            let dirname = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+            if dirname.starts_with('.') {
+                continue;
+            }
             let mut app = json!({"app_id": dirname, "url": format!("/apps/{}/", dirname)});
             if let Ok(ms) = std::fs::read_to_string(path.join("manifest.json")) {
                 if let Ok(manifest) = serde_json::from_str::<Value>(&ms) {
@@ -447,17 +584,24 @@ async fn api_apps_list(State(state): State<AppState>) -> Json<Value> {
     Json(Value::Array(apps))
 }
 
-async fn api_app_detail(State(state): State<AppState>, AxumPath(app_id): AxumPath<String>)
-    -> Result<Json<Value>, (StatusCode, Json<Value>)>
-{
-    if app_id.contains("..") || app_id.contains('/') { return Err(json_error(StatusCode::BAD_REQUEST, "Invalid app_id")); }
+async fn api_app_detail(
+    State(state): State<AppState>,
+    AxumPath(app_id): AxumPath<String>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if app_id.contains("..") || app_id.contains('/') {
+        return Err(json_error(StatusCode::BAD_REQUEST, "Invalid app_id"));
+    }
     let path = state.web_root.join("apps").join(&app_id);
-    if !path.is_dir() { return Err(json_error(StatusCode::NOT_FOUND, "App not found")); }
+    if !path.is_dir() {
+        return Err(json_error(StatusCode::NOT_FOUND, "App not found"));
+    }
     let mut app = json!({"app_id": app_id, "url": format!("/apps/{}/", app_id)});
     if let Ok(ms) = std::fs::read_to_string(path.join("manifest.json")) {
         if let Ok(manifest) = serde_json::from_str::<Value>(&ms) {
             if let Some(obj) = manifest.as_object() {
-                for (k, v) in obj { app[k] = v.clone(); }
+                for (k, v) in obj {
+                    app[k] = v.clone();
+                }
             }
         }
     }
@@ -465,7 +609,9 @@ async fn api_app_detail(State(state): State<AppState>, AxumPath(app_id): AxumPat
     if let Ok(entries) = std::fs::read_dir(&path) {
         for entry in entries.flatten() {
             if entry.path().is_file() {
-                if let Some(name) = entry.file_name().to_str() { files.push(json!(name)); }
+                if let Some(name) = entry.file_name().to_str() {
+                    files.push(json!(name));
+                }
             }
         }
     }
@@ -495,7 +641,9 @@ async fn api_a2a() -> Json<Value> {
 fn ipc_send_prompt(session_id: &str, prompt: &str) -> Result<String, String> {
     unsafe {
         let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
-        if fd < 0 { return Err("Failed to create IPC socket".into()); }
+        if fd < 0 {
+            return Err("Failed to create IPC socket".into());
+        }
 
         let mut addr: libc::sockaddr_un = std::mem::zeroed();
         addr.sun_family = libc::AF_UNIX as u16;
@@ -503,7 +651,8 @@ fn ipc_send_prompt(session_id: &str, prompt: &str) -> Result<String, String> {
         for (i, b) in name.iter().enumerate() {
             addr.sun_path[1 + i] = *b as libc::c_char;
         }
-        let addr_len = (std::mem::size_of::<libc::sa_family_t>() + 1 + name.len()) as libc::socklen_t;
+        let addr_len =
+            (std::mem::size_of::<libc::sa_family_t>() + 1 + name.len()) as libc::socklen_t;
 
         if libc::connect(fd, &addr as *const _ as *const libc::sockaddr, addr_len) < 0 {
             libc::close(fd);
@@ -523,7 +672,10 @@ fn ipc_send_prompt(session_id: &str, prompt: &str) -> Result<String, String> {
         let mut sent = 0usize;
         while sent < data.len() {
             let n = libc::write(fd, data.as_ptr().add(sent) as *const _, data.len() - sent);
-            if n <= 0 { libc::close(fd); return Err("Failed to send request".into()); }
+            if n <= 0 {
+                libc::close(fd);
+                return Err("Failed to send request".into());
+            }
             sent += n as usize;
         }
 
@@ -541,14 +693,15 @@ fn ipc_send_prompt(session_id: &str, prompt: &str) -> Result<String, String> {
         let mut got = 0usize;
         while got < resp_len {
             let n = libc::recv(fd, buf.as_mut_ptr().add(got) as *mut _, resp_len - got, 0);
-            if n <= 0 { break; }
+            if n <= 0 {
+                break;
+            }
             got += n as usize;
         }
         libc::close(fd);
 
         let raw = String::from_utf8_lossy(&buf[..got]).to_string();
-        let resp: Value = serde_json::from_str(&raw)
-            .map_err(|e| format!("Invalid JSON: {}", e))?;
+        let resp: Value = serde_json::from_str(&raw).map_err(|e| format!("Invalid JSON: {}", e))?;
         if let Some(result) = resp.get("result") {
             if let Some(text) = result.get("text").and_then(|v| v.as_str()) {
                 return Ok(text.to_string());
@@ -556,7 +709,11 @@ fn ipc_send_prompt(session_id: &str, prompt: &str) -> Result<String, String> {
             return Ok(serde_json::to_string_pretty(result).unwrap_or_default());
         }
         if let Some(err) = resp.get("error") {
-            return Err(err.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown error").to_string());
+            return Err(err
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown error")
+                .to_string());
         }
         Err("Unexpected response format".into())
     }
@@ -577,24 +734,37 @@ fn sha256_hex(input: &str) -> String {
 
 fn generate_token() -> String {
     let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
     format!("{:032x}", ts)
 }
 
 fn load_admin_password(path: &str) -> Option<String> {
-    std::fs::read_to_string(path).ok()
+    std::fs::read_to_string(path)
+        .ok()
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
         .and_then(|j| j["password_hash"].as_str().map(|s| s.to_string()))
 }
 
 fn parse_proc_status() -> (i64, i64, i32) {
-    let mut rss_kb = 0i64; let mut vm_kb = 0i64; let mut threads = 0i32;
+    let mut rss_kb = 0i64;
+    let mut vm_kb = 0i64;
+    let mut threads = 0i32;
     if let Ok(content) = std::fs::read_to_string("/proc/self/status") {
         for line in content.lines() {
             if let Some(v) = line.strip_prefix("VmRSS:") {
-                rss_kb = v.split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                rss_kb = v
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
             } else if let Some(v) = line.strip_prefix("VmSize:") {
-                vm_kb = v.split_whitespace().next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                vm_kb = v
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
             } else if let Some(v) = line.strip_prefix("Threads:") {
                 threads = v.trim().parse().unwrap_or(0);
             }
@@ -616,31 +786,57 @@ fn parse_loadavg() -> (f64, f64, f64) {
 }
 
 fn get_process_uptime() -> f64 {
-    let sys = std::fs::read_to_string("/proc/uptime").ok()
-        .and_then(|s| s.split_whitespace().next().and_then(|v| v.parse::<f64>().ok()))
+    let sys = std::fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|s| {
+            s.split_whitespace()
+                .next()
+                .and_then(|v| v.parse::<f64>().ok())
+        })
         .unwrap_or(0.0);
-    let start = std::fs::read_to_string("/proc/self/stat").ok().and_then(|s| {
-        let after_comm = s.rfind(')')?;
-        s[after_comm + 2..].split_whitespace().nth(19).and_then(|v| v.parse::<f64>().ok())
-    }).unwrap_or(0.0);
+    let start = std::fs::read_to_string("/proc/self/stat")
+        .ok()
+        .and_then(|s| {
+            let after_comm = s.rfind(')')?;
+            s[after_comm + 2..]
+                .split_whitespace()
+                .nth(19)
+                .and_then(|v| v.parse::<f64>().ok())
+        })
+        .unwrap_or(0.0);
     let start_secs = start / 100.0;
-    if sys > start_secs { sys - start_secs } else { 0.0 }
+    if sys > start_secs {
+        sys - start_secs
+    } else {
+        0.0
+    }
 }
 
 fn today_date_str() -> String {
     let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
     let days = secs / 86400;
     let y = (days * 4 + 2) / 1461 + 1970;
     let mut doy = days - ((y - 1970) * 365 + (y - 1969) / 4);
-    let leap: u64 = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 1 } else { 0 };
+    let leap: u64 = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+        1
+    } else {
+        0
+    };
     let months = [31u64, 28 + leap, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut m = 0u64;
     for (i, &ml) in months.iter().enumerate() {
-        if doy < ml { m = i as u64 + 1; break; }
+        if doy < ml {
+            m = i as u64 + 1;
+            break;
+        }
         doy -= ml;
     }
-    if m == 0 { m = 12; }
+    if m == 0 {
+        m = 12;
+    }
     format!("{:04}-{:02}-{:02}", y, m, doy + 1)
 }
 
@@ -653,16 +849,30 @@ fn list_md_files(dir: &str) -> Vec<Value> {
                 if let Ok(sub) = std::fs::read_dir(&path) {
                     for s in sub.flatten() {
                         let sp = s.path();
-                        if !sp.is_file() { continue; }
-                        let name = sp.file_name().unwrap_or_default().to_string_lossy().to_string();
-                        if name.starts_with('.') || !name.ends_with(".md") { continue; }
+                        if !sp.is_file() {
+                            continue;
+                        }
+                        let name = sp
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        if name.starts_with('.') || !name.ends_with(".md") {
+                            continue;
+                        }
                         entries.push(json!({"id": name.trim_end_matches(".md"), "file": name,
                             "size_bytes": sp.metadata().map(|m| m.len()).unwrap_or(0)}));
                     }
                 }
             } else if path.is_file() {
-                let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                if name.starts_with('.') || !name.ends_with(".md") { continue; }
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                if name.starts_with('.') || !name.ends_with(".md") {
+                    continue;
+                }
                 entries.push(json!({"id": name.trim_end_matches(".md"), "file": name,
                     "size_bytes": path.metadata().map(|m| m.len()).unwrap_or(0)}));
             }

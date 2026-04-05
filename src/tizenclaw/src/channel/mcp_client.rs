@@ -92,10 +92,7 @@ impl McpClient {
         self.child = Some(child);
         self.connected = true;
 
-        log::debug!(
-            "MCP Client: '{}' started (PID: {})",
-            self.server_name, pid
-        );
+        log::debug!("MCP Client: '{}' started (PID: {})", self.server_name, pid);
 
         // Perform initialize handshake
         let init_params = json!({
@@ -160,10 +157,7 @@ impl McpClient {
                             let name = t["name"].as_str()?;
                             Some(LlmToolDecl {
                                 name: format!("mcp_{}_{}", self.server_name, name),
-                                description: t["description"]
-                                    .as_str()
-                                    .unwrap_or("")
-                                    .to_string(),
+                                description: t["description"].as_str().unwrap_or("").to_string(),
                                 parameters: t
                                     .get("inputSchema")
                                     .cloned()
@@ -176,7 +170,8 @@ impl McpClient {
             Err(e) => {
                 log::error!(
                     "MCP Client: tools/list error for '{}': {}",
-                    self.server_name, e
+                    self.server_name,
+                    e
                 );
             }
         }
@@ -288,7 +283,11 @@ impl McpClient {
 
             // Handle notifications
             if let Some(m) = resp.get("method").and_then(|v| v.as_str()) {
-                log::debug!("MCP Client: notification from '{}': {}", self.server_name, m);
+                log::debug!(
+                    "MCP Client: notification from '{}': {}",
+                    self.server_name,
+                    m
+                );
             }
         }
     }
@@ -357,7 +356,8 @@ impl McpClientManager {
                     client.discover_tools();
                     log::debug!(
                         "MCP Client: '{}' connected ({} tools)",
-                        name, client.get_tools().len()
+                        name,
+                        client.get_tools().len()
                     );
                 }
                 self.clients.push(client);

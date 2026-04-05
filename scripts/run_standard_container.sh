@@ -93,8 +93,8 @@ run_without_container() {
     mount --rbind /opt/etc \"${BUNDLE_DIR}/rootfs/opt/etc\" || true
     mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/opt/etc\" || true
     mount --rbind /opt/usr/share/tizenclaw \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw\" || true
-    mkdir -p \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizen-tools\"
-    mount --rbind /opt/usr/share/tizen-tools \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizen-tools\" || true
+    mkdir -p \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw/tools\"
+    mount --rbind /opt/usr/share/tizenclaw/tools \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw/tools\" || true
     mkdir -p \"${BUNDLE_DIR}/rootfs/opt/usr/share/crash/dump\"
     if [ -d /opt/usr/share/crash ]; then
       mount --rbind /opt/usr/share/crash \"${BUNDLE_DIR}/rootfs/opt/usr/share/crash\" || true
@@ -154,13 +154,13 @@ write_config() {
       \"options\": [\"rbind\", \"rw\"]
     }"
   fi
-  # Add tizen-tools mount if it exists
-  if [ -d /opt/usr/share/tizen-tools ]; then
+  # Add managed tools mount if it exists
+  if [ -d /opt/usr/share/tizenclaw/tools ]; then
     OPTIONAL_MOUNTS="${OPTIONAL_MOUNTS},
     {
-      \"destination\": \"/opt/usr/share/tizen-tools\",
+      \"destination\": \"/opt/usr/share/tizenclaw/tools\",
       \"type\": \"bind\",
-      \"source\": \"/opt/usr/share/tizen-tools\",
+      \"source\": \"/opt/usr/share/tizenclaw/tools\",
       \"options\": [\"rbind\", \"rw\"]
     }"
   fi

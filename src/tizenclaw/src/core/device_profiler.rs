@@ -11,7 +11,9 @@ impl Default for DeviceProfiler {
 }
 
 impl DeviceProfiler {
-    pub fn new() -> Self { DeviceProfiler }
+    pub fn new() -> Self {
+        DeviceProfiler
+    }
 
     pub fn get_profile(&self) -> Value {
         let mut profile = json!({});
@@ -34,8 +36,11 @@ impl DeviceProfiler {
         if let Ok(meminfo) = std::fs::read_to_string("/proc/meminfo") {
             for line in meminfo.lines() {
                 if line.starts_with("MemTotal:") {
-                    let kb: u64 = line.split_whitespace().nth(1)
-                        .and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let kb: u64 = line
+                        .split_whitespace()
+                        .nth(1)
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
                     profile["memory_mb"] = json!(kb / 1024);
                     break;
                 }

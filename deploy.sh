@@ -65,6 +65,7 @@ WITH_CRUN=false
 WITH_ASSETS=false
 WITH_BRIDGE=false
 DEVICE_SERIAL=""
+REMOVE_PACKAGE=false
 
 # ─────────────────────────────────────────────
 # Logging helpers
@@ -186,6 +187,7 @@ ${CYAN}Options:${NC}
       --with-crun       Build crun and enable container execution mode
   -w, --with-ngrok      Auto-download and push ngrok binary to the device
   -d, --device <serial> Target a specific sdb device
+      --remove          Stop services and uninstall TizenClaw from device
       --dry-run         Print commands without executing
   -h, --help            Show this help
 
@@ -222,6 +224,7 @@ parse_args() {
       --with-crun)     WITH_CRUN=true; shift ;;
       -w|--with-ngrok) WITH_NGROK=true; shift ;;
       -d|--device)     DEVICE_SERIAL="$2"; shift 2 ;;
+      --remove)        REMOVE_PACKAGE=true; shift ;;
       --dry-run)       DRY_RUN=true; shift ;;
       -h|--help)       usage ;;
       *)               fail "Unknown option: $1 (use --help)" ;;
@@ -604,6 +607,43 @@ do_restart_and_run() {
   fi
 }
 
+remove_from_device() {
+  header "Remove TizenClaw From Device"
+
+  log "Checking device connectivity..."
+  if [ "${DRY_RUN}" = false ]; then
+    sdb_cmd devices >/dev/null 2>&1 || fail "sdb devices failed"
+  fi
+
+  log "Acquiring root access..."
+  run sdb_cmd root on
+  run sdb_shell mount -o remount,rw /
+
+  log "Stopping TizenClaw services..."
+  run sdb_shell systemctl stop tizenclaw 2>/dev/null || true
+  run sdb_shell systemctl stop tizenclaw-tool-executor.service 2>/dev/null || true
+  run sdb_shell systemctl stop tizenclaw-tool-executor.socket 2>/dev/null || true
+  run sdb_shell systemctl disable tizenclaw-tool-executor.socket 2>/dev/null || true
+
+  log "Removing RPM package..."
+  run sdb_shell rpm -e "${PKG_NAME}" 2>/dev/null || true
+
+  log "Cleaning package-owned runtime paths..."
+  run sdb_shell rm -rf /opt/usr/share/tizenclaw/tools 2>/dev/null || true
+  run sdb_shell rm -rf /opt/usr/share/tizen-tools 2>/dev/null || true
+
+  ok "TizenClaw removal command completed"
+}
+
+cleanup_legacy_paths_on_device() {
+  header "Legacy Path Cleanup"
+
+  log "Removing legacy tool path..."
+  run sdb_shell rm -rf /opt/usr/share/tizen-tools 2>/dev/null || true
+
+  ok "Legacy device paths cleaned"
+}
+
 
 
 # ─────────────────────────────────────────────
@@ -629,12 +669,19 @@ show_summary() {
 # ─────────────────────────────────────────────
 main() {
   parse_args "$@"
+  if [ "${REMOVE_PACKAGE}" = true ]; then
+    detect_arch
+    check_prerequisites
+    remove_from_device
+    exit 0
+  fi
   detect_arch
   load_repo_config
   check_prerequisites
   do_build
   find_rpm
   do_deploy
+  cleanup_legacy_paths_on_device
   do_restart_and_run
   show_summary
 }

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 pub struct UserProfile {
     pub user_id: String,
     pub name: String,
-    pub role: String,  // "admin", "adult", "child", "guest"
+    pub role: String, // "admin", "adult", "child", "guest"
     pub preferences: Value,
 }
 
@@ -35,12 +35,15 @@ impl UserProfileStore {
             Ok(c) => c,
             Err(_) => {
                 // Create default admin profile
-                self.profiles.insert("admin_01".into(), UserProfile {
-                    user_id: "admin_01".into(),
-                    name: "Admin".into(),
-                    role: "admin".into(),
-                    preferences: json!({}),
-                });
+                self.profiles.insert(
+                    "admin_01".into(),
+                    UserProfile {
+                        user_id: "admin_01".into(),
+                        name: "Admin".into(),
+                        role: "admin".into(),
+                        preferences: json!({}),
+                    },
+                );
                 self.active_user = Some("admin_01".into());
                 return;
             }
@@ -54,26 +57,37 @@ impl UserProfileStore {
         if let Some(users) = config["users"].as_array() {
             for u in users {
                 let id = u["user_id"].as_str().unwrap_or("").to_string();
-                if id.is_empty() { continue; }
-                self.profiles.insert(id.clone(), UserProfile {
-                    user_id: id,
-                    name: u["name"].as_str().unwrap_or("").to_string(),
-                    role: u["role"].as_str().unwrap_or("adult").to_string(),
-                    preferences: u.get("preferences").cloned().unwrap_or(json!({})),
-                });
+                if id.is_empty() {
+                    continue;
+                }
+                self.profiles.insert(
+                    id.clone(),
+                    UserProfile {
+                        user_id: id,
+                        name: u["name"].as_str().unwrap_or("").to_string(),
+                        role: u["role"].as_str().unwrap_or("adult").to_string(),
+                        preferences: u.get("preferences").cloned().unwrap_or(json!({})),
+                    },
+                );
             }
         }
 
-        self.active_user = config["active_user"].as_str().map(|s| s.to_string())
+        self.active_user = config["active_user"]
+            .as_str()
+            .map(|s| s.to_string())
             .or_else(|| self.profiles.keys().next().cloned());
 
-        log::info!("UserProfileStore: loaded {} profiles, active={}",
+        log::info!(
+            "UserProfileStore: loaded {} profiles, active={}",
             self.profiles.len(),
-            self.active_user.as_deref().unwrap_or("none"));
+            self.active_user.as_deref().unwrap_or("none")
+        );
     }
 
     pub fn get_active_user(&self) -> Option<&UserProfile> {
-        self.active_user.as_ref().and_then(|id| self.profiles.get(id))
+        self.active_user
+            .as_ref()
+            .and_then(|id| self.profiles.get(id))
     }
 
     pub fn switch_user(&mut self, user_id: &str) -> bool {

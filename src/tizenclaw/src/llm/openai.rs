@@ -2,9 +2,9 @@
 
 #![allow(clippy::all)]
 
-use serde_json::{json, Value};
-use crate::infra::http_client;
 use super::backend::*;
+use crate::infra::http_client;
+use serde_json::{json, Value};
 
 pub struct OpenAiBackend {
     api_key: String,
@@ -19,20 +19,38 @@ impl OpenAiBackend {
             "xai" => ("https://api.x.ai/v1", "grok-3-mini-fast"),
             _ => ("https://api.openai.com/v1", "gpt-4o"),
         };
-        OpenAiBackend { api_key: String::new(), model: model.into(), endpoint: endpoint.into(), provider_name: provider.into() }
+        OpenAiBackend {
+            api_key: String::new(),
+            model: model.into(),
+            endpoint: endpoint.into(),
+            provider_name: provider.into(),
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl LlmBackend for OpenAiBackend {
     fn initialize(&mut self, config: &Value) -> bool {
-        if let Some(k) = config["api_key"].as_str() { self.api_key = k.into(); }
-        if let Some(m) = config["model"].as_str() { self.model = m.into(); }
-        if let Some(e) = config["endpoint"].as_str() { self.endpoint = e.into(); }
+        if let Some(k) = config["api_key"].as_str() {
+            self.api_key = k.into();
+        }
+        if let Some(m) = config["model"].as_str() {
+            self.model = m.into();
+        }
+        if let Some(e) = config["endpoint"].as_str() {
+            self.endpoint = e.into();
+        }
         !self.api_key.is_empty()
     }
 
-    async fn chat(&self, messages: &[LlmMessage], tools: &[LlmToolDecl], _on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>, system_prompt: &str, max_tokens: Option<u32>) -> LlmResponse {
+    async fn chat(
+        &self,
+        messages: &[LlmMessage],
+        tools: &[LlmToolDecl],
+        _on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
+        system_prompt: &str,
+        max_tokens: Option<u32>,
+    ) -> LlmResponse {
         let mut valid_tools = std::collections::HashSet::new();
         for t in tools {
             valid_tools.insert(t.name.as_str());
@@ -47,7 +65,12 @@ impl LlmBackend for OpenAiBackend {
             if msg.role == "tool" && !valid_tools.contains(msg.tool_name.as_str()) {
                 is_downgraded = true;
             }
-            if !msg.tool_calls.is_empty() && msg.tool_calls.iter().any(|tc| !valid_tools.contains(tc.name.as_str())) {
+            if !msg.tool_calls.is_empty()
+                && msg
+                    .tool_calls
+                    .iter()
+                    .any(|tc| !valid_tools.contains(tc.name.as_str()))
+            {
                 is_downgraded = true;
             }
 
@@ -55,10 +78,17 @@ impl LlmBackend for OpenAiBackend {
                 if msg.role == "tool" {
                     msgs.push(json!({"role": "user", "content": format!("[Historical Tool Result for '{}']: {}", msg.tool_name, msg.tool_result)}));
                 } else if !msg.tool_calls.is_empty() {
-                    let calls_text = msg.tool_calls.iter()
+                    let calls_text = msg
+                        .tool_calls
+                        .iter()
                         .map(|tc| format!("Called tool '{}' with args '{}'", tc.name, tc.args))
-                        .collect::<Vec<_>>().join("\n");
-                    let full_text = if msg.text.is_empty() { calls_text } else { format!("{}\n\n{}", msg.text, calls_text) };
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let full_text = if msg.text.is_empty() {
+                        calls_text
+                    } else {
+                        format!("{}\n\n{}", msg.text, calls_text)
+                    };
                     msgs.push(json!({"role": "assistant", "content": full_text}));
                 } else {
                     msgs.push(json!({"role": msg.role, "content": msg.text}));
@@ -66,12 +96,20 @@ impl LlmBackend for OpenAiBackend {
             } else if msg.role == "tool" {
                 msgs.push(json!({"role": "tool", "content": msg.tool_result.to_string(), "tool_call_id": msg.tool_call_id}));
             } else if !msg.tool_calls.is_empty() {
-                let tcs: Vec<Value> = msg.tool_calls.iter().map(|tc| json!({
-                    "id": tc.id, "type": "function",
-                    "function": {"name": tc.name, "arguments": tc.args.to_string()}
-                })).collect();
+                let tcs: Vec<Value> = msg
+                    .tool_calls
+                    .iter()
+                    .map(|tc| {
+                        json!({
+                            "id": tc.id, "type": "function",
+                            "function": {"name": tc.name, "arguments": tc.args.to_string()}
+                        })
+                    })
+                    .collect();
                 let mut m = json!({"role": "assistant", "tool_calls": tcs});
-                if !msg.text.is_empty() { m["content"] = json!(msg.text); }
+                if !msg.text.is_empty() {
+                    m["content"] = json!(msg.text);
+                }
                 msgs.push(m);
             } else {
                 msgs.push(json!({"role": msg.role, "content": msg.text}));
@@ -97,7 +135,10 @@ impl LlmBackend for OpenAiBackend {
 
         let mut resp = LlmResponse::default();
         resp.http_status = http_resp.status_code;
-        if !http_resp.success { resp.error_message = http_resp.error; return resp; }
+        if !http_resp.success {
+            resp.error_message = http_resp.error;
+            return resp;
+        }
 
         if let Ok(json) = serde_json::from_str::<Value>(&http_resp.body) {
             if let Some(msg) = json.pointer("/choices/0/message") {
@@ -123,5 +164,7 @@ impl LlmBackend for OpenAiBackend {
         resp
     }
 
-    fn get_name(&self) -> &str { &self.provider_name }
+    fn get_name(&self) -> &str {
+        &self.provider_name
+    }
 }

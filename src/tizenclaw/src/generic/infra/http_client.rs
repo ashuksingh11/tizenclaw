@@ -3,8 +3,8 @@
 //! Provides GET/POST with retry, exponential backoff, and automatic
 //! CA certificate discovery matching the C++ tizenclaw_curl behavior.
 
+use reqwest::{Certificate, Client, ClientBuilder};
 use std::sync::OnceLock;
-use reqwest::{Client, ClientBuilder, Certificate};
 
 /// Tizen-compatible CA certificate paths probed at startup.
 const CA_CERT_PATHS: &[&str] = &[
@@ -31,8 +31,7 @@ pub fn default_client() -> Client {
 
 /// Build a properly configured reqwest client with CA certificates.
 fn build_agent(timeout_secs: u64) -> Client {
-    let mut builder = ClientBuilder::new()
-        .timeout(std::time::Duration::from_secs(timeout_secs));
+    let mut builder = ClientBuilder::new().timeout(std::time::Duration::from_secs(timeout_secs));
 
     // Probe for CA certificate file (matching C++ tizenclaw_curl behavior)
     for path in CA_CERT_PATHS {
@@ -111,7 +110,10 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
         }
     }
 
-    let bytes: Vec<u8> = input.bytes().filter(|b| *b != b'\n' && *b != b'\r' && *b != b' ').collect();
+    let bytes: Vec<u8> = input
+        .bytes()
+        .filter(|b| *b != b'\n' && *b != b'\r' && *b != b' ')
+        .collect();
     let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
 
     let mut i = 0;
@@ -150,20 +152,34 @@ pub async fn http_post(
         }
         match do_post(url, headers, json_body, timeout_secs).await {
             Ok(resp) if resp.status_code == 429 || resp.status_code >= 500 => {
-                log::warn!("HTTP {}, retrying ({}/{})", resp.status_code, attempt + 1, max_retries);
+                log::warn!(
+                    "HTTP {}, retrying ({}/{})",
+                    resp.status_code,
+                    attempt + 1,
+                    max_retries
+                );
                 if attempt == max_retries {
                     return resp;
                 }
             }
             Ok(resp) => return resp,
             Err(e) => {
-                let err_str = format!("HTTP POST failed: {} ({}/{})\n", e, attempt + 1, max_retries);
+                let err_str = format!(
+                    "HTTP POST failed: {} ({}/{})\n",
+                    e,
+                    attempt + 1,
+                    max_retries
+                );
                 log::warn!("{}", err_str.trim());
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/http_err.log") {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("/tmp/http_err.log")
+                {
                     use std::io::Write;
                     let _ = f.write_all(err_str.as_bytes());
                 }
-                
+
                 if attempt == max_retries {
                     return HttpResponse {
                         status_code: 0,
@@ -207,23 +223,63 @@ pub async fn http_get(
     unreachable!()
 }
 
-pub fn http_get_sync(url: &str, headers: &[(&str, &str)], max_retries: u32, timeout_secs: u64) -> HttpResponse {
+pub fn http_get_sync(
+    url: &str,
+    headers: &[(&str, &str)],
+    max_retries: u32,
+    timeout_secs: u64,
+) -> HttpResponse {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        tokio::task::block_in_place(|| handle.block_on(http_get(url, headers, max_retries, timeout_secs)))
+        tokio::task::block_in_place(|| {
+            handle.block_on(http_get(url, headers, max_retries, timeout_secs))
+        })
     } else {
-        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(http_get(url, headers, max_retries, timeout_secs))
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(http_get(url, headers, max_retries, timeout_secs))
     }
 }
 
-pub fn http_post_sync(url: &str, headers: &[(&str, &str)], json_body: &str, max_retries: u32, timeout_secs: u64) -> HttpResponse {
+pub fn http_post_sync(
+    url: &str,
+    headers: &[(&str, &str)],
+    json_body: &str,
+    max_retries: u32,
+    timeout_secs: u64,
+) -> HttpResponse {
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
-        tokio::task::block_in_place(|| handle.block_on(http_post(url, headers, json_body, max_retries, timeout_secs)))
+        tokio::task::block_in_place(|| {
+            handle.block_on(http_post(
+                url,
+                headers,
+                json_body,
+                max_retries,
+                timeout_secs,
+            ))
+        })
     } else {
-        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(http_post(url, headers, json_body, max_retries, timeout_secs))
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(http_post(
+                url,
+                headers,
+                json_body,
+                max_retries,
+                timeout_secs,
+            ))
     }
 }
 
-async fn do_post(url: &str, headers: &[(&str, &str)], body: &str, _timeout_secs: u64) -> Result<HttpResponse, String> {
+async fn do_post(
+    url: &str,
+    headers: &[(&str, &str)],
+    body: &str,
+    _timeout_secs: u64,
+) -> Result<HttpResponse, String> {
     let agent = default_client();
 
     let mut req = agent.post(url);
@@ -238,8 +294,13 @@ async fn do_post(url: &str, headers: &[(&str, &str)], body: &str, _timeout_secs:
             match resp.text().await {
                 Ok(body_str) => {
                     if !status.is_success() {
-                        let err_str = format!("HTTP {} from {}:\n{}\n", status.as_u16(), url, body_str);
-                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/http_err.log") {
+                        let err_str =
+                            format!("HTTP {} from {}:\n{}\n", status.as_u16(), url, body_str);
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open("/tmp/http_err.log")
+                        {
                             use std::io::Write;
                             let _ = f.write_all(err_str.as_bytes());
                         }
@@ -248,9 +309,13 @@ async fn do_post(url: &str, headers: &[(&str, &str)], body: &str, _timeout_secs:
                         status_code: status.as_u16(),
                         body: body_str,
                         success: status.is_success(),
-                        error: if status.is_success() { String::new() } else { format!("HTTP {}", status.as_u16()) },
+                        error: if status.is_success() {
+                            String::new()
+                        } else {
+                            format!("HTTP {}", status.as_u16())
+                        },
                     })
-                },
+                }
                 Err(e) => Err(format!("Failed to read body: {}", e)),
             }
         }
@@ -258,7 +323,11 @@ async fn do_post(url: &str, headers: &[(&str, &str)], body: &str, _timeout_secs:
     }
 }
 
-async fn do_get(url: &str, headers: &[(&str, &str)], _timeout_secs: u64) -> Result<HttpResponse, String> {
+async fn do_get(
+    url: &str,
+    headers: &[(&str, &str)],
+    _timeout_secs: u64,
+) -> Result<HttpResponse, String> {
     let agent = default_client();
 
     let mut req = agent.get(url);
@@ -274,7 +343,11 @@ async fn do_get(url: &str, headers: &[(&str, &str)], _timeout_secs: u64) -> Resu
                     status_code: status.as_u16(),
                     body: body_str,
                     success: status.is_success(),
-                    error: if status.is_success() { String::new() } else { format!("HTTP {}", status.as_u16()) },
+                    error: if status.is_success() {
+                        String::new()
+                    } else {
+                        format!("HTTP {}", status.as_u16())
+                    },
                 }),
                 Err(e) => Err(format!("Failed to read body: {}", e)),
             }
@@ -293,31 +366,63 @@ impl Default for HttpClient {
 }
 
 impl HttpClient {
-    pub fn new() -> Self { HttpClient }
+    pub fn new() -> Self {
+        HttpClient
+    }
 
-    pub async fn get(&self, url: &str) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get(
+        &self,
+        url: &str,
+    ) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
         let r = http_get(url, &[], 1, 30).await;
-        if r.success { Ok(r) } else { Err(r.error.into()) }
-    }
-
-    pub async fn post(&self, url: &str, body: &str) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
-        let r = http_post(url, &[], body, 1, 30).await;
-        if r.success { Ok(r) } else { Err(r.error.into()) }
-    }
-
-    pub fn get_sync(&self, url: &str) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            tokio::task::block_in_place(|| handle.block_on(self.get(url)))
+        if r.success {
+            Ok(r)
         } else {
-            tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(self.get(url))
+            Err(r.error.into())
         }
     }
 
-    pub fn post_sync(&self, url: &str, body: &str) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn post(
+        &self,
+        url: &str,
+        body: &str,
+    ) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
+        let r = http_post(url, &[], body, 1, 30).await;
+        if r.success {
+            Ok(r)
+        } else {
+            Err(r.error.into())
+        }
+    }
+
+    pub fn get_sync(
+        &self,
+        url: &str,
+    ) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(self.get(url)))
+        } else {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(self.get(url))
+        }
+    }
+
+    pub fn post_sync(
+        &self,
+        url: &str,
+        body: &str,
+    ) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             tokio::task::block_in_place(|| handle.block_on(self.post(url, body)))
         } else {
-            tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(self.post(url, body))
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(self.post(url, body))
         }
     }
 }

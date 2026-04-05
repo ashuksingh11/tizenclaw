@@ -80,10 +80,7 @@ impl TunnelManager {
         }
 
         // Build ngrok command
-        let mut args = vec![
-            "http".to_string(),
-            local_port.to_string(),
-        ];
+        let mut args = vec!["http".to_string(), local_port.to_string()];
 
         if !self.auth_token.is_empty() {
             args.push("--authtoken".into());
@@ -150,7 +147,10 @@ impl TunnelManager {
 
     /// Get the public URL of the tunnel.
     pub fn get_public_url(&self) -> String {
-        self.public_url.lock().map(|u| u.clone()).unwrap_or_default()
+        self.public_url
+            .lock()
+            .map(|u| u.clone())
+            .unwrap_or_default()
     }
 
     /// Monitor thread: polls ngrok local API to discover the public URL.

@@ -12,8 +12,7 @@ pub const EMBEDDING_DIM: usize = 384;
 
 /// Default path to ONNX Runtime shared library.
 /// Falls back to env-based path or standard Tizen location.
-const DEFAULT_ORT_LIB_PATH: &str =
-    "/usr/lib/libonnxruntime.so";
+const DEFAULT_ORT_LIB_PATH: &str = "/usr/lib/libonnxruntime.so";
 
 // ═══════════════════════════════════════════
 //  ORT C API types (minimal set for dlopen)
@@ -21,28 +20,43 @@ const DEFAULT_ORT_LIB_PATH: &str =
 
 #[repr(C)]
 struct OrtApiBase {
-    get_api:
-        unsafe extern "C" fn(version: u32) -> *const OrtApi,
+    get_api: unsafe extern "C" fn(version: u32) -> *const OrtApi,
     get_version_string: unsafe extern "C" fn() -> *const libc::c_char,
 }
 
 // Opaque handles
 #[repr(C)]
-struct OrtEnv { _opaque: [u8; 0] }
+struct OrtEnv {
+    _opaque: [u8; 0],
+}
 #[repr(C)]
-struct OrtSessionOptions { _opaque: [u8; 0] }
+struct OrtSessionOptions {
+    _opaque: [u8; 0],
+}
 #[repr(C)]
-struct OrtSession { _opaque: [u8; 0] }
+struct OrtSession {
+    _opaque: [u8; 0],
+}
 #[repr(C)]
-struct OrtAllocator { _opaque: [u8; 0] }
+struct OrtAllocator {
+    _opaque: [u8; 0],
+}
 #[repr(C)]
-struct OrtMemoryInfo { _opaque: [u8; 0] }
+struct OrtMemoryInfo {
+    _opaque: [u8; 0],
+}
 #[repr(C)]
-struct OrtValue { _opaque: [u8; 0] }
+struct OrtValue {
+    _opaque: [u8; 0],
+}
 #[repr(C)]
-struct OrtStatus { _opaque: [u8; 0] }
+struct OrtStatus {
+    _opaque: [u8; 0],
+}
 #[repr(C)]
-struct OrtRunOptions { _opaque: [u8; 0] }
+struct OrtRunOptions {
+    _opaque: [u8; 0],
+}
 
 // ORT logging level
 const ORT_LOGGING_LEVEL_WARNING: i32 = 2;
@@ -71,15 +85,41 @@ struct OrtFunctions {
     create_session_options: unsafe extern "C" fn(*mut *mut OrtSessionOptions) -> *mut OrtStatus,
     set_intra_op_num_threads: unsafe extern "C" fn(*mut OrtSessionOptions, i32) -> *mut OrtStatus,
     set_inter_op_num_threads: unsafe extern "C" fn(*mut OrtSessionOptions, i32) -> *mut OrtStatus,
-    set_session_graph_optimization_level: unsafe extern "C" fn(*mut OrtSessionOptions, i32) -> *mut OrtStatus,
+    set_session_graph_optimization_level:
+        unsafe extern "C" fn(*mut OrtSessionOptions, i32) -> *mut OrtStatus,
     disable_cpu_mem_arena: unsafe extern "C" fn(*mut OrtSessionOptions) -> *mut OrtStatus,
     disable_mem_pattern: unsafe extern "C" fn(*mut OrtSessionOptions) -> *mut OrtStatus,
-    create_session: unsafe extern "C" fn(*mut OrtEnv, *const libc::c_char, *const OrtSessionOptions, *mut *mut OrtSession) -> *mut OrtStatus,
-    get_allocator_with_default_options: unsafe extern "C" fn(*mut *mut OrtAllocator) -> *mut OrtStatus,
-    create_cpu_memory_info: unsafe extern "C" fn(i32, i32, *mut *mut OrtMemoryInfo) -> *mut OrtStatus,
-    create_tensor_with_data: unsafe extern "C" fn(*const OrtMemoryInfo, *mut libc::c_void, usize, *const i64, usize, i32, *mut *mut OrtValue) -> *mut OrtStatus,
-    run: unsafe extern "C" fn(*mut OrtSession, *const OrtRunOptions, *const *const libc::c_char, *const *const OrtValue, usize, *const *const libc::c_char, usize, *mut *mut OrtValue) -> *mut OrtStatus,
-    get_tensor_mutable_data: unsafe extern "C" fn(*mut OrtValue, *mut *mut libc::c_void) -> *mut OrtStatus,
+    create_session: unsafe extern "C" fn(
+        *mut OrtEnv,
+        *const libc::c_char,
+        *const OrtSessionOptions,
+        *mut *mut OrtSession,
+    ) -> *mut OrtStatus,
+    get_allocator_with_default_options:
+        unsafe extern "C" fn(*mut *mut OrtAllocator) -> *mut OrtStatus,
+    create_cpu_memory_info:
+        unsafe extern "C" fn(i32, i32, *mut *mut OrtMemoryInfo) -> *mut OrtStatus,
+    create_tensor_with_data: unsafe extern "C" fn(
+        *const OrtMemoryInfo,
+        *mut libc::c_void,
+        usize,
+        *const i64,
+        usize,
+        i32,
+        *mut *mut OrtValue,
+    ) -> *mut OrtStatus,
+    run: unsafe extern "C" fn(
+        *mut OrtSession,
+        *const OrtRunOptions,
+        *const *const libc::c_char,
+        *const *const OrtValue,
+        usize,
+        *const *const libc::c_char,
+        usize,
+        *mut *mut OrtValue,
+    ) -> *mut OrtStatus,
+    get_tensor_mutable_data:
+        unsafe extern "C" fn(*mut OrtValue, *mut *mut libc::c_void) -> *mut OrtStatus,
     release_env: unsafe extern "C" fn(*mut OrtEnv),
     release_session: unsafe extern "C" fn(*mut OrtSession),
     release_session_options: unsafe extern "C" fn(*mut OrtSessionOptions),
@@ -140,21 +180,23 @@ impl OnDeviceEmbedding {
         if lib.is_null() {
             let err = unsafe {
                 let e = libc::dlerror();
-                if e.is_null() { "unknown".to_string() }
-                else { std::ffi::CStr::from_ptr(e).to_string_lossy().to_string() }
+                if e.is_null() {
+                    "unknown".to_string()
+                } else {
+                    std::ffi::CStr::from_ptr(e).to_string_lossy().to_string()
+                }
             };
-            log::warn!("ONNX Runtime not found: {} (on-device embedding disabled)", err);
+            log::warn!(
+                "ONNX Runtime not found: {} (on-device embedding disabled)",
+                err
+            );
             return false;
         }
         self.ort_lib = lib;
 
         // 2. Get OrtGetApiBase
-        let get_api_base_sym = unsafe {
-            libc::dlsym(
-                lib,
-                b"OrtGetApiBase\0".as_ptr() as *const libc::c_char,
-            )
-        };
+        let get_api_base_sym =
+            unsafe { libc::dlsym(lib, b"OrtGetApiBase\0".as_ptr() as *const libc::c_char) };
         if get_api_base_sym.is_null() {
             log::error!("OrtGetApiBase not found");
             self.shutdown();
@@ -180,8 +222,11 @@ impl OnDeviceEmbedding {
 
         let version = unsafe {
             let v = ((*api_base).get_version_string)();
-            if v.is_null() { "unknown".to_string() }
-            else { std::ffi::CStr::from_ptr(v).to_string_lossy().to_string() }
+            if v.is_null() {
+                "unknown".to_string()
+            } else {
+                std::ffi::CStr::from_ptr(v).to_string_lossy().to_string()
+            }
         };
         log::info!("ONNX Runtime loaded: {}", version);
 
@@ -201,13 +246,19 @@ impl OnDeviceEmbedding {
         let name = std::ffi::CString::new("tizenclaw").unwrap();
         let mut env: *mut OrtEnv = std::ptr::null_mut();
         let status = unsafe { (f.create_env)(ORT_LOGGING_LEVEL_WARNING, name.as_ptr(), &mut env) };
-        if !self.check_status(status) { self.shutdown(); return false; }
+        if !self.check_status(status) {
+            self.shutdown();
+            return false;
+        }
         self.env = env;
 
         // 5. Create session options
         let mut opts: *mut OrtSessionOptions = std::ptr::null_mut();
         let status = unsafe { (f.create_session_options)(&mut opts) };
-        if !self.check_status(status) { self.shutdown(); return false; }
+        if !self.check_status(status) {
+            self.shutdown();
+            return false;
+        }
         self.session_options = opts;
 
         // Optimize for inference
@@ -223,10 +274,11 @@ impl OnDeviceEmbedding {
         let model_path = format!("{}/model.onnx", model_dir);
         let model_cstr = std::ffi::CString::new(model_path.as_str()).unwrap();
         let mut session: *mut OrtSession = std::ptr::null_mut();
-        let status = unsafe {
-            (f.create_session)(env, model_cstr.as_ptr(), opts, &mut session)
-        };
-        if !self.check_status(status) { self.shutdown(); return false; }
+        let status = unsafe { (f.create_session)(env, model_cstr.as_ptr(), opts, &mut session) };
+        if !self.check_status(status) {
+            self.shutdown();
+            return false;
+        }
         self.session = session;
 
         // 7. Load tokenizer vocabulary
@@ -244,15 +296,21 @@ impl OnDeviceEmbedding {
     pub fn shutdown(&mut self) {
         if let Some(ref f) = self.fns {
             if !self.session.is_null() {
-                unsafe { (f.release_session)(self.session); }
+                unsafe {
+                    (f.release_session)(self.session);
+                }
                 self.session = std::ptr::null_mut();
             }
             if !self.session_options.is_null() {
-                unsafe { (f.release_session_options)(self.session_options); }
+                unsafe {
+                    (f.release_session_options)(self.session_options);
+                }
                 self.session_options = std::ptr::null_mut();
             }
             if !self.env.is_null() {
-                unsafe { (f.release_env)(self.env); }
+                unsafe {
+                    (f.release_env)(self.env);
+                }
                 self.env = std::ptr::null_mut();
             }
         }
@@ -282,7 +340,9 @@ impl OnDeviceEmbedding {
         let status = unsafe {
             (f.create_cpu_memory_info)(ORT_ARENA_ALLOCATOR, ORT_MEM_TYPE_DEFAULT, &mut mem_info)
         };
-        if !self.check_status(status) { return Vec::new(); }
+        if !self.check_status(status) {
+            return Vec::new();
+        }
 
         // 3. Create input tensors
         let shape = [1i64, seq_len];
@@ -312,9 +372,15 @@ impl OnDeviceEmbedding {
             || !create_tensor(&tokens.token_type_ids, &mut token_type_ids_tensor)
         {
             unsafe {
-                if !input_ids_tensor.is_null() { (f.release_value)(input_ids_tensor); }
-                if !attention_mask_tensor.is_null() { (f.release_value)(attention_mask_tensor); }
-                if !token_type_ids_tensor.is_null() { (f.release_value)(token_type_ids_tensor); }
+                if !input_ids_tensor.is_null() {
+                    (f.release_value)(input_ids_tensor);
+                }
+                if !attention_mask_tensor.is_null() {
+                    (f.release_value)(attention_mask_tensor);
+                }
+                if !token_type_ids_tensor.is_null() {
+                    (f.release_value)(token_type_ids_tensor);
+                }
                 (f.release_memory_info)(mem_info);
             }
             return Vec::new();
@@ -326,9 +392,7 @@ impl OnDeviceEmbedding {
             b"attention_mask\0".as_ptr() as *const libc::c_char,
             b"token_type_ids\0".as_ptr() as *const libc::c_char,
         ];
-        let output_names = [
-            b"last_hidden_state\0".as_ptr() as *const libc::c_char,
-        ];
+        let output_names = [b"last_hidden_state\0".as_ptr() as *const libc::c_char];
         let inputs = [
             input_ids_tensor as *const OrtValue,
             attention_mask_tensor as *const OrtValue,
@@ -357,22 +421,23 @@ impl OnDeviceEmbedding {
             (f.release_memory_info)(mem_info);
         }
 
-        if !self.check_status(status) { return Vec::new(); }
+        if !self.check_status(status) {
+            return Vec::new();
+        }
 
         // 5. Get output data
         let mut output_data: *mut libc::c_void = std::ptr::null_mut();
         let status = unsafe { (f.get_tensor_mutable_data)(output, &mut output_data) };
         if !self.check_status(status) || output_data.is_null() {
-            unsafe { (f.release_value)(output); }
+            unsafe {
+                (f.release_value)(output);
+            }
             return Vec::new();
         }
 
         // 6. Mean pooling with attention mask
         let output_floats = unsafe {
-            std::slice::from_raw_parts(
-                output_data as *const f32,
-                seq_len as usize * EMBEDDING_DIM,
-            )
+            std::slice::from_raw_parts(output_data as *const f32, seq_len as usize * EMBEDDING_DIM)
         };
         let mut embedding = Self::mean_pooling(
             output_floats,
@@ -384,7 +449,9 @@ impl OnDeviceEmbedding {
         // 7. L2 normalize
         Self::l2_normalize(&mut embedding);
 
-        unsafe { (f.release_value)(output); }
+        unsafe {
+            (f.release_value)(output);
+        }
         embedding
     }
 
@@ -397,11 +464,16 @@ impl OnDeviceEmbedding {
         if let Some(ref f) = self.fns {
             let msg = unsafe {
                 let p = (f.get_error_message)(status);
-                if p.is_null() { "unknown".to_string() }
-                else { std::ffi::CStr::from_ptr(p).to_string_lossy().to_string() }
+                if p.is_null() {
+                    "unknown".to_string()
+                } else {
+                    std::ffi::CStr::from_ptr(p).to_string_lossy().to_string()
+                }
             };
             log::error!("ORT error: {}", msg);
-            unsafe { (f.release_status)(status); }
+            unsafe {
+                (f.release_status)(status);
+            }
         }
         false
     }
@@ -419,30 +491,35 @@ impl OnDeviceEmbedding {
         // These offsets correspond to ORT API v18 (1.20.x)
         // Verified against onnxruntime_c_api.h
         Some(OrtFunctions {
-            create_env: std::mem::transmute(*table.add(1)),          // CreateEnv
-            create_session_options: std::mem::transmute(*table.add(10)),  // CreateSessionOptions
-            set_intra_op_num_threads: std::mem::transmute(*table.add(5)),  // SetIntraOpNumThreads
+            create_env: std::mem::transmute(*table.add(1)), // CreateEnv
+            create_session_options: std::mem::transmute(*table.add(10)), // CreateSessionOptions
+            set_intra_op_num_threads: std::mem::transmute(*table.add(5)), // SetIntraOpNumThreads
             set_inter_op_num_threads: std::mem::transmute(*table.add(65)), // SetInterOpNumThreads
             set_session_graph_optimization_level: std::mem::transmute(*table.add(12)), // SetSessionGraphOptimizationLevel
             disable_cpu_mem_arena: std::mem::transmute(*table.add(14)), // DisableCpuMemArena
-            disable_mem_pattern: std::mem::transmute(*table.add(16)),  // DisableMemPattern
-            create_session: std::mem::transmute(*table.add(2)),       // CreateSession
+            disable_mem_pattern: std::mem::transmute(*table.add(16)),   // DisableMemPattern
+            create_session: std::mem::transmute(*table.add(2)),         // CreateSession
             get_allocator_with_default_options: std::mem::transmute(*table.add(18)), // GetAllocatorWithDefaultOptions
             create_cpu_memory_info: std::mem::transmute(*table.add(21)), // CreateCpuMemoryInfo
             create_tensor_with_data: std::mem::transmute(*table.add(22)), // CreateTensorWithDataAsOrtValue
-            run: std::mem::transmute(*table.add(9)),                  // Run
+            run: std::mem::transmute(*table.add(9)),                      // Run
             get_tensor_mutable_data: std::mem::transmute(*table.add(23)), // GetTensorMutableData
-            release_env: std::mem::transmute(*table.add(42)),         // ReleaseEnv
-            release_session: std::mem::transmute(*table.add(38)),     // ReleaseSession
+            release_env: std::mem::transmute(*table.add(42)),             // ReleaseEnv
+            release_session: std::mem::transmute(*table.add(38)),         // ReleaseSession
             release_session_options: std::mem::transmute(*table.add(39)), // ReleaseSessionOptions
-            release_value: std::mem::transmute(*table.add(41)),       // ReleaseValue
-            release_memory_info: std::mem::transmute(*table.add(43)), // ReleaseMemoryInfo
-            release_status: std::mem::transmute(*table.add(4)),       // ReleaseStatus
-            get_error_message: std::mem::transmute(*table.add(3)),    // GetErrorMessage
+            release_value: std::mem::transmute(*table.add(41)),           // ReleaseValue
+            release_memory_info: std::mem::transmute(*table.add(43)),     // ReleaseMemoryInfo
+            release_status: std::mem::transmute(*table.add(4)),           // ReleaseStatus
+            get_error_message: std::mem::transmute(*table.add(3)),        // GetErrorMessage
         })
     }
 
-    fn mean_pooling(output: &[f32], seq_len: usize, hidden_dim: usize, attn_mask: &[i64]) -> Vec<f32> {
+    fn mean_pooling(
+        output: &[f32],
+        seq_len: usize,
+        hidden_dim: usize,
+        attn_mask: &[i64],
+    ) -> Vec<f32> {
         let mut result = vec![0.0f32; hidden_dim];
         let mut mask_sum = 0.0f32;
 

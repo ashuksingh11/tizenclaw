@@ -7,7 +7,7 @@
 //! Priority:
 //! 1. Environment variables (TIZENCLAW_DATA_DIR, TIZENCLAW_TOOLS_DIR, etc.)
 //! 2. Tizen standard paths (if /opt/usr/share/tizenclaw exists)
-//! 3. XDG-compliant Linux paths (~/.local/share/tizenclaw)
+//! 3. Host Linux paths (~/.tizenclaw)
 
 use std::path::PathBuf;
 
@@ -34,6 +34,8 @@ pub struct PlatformPaths {
     pub workflows_dir: PathBuf,
     /// Generated and reusable code directory
     pub codes_dir: PathBuf,
+    /// Log directory
+    pub logs_dir: PathBuf,
     /// Actions directory
     pub actions_dir: PathBuf,
     /// Pipelines directory
@@ -46,8 +48,7 @@ pub struct PlatformPaths {
 
 /// Tizen standard base path.
 const TIZEN_DATA_DIR: &str = "/opt/usr/share/tizenclaw";
-const TIZEN_APP_DATA_DIR: &str = "/opt/usr/data/tizenclaw";
-const TIZEN_TOOLS_DIR: &str = "/opt/usr/share/tizen-tools";
+const TIZEN_TOOLS_DIR: &str = "/opt/usr/share/tizenclaw/tools";
 
 impl PlatformPaths {
     /// Auto-detect paths based on environment and OS.
@@ -87,6 +88,7 @@ impl PlatformPaths {
             web_root: base.join("web"),
             workflows_dir: base.join("workflows"),
             codes_dir: base.join("codes"),
+            logs_dir: base.join("logs"),
             actions_dir: base.join("actions"),
             pipelines_dir: base.join("pipelines"),
             llm_plugins_dir: base.join("plugins/llm"),
@@ -117,6 +119,7 @@ impl PlatformPaths {
             web_root: PathBuf::from(TIZEN_DATA_DIR).join("web"),
             workflows_dir: PathBuf::from(TIZEN_DATA_DIR).join("workflows"),
             codes_dir: PathBuf::from(TIZEN_DATA_DIR).join("codes"),
+            logs_dir: PathBuf::from(TIZEN_DATA_DIR).join("logs"),
             actions_dir: PathBuf::from(TIZEN_DATA_DIR).join("actions"),
             pipelines_dir: PathBuf::from(TIZEN_DATA_DIR).join("pipelines"),
             llm_plugins_dir: PathBuf::from(TIZEN_DATA_DIR).join("plugins/llm"),
@@ -124,14 +127,9 @@ impl PlatformPaths {
         }
     }
 
-    /// XDG-compliant Linux paths.
+    /// Host Linux paths.
     fn linux_defaults() -> Self {
-        let xdg_data = std::env::var("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                dirs_or_home().join(".local/share")
-            });
-        let base = xdg_data.join("tizenclaw");
+        let base = dirs_or_home().join(".tizenclaw");
         Self::from_base(base)
     }
 
@@ -148,6 +146,7 @@ impl PlatformPaths {
             &self.web_root,
             &self.workflows_dir,
             &self.codes_dir,
+            &self.logs_dir,
         ];
         for dir in &dirs {
             if !dir.exists() {
@@ -163,14 +162,11 @@ impl PlatformPaths {
         self.data_dir.join("sessions/sessions.db")
     }
 
-    /// Get the app data directory (for web dashboard file-based storage).
-    /// On Tizen this is /opt/usr/data/tizenclaw, elsewhere same as data_dir.
+    /// Get the app data directory for file-based storage.
+    /// The project now keeps both Tizen and host runtime state under the
+    /// resolved data root directly.
     pub fn app_data_dir(&self) -> PathBuf {
-        if self.data_dir.starts_with("/opt/usr/share") {
-            PathBuf::from(TIZEN_APP_DATA_DIR)
-        } else {
-            self.data_dir.clone()
-        }
+        self.data_dir.clone()
     }
 }
 

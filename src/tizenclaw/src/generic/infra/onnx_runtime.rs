@@ -10,7 +10,9 @@ pub enum OnnxError {
 impl fmt::Display for OnnxError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            OnnxError::LibraryLoadError(s) => write!(f, "Failed to load specific dynamic library: {}", s),
+            OnnxError::LibraryLoadError(s) => {
+                write!(f, "Failed to load specific dynamic library: {}", s)
+            }
             OnnxError::SymbolNotFound(s) => write!(f, "Failed to load symbol: {}", s),
         }
     }
@@ -39,16 +41,14 @@ impl DynamicOnnxEngine {
     pub fn new(path: &str) -> Result<Self, OnnxError> {
         let lib = unsafe { Library::new(path) }
             .map_err(|e| OnnxError::LibraryLoadError(e.to_string()))?;
-        
+
         // This is where one would load specific symbols, e.g.:
-        // let func: libloading::Symbol<unsafe extern "C" fn() -> *const core::ffi::c_void> = 
+        // let func: libloading::Symbol<unsafe extern "C" fn() -> *const core::ffi::c_void> =
         //      unsafe { lib.get(b"OrtGetApiBase\0") }.map_err(|e| OnnxError::SymbolNotFound(e.to_string()))?;
-        
-        Ok(DynamicOnnxEngine {
-            _lib: lib,
-        })
+
+        Ok(DynamicOnnxEngine { _lib: lib })
     }
-    
+
     /// Computes dense embeddings for the given text payload asynchronously.
     /// In a real scenario, this involves tensor array allocations and executing the ORT session.
     pub fn compute_embedding(&self, _text: &str) -> Vec<f32> {
@@ -60,7 +60,7 @@ impl DynamicOnnxEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_dynamic_onnx_load_failure_gracefully() {
         // Asserting that giving an invalid library path doesn't crash the agent but returns Enum errors.
@@ -73,7 +73,7 @@ mod tests {
             panic!("Expected LibraryLoadError");
         }
     }
-    
+
     #[tokio::test]
     async fn test_async_boundary_isolation_closure() {
         // Demonstrating that we can wrap dynamic loading in tokio's sparse OS thread pool
@@ -84,7 +84,7 @@ mod tests {
             assert!(engine_res.is_err());
             // Drops here causing OS to dlclose automatically.
         });
-        
+
         handle.await.unwrap();
     }
 }

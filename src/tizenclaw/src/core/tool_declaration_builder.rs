@@ -1,7 +1,7 @@
 //! Tool declaration builder — generates LLM function declarations for all tools.
 
-use serde_json::{json, Value};
 use crate::llm::backend::LlmToolDecl;
+use serde_json::{json, Value};
 
 pub struct ToolDeclarationBuilder;
 
@@ -10,32 +10,67 @@ impl ToolDeclarationBuilder {
     /// This drastically reduces token bloat (Token Optimization via Dynamic Tool Loading).
     pub fn append_builtin_tools(tools: &mut Vec<LlmToolDecl>, prompt: &str) {
         let p = prompt.to_lowercase();
-        
+
         // 1. Meta / System Tools - always injected
         Self::push_meta_tools(tools);
 
         // 2. Task Intent
-        if p.contains("task") || p.contains("schedule") || p.contains("기억") || p.contains("태스크") || p.contains("작업") || p.contains("예약") || p.contains("내일") {
+        if p.contains("task")
+            || p.contains("schedule")
+            || p.contains("기억")
+            || p.contains("태스크")
+            || p.contains("작업")
+            || p.contains("예약")
+            || p.contains("내일")
+        {
             Self::push_task_tools(tools);
         }
 
         // 3. Memory & Knowledge Intent
-        if p.contains("remember") || p.contains("memory") || p.contains("기억") || p.contains("search") || p.contains("knowledge") || p.contains("지식") || p.contains("문서") {
+        if p.contains("remember")
+            || p.contains("memory")
+            || p.contains("기억")
+            || p.contains("search")
+            || p.contains("knowledge")
+            || p.contains("지식")
+            || p.contains("문서")
+        {
             Self::push_memory_tools(tools);
         }
 
         // 4. Session Intent
-        if p.contains("session") || p.contains("세션") || p.contains("switch") || p.contains("user") || p.contains("유저") {
+        if p.contains("session")
+            || p.contains("세션")
+            || p.contains("switch")
+            || p.contains("user")
+            || p.contains("유저")
+        {
             Self::push_session_tools(tools);
         }
 
         // 5. Workflow & Pipeline Intent
-        if p.contains("workflow") || p.contains("pipeline") || p.contains("skill") || p.contains("스킬") || p.contains("파이프라인") || p.contains("워크플로우") || p.contains("배우") || p.contains("learn") || p.contains("run") || p.contains("실행") {
+        if p.contains("workflow")
+            || p.contains("pipeline")
+            || p.contains("skill")
+            || p.contains("스킬")
+            || p.contains("파이프라인")
+            || p.contains("워크플로우")
+            || p.contains("배우")
+            || p.contains("learn")
+            || p.contains("run")
+            || p.contains("실행")
+        {
             Self::push_workflow_tools(tools);
         }
 
         // 6. Agent Role Intent
-        if p.contains("agent") || p.contains("role") || p.contains("에이전트") || p.contains("역할") || p.contains("supervisor") || p.contains("감독") {
+        if p.contains("agent")
+            || p.contains("role")
+            || p.contains("에이전트")
+            || p.contains("역할")
+            || p.contains("supervisor")
+            || p.contains("감독")
+        {
             Self::push_agent_tools(tools);
         }
     }
@@ -53,7 +88,9 @@ impl ToolDeclarationBuilder {
         });
         tools.push(LlmToolDecl {
             name: "lookup_web_api".into(),
-            description: "Look up Tizen Web API reference documentation. Use 'list', 'read', or 'search'.".into(),
+            description:
+                "Look up Tizen Web API reference documentation. Use 'list', 'read', or 'search'."
+                    .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -75,10 +112,33 @@ impl ToolDeclarationBuilder {
                         "enum": ["python", "python3", "node", "bash"],
                         "description": "Interpreter used to execute the generated code"
                     },
+                    "name": {
+                        "type": "string",
+                        "description": "Optional human-readable script name used in the saved filename"
+                    },
                     "code": {"type": "string", "description": "Full source code to write into a reusable script file before execution"},
                     "args": {"type": "string", "description": "Optional command-line arguments passed to the generated script as a single shell-style string"}
                 },
                 "required": ["runtime", "code"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "manage_generated_code".into(),
+            description: "List or delete generated code files stored under the device-owned codes directory. Use this when the user asks to inspect, clean up, or remove generated scripts.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["list", "delete", "delete_all"],
+                        "description": "Management action to perform on stored generated code"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Exact filename to delete when operation is 'delete'"
+                    }
+                },
+                "required": ["operation"]
             }),
         });
     }
@@ -222,7 +282,8 @@ impl ToolDeclarationBuilder {
     fn push_workflow_tools(tools: &mut Vec<LlmToolDecl>) {
         tools.push(LlmToolDecl {
             name: "create_pipeline".into(),
-            description: "Create a multi-step pipeline for deterministic workflow execution.".into(),
+            description: "Create a multi-step pipeline for deterministic workflow execution."
+                .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -294,7 +355,8 @@ impl ToolDeclarationBuilder {
         });
         tools.push(LlmToolDecl {
             name: "read_skill".into(),
-            description: "Read the exact markdown content of a previously created textual skill.".into(),
+            description: "Read the exact markdown content of a previously created textual skill."
+                .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -305,7 +367,9 @@ impl ToolDeclarationBuilder {
         });
         tools.push(LlmToolDecl {
             name: "list_skill_references".into(),
-            description: "List the packaged Anthropic skill-reference documents installed on the device.".into(),
+            description:
+                "List the packaged Anthropic skill-reference documents installed on the device."
+                    .into(),
             parameters: json!({"type": "object", "properties": {}, "required": []}),
         });
         tools.push(LlmToolDecl {
@@ -324,7 +388,9 @@ impl ToolDeclarationBuilder {
     fn push_agent_tools(tools: &mut Vec<LlmToolDecl>) {
         tools.push(LlmToolDecl {
             name: "run_supervisor".into(),
-            description: "Decompose a complex goal into sub-tasks and delegate to specialized role agents.".into(),
+            description:
+                "Decompose a complex goal into sub-tasks and delegate to specialized role agents."
+                    .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -357,13 +423,14 @@ impl ToolDeclarationBuilder {
 
     /// Build declarations from system CLI tools.
     pub fn build_from_system_cli(cli_tools: &[(String, String, Value)]) -> Vec<LlmToolDecl> {
-        cli_tools.iter().map(|(name, desc, params)| {
-            LlmToolDecl {
+        cli_tools
+            .iter()
+            .map(|(name, desc, params)| LlmToolDecl {
                 name: format!("execute_cli_{}", name),
                 description: desc.clone(),
                 parameters: params.clone(),
-            }
-        }).collect()
+            })
+            .collect()
     }
 }
 
@@ -377,9 +444,11 @@ mod tests {
         ToolDeclarationBuilder::append_builtin_tools(&mut tools, "what is my agent status?");
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"get_agent_status"));
+        assert!(names.contains(&"run_generated_code"));
+        assert!(names.contains(&"manage_generated_code"));
         // Task tools shouldn't be here since task intent is missing
         assert!(!names.contains(&"create_task"));
-        
+
         let mut tools2 = vec![];
         ToolDeclarationBuilder::append_builtin_tools(&mut tools2, "create a new task");
         let names2: Vec<&str> = tools2.iter().map(|t| t.name.as_str()).collect();
@@ -388,9 +457,11 @@ mod tests {
 
     #[test]
     fn test_build_from_system_cli() {
-        let cli_tools = vec![
-            ("wifi".into(), "Manage WiFi".into(), json!({"type": "object", "properties": {}})),
-        ];
+        let cli_tools = vec![(
+            "wifi".into(),
+            "Manage WiFi".into(),
+            json!({"type": "object", "properties": {}}),
+        )];
         let tools = ToolDeclarationBuilder::build_from_system_cli(&cli_tools);
         assert_eq!(tools[0].name, "execute_cli_wifi");
     }

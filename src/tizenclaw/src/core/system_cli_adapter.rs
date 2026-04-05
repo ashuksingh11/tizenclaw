@@ -1,8 +1,8 @@
 //! System CLI adapter — registers system-provided CLI tools as agent tools.
 
+use crate::llm::backend::LlmToolDecl;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use crate::llm::backend::LlmToolDecl;
 
 #[derive(Clone, Debug)]
 pub struct SystemCliTool {
@@ -25,7 +25,9 @@ impl Default for SystemCliAdapter {
 
 impl SystemCliAdapter {
     pub fn new() -> Self {
-        SystemCliAdapter { tools: HashMap::new() }
+        SystemCliAdapter {
+            tools: HashMap::new(),
+        }
     }
 
     pub fn initialize(&mut self, config_path: &str) {
@@ -35,15 +37,22 @@ impl SystemCliAdapter {
                 if let Some(tools) = config["tools"].as_array() {
                     for t in tools {
                         let name = t["name"].as_str().unwrap_or("").to_string();
-                        if name.is_empty() { continue; }
-                        self.tools.insert(name.clone(), SystemCliTool {
-                            name: name.clone(),
-                            description: t["description"].as_str().unwrap_or("").to_string(),
-                            binary_path: t["binary_path"].as_str().unwrap_or("").to_string(),
-                            parameters: t.get("parameters").cloned()
-                                .unwrap_or(json!({"type": "object", "properties": {}})),
-                            category: t["category"].as_str().unwrap_or("system").to_string(),
-                        });
+                        if name.is_empty() {
+                            continue;
+                        }
+                        self.tools.insert(
+                            name.clone(),
+                            SystemCliTool {
+                                name: name.clone(),
+                                description: t["description"].as_str().unwrap_or("").to_string(),
+                                binary_path: t["binary_path"].as_str().unwrap_or("").to_string(),
+                                parameters: t
+                                    .get("parameters")
+                                    .cloned()
+                                    .unwrap_or(json!({"type": "object", "properties": {}})),
+                                category: t["category"].as_str().unwrap_or("system").to_string(),
+                            },
+                        );
                     }
                 }
             }
@@ -62,8 +71,12 @@ impl SystemCliAdapter {
         };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if !name.starts_with("tizenclaw-") { continue; }
-            if self.tools.contains_key(&name) { continue; }
+            if !name.starts_with("tizenclaw-") {
+                continue;
+            }
+            if self.tools.contains_key(&name) {
+                continue;
+            }
 
             let tool_name = name.replace("tizenclaw-", "");
             self.tools.insert(tool_name.clone(), SystemCliTool {
@@ -85,11 +98,14 @@ impl SystemCliAdapter {
     }
 
     pub fn get_tool_declarations(&self) -> Vec<LlmToolDecl> {
-        self.tools.values().map(|t| LlmToolDecl {
-            name: format!("execute_cli_{}", t.name),
-            description: t.description.clone(),
-            parameters: t.parameters.clone(),
-        }).collect()
+        self.tools
+            .values()
+            .map(|t| LlmToolDecl {
+                name: format!("execute_cli_{}", t.name),
+                description: t.description.clone(),
+                parameters: t.parameters.clone(),
+            })
+            .collect()
     }
 
     pub async fn execute(&self, tool_name: &str, args: &Value) -> Value {

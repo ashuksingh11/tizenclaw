@@ -37,7 +37,11 @@ impl TaskScheduler {
 
     pub fn add_task(&self, task: ScheduledTask) {
         if let Ok(mut tasks) = self.tasks.lock() {
-            log::debug!("Scheduler: added task '{}' (interval={}s)", task.name, task.interval_secs);
+            log::debug!(
+                "Scheduler: added task '{}' (interval={}s)",
+                task.name,
+                task.interval_secs
+            );
             tasks.push(task);
         }
     }
@@ -52,15 +56,19 @@ impl TaskScheduler {
         if let Ok(entries) = std::fs::read_dir(dir_path) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if !path.is_file() { continue; }
+                if !path.is_file() {
+                    continue;
+                }
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-                if ext != "md" { continue; }
-                
+                if ext != "md" {
+                    continue;
+                }
+
                 let content = match std::fs::read_to_string(&path) {
                     Ok(c) => c,
                     Err(_) => continue,
                 };
-                
+
                 let id = path.file_stem().unwrap().to_string_lossy().to_string();
                 let mut name = id.clone();
                 let mut interval_secs = 3600;
@@ -69,7 +77,7 @@ impl TaskScheduler {
                 let mut session_id = "scheduler".to_string();
                 let mut prompt = String::new();
                 let mut in_frontmatter = false;
-                
+
                 for line in content.lines() {
                     let text = line.trim();
                     if text == "---" {
@@ -80,7 +88,9 @@ impl TaskScheduler {
                         if let Some((k, v)) = text.split_once(':') {
                             let val = v.trim().trim_matches(|c| c == '\'' || c == '"');
                             match k.trim() {
-                                "interval" | "interval_secs" => interval_secs = val.parse().unwrap_or(3600),
+                                "interval" | "interval_secs" => {
+                                    interval_secs = val.parse().unwrap_or(3600)
+                                }
                                 "one_shot" => one_shot = val == "true",
                                 "enabled" => enabled = val != "false",
                                 "name" => name = val.to_string(),
@@ -93,8 +103,16 @@ impl TaskScheduler {
                         prompt.push('\n');
                     }
                 }
-                
-                let task = ScheduledTask { id, name, prompt: prompt.trim().to_string(), session_id, interval_secs, one_shot, enabled };
+
+                let task = ScheduledTask {
+                    id,
+                    name,
+                    prompt: prompt.trim().to_string(),
+                    session_id,
+                    interval_secs,
+                    one_shot,
+                    enabled,
+                };
                 self.add_task(task);
             }
         }
@@ -113,7 +131,7 @@ impl TaskScheduler {
             log::info!("TaskScheduler started");
             let mut last_run: std::collections::HashMap<String, std::time::Instant> =
                 std::collections::HashMap::new();
-            
+
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
 
             while running.load(Ordering::SeqCst) {
@@ -126,7 +144,9 @@ impl TaskScheduler {
 
                 let now = std::time::Instant::now();
                 for task in &task_list {
-                    if !task.enabled { continue; }
+                    if !task.enabled {
+                        continue;
+                    }
 
                     let should_run = match last_run.get(&task.id) {
                         Some(last) => now.duration_since(*last).as_secs() >= task.interval_secs,
@@ -216,4 +236,3 @@ mod tests {
         assert!(t.enabled);
     }
 }
-

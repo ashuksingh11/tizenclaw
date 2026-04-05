@@ -34,11 +34,7 @@ pub fn validate(stream: &UnixStream, allowed: &[&str]) -> bool {
             let name = name.trim();
             let ok = allowed.contains(&name);
             if !ok {
-                log::warn!(
-                    "Peer pid={} comm='{}' not in allowed list",
-                    cred.pid,
-                    name
-                );
+                log::warn!("Peer pid={} comm='{}' not in allowed list", cred.pid, name);
             }
             ok
         }

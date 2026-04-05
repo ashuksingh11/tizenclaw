@@ -13,7 +13,9 @@ impl AuditLogger {
     pub fn new(db_path: &str) -> Result<Self, String> {
         let db = sqlite::open_database(db_path).map_err(|e| format!("DB open: {}", e))?;
         let logger = AuditLogger { db };
-        logger.init_tables().map_err(|e| format!("DB init: {}", e))?;
+        logger
+            .init_tables()
+            .map_err(|e| format!("DB init: {}", e))?;
         Ok(logger)
     }
 
@@ -27,7 +29,7 @@ impl AuditLogger {
                 timestamp TEXT DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_events(event_type);
-            CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_events(timestamp);"
+            CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_events(timestamp);",
         )
     }
 
@@ -53,7 +55,13 @@ impl AuditLogger {
         self.log("tool_exec", session_id, &details);
     }
 
-    pub fn log_llm_call(&self, session_id: &str, backend: &str, prompt_tokens: i32, completion_tokens: i32) {
+    pub fn log_llm_call(
+        &self,
+        session_id: &str,
+        backend: &str,
+        prompt_tokens: i32,
+        completion_tokens: i32,
+    ) {
         let details = serde_json::json!({
             "backend": backend,
             "prompt_tokens": prompt_tokens,

@@ -54,10 +54,7 @@ impl SystemPromptBuilder {
         self
     }
 
-    pub fn add_available_skill_references(
-        mut self,
-        references: Vec<(String, String)>,
-    ) -> Self {
+    pub fn add_available_skill_references(mut self, references: Vec<(String, String)>) -> Self {
         self.available_skill_references = references;
         self
     }

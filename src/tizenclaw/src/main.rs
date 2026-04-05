@@ -11,15 +11,15 @@
 // TODO: Remove once all modules are wired into the daemon.
 #![allow(unused)]
 
+pub mod channel;
 pub mod common;
+pub mod core;
 pub mod generic;
 pub mod infra;
-pub mod tizen;
-pub mod storage;
 pub mod llm;
-pub mod core;
-pub mod channel;
 pub mod network;
+pub mod storage;
+pub mod tizen;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -42,10 +42,11 @@ async fn main() {
     }
 
     // ── Phase 2: Initialize logging (platform-aware) ──
-    if let Err(e) = std::fs::create_dir_all("/opt/usr/share/tizenclaw/logs") {
+    if let Err(e) = std::fs::create_dir_all(&platform.paths.logs_dir) {
         log::error!("Failed to create logs dir: {}", e);
     }
-    common::logging::FileLogBackend::init("/opt/usr/share/tizenclaw/logs/tizenclaw.log", 10 * 1024 * 1024);
+    let log_path = platform.paths.logs_dir.join("tizenclaw.log");
+    common::logging::FileLogBackend::init(&log_path.to_string_lossy(), 10 * 1024 * 1024);
     common::logging::init_with_logger();
 
     // ── Phase 2.5: Pre-initialize HTTP Client ──
@@ -59,8 +60,14 @@ async fn main() {
 
     // ── Phase 3: Set up signal handlers ──
     unsafe {
-        libc::signal(libc::SIGINT, signal_handler as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, signal_handler as *const () as libc::sighandler_t);
+        libc::signal(
+            libc::SIGINT,
+            signal_handler as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGTERM,
+            signal_handler as *const () as libc::sighandler_t,
+        );
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
 
@@ -75,7 +82,9 @@ async fn main() {
     let agent = Arc::new(agent);
 
     // Register pkgmgr listener for runtime plugin injection
-    use libtizenclaw_core::plugin_core::pkgmgr_client::{PkgmgrClient, PkgmgrListener, PkgmgrEventArgs};
+    use libtizenclaw_core::plugin_core::pkgmgr_client::{
+        PkgmgrClient, PkgmgrEventArgs, PkgmgrListener,
+    };
     struct AgentPkgmgrListener(Arc<core::agent_core::AgentCore>);
     impl PkgmgrListener for AgentPkgmgrListener {
         fn on_pkgmgr_event(&self, args: Arc<PkgmgrEventArgs>) {
@@ -94,9 +103,9 @@ async fn main() {
     // ── Phase 6: Start TaskScheduler ──
     log::info!("[Boot] Starting TaskScheduler...");
     let task_scheduler = core::task_scheduler::TaskScheduler::new();
-    let task_dir = "/opt/usr/share/tizenclaw/tasks";
-    let _ = std::fs::create_dir_all(task_dir);
-    task_scheduler.load_config(task_dir);
+    let task_dir = platform.paths.data_dir.join("tasks");
+    let _ = std::fs::create_dir_all(&task_dir);
+    task_scheduler.load_config(&task_dir.to_string_lossy());
     let _scheduler_handle = task_scheduler.start();
 
     // ── Phase 7: Initialize ChannelRegistry (shared with IPC) ──
@@ -123,7 +132,9 @@ async fn main() {
                     "web_root": web_root
                 }),
             };
-            if let Some(ch) = channel::channel_factory::create_channel(&dashboard_config, Some(agent.clone())) {
+            if let Some(ch) =
+                channel::channel_factory::create_channel(&dashboard_config, Some(agent.clone()))
+            {
                 reg.register(ch, true);
                 log::info!("[Boot] WebDashboard registered (port 9090, auto_start=true)");
             }

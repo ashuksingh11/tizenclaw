@@ -59,8 +59,8 @@ pub struct SessionStore {
 }
 
 impl SessionStore {
-    pub fn new(db_path: &str) -> Result<Self, String> {
-        let base_dir = PathBuf::from("/opt/usr/share/tizenclaw");
+    pub fn new(base_dir: &Path, db_path: &str) -> Result<Self, String> {
+        let base_dir = base_dir.to_path_buf();
         let sessions_root = base_dir.join("sessions");
         let audit_dir = base_dir.join("audit");
 
@@ -81,8 +81,9 @@ impl SessionStore {
                 model TEXT NOT NULL,
                 prompt_tokens INTEGER DEFAULT 0,
                 completion_tokens INTEGER DEFAULT 0
-            );"
-        ).map_err(|e| e.to_string())?;
+            );",
+        )
+        .map_err(|e| e.to_string())?;
 
         Ok(SessionStore {
             base_dir,
@@ -119,7 +120,12 @@ impl SessionStore {
         let path = self.session_file_today(session_id);
         if !path.exists() {
             let _g = self.lock.write().unwrap();
-            if let Ok(mut f) = OpenOptions::new().create(true).truncate(true).write(true).open(&path) {
+            if let Ok(mut f) = OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&path)
+            {
                 let front = format!(
                     "---\nid: {}\ndate: {}\n---\n\n",
                     session_id,
@@ -234,8 +240,7 @@ impl SessionStore {
             let _g = self.lock.write().unwrap();
             fs::write(&tmp_path, content.as_bytes())
                 .map_err(|e| format!("tmp write failed: {}", e))?;
-            fs::rename(&tmp_path, &final_path)
-                .map_err(|e| format!("rename failed: {}", e))?;
+            fs::rename(&tmp_path, &final_path).map_err(|e| format!("rename failed: {}", e))?;
         }
 
         log::debug!(
@@ -285,11 +290,13 @@ impl SessionStore {
         let mut usage = TokenUsage::default();
         if let Ok(conn) = self.db.lock() {
             let mut stmt = conn.prepare("SELECT prompt_tokens, completion_tokens FROM token_usage WHERE session_id = ?1").unwrap();
-            let iter = stmt.query_map(rusqlite::params![session_id], |row| {
-                let p: i64 = row.get(0)?;
-                let c: i64 = row.get(1)?;
-                Ok((p, c))
-            }).unwrap();
+            let iter = stmt
+                .query_map(rusqlite::params![session_id], |row| {
+                    let p: i64 = row.get(0)?;
+                    let c: i64 = row.get(1)?;
+                    Ok((p, c))
+                })
+                .unwrap();
             for item in iter.flatten() {
                 usage.total_prompt_tokens += item.0;
                 usage.total_completion_tokens += item.1;
@@ -301,14 +308,22 @@ impl SessionStore {
 
     pub fn load_daily_usage(&self, date: &str) -> TokenUsage {
         let mut usage = TokenUsage::default();
-        let target_date = if date.is_empty() { today_date_str() } else { date.to_string() };
+        let target_date = if date.is_empty() {
+            today_date_str()
+        } else {
+            date.to_string()
+        };
         if let Ok(conn) = self.db.lock() {
-            let mut stmt = conn.prepare("SELECT prompt_tokens, completion_tokens FROM token_usage WHERE date = ?1").unwrap();
-            let iter = stmt.query_map(rusqlite::params![target_date], |row| {
-                let p: i64 = row.get(0)?;
-                let c: i64 = row.get(1)?;
-                Ok((p, c))
-            }).unwrap();
+            let mut stmt = conn
+                .prepare("SELECT prompt_tokens, completion_tokens FROM token_usage WHERE date = ?1")
+                .unwrap();
+            let iter = stmt
+                .query_map(rusqlite::params![target_date], |row| {
+                    let p: i64 = row.get(0)?;
+                    let c: i64 = row.get(1)?;
+                    Ok((p, c))
+                })
+                .unwrap();
             for item in iter.flatten() {
                 usage.total_prompt_tokens += item.0;
                 usage.total_completion_tokens += item.1;
@@ -356,7 +371,11 @@ impl SessionStore {
         }
 
         // Return last `limit` messages
-        let skip = if all.len() > limit { all.len() - limit } else { 0 };
+        let skip = if all.len() > limit {
+            all.len() - limit
+        } else {
+            0
+        };
         all.into_iter().skip(skip).collect()
     }
 }
@@ -491,7 +510,8 @@ mod tests {
                     last_active TEXT NOT NULL
                 )",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
         }
         store
     }
@@ -502,9 +522,15 @@ mod tests {
         let store = make_store(tmp.path());
         store.ensure_session("sess_abc");
         assert!(tmp.path().join("sessions").join("sess_abc").is_dir());
-        let today = tmp.path().join("sessions").join("sess_abc")
+        let today = tmp
+            .path()
+            .join("sessions")
+            .join("sess_abc")
             .join(format!("{}.md", today_date_str()));
-        assert!(today.exists(), "today's file must exist after ensure_session");
+        assert!(
+            today.exists(),
+            "today's file must exist after ensure_session"
+        );
     }
 
     #[test]
@@ -527,12 +553,26 @@ mod tests {
         let store = make_store(tmp.path());
 
         let messages = vec![
-            SessionMessage { role: "system".into(), text: "You are TizenClaw.".into(), timestamp: String::new() },
-            SessionMessage { role: "user".into(), text: "Original goal".into(), timestamp: String::new() },
-            SessionMessage { role: "assistant".into(), text: "Got it.".into(), timestamp: String::new() },
+            SessionMessage {
+                role: "system".into(),
+                text: "You are TizenClaw.".into(),
+                timestamp: String::new(),
+            },
+            SessionMessage {
+                role: "user".into(),
+                text: "Original goal".into(),
+                timestamp: String::new(),
+            },
+            SessionMessage {
+                role: "assistant".into(),
+                text: "Got it.".into(),
+                timestamp: String::new(),
+            },
         ];
 
-        store.save_compacted("s2", &messages).expect("save_compacted must succeed");
+        store
+            .save_compacted("s2", &messages)
+            .expect("save_compacted must succeed");
         let path = tmp.path().join("sessions").join("s2").join("compacted.md");
         assert!(path.exists(), "compacted.md must exist after save");
 
@@ -549,8 +589,16 @@ mod tests {
 
         // Save a compacted snapshot
         let compacted = vec![
-            SessionMessage { role: "user".into(), text: "old question".into(), timestamp: String::new() },
-            SessionMessage { role: "assistant".into(), text: "old answer".into(), timestamp: String::new() },
+            SessionMessage {
+                role: "user".into(),
+                text: "old question".into(),
+                timestamp: String::new(),
+            },
+            SessionMessage {
+                role: "assistant".into(),
+                text: "old answer".into(),
+                timestamp: String::new(),
+            },
         ];
         store.save_compacted("s3", &compacted).unwrap();
 
@@ -566,12 +614,22 @@ mod tests {
 
     #[test]
     fn test_deduplicate_after_compacted_removes_overlap() {
-        let compacted = vec![
-            SessionMessage { role: "user".into(), text: "same message".into(), timestamp: String::new() },
-        ];
+        let compacted = vec![SessionMessage {
+            role: "user".into(),
+            text: "same message".into(),
+            timestamp: String::new(),
+        }];
         let today = vec![
-            SessionMessage { role: "user".into(), text: "same message".into(), timestamp: String::new() },
-            SessionMessage { role: "assistant".into(), text: "new reply".into(), timestamp: String::new() },
+            SessionMessage {
+                role: "user".into(),
+                text: "same message".into(),
+                timestamp: String::new(),
+            },
+            SessionMessage {
+                role: "assistant".into(),
+                text: "new reply".into(),
+                timestamp: String::new(),
+            },
         ];
         let result = deduplicate_after_compacted(&compacted, &today);
         assert_eq!(result.len(), 1, "duplicate removed, only new reply kept");
@@ -582,13 +640,22 @@ mod tests {
     fn test_atomic_write_no_partial_file() {
         let tmp = tempdir().unwrap();
         let store = make_store(tmp.path());
-        let msgs = vec![
-            SessionMessage { role: "user".into(), text: "test".into(), timestamp: String::new() },
-        ];
+        let msgs = vec![SessionMessage {
+            role: "user".into(),
+            text: "test".into(),
+            timestamp: String::new(),
+        }];
         // Tmp file should not persist after successful save
         store.save_compacted("s4", &msgs).unwrap();
-        let tmp_file = tmp.path().join("sessions").join("s4").join(".compacted.tmp");
-        assert!(!tmp_file.exists(), ".compacted.tmp must be cleaned up after rename");
+        let tmp_file = tmp
+            .path()
+            .join("sessions")
+            .join("s4")
+            .join(".compacted.tmp");
+        assert!(
+            !tmp_file.exists(),
+            ".compacted.tmp must be cleaned up after rename"
+        );
     }
 
     #[test]
@@ -613,7 +680,8 @@ mod tests {
 
     #[test]
     fn test_parse_session_markdown_skips_frontmatter() {
-        let content = "---\nid: test\ndate: 2026-04-03\n---\n\n## user\nHello\n\n## assistant\nHi!\n\n";
+        let content =
+            "---\nid: test\ndate: 2026-04-03\n---\n\n## user\nHello\n\n## assistant\nHi!\n\n";
         let msgs = parse_session_markdown(content);
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, "user");

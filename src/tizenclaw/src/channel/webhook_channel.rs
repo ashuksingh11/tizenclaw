@@ -27,10 +27,14 @@ pub struct WebhookChannel {
 
 impl WebhookChannel {
     pub fn new(config: &ChannelConfig) -> Self {
-        let port = config.settings.get("port")
+        let port = config
+            .settings
+            .get("port")
             .and_then(|v| v.as_u64())
             .unwrap_or(8080) as u16;
-        let hmac_secret = config.settings.get("hmac_secret")
+        let hmac_secret = config
+            .settings
+            .get("hmac_secret")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
@@ -39,7 +43,10 @@ impl WebhookChannel {
         if let Some(arr) = config.settings.get("routes").and_then(|v| v.as_array()) {
             for r in arr {
                 let path = r["path"].as_str().unwrap_or("").to_string();
-                let session_id = r["session_id"].as_str().unwrap_or("webhook_default").to_string();
+                let session_id = r["session_id"]
+                    .as_str()
+                    .unwrap_or("webhook_default")
+                    .to_string();
                 if !path.is_empty() {
                     routes.push(WebhookRoute { path, session_id });
                 }
@@ -58,7 +65,9 @@ impl WebhookChannel {
 }
 
 impl Channel for WebhookChannel {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
     fn start(&mut self) -> bool {
         if self.running.load(Ordering::SeqCst) {
@@ -103,17 +112,15 @@ impl Channel for WebhookChannel {
                         let path = parts.get(1).copied().unwrap_or("/");
 
                         // Extract body (after \r\n\r\n)
-                        let body = request.split("\r\n\r\n")
-                            .nth(1)
-                            .unwrap_or("")
-                            .to_string();
+                        let body = request.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
 
                         // Build JSON response
                         let response_body = json!({
                             "status": "received",
                             "path": path,
                             "body_length": body.len()
-                        }).to_string();
+                        })
+                        .to_string();
 
                         let http_response = format!(
                             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",

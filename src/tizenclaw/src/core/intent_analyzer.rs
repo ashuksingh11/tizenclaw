@@ -22,7 +22,10 @@ impl IntentAnalyzer {
 
         // 2. Sentence Density / Punctuation
         // Count typical sentence terminators and multi-clause connectors
-        let punct_count = prompt.chars().filter(|c| ['.', '?', '!', '。', '？', '！', ';'].contains(c)).count();
+        let punct_count = prompt
+            .chars()
+            .filter(|c| ['.', '?', '!', '。', '？', '！', ';'].contains(c))
+            .count();
         if punct_count >= 3 {
             complexity_score += 2;
         } else if punct_count == 2 {
@@ -58,9 +61,10 @@ mod tests {
 
     #[test]
     fn test_list_prompt() {
-        let prompt = "Please do the following:\n1. Turn on the TV\n2. Set volume to 20\n3. Launch Netflix";
+        let prompt =
+            "Please do the following:\n1. Turn on the TV\n2. Set volume to 20\n3. Launch Netflix";
         assert!(IntentAnalyzer::is_complex_task(prompt));
-        
+
         let prompt_bullet = "- Play music\n- Turn off lights\n- Lock the door";
         assert!(IntentAnalyzer::is_complex_task(prompt_bullet));
     }
@@ -69,7 +73,7 @@ mod tests {
     fn test_dense_punctuation() {
         let prompt = "Turn on the AC. Then close the door! And what about the weather? It is very important that you do this task perfectly. Please give me an update when you finish.";
         assert!(IntentAnalyzer::is_complex_task(prompt));
-        
+
         // Korean multi-sentence
         let prompt_kr = "에어컨 켜줘. 그리고 문도 닫아줄래? 날씨는 어때. 이것은 복잡한 작업인지 확인하기 위한 테스트 문장입니다 길이가 길어져서 100자를 넘을수 있도록 문장을 길게 작성합니다. 꼭 확인해주세요 절대로 실수하지마세요.";
         assert!(IntentAnalyzer::is_complex_task(prompt_kr));

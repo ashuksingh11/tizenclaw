@@ -141,9 +141,7 @@ impl ToolWatcher {
 
                 // Record when the most recent change occurred
                 if changed {
-                    log::debug!(
-                        "ToolWatcher: Change detected — (re)starting debounce timer."
-                    );
+                    log::debug!("ToolWatcher: Change detected — (re)starting debounce timer.");
                     last_change = Some(std::time::Instant::now());
                 }
 

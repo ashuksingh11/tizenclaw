@@ -20,22 +20,38 @@ impl DiscordChannel {
     pub fn new(config: &ChannelConfig) -> Self {
         DiscordChannel {
             name: config.name.clone(),
-            webhook_url: config.settings.get("webhook_url")
-                .and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            bot_token: config.settings.get("bot_token")
-            .and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            channel_id: config.settings.get("channel_id")
-                .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            webhook_url: config
+                .settings
+                .get("webhook_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            bot_token: config
+                .settings
+                .get("bot_token")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            channel_id: config
+                .settings
+                .get("channel_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             running: Arc::new(AtomicBool::new(false)),
         }
     }
 }
 
 impl Channel for DiscordChannel {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
     fn start(&mut self) -> bool {
-        if self.running.load(Ordering::SeqCst) { return true; }
+        if self.running.load(Ordering::SeqCst) {
+            return true;
+        }
         if self.bot_token.is_empty() && self.webhook_url.is_empty() {
             log::warn!("DiscordChannel: no bot_token or webhook_url configured");
             return false;
@@ -49,7 +65,10 @@ impl Channel for DiscordChannel {
             let bot_token = self.bot_token.clone(); // In Discord API, token is needed for Authorization headers. Wait, our generic HttpClient doesn't have custom headers easily, but we'll leave it as is per legacy code.
 
             tokio::spawn(async move {
-                log::info!("DiscordChannel: async epoll started for channel {}", channel_id);
+                log::info!(
+                    "DiscordChannel: async epoll started for channel {}",
+                    channel_id
+                );
                 let mut last_message_id: Option<String> = None;
 
                 while running.load(Ordering::SeqCst) {
@@ -66,7 +85,7 @@ impl Channel for DiscordChannel {
                     };
 
                     let client = crate::infra::http_client::HttpClient::new();
-                    
+
                     // Native async GET via epoll
                     match client.get(&url).await {
                         Ok(resp) => {
@@ -75,8 +94,10 @@ impl Channel for DiscordChannel {
                                     for msg in arr {
                                         let msg_id = msg["id"].as_str().unwrap_or("").to_string();
                                         let content = msg["content"].as_str().unwrap_or("");
-                                        let author = msg["author"]["username"].as_str().unwrap_or("unknown");
-                                        let is_bot = msg["author"]["bot"].as_bool().unwrap_or(false);
+                                        let author =
+                                            msg["author"]["username"].as_str().unwrap_or("unknown");
+                                        let is_bot =
+                                            msg["author"]["bot"].as_bool().unwrap_or(false);
 
                                         if !is_bot && !content.is_empty() {
                                             log::debug!("Discord msg from {}: {}", author, content);
@@ -121,10 +142,12 @@ impl Channel for DiscordChannel {
 
         let body = json!({"content": safe_msg}).to_string();
         let webhook_url = self.webhook_url.clone();
-        
+
         // Use Async PUSH
         tokio::spawn(async move {
-            let _ = crate::infra::http_client::HttpClient::new().post(&webhook_url, &body).await;
+            let _ = crate::infra::http_client::HttpClient::new()
+                .post(&webhook_url, &body)
+                .await;
         });
 
         Ok(())

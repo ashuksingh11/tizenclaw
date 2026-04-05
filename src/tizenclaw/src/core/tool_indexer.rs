@@ -82,21 +82,31 @@ impl ToolIndexer {
         let query_lower = query.to_lowercase();
         let words: Vec<&str> = query_lower.split_whitespace().collect();
 
-        let mut scored: Vec<(usize, &LlmToolDecl)> = self.tools.iter()
+        let mut scored: Vec<(usize, &LlmToolDecl)> = self
+            .tools
+            .iter()
             .map(|t| {
                 let name_lower = t.name.to_lowercase();
                 let desc_lower = t.description.to_lowercase();
                 let mut score = 0usize;
 
                 // Exact name match = highest score
-                if name_lower == query_lower { score += 100; }
+                if name_lower == query_lower {
+                    score += 100;
+                }
                 // Name contains query
-                if name_lower.contains(&query_lower) { score += 50; }
+                if name_lower.contains(&query_lower) {
+                    score += 50;
+                }
 
                 // Word matches in name and description
                 for word in &words {
-                    if name_lower.contains(word) { score += 20; }
-                    if desc_lower.contains(word) { score += 5; }
+                    if name_lower.contains(word) {
+                        score += 20;
+                    }
+                    if desc_lower.contains(word) {
+                        score += 5;
+                    }
                 }
                 (score, t)
             })
@@ -104,7 +114,11 @@ impl ToolIndexer {
             .collect();
 
         scored.sort_by(|a, b| b.0.cmp(&a.0));
-        scored.into_iter().take(max_results).map(|(_, t)| t).collect()
+        scored
+            .into_iter()
+            .take(max_results)
+            .map(|(_, t)| t)
+            .collect()
     }
 
     /// Filter tools relevant to a given prompt.
@@ -142,14 +156,20 @@ pub fn scan_tools_metadata(root_dir: &str) -> ToolsMetadata {
 
     if !root.exists() || !root.is_dir() {
         log::warn!("ToolIndexer: root dir '{}' does not exist", root_dir);
-        return ToolsMetadata { root_dir: root_dir.to_string(), categories };
+        return ToolsMetadata {
+            root_dir: root_dir.to_string(),
+            categories,
+        };
     }
 
     let entries = match std::fs::read_dir(root) {
         Ok(e) => e,
         Err(e) => {
             log::warn!("ToolIndexer: cannot read root dir '{}': {}", root_dir, e);
-            return ToolsMetadata { root_dir: root_dir.to_string(), categories };
+            return ToolsMetadata {
+                root_dir: root_dir.to_string(),
+                categories,
+            };
         }
     };
 
@@ -158,7 +178,8 @@ pub fn scan_tools_metadata(root_dir: &str) -> ToolsMetadata {
         if !path.is_dir() {
             continue;
         }
-        let cat_name = path.file_name()
+        let cat_name = path
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_string();
@@ -175,7 +196,8 @@ pub fn scan_tools_metadata(root_dir: &str) -> ToolsMetadata {
                 if !sub_path.is_dir() {
                     continue;
                 }
-                let sub_name = sub_path.file_name()
+                let sub_name = sub_path
+                    .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown")
                     .to_string();
@@ -196,7 +218,8 @@ pub fn scan_tools_metadata(root_dir: &str) -> ToolsMetadata {
                 for flat_entry in flat_entries.flatten() {
                     let fp = flat_entry.path();
                     if fp.is_file() {
-                        let fname = fp.file_name()
+                        let fname = fp
+                            .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or("")
                             .to_string();
@@ -237,7 +260,10 @@ pub fn scan_tools_metadata(root_dir: &str) -> ToolsMetadata {
         root_dir,
     );
 
-    ToolsMetadata { root_dir: root_dir.to_string(), categories }
+    ToolsMetadata {
+        root_dir: root_dir.to_string(),
+        categories,
+    }
 }
 
 /// Scan metadata from the standard tools root plus an optional flat
@@ -262,7 +288,11 @@ pub fn scan_tools_metadata_with_embedded(
 
 /// Parse a single tool directory for metadata.
 fn parse_tool_dir(dir: &Path, category: &str) -> Vec<ToolMeta> {
-    let dir_name_str = dir.file_name().and_then(|n| n.to_str()).unwrap_or("unknown").to_string();
+    let dir_name_str = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string();
     let dir_name = dir_name_str.clone();
 
     // Look for descriptors in priority order
@@ -291,8 +321,16 @@ fn parse_tool_dir(dir: &Path, category: &str) -> Vec<ToolMeta> {
             for entry in entries.flatten() {
                 let p = entry.path();
                 if p.is_file() {
-                    let fname = p.file_name().unwrap_or_default().to_string_lossy().to_string();
-                    if fname.ends_with(".md") && fname != "index.md" && fname != "tools.md" && !fname.starts_with('.') {
+                    let fname = p
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_string();
+                    if fname.ends_with(".md")
+                        && fname != "index.md"
+                        && fname != "tools.md"
+                        && !fname.starts_with('.')
+                    {
                         let action_name = fname.trim_end_matches(".md").to_string();
                         let desc = extract_description_from_md(&p);
                         results.push(ToolMeta {
@@ -342,10 +380,17 @@ fn parse_tool_dir(dir: &Path, category: &str) -> Vec<ToolMeta> {
         // Use first non-empty, non-heading line as description
         for line in content.lines() {
             let t = line.trim();
-            if !t.is_empty() && !t.starts_with('#') && !t.starts_with("---")
-                && !t.starts_with("name:") && !t.starts_with("description:")
+            if !t.is_empty()
+                && !t.starts_with('#')
+                && !t.starts_with("---")
+                && !t.starts_with("name:")
+                && !t.starts_with("description:")
             {
-                description = if t.len() > 200 { t[..200].to_string() } else { t.to_string() };
+                description = if t.len() > 200 {
+                    t[..200].to_string()
+                } else {
+                    t.to_string()
+                };
                 break;
             }
         }
@@ -438,7 +483,11 @@ fn extract_description_from_md(path: &Path) -> String {
     for line in content.lines() {
         let t = line.trim();
         if !t.is_empty() && !t.starts_with('#') && !t.starts_with("---") {
-            return if t.len() > 200 { t[..200].to_string() } else { t.to_string() };
+            return if t.len() > 200 {
+                t[..200].to_string()
+            } else {
+                t.to_string()
+            };
         }
     }
 
@@ -487,17 +536,16 @@ fn compute_dir_hash(dir: &Path) -> u64 {
     let mut hasher = DefaultHasher::new();
 
     fn walk(dir: &Path, hasher: &mut DefaultHasher, depth: usize) {
-        if depth > 3 { return; }
+        if depth > 3 {
+            return;
+        }
         if let Ok(entries) = std::fs::read_dir(dir) {
             let mut names: Vec<(String, std::time::SystemTime)> = entries
                 .flatten()
                 .filter_map(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
                     // Skip hidden files and generated index artifacts
-                    if name.starts_with('.')
-                        || name == "tools.md"
-                        || name == "index.md"
-                    {
+                    if name.starts_with('.') || name == "tools.md" || name == "index.md" {
                         return None;
                     }
                     let modified = e.metadata().ok()?.modified().ok()?;
@@ -551,13 +599,17 @@ pub fn build_indexing_prompt(metadata: &ToolsMetadata) -> String {
     prompt.push_str(
         "You are a documentation generator for the TizenClaw AI Agent system. \
          Based on the tool metadata provided below, generate high-quality \
-         markdown documentation files.\n\n"
+         markdown documentation files.\n\n",
     );
 
     prompt.push_str("## Scanned Tool Metadata\n\n");
 
     for cat in &metadata.categories {
-        prompt.push_str(&format!("### Category: `{}` ({} tools)\n", cat.name, cat.tools.len()));
+        prompt.push_str(&format!(
+            "### Category: `{}` ({} tools)\n",
+            cat.name,
+            cat.tools.len()
+        ));
         for tool in &cat.tools {
             prompt.push_str(&format!("- **{}**: {}\n", tool.name, tool.description));
             if let Some(bin) = &tool.binary_path {
@@ -566,7 +618,8 @@ pub fn build_indexing_prompt(metadata: &ToolsMetadata) -> String {
             if !tool.commands.is_empty() {
                 prompt.push_str(&format!(
                     "  - Commands: {}\n",
-                    tool.commands.iter()
+                    tool.commands
+                        .iter()
                         .take(10)
                         .map(|c| format!("`{}`", c))
                         .collect::<Vec<_>>()
@@ -615,9 +668,15 @@ pub fn apply_llm_index_result(result: &str, root_dir: &str, metadata: &ToolsMeta
     let clean = result.trim();
     // Strip markdown code fences if present
     let json_str = if clean.starts_with("```json") {
-        clean.trim_start_matches("```json").trim_end_matches("```").trim()
+        clean
+            .trim_start_matches("```json")
+            .trim_end_matches("```")
+            .trim()
     } else if clean.starts_with("```") {
-        clean.trim_start_matches("```").trim_end_matches("```").trim()
+        clean
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim()
     } else {
         clean
     };
@@ -662,10 +721,9 @@ pub fn apply_llm_index_result(result: &str, root_dir: &str, metadata: &ToolsMeta
                             log::info!("ToolIndexer: wrote {}", index_path.display());
                             written += 1;
                         }
-                        Err(e) => log::error!(
-                            "ToolIndexer: failed to write {}/index.md: {}",
-                            cat_name, e
-                        ),
+                        Err(e) => {
+                            log::error!("ToolIndexer: failed to write {}/index.md: {}", cat_name, e)
+                        }
                     }
                 }
             }
@@ -696,7 +754,12 @@ pub fn generate_fallback_index(metadata: &ToolsMetadata, root_dir: &str) {
             "| {} | {} | {} |\n",
             cat.name,
             cat.tools.len(),
-            cat.tools.iter().take(3).map(|t| t.name.as_str()).collect::<Vec<_>>().join(", "),
+            cat.tools
+                .iter()
+                .take(3)
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
         ));
     }
     md.push('\n');
@@ -779,9 +842,7 @@ pub fn get_tool_catalog(root_dir: &str) -> String {
     }
 
     // Fallback: live query
-    log::info!(
-        "ToolIndexer: tools.md not available, performing live query"
-    );
+    log::info!("ToolIndexer: tools.md not available, performing live query");
     query_tools_live(root_dir)
 }
 
@@ -815,7 +876,10 @@ mod tests {
         );
 
         assert_eq!(metadata.categories.len(), 2);
-        assert!(metadata.categories.iter().any(|category| category.name == "cli"));
+        assert!(metadata
+            .categories
+            .iter()
+            .any(|category| category.name == "cli"));
         let embedded = metadata
             .categories
             .iter()
@@ -848,11 +912,8 @@ mod tests {
           }\n\
         }";
 
-        let written = apply_llm_index_result(
-            result,
-            &tools_root.path().to_string_lossy(),
-            &metadata,
-        );
+        let written =
+            apply_llm_index_result(result, &tools_root.path().to_string_lossy(), &metadata);
 
         assert_eq!(written, 2);
         assert!(embedded_root.path().join("index.md").exists());

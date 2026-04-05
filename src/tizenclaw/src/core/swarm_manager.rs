@@ -2,7 +2,9 @@
 
 use serde_json::{json, Value};
 
-pub struct SwarmManager { running: bool }
+pub struct SwarmManager {
+    running: bool,
+}
 
 impl Default for SwarmManager {
     fn default() -> Self {
@@ -11,8 +13,18 @@ impl Default for SwarmManager {
 }
 
 impl SwarmManager {
-    pub fn new() -> Self { SwarmManager { running: false } }
-    pub fn start(&mut self) -> bool { self.running = true; log::info!("SwarmManager started"); true }
-    pub fn stop(&mut self) { self.running = false; }
-    pub fn is_running(&self) -> bool { self.running }
+    pub fn new() -> Self {
+        SwarmManager { running: false }
+    }
+    pub fn start(&mut self) -> bool {
+        self.running = true;
+        log::info!("SwarmManager started");
+        true
+    }
+    pub fn stop(&mut self) {
+        self.running = false;
+    }
+    pub fn is_running(&self) -> bool {
+        self.running
+    }
 }

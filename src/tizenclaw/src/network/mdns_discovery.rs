@@ -1,8 +1,8 @@
 //! mDNS Discovery — scanning and registering zero-config endpoints.
 
 use mdns_sd::{ServiceDaemon, ServiceEvent};
-use std::sync::{Arc, RwLock};
 use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone)]
 pub struct Peer {
@@ -35,7 +35,10 @@ impl MdnsScanner {
             let mdns = match ServiceDaemon::new() {
                 Ok(m) => m,
                 Err(e) => {
-                    log::error!("mDNS initialization failed: {}. Fallback to isolated mode.", e);
+                    log::error!(
+                        "mDNS initialization failed: {}. Fallback to isolated mode.",
+                        e
+                    );
                     return;
                 }
             };
@@ -55,22 +58,29 @@ impl MdnsScanner {
                 match event {
                     ServiceEvent::ServiceResolved(info) => {
                         let id = info.get_fullname().to_string();
-                        let addresses: Vec<String> = info.get_addresses().iter().map(|ip| ip.to_string()).collect();
+                        let addresses: Vec<String> = info
+                            .get_addresses()
+                            .iter()
+                            .map(|ip| ip.to_string())
+                            .collect();
                         let addr = addresses.first().cloned().unwrap_or_else(|| "".to_string());
                         let port = info.get_port();
-                        
+
                         log::debug!("Discovered TizenClaw peer: {} at {}:{}", id, addr, port);
-                        
+
                         if let Ok(mut peers) = peers_clone.write() {
-                            peers.insert(id.clone(), Peer {
-                                id,
-                                address: addr,
-                                port,
-                                last_seen: std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_secs(),
-                            });
+                            peers.insert(
+                                id.clone(),
+                                Peer {
+                                    id,
+                                    address: addr,
+                                    port,
+                                    last_seen: std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs(),
+                                },
+                            );
                         }
                     }
                     ServiceEvent::ServiceRemoved(_service_type, fullname) => {

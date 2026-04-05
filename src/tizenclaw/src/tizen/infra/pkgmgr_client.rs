@@ -22,9 +22,7 @@ pub struct PkgmgrClient;
 impl PkgmgrClient {
     /// List all installed packages on the device.
     pub fn list_packages() -> Vec<PackageInfo> {
-        let output = Command::new("pkgcmd")
-            .args(["--list", "-t", "0"])
-            .output();
+        let output = Command::new("pkgcmd").args(["--list", "-t", "0"]).output();
 
         match output {
             Ok(out) => {

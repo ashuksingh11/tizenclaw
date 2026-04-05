@@ -60,7 +60,10 @@ impl ContainerEngine {
         UnixStream::from_std(std_stream).map_err(|e| format!("Tokio wrap failed: {}", e))
     }
 
-    async fn send_payload<W: AsyncWrite + Unpin>(writer: &mut W, val: &Value) -> Result<(), String> {
+    async fn send_payload<W: AsyncWrite + Unpin>(
+        writer: &mut W,
+        val: &Value,
+    ) -> Result<(), String> {
         let payload = val.to_string();
         let len = (payload.len() as u32).to_be_bytes();
         writer
@@ -71,7 +74,10 @@ impl ContainerEngine {
             .write_all(payload.as_bytes())
             .await
             .map_err(|e| format!("Write payload failed: {}", e))?;
-        writer.flush().await.map_err(|e| format!("Flush failed: {}", e))?;
+        writer
+            .flush()
+            .await
+            .map_err(|e| format!("Flush failed: {}", e))?;
         Ok(())
     }
 
@@ -94,7 +100,10 @@ impl ContainerEngine {
     }
 
     fn executor_binary_candidates() -> Vec<std::path::PathBuf> {
-        let mut candidates = vec![std::path::PathBuf::from(format!("/usr/bin/{}", EXECUTOR_BINARY))];
+        let mut candidates = vec![std::path::PathBuf::from(format!(
+            "/usr/bin/{}",
+            EXECUTOR_BINARY
+        ))];
 
         if let Ok(current_exe) = std::env::current_exe() {
             if let Some(parent) = current_exe.parent() {
@@ -146,7 +155,10 @@ impl ContainerEngine {
 
             if let Some(status) = resp["status"].as_str() {
                 if status == "error" {
-                    return Err(resp["message"].as_str().unwrap_or("Unknown executor error").to_string());
+                    return Err(resp["message"]
+                        .as_str()
+                        .unwrap_or("Unknown executor error")
+                        .to_string());
                 }
             }
 
@@ -235,7 +247,10 @@ impl ContainerEngine {
         match self.execute_oneshot_via_socket(&req).await {
             Ok(result) => Ok(result),
             Err(socket_err) => {
-                log::warn!("Socket executor unavailable, trying stdio executor: {}", socket_err);
+                log::warn!(
+                    "Socket executor unavailable, trying stdio executor: {}",
+                    socket_err
+                );
                 match self.execute_oneshot_via_stdio_executor(&req).await {
                     Ok(result) => Ok(result),
                     Err(stdio_err) => {
@@ -266,7 +281,10 @@ impl ContainerEngine {
         match self.execute_streaming_via_socket(&req).await {
             Ok(rx) => Ok(rx),
             Err(socket_err) => {
-                log::warn!("Socket streaming unavailable, trying stdio executor: {}", socket_err);
+                log::warn!(
+                    "Socket streaming unavailable, trying stdio executor: {}",
+                    socket_err
+                );
                 match self.execute_streaming_via_stdio_executor(&req).await {
                     Ok(rx) => Ok(rx),
                     Err(stdio_err) => {
@@ -297,7 +315,11 @@ impl ContainerEngine {
 
     /// Fallback direct mode only when executor delegation is unavailable.
     async fn execute_direct(&self, binary: &str, args: &[&str]) -> Result<Value, String> {
-        match tokio::process::Command::new(binary).args(args).output().await {
+        match tokio::process::Command::new(binary)
+            .args(args)
+            .output()
+            .await
+        {
             Ok(output) => Ok(json!({
                 "exit_code": output.status.code().unwrap_or(-1),
                 "stdout": String::from_utf8_lossy(&output.stdout).to_string(),
@@ -316,6 +338,8 @@ mod tests {
     #[test]
     fn executor_candidates_include_system_binary() {
         let candidates = ContainerEngine::executor_binary_candidates();
-        assert!(candidates.iter().any(|path| path == std::path::Path::new("/usr/bin/tizenclaw-tool-executor")));
+        assert!(candidates
+            .iter()
+            .any(|path| path == std::path::Path::new("/usr/bin/tizenclaw-tool-executor")));
     }
 }

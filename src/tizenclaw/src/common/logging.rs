@@ -28,7 +28,9 @@ impl log::Log for PlatformLogBridge {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         // Enforce strict filtering: ONLY tizenclaw internal modules get Debug/Trace.
         // Vendor crates (mdns_sd, hyper, rustls, etc.) are restricted to Warn/Error.
-        if metadata.target().starts_with("tizenclaw") || metadata.target().starts_with("libtizenclaw") {
+        if metadata.target().starts_with("tizenclaw")
+            || metadata.target().starts_with("libtizenclaw")
+        {
             metadata.level() <= log::Level::Debug
         } else {
             metadata.level() <= log::Level::Warn
@@ -42,13 +44,19 @@ impl log::Log for PlatformLogBridge {
 
         let level = match record.level() {
             log::Level::Error => libtizenclaw_core::framework::LogLevel::Error,
-            log::Level::Warn  => libtizenclaw_core::framework::LogLevel::Warn,
-            log::Level::Info  => libtizenclaw_core::framework::LogLevel::Info,
+            log::Level::Warn => libtizenclaw_core::framework::LogLevel::Warn,
+            log::Level::Info => libtizenclaw_core::framework::LogLevel::Info,
             log::Level::Debug | log::Level::Trace => libtizenclaw_core::framework::LogLevel::Debug,
         };
 
         let filepath = record.file().unwrap_or("?");
-        let filename = filepath.rsplit('/').next().unwrap_or(filepath).rsplit('\\').next().unwrap_or(filepath);
+        let filename = filepath
+            .rsplit('/')
+            .next()
+            .unwrap_or(filepath)
+            .rsplit('\\')
+            .next()
+            .unwrap_or(filepath);
 
         let msg = format!(
             "{}:{} {}",
@@ -64,13 +72,22 @@ impl log::Log for PlatformLogBridge {
         if is_tizen {
             let prio = match record.level() {
                 log::Level::Error => libtizenclaw_core::tizen_sys::dlog::DLOG_ERROR,
-                log::Level::Warn  => libtizenclaw_core::tizen_sys::dlog::DLOG_WARN,
-                log::Level::Info  => libtizenclaw_core::tizen_sys::dlog::DLOG_INFO,
-                log::Level::Debug | log::Level::Trace => libtizenclaw_core::tizen_sys::dlog::DLOG_DEBUG,
+                log::Level::Warn => libtizenclaw_core::tizen_sys::dlog::DLOG_WARN,
+                log::Level::Info => libtizenclaw_core::tizen_sys::dlog::DLOG_INFO,
+                log::Level::Debug | log::Level::Trace => {
+                    libtizenclaw_core::tizen_sys::dlog::DLOG_DEBUG
+                }
             };
-            if let (Ok(tag_c), Ok(msg_c)) = (std::ffi::CString::new(TAG), std::ffi::CString::new(msg.replace('%', "%%"))) {
+            if let (Ok(tag_c), Ok(msg_c)) = (
+                std::ffi::CString::new(TAG),
+                std::ffi::CString::new(msg.replace('%', "%%")),
+            ) {
                 unsafe {
-                    libtizenclaw_core::tizen_sys::dlog::dlog_print(prio, tag_c.as_ptr(), msg_c.as_ptr());
+                    libtizenclaw_core::tizen_sys::dlog::dlog_print(
+                        prio,
+                        tag_c.as_ptr(),
+                        msg_c.as_ptr(),
+                    );
                 }
             }
             FileLogBackend::write(&msg, level);
@@ -80,8 +97,8 @@ impl log::Log for PlatformLogBridge {
         // Fallback: stderr
         let prefix = match level {
             libtizenclaw_core::framework::LogLevel::Error => "E",
-            libtizenclaw_core::framework::LogLevel::Warn  => "W",
-            libtizenclaw_core::framework::LogLevel::Info  => "I",
+            libtizenclaw_core::framework::LogLevel::Warn => "W",
+            libtizenclaw_core::framework::LogLevel::Info => "I",
             libtizenclaw_core::framework::LogLevel::Debug => "D",
         };
         eprintln!("[{}] [{}] {}", prefix, TAG, msg);
@@ -116,8 +133,8 @@ impl FileLogBackend {
             if let Some(backend) = guard.as_ref() {
                 let level_str = match level {
                     libtizenclaw_core::framework::LogLevel::Error => "E",
-                    libtizenclaw_core::framework::LogLevel::Warn  => "W",
-                    libtizenclaw_core::framework::LogLevel::Info  => "I",
+                    libtizenclaw_core::framework::LogLevel::Warn => "W",
+                    libtizenclaw_core::framework::LogLevel::Info => "I",
                     libtizenclaw_core::framework::LogLevel::Debug => "D",
                 };
                 let pid = std::process::id();
@@ -171,16 +188,25 @@ mod tests {
     async fn test_file_log_format_contains_pid() {
         let path = "test_tizenclaw.log";
         let _ = fs::remove_file(path);
-        
+
         FileLogBackend::init(path, 1024);
         FileLogBackend::write("test payload", libtizenclaw_core::framework::LogLevel::Info);
-        
+
         let content = fs::read_to_string(path).unwrap_or_default();
         let pid = std::process::id();
-        assert!(content.contains(&format!("|{}|", pid)), "Log does not contain PID");
-        assert!(content.contains("UTC|"), "Log does not contain UTC timestamp tag");
-        assert!(content.contains("test payload"), "Log does not contain payload");
-        
+        assert!(
+            content.contains(&format!("|{}|", pid)),
+            "Log does not contain PID"
+        );
+        assert!(
+            content.contains("UTC|"),
+            "Log does not contain UTC timestamp tag"
+        );
+        assert!(
+            content.contains("test payload"),
+            "Log does not contain payload"
+        );
+
         let _ = fs::remove_file(path);
     }
 }

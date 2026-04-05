@@ -33,26 +33,35 @@ pub struct LlmMessage {
 impl LlmMessage {
     pub fn user(text: &str) -> Self {
         LlmMessage {
-            role: "user".into(), text: text.into(),
+            role: "user".into(),
+            text: text.into(),
             reasoning_text: String::new(),
-            tool_calls: vec![], tool_name: String::new(),
-            tool_call_id: String::new(), tool_result: Value::Null,
+            tool_calls: vec![],
+            tool_name: String::new(),
+            tool_call_id: String::new(),
+            tool_result: Value::Null,
         }
     }
     pub fn assistant(text: &str) -> Self {
         LlmMessage {
-            role: "assistant".into(), text: text.into(),
+            role: "assistant".into(),
+            text: text.into(),
             reasoning_text: String::new(),
-            tool_calls: vec![], tool_name: String::new(),
-            tool_call_id: String::new(), tool_result: Value::Null,
+            tool_calls: vec![],
+            tool_name: String::new(),
+            tool_call_id: String::new(),
+            tool_result: Value::Null,
         }
     }
     pub fn tool_result(call_id: &str, name: &str, result: Value) -> Self {
         LlmMessage {
-            role: "tool".into(), text: String::new(),
+            role: "tool".into(),
+            text: String::new(),
             reasoning_text: String::new(),
-            tool_calls: vec![], tool_name: name.into(),
-            tool_call_id: call_id.into(), tool_result: result,
+            tool_calls: vec![],
+            tool_name: name.into(),
+            tool_call_id: call_id.into(),
+            tool_result: result,
         }
     }
 }
@@ -86,7 +95,9 @@ pub struct LlmResponse {
 }
 
 impl LlmResponse {
-    pub fn has_tool_calls(&self) -> bool { !self.tool_calls.is_empty() }
+    pub fn has_tool_calls(&self) -> bool {
+        !self.tool_calls.is_empty()
+    }
 }
 
 /// Tool declaration for function calling.
@@ -102,8 +113,11 @@ pub struct LlmToolDecl {
 pub trait LlmBackend: Send + Sync {
     fn initialize(&mut self, config: &Value) -> bool;
     async fn chat(
-        &self, messages: &[LlmMessage], tools: &[LlmToolDecl],
-        on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>, system_prompt: &str,
+        &self,
+        messages: &[LlmMessage],
+        tools: &[LlmToolDecl],
+        on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
+        system_prompt: &str,
         max_tokens: Option<u32>,
     ) -> LlmResponse;
     fn get_name(&self) -> &str;

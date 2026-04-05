@@ -24,19 +24,22 @@ pub struct WebDashboard {
 
 impl WebDashboard {
     pub fn new(config: &ChannelConfig) -> Self {
-        let port = config.settings.get("port")
+        let port = config
+            .settings
+            .get("port")
             .and_then(|v| v.as_u64())
             .unwrap_or(9090) as u16;
-        let localhost_only = config.settings.get("localhost_only")
+        let localhost_only = config
+            .settings
+            .get("localhost_only")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let data_dir = PathBuf::from(
-            std::env::var("TIZENCLAW_DATA_DIR")
-                .unwrap_or_else(|_| "/opt/usr/share/tizenclaw".to_string()),
-        );
+        let data_dir = crate::core::runtime_paths::default_data_dir();
         let default_web_root = data_dir.join("web");
-        let web_root = config.settings.get("web_root")
+        let web_root = config
+            .settings
+            .get("web_root")
             .and_then(|v| v.as_str())
             .map(PathBuf::from)
             .unwrap_or(default_web_root);
@@ -67,35 +70,48 @@ impl WebDashboard {
 }
 
 impl Channel for WebDashboard {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
     fn start(&mut self) -> bool {
-        if self.is_running() { return true; }
+        if self.is_running() {
+            return true;
+        }
 
         let bin = Self::find_binary();
         let mut cmd = std::process::Command::new(&bin);
-        cmd.arg("--port").arg(self.port.to_string())
-           .arg("--web-root").arg(&self.web_root)
-           .arg("--config-dir").arg(&self.config_dir)
-           .arg("--data-dir").arg(&self.data_dir);
+        cmd.arg("--port")
+            .arg(self.port.to_string())
+            .arg("--web-root")
+            .arg(&self.web_root)
+            .arg("--config-dir")
+            .arg(&self.config_dir)
+            .arg("--data-dir")
+            .arg(&self.data_dir);
         if self.localhost_only {
             cmd.arg("--localhost-only");
         }
         // Inherit stdout/stderr so logs flow to the same terminal / journal
         cmd.stdout(std::process::Stdio::inherit())
-           .stderr(std::process::Stdio::inherit());
+            .stderr(std::process::Stdio::inherit());
 
         match cmd.spawn() {
             Ok(child) => {
                 log::info!(
                     "WebDashboard process started (pid {}, port {})",
-                    child.id(), self.port
+                    child.id(),
+                    self.port
                 );
                 self.child = Some(child);
                 true
             }
             Err(e) => {
-                log::error!("Failed to spawn tizenclaw-web-dashboard ({}): {}", bin.display(), e);
+                log::error!(
+                    "Failed to spawn tizenclaw-web-dashboard ({}): {}",
+                    bin.display(),
+                    e
+                );
                 false
             }
         }
@@ -104,7 +120,9 @@ impl Channel for WebDashboard {
     fn stop(&mut self) {
         if let Some(mut child) = self.child.take() {
             // Send SIGTERM for graceful shutdown
-            unsafe { libc::kill(child.id() as libc::pid_t, libc::SIGTERM); }
+            unsafe {
+                libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
+            }
             // Give the process up to 3 seconds, then force-kill
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
             loop {

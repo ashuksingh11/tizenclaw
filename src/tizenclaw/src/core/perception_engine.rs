@@ -14,7 +14,9 @@ impl Default for PerceptionEngine {
 
 impl PerceptionEngine {
     pub fn new() -> Self {
-        PerceptionEngine { last_screen_text: String::new() }
+        PerceptionEngine {
+            last_screen_text: String::new(),
+        }
     }
 
     pub fn capture_screen(&mut self) -> Value {

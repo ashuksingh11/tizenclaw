@@ -47,7 +47,10 @@ impl Default for ChannelRegistry {
 
 impl ChannelRegistry {
     pub fn new() -> Self {
-        ChannelRegistry { channels: vec![], auto_start: vec![] }
+        ChannelRegistry {
+            channels: vec![],
+            auto_start: vec![],
+        }
     }
 
     /// Register a channel.  `auto_start` controls whether
@@ -60,7 +63,9 @@ impl ChannelRegistry {
     /// Start all channels whose `auto_start` flag is true.
     pub fn start_all(&mut self) {
         for (ch, &auto) in self.channels.iter_mut().zip(self.auto_start.iter()) {
-            if !auto || ch.is_running() { continue; }
+            if !auto || ch.is_running() {
+                continue;
+            }
             if ch.start() {
                 log::info!("Channel '{}' started", ch.name());
             } else {
@@ -111,7 +116,10 @@ impl ChannelRegistry {
 
     /// Returns Some(is_running) if the channel is registered, None otherwise.
     pub fn channel_status(&self, name: &str) -> Option<bool> {
-        self.channels.iter().find(|c| c.name() == name).map(|c| c.is_running())
+        self.channels
+            .iter()
+            .find(|c| c.name() == name)
+            .map(|c| c.is_running())
     }
 
     pub fn broadcast(&self, text: &str) {
@@ -128,7 +136,10 @@ impl ChannelRegistry {
                 return ch.send_message(text);
             }
         }
-        Err(format!("Channel '{}' not found or not running", channel_name))
+        Err(format!(
+            "Channel '{}' not found or not running",
+            channel_name
+        ))
     }
 
     pub fn has_channel(&self, name: &str) -> bool {
@@ -186,13 +197,13 @@ impl ChannelRegistry {
     }
 }
 
-pub mod web_dashboard;
-pub mod channel_factory;
-pub mod webhook_channel;
-pub mod telegram_client;
-pub mod discord_channel;
-pub mod slack_channel;
-pub mod voice_channel;
 pub mod a2a_handler;
+pub mod channel_factory;
+pub mod discord_channel;
 pub mod mcp_client;
 pub mod mcp_server;
+pub mod slack_channel;
+pub mod telegram_client;
+pub mod voice_channel;
+pub mod web_dashboard;
+pub mod webhook_channel;

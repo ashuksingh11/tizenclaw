@@ -21,14 +21,23 @@ pub struct TelegramClient {
 }
 
 impl TelegramClient {
-    pub fn new(config: &ChannelConfig, agent: Option<Arc<crate::core::agent_core::AgentCore>>) -> Self {
-        let mut bot_token = config.settings.get("bot_token")
+    pub fn new(
+        config: &ChannelConfig,
+        agent: Option<Arc<crate::core::agent_core::AgentCore>>,
+    ) -> Self {
+        let mut bot_token = config
+            .settings
+            .get("bot_token")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
 
         let mut allowed_ids = HashSet::new();
-        if let Some(arr) = config.settings.get("allowed_chat_ids").and_then(|v| v.as_array()) {
+        if let Some(arr) = config
+            .settings
+            .get("allowed_chat_ids")
+            .and_then(|v| v.as_array())
+        {
             for id in arr {
                 if let Some(n) = id.as_i64() {
                     allowed_ids.insert(n);
@@ -37,7 +46,9 @@ impl TelegramClient {
         }
 
         // Try load from unified config file
-        if let Ok(content) = std::fs::read_to_string("/opt/usr/share/tizenclaw/config/telegram_config.json") {
+        let telegram_config =
+            crate::core::runtime_paths::default_data_dir().join("config/telegram_config.json");
+        if let Ok(content) = std::fs::read_to_string(&telegram_config) {
             if let Ok(json) = serde_json::from_str::<Value>(&content) {
                 if let Some(token) = json.get("bot_token").and_then(|v| v.as_str()) {
                     if !token.is_empty() {
@@ -70,7 +81,9 @@ impl TelegramClient {
 
     // Static so it can be called inside spawned async tasks easily
     fn send_telegram_message(bot_token: &str, chat_id: i64, text: &str) {
-        if bot_token.is_empty() { return; }
+        if bot_token.is_empty() {
+            return;
+        }
 
         let safe_text = if text.len() > 4000 {
             format!("{}\n...(truncated)", &text[..4000])
@@ -83,7 +96,8 @@ impl TelegramClient {
             "chat_id": chat_id,
             "text": safe_text,
             "parse_mode": "Markdown"
-        }).to_string();
+        })
+        .to_string();
 
         let client = crate::infra::http_client::HttpClient::new();
         tokio::spawn(async move {
@@ -100,17 +114,24 @@ impl TelegramClient {
 }
 
 impl Channel for TelegramClient {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
     fn start(&mut self) -> bool {
-        if self.running.load(Ordering::SeqCst) { return true; }
+        if self.running.load(Ordering::SeqCst) {
+            return true;
+        }
         if self.bot_token.is_empty() || self.bot_token == "YOUR_TELEGRAM_BOT_TOKEN_HERE" {
             log::warn!("TelegramClient: invalid bot token");
             return false;
         }
 
         // Clear Webhook (in case user had it previously configured from testing)
-        let reset_url = format!("https://api.telegram.org/bot{}/deleteWebhook", self.bot_token);
+        let reset_url = format!(
+            "https://api.telegram.org/bot{}/deleteWebhook",
+            self.bot_token
+        );
         let client = crate::infra::http_client::HttpClient::new();
         let _ = client.get_sync(&reset_url);
 
@@ -143,7 +164,9 @@ impl Channel for TelegramClient {
                     }
                 };
 
-                if !running.load(Ordering::SeqCst) { break; }
+                if !running.load(Ordering::SeqCst) {
+                    break;
+                }
                 backoff_secs = 5;
 
                 let data: Value = match serde_json::from_str(&resp.body) {
@@ -169,7 +192,9 @@ impl Channel for TelegramClient {
                         let text = msg["text"].as_str().unwrap_or("");
                         let chat_id = msg["chat"]["id"].as_i64().unwrap_or(0);
 
-                        if text.is_empty() || chat_id == 0 { continue; }
+                        if text.is_empty() || chat_id == 0 {
+                            continue;
+                        }
                         if !allowed_ids.is_empty() && !allowed_ids.contains(&chat_id) {
                             log::debug!("Blocked chat_id {} — not in allowlist", chat_id);
                             continue;
@@ -177,22 +202,31 @@ impl Channel for TelegramClient {
 
                         let current_handlers = active_handlers.load(Ordering::SeqCst);
                         if current_handlers >= MAX_CONCURRENT_HANDLERS {
-                            log::warn!("Telegram dropping message: max concurrent handlers ({}) reached", current_handlers);
+                            log::warn!(
+                                "Telegram dropping message: max concurrent handlers ({}) reached",
+                                current_handlers
+                            );
                             continue;
                         }
 
                         log::debug!("Telegram received from {}: {}", chat_id, text);
-                        
+
                         if let Some(agent_core) = agent.clone() {
                             active_handlers.fetch_add(1, Ordering::SeqCst);
                             let text_clone = text.to_string();
                             let bot_token_clone = bot_token.clone();
                             let session_id = format!("tg_{}", chat_id);
                             let active_handlers_clone = active_handlers.clone();
-                            
+
                             tokio::spawn(async move {
-                                let result = agent_core.process_prompt(&session_id, &text_clone, None).await;
-                                TelegramClient::send_telegram_message(&bot_token_clone, chat_id, &result);
+                                let result = agent_core
+                                    .process_prompt(&session_id, &text_clone, None)
+                                    .await;
+                                TelegramClient::send_telegram_message(
+                                    &bot_token_clone,
+                                    chat_id,
+                                    &result,
+                                );
                                 active_handlers_clone.fetch_sub(1, Ordering::SeqCst);
                             });
                         }

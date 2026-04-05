@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::channel::ChannelRegistry;
 use crate::core::agent_core::AgentCore;
+use crate::core::registration_store::RegistrationKind;
 
 const MAX_CONCURRENT_CLIENTS: usize = 8;
 const MAX_PAYLOAD_SIZE: usize = 10 * 1024 * 1024; // 10MB
@@ -83,7 +84,10 @@ impl IpcServer {
                 return;
             }
 
-            let timeout = libc::timeval { tv_sec: 1, tv_usec: 0 };
+            let timeout = libc::timeval {
+                tv_sec: 1,
+                tv_usec: 0,
+            };
             libc::setsockopt(
                 fd,
                 libc::SOL_SOCKET,
@@ -108,7 +112,9 @@ impl IpcServer {
                 let busy = json!({"jsonrpc":"2.0","error":{"code":-32000,"message":"Server busy"}})
                     .to_string();
                 Self::send_response(client_fd, &busy);
-                unsafe { libc::close(client_fd); }
+                unsafe {
+                    libc::close(client_fd);
+                }
                 continue;
             }
 
@@ -121,11 +127,15 @@ impl IpcServer {
             std::thread::spawn(move || {
                 Self::handle_client(rt_handle_clone, client_fd, agent, registry);
                 active.fetch_sub(1, Ordering::SeqCst);
-                unsafe { libc::close(client_fd); }
+                unsafe {
+                    libc::close(client_fd);
+                }
             });
         }
 
-        unsafe { libc::close(sock); }
+        unsafe {
+            libc::close(sock);
+        }
         log::info!("IPC Server stopped")
     }
 
@@ -138,7 +148,9 @@ impl IpcServer {
         loop {
             let mut len_buf = [0u8; 4];
             let n = unsafe { libc::recv(fd, len_buf.as_mut_ptr() as *mut _, 4, libc::MSG_WAITALL) };
-            if n != 4 { break; }
+            if n != 4 {
+                break;
+            }
 
             let payload_len = u32::from_be_bytes(len_buf) as usize;
             if payload_len > MAX_PAYLOAD_SIZE {
@@ -148,17 +160,25 @@ impl IpcServer {
 
             let mut buf = vec![0u8; payload_len];
             let n = unsafe {
-                libc::recv(fd, buf.as_mut_ptr() as *mut _, payload_len, libc::MSG_WAITALL)
+                libc::recv(
+                    fd,
+                    buf.as_mut_ptr() as *mut _,
+                    payload_len,
+                    libc::MSG_WAITALL,
+                )
             };
-            if n as usize != payload_len { break; }
+            if n as usize != payload_len {
+                break;
+            }
 
             let raw_msg = String::from_utf8_lossy(&buf).to_string();
-            if raw_msg.is_empty() { break; }
+            if raw_msg.is_empty() {
+                break;
+            }
 
             log::debug!("IPC msg received ({} bytes)", raw_msg.len());
 
-            let response =
-                Self::dispatch_request(&rt_handle, &raw_msg, &agent, &registry, fd);
+            let response = Self::dispatch_request(&rt_handle, &raw_msg, &agent, &registry, fd);
             Self::send_response(fd, &response);
         }
     }
@@ -179,8 +199,7 @@ impl IpcServer {
             }
         };
 
-        if req.get("jsonrpc").and_then(|v| v.as_str()) != Some("2.0")
-            || req.get("method").is_none()
+        if req.get("jsonrpc").and_then(|v| v.as_str()) != Some("2.0") || req.get("method").is_none()
         {
             return json!({"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":null})
                 .to_string();
@@ -194,7 +213,10 @@ impl IpcServer {
             "prompt" => {
                 let session_id = params["session_id"].as_str().unwrap_or("default");
                 let text = params["text"].as_str().unwrap_or("");
-                let stream = params.get("stream").and_then(|v| v.as_bool()).unwrap_or(false);
+                let stream = params
+                    .get("stream")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 if text.is_empty() {
                     return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Empty prompt"},"id":req_id})
                         .to_string();
@@ -218,7 +240,9 @@ impl IpcServer {
                             .await;
                         }
                     });
-                    let on_chunk = move |chunk: &str| { let _ = tx.send(chunk.to_string()); };
+                    let on_chunk = move |chunk: &str| {
+                        let _ = tx.send(chunk.to_string());
+                    };
                     let fut = agent.process_prompt(session_id, text, Some(&on_chunk));
                     tokio::task::block_in_place(|| rt_handle.block_on(fut))
                 } else {
@@ -305,6 +329,71 @@ impl IpcServer {
                 }
             }
 
+            "register_path" => {
+                let kind = match params["kind"].as_str().unwrap_or("") {
+                    "tool" => RegistrationKind::Tool,
+                    "skill" => RegistrationKind::Skill,
+                    _ => {
+                        return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Invalid 'kind'. Expected 'tool' or 'skill'"},"id":req_id})
+                            .to_string();
+                    }
+                };
+                let path = params["path"].as_str().unwrap_or("");
+                if path.is_empty() {
+                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'path'"},"id":req_id})
+                        .to_string();
+                }
+                let fut = agent.register_external_path(kind, path);
+                match tokio::task::block_in_place(|| rt_handle.block_on(fut)) {
+                    Ok(registrations) => json!({
+                        "status": "ok",
+                        "kind": kind.as_str(),
+                        "registrations": registrations,
+                    }),
+                    Err(err) => {
+                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":err},"id":req_id})
+                            .to_string();
+                    }
+                }
+            }
+
+            "unregister_path" => {
+                let kind = match params["kind"].as_str().unwrap_or("") {
+                    "tool" => RegistrationKind::Tool,
+                    "skill" => RegistrationKind::Skill,
+                    _ => {
+                        return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Invalid 'kind'. Expected 'tool' or 'skill'"},"id":req_id})
+                            .to_string();
+                    }
+                };
+                let path = params["path"].as_str().unwrap_or("");
+                if path.is_empty() {
+                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'path'"},"id":req_id})
+                        .to_string();
+                }
+                let fut = agent.unregister_external_path(kind, path);
+                match tokio::task::block_in_place(|| rt_handle.block_on(fut)) {
+                    Ok((registrations, removed)) => json!({
+                        "status": "ok",
+                        "kind": kind.as_str(),
+                        "removed": removed,
+                        "registrations": registrations,
+                    }),
+                    Err(err) => {
+                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":err},"id":req_id})
+                            .to_string();
+                    }
+                }
+            }
+
+            "list_registered_paths" => {
+                let registrations = agent.list_registered_paths();
+                json!({
+                    "status": "ok",
+                    "registrations": registrations,
+                })
+            }
+
             _ => {
                 return json!({"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":req_id})
                     .to_string();
@@ -327,7 +416,9 @@ impl IpcServer {
                     msg_buf.as_ptr().add(sent) as *const _,
                     msg_buf.len() - sent,
                 );
-                if n <= 0 { break; }
+                if n <= 0 {
+                    break;
+                }
                 sent += n as usize;
             }
         }

@@ -91,16 +91,16 @@ mkdir -p %{buildroot}/opt/usr/share/tizenclaw/docs
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/embedded
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/memory
 # actions/ dir removed — tools are discovered dynamically
-mkdir -p %{buildroot}/opt/usr/share/tizen-tools/cli
-mkdir -p %{buildroot}/opt/usr/share/tizen-tools/skills
+mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/cli
+mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/skills
 mkdir -p %{buildroot}/opt/usr/share/crash/dump
 
 ln -sf ../tizenclaw.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw.service
 ln -sf ../tizenclaw-tool-executor.socket %{buildroot}%{_unitdir}/sockets.target.wants/tizenclaw-tool-executor.socket
 
 %post
-if [ -d /opt/usr/share/tizen-tools/embedded ]; then
-rm -rf /opt/usr/share/tizen-tools/embedded
+if [ -d /opt/usr/share/tizen-tools ]; then
+rm -rf /opt/usr/share/tizen-tools
 fi
 
 %files
@@ -124,10 +124,10 @@ fi
 /opt/usr/share/tizenclaw/docs/
 /opt/usr/share/tizenclaw/embedded/
 # actions/ dir removed
-%dir /opt/usr/share/tizen-tools/cli/
-%dir /opt/usr/share/tizen-tools/skills/
-/opt/usr/share/tizen-tools/cli/*
-%dir /opt/usr/share/tizen-tools/
+%dir /opt/usr/share/tizenclaw/tools/
+%dir /opt/usr/share/tizenclaw/tools/cli/
+%dir /opt/usr/share/tizenclaw/tools/skills/
+/opt/usr/share/tizenclaw/tools/cli/*
 %dir /opt/usr/share/tizenclaw/config/
 %dir /opt/usr/share/tizenclaw/memory/
 %dir /opt/usr/share/tizenclaw/

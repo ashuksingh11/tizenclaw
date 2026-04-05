@@ -43,8 +43,13 @@ impl OfflineFallback {
 
         if let Some(rules) = config["rules"].as_array() {
             for rule in rules {
-                let patterns: Vec<String> = rule["patterns"].as_array()
-                    .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_lowercase())).collect())
+                let patterns: Vec<String> = rule["patterns"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_lowercase()))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 self.rules.push(FallbackRule {
                     patterns,

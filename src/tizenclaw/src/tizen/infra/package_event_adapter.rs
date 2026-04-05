@@ -91,12 +91,29 @@ impl PackageEventAdapter {
                 user_data: *mut std::os::raw::c_void,
             ) -> std::os::raw::c_int {
                 let adapter = &*(user_data as *const PackageEventAdapter);
-                
-                let pkgid_str = if pkgid.is_null() { "" } else { std::ffi::CStr::from_ptr(pkgid).to_str().unwrap_or("") };
-                let key_str = if key.is_null() { "" } else { std::ffi::CStr::from_ptr(key).to_str().unwrap_or("") };
-                let val_str = if val.is_null() { "" } else { std::ffi::CStr::from_ptr(val).to_str().unwrap_or("") };
 
-                log::debug!("[TIZENCLAW] Package event received - pkgid: {}, key: {}, val: {}", pkgid_str, key_str, val_str);
+                let pkgid_str = if pkgid.is_null() {
+                    ""
+                } else {
+                    std::ffi::CStr::from_ptr(pkgid).to_str().unwrap_or("")
+                };
+                let key_str = if key.is_null() {
+                    ""
+                } else {
+                    std::ffi::CStr::from_ptr(key).to_str().unwrap_or("")
+                };
+                let val_str = if val.is_null() {
+                    ""
+                } else {
+                    std::ffi::CStr::from_ptr(val).to_str().unwrap_or("")
+                };
+
+                log::debug!(
+                    "[TIZENCLAW] Package event received - pkgid: {}, key: {}, val: {}",
+                    pkgid_str,
+                    key_str,
+                    val_str
+                );
 
                 adapter.handle_event(pkgid_str, key_str, key_str, val_str);
                 0
@@ -107,7 +124,8 @@ impl PackageEventAdapter {
                 self.client as *mut _,
                 handler,
                 self as *mut _ as *mut std::os::raw::c_void,
-            ) != 0 {
+            ) != 0
+            {
                 log::error!("[TIZENCLAW] PackageEventAdapter: failed to listen status");
                 pkgmgr_client_free(self.client as *mut _);
                 self.client = std::ptr::null_mut();

@@ -4,6 +4,7 @@
 
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::path::Path;
 use std::process::Stdio;
 use tokio::process::Command;
 
@@ -32,7 +33,9 @@ impl Default for ToolDispatcher {
 
 impl ToolDispatcher {
     pub fn new() -> Self {
-        ToolDispatcher { tools: HashMap::new() }
+        ToolDispatcher {
+            tools: HashMap::new(),
+        }
     }
 
     /// Register a tool.
@@ -61,6 +64,31 @@ impl ToolDispatcher {
         }
     }
 
+    pub fn load_tools_from_paths<'a, I>(&mut self, roots: I)
+    where
+        I: IntoIterator<Item = &'a str>,
+    {
+        for root in roots {
+            self.load_tools_from_path(root);
+        }
+    }
+
+    pub fn load_tools_from_path(&mut self, root: &str) {
+        let path = Path::new(root);
+        if !path.exists() {
+            log::warn!("ToolDispatcher: path '{}' does not exist", root);
+            return;
+        }
+
+        if path.is_dir() {
+            if let Some(decl) = Self::parse_decl_from_dir(path) {
+                self.register(decl);
+            }
+            self.load_tools_from_dir(root);
+            self.load_tools_from_root(root);
+        }
+    }
+
     /// Load tools from a directory containing sub-directories with tool descriptors.
     ///
     /// Each immediate child directory is scanned for either `tool.md` or `index.md`
@@ -85,7 +113,8 @@ impl ToolDispatcher {
                         if let Some(decl) = Self::parse_tool_md(&content, &path) {
                             log::debug!(
                                 "ToolDispatcher: registered '{}' from {:?}",
-                                decl.name, md_path
+                                decl.name,
+                                md_path
                             );
                             self.register(decl);
                         }
@@ -93,6 +122,16 @@ impl ToolDispatcher {
                 }
             }
         }
+    }
+
+    fn parse_decl_from_dir(path: &Path) -> Option<ToolDecl> {
+        let descriptor = ["tool.md", "index.md"]
+            .iter()
+            .map(|name| path.join(name))
+            .find(|candidate| candidate.exists());
+        let md_path = descriptor?;
+        let content = std::fs::read_to_string(&md_path).ok()?;
+        Self::parse_tool_md(&content, path)
     }
 
     fn parse_tool_md(content: &str, tool_dir: &std::path::Path) -> Option<ToolDecl> {
@@ -124,7 +163,7 @@ impl ToolDispatcher {
                 name = line[2..].trim().to_string();
             }
         }
-        
+
         let full_desc = content.trim();
         description = if full_desc.len() > 1536 {
             full_desc[0..1536].to_string()
@@ -139,11 +178,18 @@ impl ToolDispatcher {
         let original_name = name.clone();
 
         // Sanitize name for OpenAI function calling rules (^[a-zA-Z0-9_-]+$)
-        let clean_name: String = name.chars()
-            .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        let clean_name: String = name
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         name = clean_name.trim_matches('_').to_string();
-        
+
         if name.is_empty() {
             name = "unknown_tool".into();
         }
@@ -190,10 +236,7 @@ impl ToolDispatcher {
         }
 
         if !binary.trim().is_empty() {
-            return (
-                Self::resolve_binary_path(tool_dir, binary),
-                Vec::new(),
-            );
+            return (Self::resolve_binary_path(tool_dir, binary), Vec::new());
         }
 
         if let Some(script_path) = selected_script {
@@ -209,10 +252,16 @@ impl ToolDispatcher {
             }
         }
 
-        (Self::resolve_binary_path(tool_dir, original_name), Vec::new())
+        (
+            Self::resolve_binary_path(tool_dir, original_name),
+            Vec::new(),
+        )
     }
 
-    fn resolve_relative_path(tool_dir: &std::path::Path, value: &str) -> Option<std::path::PathBuf> {
+    fn resolve_relative_path(
+        tool_dir: &std::path::Path,
+        value: &str,
+    ) -> Option<std::path::PathBuf> {
         let trimmed = value.trim();
         if trimmed.is_empty() {
             return None;
@@ -338,35 +387,41 @@ impl ToolDispatcher {
 
     /// Get all tool declarations for LLM function calling.
     pub fn get_tool_declarations(&self) -> Vec<crate::llm::backend::LlmToolDecl> {
-        self.tools.values().map(|t| {
-            crate::llm::backend::LlmToolDecl {
+        self.tools
+            .values()
+            .map(|t| crate::llm::backend::LlmToolDecl {
                 name: t.name.clone(),
                 description: t.description.clone(),
                 parameters: t.parameters.clone(),
-            }
-        }).collect()
+            })
+            .collect()
     }
 
     /// Get tool declarations filtered by intent keywords.
-    pub fn get_tool_declarations_filtered(&self, keywords: &[String]) -> Vec<crate::llm::backend::LlmToolDecl> {
+    pub fn get_tool_declarations_filtered(
+        &self,
+        keywords: &[String],
+    ) -> Vec<crate::llm::backend::LlmToolDecl> {
         if keywords.is_empty() {
             return vec![];
         }
-        
-        self.tools.values().filter(|t| {
-            let name_lower = t.name.to_lowercase();
-            let desc_lower = t.description.to_lowercase();
-            keywords.iter().any(|k| {
-                let kl = k.to_lowercase();
-                name_lower.contains(&kl) || desc_lower.contains(&kl)
+
+        self.tools
+            .values()
+            .filter(|t| {
+                let name_lower = t.name.to_lowercase();
+                let desc_lower = t.description.to_lowercase();
+                keywords.iter().any(|k| {
+                    let kl = k.to_lowercase();
+                    name_lower.contains(&kl) || desc_lower.contains(&kl)
+                })
             })
-        }).map(|t| {
-            crate::llm::backend::LlmToolDecl {
+            .map(|t| crate::llm::backend::LlmToolDecl {
                 name: t.name.clone(),
                 description: t.description.clone(),
                 parameters: t.parameters.clone(),
-            }
-        }).collect()
+            })
+            .collect()
     }
 
     /// Execute a tool call.
@@ -423,7 +478,12 @@ impl ToolDispatcher {
         let mut exec_args = decl.prepend_args.clone();
         exec_args.extend(cmd_args);
 
-        log::debug!("Executing tool '{}': {} {:?}", tool_name, decl.binary_path, exec_args);
+        log::debug!(
+            "Executing tool '{}': {} {:?}",
+            tool_name,
+            decl.binary_path,
+            exec_args
+        );
 
         let engine = crate::infra::container_engine::ContainerEngine::new();
         let args_ref: Vec<&str> = exec_args.iter().map(|s| s.as_str()).collect();

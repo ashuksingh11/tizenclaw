@@ -26,6 +26,7 @@ use crate::core::context_engine::{
     ContextEngine, SizedContextEngine, DEFAULT_TOOL_RESULT_BUDGET_CHARS,
 };
 use crate::core::fallback_parser::FallbackParser;
+use crate::core::registration_store::{self, RegisteredPaths, RegistrationKind};
 use crate::core::textual_skill_scanner::TextualSkill;
 use crate::core::tool_dispatcher::ToolDispatcher;
 use crate::infra::key_store::KeyStore;
@@ -123,6 +124,32 @@ fn build_skill_prefetch_message(skills: &[TextualSkill]) -> Option<String> {
     Some(lines.join("\n"))
 }
 
+fn collect_tool_roots(paths: &libtizenclaw_core::framework::paths::PlatformPaths) -> Vec<String> {
+    let mut roots = vec![paths.tools_dir.to_string_lossy().to_string()];
+    roots.extend(RegisteredPaths::load(&paths.config_dir).tool_paths);
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+fn collect_skill_roots(paths: &libtizenclaw_core::framework::paths::PlatformPaths) -> Vec<String> {
+    let mut roots = vec![paths.skills_dir.to_string_lossy().to_string()];
+    roots.extend(RegisteredPaths::load(&paths.config_dir).skill_paths);
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+fn resolve_skill_file(skill_roots: &[String], normalized_name: &str) -> Option<PathBuf> {
+    for root in skill_roots {
+        let candidate = Path::new(root).join(normalized_name).join("SKILL.md");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 fn build_progress_marker(
     response_text: &str,
     reasoning_text: &str,
@@ -195,17 +222,192 @@ fn generated_code_runtime_spec(runtime: &str) -> Option<(&'static str, &'static 
     }
 }
 
-fn generated_code_script_path(base_dir: &Path, runtime: &str) -> Option<PathBuf> {
-    let (_, suffix) = generated_code_runtime_spec(runtime)?;
-    Some(
-        base_dir
-            .join("codes")
-            .join(format!("generated-{}{}", uuid::Uuid::new_v4(), suffix)),
+fn sanitize_generated_code_name(name: &str) -> String {
+    let mut slug = String::with_capacity(name.len());
+    let mut previous_was_dash = false;
+
+    for ch in name.chars() {
+        let lowered = ch.to_ascii_lowercase();
+        if lowered.is_ascii_alphanumeric() {
+            slug.push(lowered);
+            previous_was_dash = false;
+        } else if !previous_was_dash && !slug.is_empty() {
+            slug.push('-');
+            previous_was_dash = true;
+        }
+    }
+
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+
+    if slug.is_empty() {
+        "script".to_string()
+    } else {
+        slug
+    }
+}
+
+fn generated_code_date_prefix() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = now.as_secs() as libc::time_t;
+    let mut tm_buf: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::localtime_r(&secs, &mut tm_buf) };
+
+    format!(
+        "{:04}-{:02}-{:02}",
+        tm_buf.tm_year + 1900,
+        tm_buf.tm_mon + 1,
+        tm_buf.tm_mday
     )
+}
+
+fn generated_code_script_path(base_dir: &Path, runtime: &str, name: &str) -> Option<PathBuf> {
+    let (_, suffix) = generated_code_runtime_spec(runtime)?;
+    let codes_dir = base_dir.join("codes");
+    let date_prefix = generated_code_date_prefix();
+    let base_name = sanitize_generated_code_name(name);
+
+    for attempt in 0..1000usize {
+        let file_name = if attempt == 0 {
+            format!("{date_prefix}-generated-{base_name}{suffix}")
+        } else {
+            format!("{date_prefix}-generated-{base_name}-{attempt}{suffix}")
+        };
+        let candidate = codes_dir.join(file_name);
+        if !candidate.exists() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+fn list_generated_code_entries(codes_dir: &Path) -> Result<Vec<Value>, String> {
+    let mut entries = Vec::new();
+    let read_dir = std::fs::read_dir(codes_dir).map_err(|err| {
+        format!(
+            "Failed to read codes dir '{}': {}",
+            codes_dir.display(),
+            err
+        )
+    })?;
+
+    for entry in read_dir {
+        let entry = entry.map_err(|err| format!("Failed to read codes entry: {}", err))?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        let metadata = entry
+            .metadata()
+            .map_err(|err| format!("Failed to read metadata for '{}': {}", path.display(), err))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        entries.push(json!({
+            "name": name,
+            "path": path.to_string_lossy().to_string(),
+            "size_bytes": metadata.len(),
+        }));
+    }
+
+    entries.sort_by(|left, right| {
+        let left_name = left.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let right_name = right.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        left_name.cmp(right_name)
+    });
+
+    Ok(entries)
+}
+
+fn validate_generated_code_filename(name: &str) -> Result<&str, String> {
+    if name.is_empty() {
+        return Err("Missing generated code filename".to_string());
+    }
+    if name.contains('/') || name.contains('\\') || name == "." || name == ".." {
+        return Err(format!("Invalid generated code filename '{}'", name));
+    }
+    Ok(name)
+}
+
+fn manage_generated_code_tool(operation: &str, name: Option<&str>, base_dir: &Path) -> Value {
+    let codes_dir = base_dir.join("codes");
+    if let Err(err) = std::fs::create_dir_all(&codes_dir) {
+        return json!({"error": format!("Failed to create codes dir: {}", err)});
+    }
+
+    match operation {
+        "list" => match list_generated_code_entries(&codes_dir) {
+            Ok(entries) => json!({
+                "status": "success",
+                "operation": "list",
+                "count": entries.len(),
+                "entries": entries,
+            }),
+            Err(err) => json!({ "error": err }),
+        },
+        "delete" => {
+            let Some(file_name) = name else {
+                return json!({"error": "Missing 'name' for delete operation"});
+            };
+            let file_name = match validate_generated_code_filename(file_name) {
+                Ok(file_name) => file_name,
+                Err(err) => return json!({ "error": err }),
+            };
+            let target = codes_dir.join(file_name);
+            if !target.exists() {
+                return json!({
+                    "error": format!("Generated code file '{}' was not found", file_name)
+                });
+            }
+            match std::fs::remove_file(&target) {
+                Ok(()) => json!({
+                    "status": "success",
+                    "operation": "delete",
+                    "name": file_name,
+                    "path": target.to_string_lossy().to_string(),
+                }),
+                Err(err) => json!({
+                    "error": format!("Failed to delete '{}': {}", target.display(), err)
+                }),
+            }
+        }
+        "delete_all" => match list_generated_code_entries(&codes_dir) {
+            Ok(entries) => {
+                let mut deleted = Vec::new();
+                for entry in entries {
+                    if let Some(path) = entry.get("path").and_then(|v| v.as_str()) {
+                        if let Err(err) = std::fs::remove_file(path) {
+                            return json!({
+                                "error": format!("Failed to delete '{}': {}", path, err)
+                            });
+                        }
+                        deleted.push(path.to_string());
+                    }
+                }
+                json!({
+                    "status": "success",
+                    "operation": "delete_all",
+                    "deleted_count": deleted.len(),
+                    "deleted_paths": deleted,
+                })
+            }
+            Err(err) => json!({ "error": err }),
+        },
+        other => json!({
+            "error": format!(
+                "Unsupported operation '{}'. Expected list, delete, or delete_all.",
+                other
+            )
+        }),
+    }
 }
 
 async fn run_generated_code_tool(
     runtime: &str,
+    name: Option<&str>,
     code: &str,
     args: &str,
     base_dir: &Path,
@@ -227,12 +429,13 @@ async fn run_generated_code_tool(
         return json!({"error": format!("Failed to create codes dir: {}", err)});
     }
 
-    let script_path = match generated_code_script_path(base_dir, runtime) {
+    let script_path = match generated_code_script_path(base_dir, runtime, name.unwrap_or("script"))
+    {
         Some(path) => path,
         None => {
             return json!({
                 "error": format!(
-                    "Unsupported runtime '{}'. Expected python, python3, node, or bash.",
+                    "Failed to allocate generated code path for runtime '{}'.",
                     runtime
                 )
             });
@@ -261,11 +464,13 @@ async fn run_generated_code_tool(
         Ok(result) => json!({
             "runtime": runtime,
             "script_path": script_path,
+            "name": script_path.rsplit('/').next().unwrap_or(""),
             "result": result
         }),
         Err(err) => json!({
             "runtime": runtime,
             "script_path": script_path,
+            "name": script_path.rsplit('/').next().unwrap_or(""),
             "error": format!("Failed to execute generated code: {}", err)
         }),
     }
@@ -529,7 +734,7 @@ impl AgentCore {
 
         // Initialize session store
         let db_path = paths.sessions_db_path();
-        match SessionStore::new(&db_path.to_string_lossy()) {
+        match SessionStore::new(&paths.app_data_dir(), &db_path.to_string_lossy()) {
             Ok(store) => {
                 log::info!("Session store initialized");
                 if let Ok(mut ss) = self.session_store.lock() {
@@ -540,7 +745,7 @@ impl AgentCore {
         }
 
         // Initialize memory store
-        let mem_dir = std::path::PathBuf::from("/opt/usr/share/tizenclaw/memory");
+        let mem_dir = paths.data_dir.join("memory");
         let mem_db = mem_dir.join("memories.db");
         let model_dir = paths.data_dir.join("models");
         match crate::storage::memory_store::MemoryStore::new(
@@ -560,14 +765,15 @@ impl AgentCore {
         // Load tools from all subdirectories under the tools directory
         {
             let mut td = self.tool_dispatcher.write().await;
-            td.load_tools_from_root(&paths.tools_dir.to_string_lossy());
+            let tool_roots = collect_tool_roots(paths);
+            td.load_tools_from_paths(tool_roots.iter().map(|root| root.as_str()));
         }
-        log::info!("Tools loaded from {:?}", paths.tools_dir);
+        log::info!("Tools loaded from {:?}", collect_tool_roots(paths));
 
         // Load workflows
         {
             let mut we = self.workflow_engine.write().await;
-            we.load_workflows(); // uses default path "/opt/usr/share/tizenclaw/workflows"
+            we.load_workflows_from(&paths.workflows_dir.to_string_lossy());
         }
 
         {
@@ -1079,8 +1285,10 @@ impl AgentCore {
         // Extract intent keywords for optimal tool injection
         let intent_keywords = Self::extract_intent_keywords(prompt);
 
-        let skills_dir = self.platform.paths.skills_dir.to_string_lossy().to_string();
-        let textual_skills = crate::core::textual_skill_scanner::scan_textual_skills(&skills_dir);
+        let skill_roots = collect_skill_roots(&self.platform.paths);
+        let textual_skills = crate::core::textual_skill_scanner::scan_textual_skills_from_roots(
+            skill_roots.iter().map(|root| root.as_str()),
+        );
         let skill_reference_docs =
             crate::core::skill_support::list_skill_reference_docs(&self.platform.paths.docs_dir);
         let prefetched_skills =
@@ -1536,6 +1744,7 @@ impl AgentCore {
 
                 for tc in detected_tool_calls.iter() {
                     let skills_dir = self.platform.paths.skills_dir.clone();
+                    let skill_roots = collect_skill_roots(&self.platform.paths);
                     let docs_dir = self.platform.paths.docs_dir.clone();
                     let td_guard_ref = &*td_guard;
                     let tc_name = tc.name.clone();
@@ -1625,15 +1834,24 @@ impl AgentCore {
                             let name = tc_args.get("name").and_then(|v| v.as_str()).unwrap_or("");
                             match crate::core::skill_support::normalize_skill_name(name) {
                                 Ok(normalized_name) => {
-                                    let skill_md_path = skills_dir.join(&normalized_name).join("SKILL.md");
-                                    match std::fs::read_to_string(&skill_md_path) {
-                                        Ok(content) => serde_json::json!({
-                                            "status": "success",
-                                            "name": normalized_name,
-                                            "path": skill_md_path.to_string_lossy().to_string(),
-                                            "content": content
+                                    match resolve_skill_file(&skill_roots, &normalized_name) {
+                                        Some(skill_md_path) => {
+                                            match std::fs::read_to_string(&skill_md_path) {
+                                                Ok(content) => serde_json::json!({
+                                                    "status": "success",
+                                                    "name": normalized_name,
+                                                    "path": skill_md_path.to_string_lossy().to_string(),
+                                                    "content": content
+                                                }),
+                                                Err(e) => serde_json::json!({"error": format!("Failed to read skill '{}': {}", normalized_name, e)})
+                                            }
+                                        }
+                                        None => serde_json::json!({
+                                            "error": format!(
+                                                "Failed to read skill '{}': not found in managed or registered roots",
+                                                normalized_name
+                                            )
                                         }),
-                                        Err(e) => serde_json::json!({"error": format!("Failed to read skill '{}': {}", normalized_name, e)})
                                     }
                                 }
                                 Err(err) => serde_json::json!({"error": err}),
@@ -1661,10 +1879,16 @@ impl AgentCore {
                             }
                         } else if tc_name == "run_generated_code" {
                             let runtime = tc_args.get("runtime").and_then(|v| v.as_str()).unwrap_or("");
+                            let name = tc_args.get("name").and_then(|v| v.as_str());
                             let code = tc_args.get("code").and_then(|v| v.as_str()).unwrap_or("");
                             let args = tc_args.get("args").and_then(|v| v.as_str()).unwrap_or("");
                             let base_dir = self.platform.paths.data_dir.clone();
-                            run_generated_code_tool(runtime, code, args, &base_dir).await
+                            run_generated_code_tool(runtime, name, code, args, &base_dir).await
+                        } else if tc_name == "manage_generated_code" {
+                            let operation = tc_args.get("operation").and_then(|v| v.as_str()).unwrap_or("");
+                            let name = tc_args.get("name").and_then(|v| v.as_str());
+                            let base_dir = self.platform.paths.data_dir.clone();
+                            manage_generated_code_tool(operation, name, &base_dir)
                         } else if tc_name == "remember" {
                             if let Some(store) = ms_clone {
                                 let key = tc_args.get("key").and_then(|v| v.as_str()).unwrap_or("");
@@ -1944,13 +2168,45 @@ impl AgentCore {
         }
     }
 
+    pub fn list_registered_paths(&self) -> RegisteredPaths {
+        RegisteredPaths::load(&self.platform.paths.config_dir)
+    }
+
+    pub async fn register_external_path(
+        &self,
+        kind: RegistrationKind,
+        raw_path: &str,
+    ) -> Result<RegisteredPaths, String> {
+        let (registrations, _) =
+            registration_store::register_path(&self.platform.paths.config_dir, kind, raw_path)?;
+        self.reload_tools().await;
+        self.run_startup_indexing().await;
+        Ok(registrations)
+    }
+
+    pub async fn unregister_external_path(
+        &self,
+        kind: RegistrationKind,
+        raw_path: &str,
+    ) -> Result<(RegisteredPaths, bool), String> {
+        let (registrations, removed, _) =
+            registration_store::unregister_path(&self.platform.paths.config_dir, kind, raw_path)?;
+        self.reload_tools().await;
+        self.run_startup_indexing().await;
+        Ok((registrations, removed))
+    }
+
     pub async fn reload_tools(&self) {
         {
             let mut td = self.tool_dispatcher.write().await;
             *td = ToolDispatcher::new();
-            td.load_tools_from_root(&self.platform.paths.tools_dir.to_string_lossy());
+            let tool_roots = collect_tool_roots(&self.platform.paths);
+            td.load_tools_from_paths(tool_roots.iter().map(|root| root.as_str()));
         }
-        log::info!("Tools reloaded from {:?}", self.platform.paths.tools_dir);
+        log::info!(
+            "Tools reloaded from {:?}",
+            collect_tool_roots(&self.platform.paths)
+        );
     }
 
     pub async fn run_startup_indexing(&self) {
@@ -2139,8 +2395,8 @@ impl<'a> SessionStoreRef<'a> {
 mod tests {
     use super::{
         build_progress_marker, build_skill_prefetch_message, generated_code_runtime_spec,
-        generated_code_script_path, parse_shell_like_args, select_relevant_skills,
-        utf8_safe_preview,
+        generated_code_script_path, manage_generated_code_tool, parse_shell_like_args,
+        sanitize_generated_code_name, select_relevant_skills, utf8_safe_preview,
     };
     use crate::core::textual_skill_scanner::TextualSkill;
     use crate::llm::backend::LlmToolCall;
@@ -2233,19 +2489,75 @@ mod tests {
 
     #[test]
     fn generated_code_runtime_spec_maps_supported_runtimes() {
-        assert_eq!(generated_code_runtime_spec("python"), Some(("python3", ".py")));
-        assert_eq!(generated_code_runtime_spec("python3"), Some(("python3", ".py")));
+        assert_eq!(
+            generated_code_runtime_spec("python"),
+            Some(("python3", ".py"))
+        );
+        assert_eq!(
+            generated_code_runtime_spec("python3"),
+            Some(("python3", ".py"))
+        );
         assert_eq!(generated_code_runtime_spec("node"), Some(("node", ".js")));
         assert_eq!(generated_code_runtime_spec("bash"), Some(("bash", ".sh")));
         assert_eq!(generated_code_runtime_spec("ruby"), None);
     }
 
     #[test]
+    fn sanitize_generated_code_name_normalizes_user_input() {
+        assert_eq!(
+            sanitize_generated_code_name("Hello World.py"),
+            "hello-world-py"
+        );
+        assert_eq!(sanitize_generated_code_name("   "), "script");
+        assert_eq!(
+            sanitize_generated_code_name("battery_probe"),
+            "battery-probe"
+        );
+    }
+
+    #[test]
     fn generated_code_script_path_uses_codes_directory() {
         let base_dir = std::path::Path::new("/opt/usr/share/tizenclaw");
-        let script_path = generated_code_script_path(base_dir, "python").unwrap();
+        let script_path = generated_code_script_path(base_dir, "python", "Battery Probe").unwrap();
 
         assert!(script_path.starts_with(base_dir.join("codes")));
-        assert_eq!(script_path.extension().and_then(|ext| ext.to_str()), Some("py"));
+        let file_name = script_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap();
+        assert!(file_name.contains("-generated-battery-probe"));
+        assert_eq!(
+            script_path.extension().and_then(|ext| ext.to_str()),
+            Some("py")
+        );
+    }
+
+    #[test]
+    fn manage_generated_code_tool_deletes_only_named_file() {
+        let unique = format!(
+            "tizenclaw-generated-code-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let base_dir = std::env::temp_dir().join(unique);
+        let codes_dir = base_dir.join("codes");
+        std::fs::create_dir_all(&codes_dir).unwrap();
+        let keep_path = codes_dir.join("keep.py");
+        let delete_path = codes_dir.join("delete.py");
+        std::fs::write(&keep_path, "print('keep')").unwrap();
+        std::fs::write(&delete_path, "print('delete')").unwrap();
+
+        let result = manage_generated_code_tool("delete", Some("delete.py"), &base_dir);
+
+        assert_eq!(
+            result.get("status").and_then(|v| v.as_str()),
+            Some("success")
+        );
+        assert!(keep_path.exists());
+        assert!(!delete_path.exists());
+
+        let _ = std::fs::remove_dir_all(base_dir);
     }
 }

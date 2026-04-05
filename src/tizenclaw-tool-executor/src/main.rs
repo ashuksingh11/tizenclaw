@@ -18,6 +18,19 @@ use tokio::sync::Mutex;
 const SOCKET_NAME: &str = "tizenclaw-tool-executor.sock";
 const MAX_PAYLOAD: usize = 10 * 1024 * 1024;
 
+fn default_tools_dir() -> std::path::PathBuf {
+    if let Ok(path) = std::env::var("TIZENCLAW_TOOLS_DIR") {
+        return std::path::PathBuf::from(path);
+    }
+    if std::path::Path::new("/etc/tizen-release").exists()
+        || std::path::Path::new("/opt/usr/share/tizenclaw").exists()
+    {
+        return std::path::PathBuf::from("/opt/usr/share/tizenclaw/tools");
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    std::path::PathBuf::from(home).join(".tizenclaw/tools")
+}
+
 async fn send_payload<W: AsyncWrite + Unpin>(writer: &mut W, resp: &Value) -> bool {
     let payload = resp.to_string();
     let len = (payload.len() as u32).to_be_bytes();
@@ -51,12 +64,13 @@ fn resolve_binary_path(tool_name: &str) -> Option<String> {
     let bin_path = if tool_name.starts_with('/') {
         tool_name.to_string()
     } else {
-        let nested_cli_path = format!("/opt/usr/share/tizen-tools/cli/{0}/{0}", tool_name);
-        let flat_cli_path = format!("/opt/usr/share/tizen-tools/cli/{}", tool_name);
-        if std::path::Path::new(&nested_cli_path).exists() {
-            nested_cli_path
-        } else if std::path::Path::new(&flat_cli_path).exists() {
-            flat_cli_path
+        let tools_dir = default_tools_dir();
+        let nested_cli_path = tools_dir.join("cli").join(tool_name).join(tool_name);
+        let flat_cli_path = tools_dir.join("cli").join(tool_name);
+        if nested_cli_path.exists() {
+            nested_cli_path.to_string_lossy().to_string()
+        } else if flat_cli_path.exists() {
+            flat_cli_path.to_string_lossy().to_string()
         } else {
             format!("/usr/bin/{}", tool_name)
         }
@@ -170,7 +184,8 @@ where
                 Ok(n) => {
                     let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
                     let mut lock = stdout_writer.lock().await;
-                    let _ = send_payload(&mut *lock, &json!({"event": "stdout", "data": chunk})).await;
+                    let _ =
+                        send_payload(&mut *lock, &json!({"event": "stdout", "data": chunk})).await;
                 }
                 Err(_) => break,
             }
@@ -186,7 +201,8 @@ where
                 Ok(n) => {
                     let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
                     let mut lock = stderr_writer.lock().await;
-                    let _ = send_payload(&mut *lock, &json!({"event": "stderr", "data": chunk})).await;
+                    let _ =
+                        send_payload(&mut *lock, &json!({"event": "stderr", "data": chunk})).await;
                 }
                 Err(_) => break,
             }
@@ -329,7 +345,10 @@ async fn main() {
         return;
     }
 
-    log::info!("tizenclaw-tool-executor starting (pid={})", std::process::id());
+    log::info!(
+        "tizenclaw-tool-executor starting (pid={})",
+        std::process::id()
+    );
 
     let listener = match systemd_socket() {
         Some(listener) => listener,
@@ -382,10 +401,7 @@ fn create_abstract_socket() -> std::io::Result<UnixListener> {
     addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
     let name_bytes = SOCKET_NAME.as_bytes();
     addr.sun_path[1..1 + name_bytes.len()].copy_from_slice(unsafe {
-        std::slice::from_raw_parts(
-            name_bytes.as_ptr() as *const libc::c_char,
-            name_bytes.len(),
-        )
+        std::slice::from_raw_parts(name_bytes.as_ptr() as *const libc::c_char, name_bytes.len())
     });
 
     let addr_len =

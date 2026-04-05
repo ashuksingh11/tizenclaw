@@ -2,9 +2,9 @@
 
 #![allow(clippy::all)]
 
-use serde_json::{json, Value};
-use crate::infra::http_client;
 use super::backend::*;
+use crate::infra::http_client;
+use serde_json::{json, Value};
 
 pub struct AnthropicBackend {
     api_key: String,
@@ -20,27 +20,44 @@ impl Default for AnthropicBackend {
 
 impl AnthropicBackend {
     pub fn new() -> Self {
-        AnthropicBackend { api_key: String::new(), model: "claude-sonnet-4-20250514".into(), endpoint: "https://api.anthropic.com/v1".into() }
+        AnthropicBackend {
+            api_key: String::new(),
+            model: "claude-sonnet-4-20250514".into(),
+            endpoint: "https://api.anthropic.com/v1".into(),
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl LlmBackend for AnthropicBackend {
     fn initialize(&mut self, config: &Value) -> bool {
-        if let Some(k) = config["api_key"].as_str() { self.api_key = k.into(); }
-        if let Some(m) = config["model"].as_str() { self.model = m.into(); }
-        if let Some(e) = config["endpoint"].as_str() { self.endpoint = e.into(); }
+        if let Some(k) = config["api_key"].as_str() {
+            self.api_key = k.into();
+        }
+        if let Some(m) = config["model"].as_str() {
+            self.model = m.into();
+        }
+        if let Some(e) = config["endpoint"].as_str() {
+            self.endpoint = e.into();
+        }
         !self.api_key.is_empty()
     }
 
-    async fn chat(&self, messages: &[LlmMessage], tools: &[LlmToolDecl], _on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>, system_prompt: &str, max_tokens: Option<u32>) -> LlmResponse {
+    async fn chat(
+        &self,
+        messages: &[LlmMessage],
+        tools: &[LlmToolDecl],
+        _on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
+        system_prompt: &str,
+        max_tokens: Option<u32>,
+    ) -> LlmResponse {
         let mut req = json!({"model": self.model, "max_tokens": max_tokens.unwrap_or(4096)});
-        if !system_prompt.is_empty() { 
+        if !system_prompt.is_empty() {
             req["system"] = json!([{
-                "type": "text", 
-                "text": system_prompt, 
+                "type": "text",
+                "text": system_prompt,
                 "cache_control": {"type": "ephemeral"}
-            }]); 
+            }]);
         }
 
         let mut valid_tools = std::collections::HashSet::new();
@@ -54,7 +71,12 @@ impl LlmBackend for AnthropicBackend {
             if msg.role == "tool" && !valid_tools.contains(msg.tool_name.as_str()) {
                 is_downgraded = true;
             }
-            if !msg.tool_calls.is_empty() && msg.tool_calls.iter().any(|tc| !valid_tools.contains(tc.name.as_str())) {
+            if !msg.tool_calls.is_empty()
+                && msg
+                    .tool_calls
+                    .iter()
+                    .any(|tc| !valid_tools.contains(tc.name.as_str()))
+            {
                 is_downgraded = true;
             }
 
@@ -62,10 +84,17 @@ impl LlmBackend for AnthropicBackend {
                 if msg.role == "tool" {
                     msgs.push(json!({"role": "user", "content": format!("[Historical Tool Result for '{}']: {}", msg.tool_name, msg.tool_result)}));
                 } else if !msg.tool_calls.is_empty() {
-                    let calls_text = msg.tool_calls.iter()
+                    let calls_text = msg
+                        .tool_calls
+                        .iter()
                         .map(|tc| format!("Called tool '{}' with args '{}'", tc.name, tc.args))
-                        .collect::<Vec<_>>().join("\n");
-                    let full_text = if msg.text.is_empty() { calls_text } else { format!("{}\n\n{}", msg.text, calls_text) };
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let full_text = if msg.text.is_empty() {
+                        calls_text
+                    } else {
+                        format!("{}\n\n{}", msg.text, calls_text)
+                    };
                     msgs.push(json!({"role": "assistant", "content": full_text}));
                 } else {
                     msgs.push(json!({"role": msg.role, "content": msg.text}));
@@ -99,29 +128,39 @@ impl LlmBackend for AnthropicBackend {
         }
         req["messages"] = Value::Array(msgs);
         if !tools.is_empty() {
-            let arr: Vec<Value> = tools.iter().map(|t| json!({
-                "name": t.name, "description": t.description, "input_schema": t.parameters
-            })).collect();
+            let arr: Vec<Value> = tools
+                .iter()
+                .map(|t| {
+                    json!({
+                        "name": t.name, "description": t.description, "input_schema": t.parameters
+                    })
+                })
+                .collect();
             req["tools"] = Value::Array(arr);
         }
 
         let url = format!("{}/messages", self.endpoint);
         let headers = [
-            ("x-api-key", self.api_key.as_str()), 
+            ("x-api-key", self.api_key.as_str()),
             ("anthropic-version", "2023-06-01"),
-            ("anthropic-beta", "prompt-caching-2024-07-31")
+            ("anthropic-beta", "prompt-caching-2024-07-31"),
         ];
         let http_resp = http_client::http_post(&url, &headers, &req.to_string(), 1, 60).await;
 
         let mut resp = LlmResponse::default();
         resp.http_status = http_resp.status_code;
-        if !http_resp.success { resp.error_message = http_resp.error; return resp; }
+        if !http_resp.success {
+            resp.error_message = http_resp.error;
+            return resp;
+        }
 
         if let Ok(json) = serde_json::from_str::<Value>(&http_resp.body) {
             if let Some(content) = json["content"].as_array() {
                 for block in content {
                     match block["type"].as_str() {
-                        Some("text") => { resp.text.push_str(block["text"].as_str().unwrap_or("")); }
+                        Some("text") => {
+                            resp.text.push_str(block["text"].as_str().unwrap_or(""));
+                        }
                         Some("tool_use") => {
                             resp.tool_calls.push(LlmToolCall {
                                 id: block["id"].as_str().unwrap_or("").into(),
@@ -143,5 +182,7 @@ impl LlmBackend for AnthropicBackend {
         resp
     }
 
-    fn get_name(&self) -> &str { "anthropic" }
+    fn get_name(&self) -> &str {
+        "anthropic"
+    }
 }

@@ -11,10 +11,10 @@
 
 #![allow(clippy::all)]
 
+use super::backend::*;
+use crate::infra::http_client;
 use serde_json::{json, Value};
 use std::sync::RwLock;
-use crate::infra::http_client;
-use super::backend::*;
 
 pub struct GeminiBackend {
     api_key: String,
@@ -55,7 +55,7 @@ impl GeminiBackend {
         max_tokens: Option<u32>,
     ) -> Value {
         let mut req = json!({});
-        
+
         if let Some(tokens) = max_tokens {
             req["generationConfig"] = json!({ "maxOutputTokens": tokens });
         }
@@ -78,11 +78,16 @@ impl GeminiBackend {
         let mut contents = vec![];
         for msg in messages {
             let mut is_downgraded = false;
-            
+
             if msg.role == "tool" && !valid_tools.contains(msg.tool_name.as_str()) {
                 is_downgraded = true;
             }
-            if !msg.tool_calls.is_empty() && msg.tool_calls.iter().any(|tc| !valid_tools.contains(tc.name.as_str())) {
+            if !msg.tool_calls.is_empty()
+                && msg
+                    .tool_calls
+                    .iter()
+                    .any(|tc| !valid_tools.contains(tc.name.as_str()))
+            {
                 is_downgraded = true;
             }
 
@@ -96,10 +101,17 @@ impl GeminiBackend {
                 if msg.role == "tool" {
                     json!([{"text": format!("[Historical Tool Result for '{}']: {}", msg.tool_name, msg.tool_result)}])
                 } else if !msg.tool_calls.is_empty() {
-                    let calls_text = msg.tool_calls.iter()
+                    let calls_text = msg
+                        .tool_calls
+                        .iter()
                         .map(|tc| format!("Called tool '{}' with args '{}'", tc.name, tc.args))
-                        .collect::<Vec<_>>().join("\n");
-                    let full_text = if msg.text.is_empty() { calls_text } else { format!("{}\n\n{}", msg.text, calls_text) };
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let full_text = if msg.text.is_empty() {
+                        calls_text
+                    } else {
+                        format!("{}\n\n{}", msg.text, calls_text)
+                    };
                     json!([{"text": full_text}])
                 } else {
                     json!([{"text": msg.text}])
@@ -135,10 +147,16 @@ impl GeminiBackend {
         let mut resp = LlmResponse::default();
         let json: Value = match serde_json::from_str(body) {
             Ok(v) => v,
-            Err(e) => { resp.error_message = format!("JSON parse error: {}", e); return resp; }
+            Err(e) => {
+                resp.error_message = format!("JSON parse error: {}", e);
+                return resp;
+            }
         };
 
-        if let Some(parts) = json.pointer("/candidates/0/content/parts").and_then(|v| v.as_array()) {
+        if let Some(parts) = json
+            .pointer("/candidates/0/content/parts")
+            .and_then(|v| v.as_array())
+        {
             for part in parts {
                 if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
                     resp.text.push_str(text);
@@ -185,14 +203,14 @@ impl GeminiBackend {
         // eligible for caching. For shorter prompts we skip the cache.
         // Rough heuristic: < 1,000 chars ≈ < 300 tokens — skip cache.
         if system_prompt.len() < 1_000 {
-            log::debug!("[GeminiCache] System prompt too short for caching ({} chars), skipping", system_prompt.len());
+            log::debug!(
+                "[GeminiCache] System prompt too short for caching ({} chars), skipping",
+                system_prompt.len()
+            );
             return false;
         }
 
-        let url = format!(
-            "{}/cachedContents?key={}",
-            self.endpoint, self.api_key
-        );
+        let url = format!("{}/cachedContents?key={}", self.endpoint, self.api_key);
 
         // TTL: 1 hour (3600 seconds). Gemini supports up to 1 hour by default.
         let body = json!({
@@ -201,14 +219,16 @@ impl GeminiBackend {
                 "parts": [{"text": system_prompt}]
             },
             "ttl": "3600s"
-        }).to_string();
+        })
+        .to_string();
 
         let http_resp = http_client::http_post(&url, &[], &body, 1, 30).await;
 
         if !http_resp.success {
             log::warn!(
                 "[GeminiCache] Cache creation failed (HTTP {}): {}",
-                http_resp.status_code, http_resp.error
+                http_resp.status_code,
+                http_resp.error
             );
             if let Ok(mut guard) = self.cached_content_name.write() {
                 *guard = None;
@@ -225,13 +245,20 @@ impl GeminiBackend {
         };
 
         if let Some(name) = parsed["name"].as_str() {
-            log::debug!("[GeminiCache] Cache created: {} ({} chars prompt)", name, system_prompt.len());
+            log::debug!(
+                "[GeminiCache] Cache created: {} ({} chars prompt)",
+                name,
+                system_prompt.len()
+            );
             if let Ok(mut guard) = self.cached_content_name.write() {
                 *guard = Some(name.to_string());
             }
             true
         } else {
-            log::warn!("[GeminiCache] No 'name' field in cache response: {}", http_resp.body);
+            log::warn!(
+                "[GeminiCache] No 'name' field in cache response: {}",
+                http_resp.body
+            );
             false
         }
     }
@@ -247,9 +274,15 @@ impl GeminiBackend {
 #[async_trait::async_trait]
 impl LlmBackend for GeminiBackend {
     fn initialize(&mut self, config: &Value) -> bool {
-        if let Some(k) = config["api_key"].as_str() { self.api_key = k.into(); }
-        if let Some(m) = config["model"].as_str() { self.model = m.into(); }
-        if let Some(e) = config["endpoint"].as_str() { self.endpoint = e.into(); }
+        if let Some(k) = config["api_key"].as_str() {
+            self.api_key = k.into();
+        }
+        if let Some(m) = config["model"].as_str() {
+            self.model = m.into();
+        }
+        if let Some(e) = config["endpoint"].as_str() {
+            self.endpoint = e.into();
+        }
         !self.api_key.is_empty()
     }
 
@@ -262,14 +295,17 @@ impl LlmBackend for GeminiBackend {
         max_tokens: Option<u32>,
     ) -> LlmResponse {
         // Read cached content name (non-blocking shared read)
-        let cached_name_opt: Option<String> = self
-            .cached_content_name
-            .read()
-            .ok()
-            .and_then(|g| g.clone());
+        let cached_name_opt: Option<String> =
+            self.cached_content_name.read().ok().and_then(|g| g.clone());
 
         let body = self
-            .build_request(messages, tools, system_prompt, cached_name_opt.as_deref(), max_tokens)
+            .build_request(
+                messages,
+                tools,
+                system_prompt,
+                cached_name_opt.as_deref(),
+                max_tokens,
+            )
             .to_string();
 
         let url = format!(
@@ -292,7 +328,9 @@ impl LlmBackend for GeminiBackend {
         self.create_or_refresh_cache(system_prompt).await
     }
 
-    fn get_name(&self) -> &str { "gemini" }
+    fn get_name(&self) -> &str {
+        "gemini"
+    }
 }
 
 #[cfg(test)]

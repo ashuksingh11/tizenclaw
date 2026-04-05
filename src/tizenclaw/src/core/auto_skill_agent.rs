@@ -9,7 +9,9 @@ impl Default for AutoSkillAgent {
 }
 
 impl AutoSkillAgent {
-    pub fn new() -> Self { AutoSkillAgent }
+    pub fn new() -> Self {
+        AutoSkillAgent
+    }
 
     pub fn generate_skill(&self, description: &str) -> Result<String, String> {
         log::debug!("AutoSkillAgent: generating skill for: {}", description);

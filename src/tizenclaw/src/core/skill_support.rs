@@ -25,8 +25,10 @@ pub fn normalize_skill_name(name: &str) -> Result<String, String> {
         if ch.is_ascii_lowercase() || ch.is_ascii_digit() {
             normalized.push(ch);
             last_was_hyphen = false;
-        } else if (ch == '-' || ch == '_' || ch.is_ascii_whitespace()) && !normalized.is_empty()
-            && !last_was_hyphen {
+        } else if (ch == '-' || ch == '_' || ch.is_ascii_whitespace())
+            && !normalized.is_empty()
+            && !last_was_hyphen
+        {
             normalized.push('-');
             last_was_hyphen = true;
         }
@@ -133,7 +135,10 @@ pub fn list_skill_reference_docs(docs_dir: &Path) -> Vec<SkillReferenceDoc> {
         if !path.is_file() {
             continue;
         }
-        let ext = path.extension().and_then(|v| v.to_str()).unwrap_or_default();
+        let ext = path
+            .extension()
+            .and_then(|v| v.to_str())
+            .unwrap_or_default();
         if !ext.eq_ignore_ascii_case("md") {
             continue;
         }
@@ -167,8 +172,12 @@ pub fn read_skill_reference_doc(
         )
     })?;
 
-    let content = fs::read_to_string(&path)
-        .map_err(|err| format!("Failed to read skill reference '{}': {}", requested_name, err))?;
+    let content = fs::read_to_string(&path).map_err(|err| {
+        format!(
+            "Failed to read skill reference '{}': {}",
+            requested_name, err
+        )
+    })?;
     let name = path
         .file_name()
         .and_then(|v| v.to_str())
@@ -199,7 +208,10 @@ fn resolve_reference_doc_path(docs_dir: &Path, requested_name: &str) -> Option<P
             Some(v) => v,
             None => continue,
         };
-        let stem = path.file_stem().and_then(|v| v.to_str()).unwrap_or_default();
+        let stem = path
+            .file_stem()
+            .and_then(|v| v.to_str())
+            .unwrap_or_default();
         if file_name.eq_ignore_ascii_case(requested) || stem.eq_ignore_ascii_case(requested) {
             return Some(path);
         }

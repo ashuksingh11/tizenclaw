@@ -48,7 +48,8 @@ impl SystemContextProvider {
 
         // Network
         ctx["network_available"] = json!(std::net::TcpStream::connect("8.8.8.8:53")
-            .map(|_| true).unwrap_or(false));
+            .map(|_| true)
+            .unwrap_or(false));
 
         // Hostname
         if let Ok(name) = std::fs::read_to_string("/etc/hostname") {
@@ -104,12 +105,17 @@ impl SystemContextProvider {
             parts.push(format!("Battery: {}%", b));
         }
         if let Some(n) = ctx.get("network_available").and_then(|v| v.as_bool()) {
-            parts.push(format!("Network: {}", if n { "connected" } else { "offline" }));
+            parts.push(format!(
+                "Network: {}",
+                if n { "connected" } else { "offline" }
+            ));
         }
         if let Some(m) = ctx.get("memory_available_mb").and_then(|v| v.as_u64()) {
             parts.push(format!("Free memory: {}MB", m));
         }
-        if parts.is_empty() { return String::new(); }
+        if parts.is_empty() {
+            return String::new();
+        }
         format!("[System Context]\n{}", parts.join("\n"))
     }
 }
@@ -126,7 +132,8 @@ fn chrono_now() -> String {
 fn get_timezone() -> String {
     std::fs::read_to_string("/etc/timezone")
         .unwrap_or_else(|_| "UTC".into())
-        .trim().to_string()
+        .trim()
+        .to_string()
 }
 
 fn read_sys_file(path: &str) -> Option<String> {
@@ -134,5 +141,8 @@ fn read_sys_file(path: &str) -> Option<String> {
 }
 
 fn parse_kb(line: &str) -> u64 {
-    line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0)
+    line.split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
 }

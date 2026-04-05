@@ -69,10 +69,22 @@ pub fn is_available() -> bool {
     }
 
     // First caller runs the probe
-    if PROBE_STATE.compare_exchange(STATE_UNTESTED, STATE_AVAILABLE, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+    if PROBE_STATE
+        .compare_exchange(
+            STATE_UNTESTED,
+            STATE_AVAILABLE,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        )
+        .is_ok()
+    {
         let ok = run_probe();
         PROBE_STATE.store(
-            if ok { STATE_AVAILABLE } else { STATE_UNAVAILABLE },
+            if ok {
+                STATE_AVAILABLE
+            } else {
+                STATE_UNAVAILABLE
+            },
             Ordering::SeqCst,
         );
         log::debug!(

@@ -17,11 +17,17 @@ fn parse_proc_status() -> (i64, i64, i32) {
     if let Ok(content) = std::fs::read_to_string("/proc/self/status") {
         for line in content.lines() {
             if let Some(val) = line.strip_prefix("VmRSS:") {
-                rss_kb = val.split_whitespace().next()
-                    .and_then(|s| s.parse().ok()).unwrap_or(0);
+                rss_kb = val
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
             } else if let Some(val) = line.strip_prefix("VmSize:") {
-                vm_kb = val.split_whitespace().next()
-                    .and_then(|s| s.parse().ok()).unwrap_or(0);
+                vm_kb = val
+                    .split_whitespace()
+                    .next()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
             } else if let Some(val) = line.strip_prefix("Threads:") {
                 threads = val.trim().parse().unwrap_or(0);
             }
@@ -45,7 +51,11 @@ fn parse_loadavg() -> (f64, f64, f64) {
 fn get_process_uptime() -> f64 {
     let sys_uptime = std::fs::read_to_string("/proc/uptime")
         .ok()
-        .and_then(|s| s.split_whitespace().next().and_then(|v| v.parse::<f64>().ok()))
+        .and_then(|s| {
+            s.split_whitespace()
+                .next()
+                .and_then(|v| v.parse::<f64>().ok())
+        })
         .unwrap_or(0.0);
 
     let proc_start = std::fs::read_to_string("/proc/self/stat")
@@ -60,7 +70,11 @@ fn get_process_uptime() -> f64 {
 
     let clk_tck: f64 = 100.0;
     let start_secs = proc_start / clk_tck;
-    if sys_uptime > start_secs { sys_uptime - start_secs } else { 0.0 }
+    if sys_uptime > start_secs {
+        sys_uptime - start_secs
+    } else {
+        0.0
+    }
 }
 
 /// TizenClaw agent — safe Rust API.
@@ -147,7 +161,8 @@ impl TizenClaw {
             "status": if self.initialized { "running" } else { "not_initialized" },
             "version": "1.0.0",
             "tools_count": self.tools.len()
-        }).to_string())
+        })
+        .to_string())
     }
 
     /// Get system metrics as JSON string.
@@ -170,7 +185,8 @@ impl TizenClaw {
             "cpu": { "load_1m": load_1m, "load_5m": load_5m, "load_15m": load_15m },
             "threads": threads,
             "pid": std::process::id()
-        }).to_string())
+        })
+        .to_string())
     }
 
     /// Get available tools as JSON string.
@@ -179,7 +195,9 @@ impl TizenClaw {
             return Err("Not initialized".into());
         }
 
-        let tools_json: Vec<Value> = self.tools.iter()
+        let tools_json: Vec<Value> = self
+            .tools
+            .iter()
             .map(|name| json!({"name": name}))
             .collect();
         Ok(Value::Array(tools_json).to_string())
@@ -191,8 +209,8 @@ impl TizenClaw {
             return Err("Not initialized".into());
         }
 
-        let args: Value = serde_json::from_str(args_json)
-            .map_err(|e| format!("Invalid JSON args: {}", e))?;
+        let args: Value =
+            serde_json::from_str(args_json).map_err(|e| format!("Invalid JSON args: {}", e))?;
 
         let request = json!({
             "method": "execute_tool",
@@ -233,19 +251,23 @@ impl TizenClaw {
         let mut stream = UnixStream::connect(&self.ipc_path)
             .map_err(|e| format!("IPC connect failed: {}", e))?;
 
-        stream.set_read_timeout(Some(std::time::Duration::from_secs(60)))
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(60)))
             .map_err(|e| format!("Set timeout failed: {}", e))?;
 
         let payload = request.to_string();
         let len_bytes = (payload.len() as u32).to_le_bytes();
-        stream.write_all(&len_bytes)
+        stream
+            .write_all(&len_bytes)
             .map_err(|e| format!("IPC write len failed: {}", e))?;
-        stream.write_all(payload.as_bytes())
+        stream
+            .write_all(payload.as_bytes())
             .map_err(|e| format!("IPC write body failed: {}", e))?;
 
         // Read response length
         let mut len_buf = [0u8; 4];
-        stream.read_exact(&mut len_buf)
+        stream
+            .read_exact(&mut len_buf)
             .map_err(|e| format!("IPC read len failed: {}", e))?;
         let resp_len = u32::from_le_bytes(len_buf) as usize;
 
@@ -254,19 +276,34 @@ impl TizenClaw {
         }
 
         let mut resp_buf = vec![0u8; resp_len];
-        stream.read_exact(&mut resp_buf)
+        stream
+            .read_exact(&mut resp_buf)
             .map_err(|e| format!("IPC read body failed: {}", e))?;
 
-        String::from_utf8(resp_buf)
-            .map_err(|e| format!("Invalid UTF-8 response: {}", e))
+        String::from_utf8(resp_buf).map_err(|e| format!("Invalid UTF-8 response: {}", e))
     }
 
     /// Discover tool names from both the shared tool tree and the
     /// TizenClaw-owned embedded descriptor directory.
     fn discover_tools() -> Vec<String> {
         let mut tools = Vec::new();
-        collect_tools_from_tree("/opt/usr/share/tizen-tools", &mut tools);
-        collect_embedded_tool_names("/opt/usr/share/tizenclaw/embedded", &mut tools);
+        let data_dir = std::env::var("TIZENCLAW_DATA_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                if std::path::Path::new("/etc/tizen-release").exists()
+                    || std::path::Path::new("/opt/usr/share/tizenclaw").exists()
+                {
+                    std::path::PathBuf::from("/opt/usr/share/tizenclaw")
+                } else {
+                    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                    std::path::PathBuf::from(home).join(".tizenclaw")
+                }
+            });
+        let tools_dir = std::env::var("TIZENCLAW_TOOLS_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| data_dir.join("tools"));
+        collect_tools_from_tree(&tools_dir.to_string_lossy(), &mut tools);
+        collect_embedded_tool_names(&data_dir.join("embedded").to_string_lossy(), &mut tools);
         tools.sort();
         tools.dedup();
         tools

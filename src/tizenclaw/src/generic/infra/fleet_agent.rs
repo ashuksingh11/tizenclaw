@@ -72,13 +72,20 @@ impl FleetAgent {
 
     /// Get list of known peers.
     pub fn get_peers(&self) -> Vec<FleetPeer> {
-        self.peers.lock().map(|p| p.values().cloned().collect()).unwrap_or_default()
+        self.peers
+            .lock()
+            .map(|p| p.values().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Register a discovered peer.
     pub fn add_peer(&self, peer: FleetPeer) {
         if let Ok(mut peers) = self.peers.lock() {
-            log::debug!("FleetAgent: discovered peer {} at {}", peer.device_id, peer.ip_address);
+            log::debug!(
+                "FleetAgent: discovered peer {} at {}",
+                peer.device_id,
+                peer.ip_address
+            );
             peers.insert(peer.device_id.clone(), peer);
         }
     }
@@ -86,7 +93,9 @@ impl FleetAgent {
     /// Delegate a task to a specific peer.
     pub fn delegate_task(&self, peer_id: &str, task: &Value) -> Result<Value, String> {
         let peers = self.peers.lock().map_err(|e| e.to_string())?;
-        let peer = peers.get(peer_id).ok_or_else(|| format!("Peer '{}' not found", peer_id))?;
+        let peer = peers
+            .get(peer_id)
+            .ok_or_else(|| format!("Peer '{}' not found", peer_id))?;
 
         let url = format!("http://{}:{}/api/task", peer.ip_address, peer.port);
         let body = serde_json::to_string(task).map_err(|e| e.to_string())?;
