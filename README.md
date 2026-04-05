@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/img/tizenclaw.jpg" alt="TizenClaw Logo" width="280">
+  <img src="data/img/tizenclaw.svg" alt="TizenClaw Logo" width="280">
 </p>
 
 <h1 align="center">TizenClaw (Rust Edition)</h1>

@@ -474,6 +474,7 @@ do_deploy() {
   # 3-5.5. Install Web Dashboard frontend files
   log "Installing Web Dashboard frontend..."
   local web_src="${PROJECT_DIR}/data/web"
+  local shared_img_src="${PROJECT_DIR}/data/img"
   local web_dst="/opt/usr/share/tizenclaw/web"
   if [ -d "${web_src}" ]; then
     if [ "${DRY_RUN}" = false ]; then
@@ -489,6 +490,10 @@ do_deploy() {
         for f in "${web_src}/img"/*; do
           [ -f "$f" ] && run sdb_cmd push "$f" "${web_dst}/img/$(basename "$f")"
         done
+      fi
+      if [ -f "${shared_img_src}/tizenclaw.svg" ]; then
+        run sdb_cmd push "${shared_img_src}/tizenclaw.svg" \
+          "${web_dst}/img/tizenclaw.svg"
       fi
       if [ -d "${web_src}/sdk" ]; then
         for f in "${web_src}/sdk"/*; do

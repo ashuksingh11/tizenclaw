@@ -86,6 +86,8 @@ INSTALL(FILES
 # Web dashboard static files
 INSTALL(DIRECTORY "${CMAKE_SOURCE_DIR}/data/web/"
         DESTINATION "${APP_DATA_DIR}/web")
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/data/img/tizenclaw.svg"
+        DESTINATION "${APP_DATA_DIR}/web/img")
 
 # Packaged skill reference docs
 INSTALL(DIRECTORY "${CMAKE_SOURCE_DIR}/data/docs/"
