@@ -91,6 +91,10 @@ journal.txt
 # Dev notes
 .dev_note/
 docs/
+!docs/
+docs/*
+!docs/llm_config_benchmark_design.md
+!docs/tizenclaw_cli_pinchbench_guide_ko.md
 !data/docs/
 !data/docs/**
 

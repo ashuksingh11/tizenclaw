@@ -13,6 +13,7 @@ pub mod tool_policy;
 pub mod event_bus;
 pub mod intent_analyzer;
 pub mod ipc_server;
+pub mod llm_config_store;
 pub mod offline_fallback;
 pub mod safety_guard;
 pub mod system_context_provider;

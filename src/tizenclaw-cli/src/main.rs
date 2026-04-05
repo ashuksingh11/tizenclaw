@@ -294,6 +294,158 @@ fn interactive_mode(session_id: &str, stream: bool) {
     }
 }
 
+fn cmd_config_get(path: Option<&str>) {
+    let params = match path {
+        Some(path) => json!({ "path": path }),
+        None => json!({}),
+    };
+    match send_jsonrpc("get_llm_config", params) {
+        Ok((resp, _)) => {
+            if let Some(result) = resp.get("result") {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(result).unwrap_or_default()
+                );
+            } else if let Some(err) = resp.get("error") {
+                eprintln!(
+                    "Error: {}",
+                    err.get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                );
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_config_set(path: &str, raw_value: &str, strict_json: bool) {
+    let value = if strict_json {
+        match serde_json::from_str::<Value>(raw_value) {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!("Error: invalid JSON value: {}", err);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        Value::String(raw_value.to_string())
+    };
+
+    match send_jsonrpc("set_llm_config", json!({ "path": path, "value": value })) {
+        Ok((resp, _)) => {
+            if let Some(result) = resp.get("result") {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(result).unwrap_or_default()
+                );
+            } else if let Some(err) = resp.get("error") {
+                eprintln!(
+                    "Error: {}",
+                    err.get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                );
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_config_unset(path: &str) {
+    match send_jsonrpc("unset_llm_config", json!({ "path": path })) {
+        Ok((resp, _)) => {
+            if let Some(result) = resp.get("result") {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(result).unwrap_or_default()
+                );
+            } else if let Some(err) = resp.get("error") {
+                eprintln!(
+                    "Error: {}",
+                    err.get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                );
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_config_reload() {
+    match send_jsonrpc("reload_llm_backends", json!({})) {
+        Ok((resp, _)) => {
+            if let Some(result) = resp.get("result") {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(result).unwrap_or_default()
+                );
+            } else if let Some(err) = resp.get("error") {
+                eprintln!(
+                    "Error: {}",
+                    err.get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                );
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_config(args: &[String]) {
+    match args.first().map(String::as_str) {
+        Some("get") => {
+            cmd_config_get(args.get(1).map(String::as_str));
+        }
+        Some("set") => {
+            if args.len() < 3 {
+                eprintln!("Usage: tizenclaw-cli config set <path> <value> [--strict-json]");
+                std::process::exit(1);
+            }
+            let strict_json = args[3..]
+                .iter()
+                .any(|arg| arg == "--strict-json" || arg == "--json");
+            cmd_config_set(&args[1], &args[2], strict_json);
+        }
+        Some("unset") => {
+            if args.len() < 2 {
+                eprintln!("Usage: tizenclaw-cli config unset <path>");
+                std::process::exit(1);
+            }
+            cmd_config_unset(&args[1]);
+        }
+        Some("reload") => {
+            cmd_config_reload();
+        }
+        _ => {
+            eprintln!("Usage:");
+            eprintln!("  tizenclaw-cli config get [path]");
+            eprintln!("  tizenclaw-cli config set <path> <value> [--strict-json]");
+            eprintln!("  tizenclaw-cli config unset <path>");
+            eprintln!("  tizenclaw-cli config reload");
+            std::process::exit(1);
+        }
+    }
+}
+
 fn print_usage() {
     eprintln!("tizenclaw-cli — TizenClaw IPC client\n");
     eprintln!("Usage:");
@@ -313,6 +465,11 @@ fn print_usage() {
     eprintln!("  tizenclaw-cli unregister tool <path>");
     eprintln!("  tizenclaw-cli unregister skill <path>");
     eprintln!("  tizenclaw-cli list registrations\n");
+    eprintln!("LLM config commands:");
+    eprintln!("  tizenclaw-cli config get [path]");
+    eprintln!("  tizenclaw-cli config set <path> <value> [--strict-json]");
+    eprintln!("  tizenclaw-cli config unset <path>");
+    eprintln!("  tizenclaw-cli config reload\n");
     eprintln!("If no prompt given, starts interactive mode.");
 }
 
@@ -438,6 +595,10 @@ fn main() {
             }
             "list" if i + 1 < args.len() && args[i + 1] == "registrations" => {
                 cmd_list_registrations();
+                return;
+            }
+            "config" => {
+                cmd_config(&args[i + 1..]);
                 return;
             }
             "dashboard" => {

@@ -20,6 +20,8 @@ pub struct GeminiBackend {
     api_key: String,
     model: String,
     endpoint: String,
+    temperature: Option<f64>,
+    default_max_tokens: Option<u32>,
     /// Cached system-prompt name returned by Gemini CachedContent API.
     /// `None` means no cache is active; fall back to inline system_instruction.
     cached_content_name: RwLock<Option<String>>,
@@ -37,6 +39,8 @@ impl GeminiBackend {
             api_key: String::new(),
             model: "gemini-2.5-flash".into(),
             endpoint: "https://generativelanguage.googleapis.com/v1beta".into(),
+            temperature: None,
+            default_max_tokens: Some(4096),
             cached_content_name: RwLock::new(None),
         }
     }
@@ -56,8 +60,16 @@ impl GeminiBackend {
     ) -> Value {
         let mut req = json!({});
 
-        if let Some(tokens) = max_tokens {
-            req["generationConfig"] = json!({ "maxOutputTokens": tokens });
+        let resolved_tokens = max_tokens.or(self.default_max_tokens);
+        if resolved_tokens.is_some() || self.temperature.is_some() {
+            let mut generation_config = json!({});
+            if let Some(tokens) = resolved_tokens {
+                generation_config["maxOutputTokens"] = json!(tokens);
+            }
+            if let Some(temperature) = self.temperature {
+                generation_config["temperature"] = json!(temperature);
+            }
+            req["generationConfig"] = generation_config;
         }
 
         if let Some(name) = cached_name {
@@ -282,6 +294,12 @@ impl LlmBackend for GeminiBackend {
         }
         if let Some(e) = config["endpoint"].as_str() {
             self.endpoint = e.into();
+        }
+        if let Some(t) = config["temperature"].as_f64() {
+            self.temperature = Some(t);
+        }
+        if let Some(tokens) = config["max_tokens"].as_u64() {
+            self.default_max_tokens = Some(tokens as u32);
         }
         !self.api_key.is_empty()
     }

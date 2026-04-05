@@ -26,6 +26,7 @@ use crate::core::context_engine::{
     ContextEngine, SizedContextEngine, DEFAULT_TOOL_RESULT_BUDGET_CHARS,
 };
 use crate::core::fallback_parser::FallbackParser;
+use crate::core::llm_config_store;
 use crate::core::registration_store::{self, RegisteredPaths, RegistrationKind};
 use crate::core::textual_skill_scanner::TextualSkill;
 use crate::core::tool_dispatcher::ToolDispatcher;
@@ -2166,6 +2167,47 @@ impl AgentCore {
         } else {
             None
         }
+    }
+
+    fn llm_config_path_affects_backends(path: &str) -> bool {
+        matches!(
+            path.split('.').next(),
+            Some("active_backend") | Some("fallback_backends") | Some("backends")
+        )
+    }
+
+    pub fn get_llm_config(&self, path: Option<&str>) -> Result<Value, String> {
+        let doc = llm_config_store::load(&self.platform.paths.config_dir)?;
+        llm_config_store::get_value(&doc, path)
+    }
+
+    pub async fn set_llm_config(&self, path: &str, value: Value) -> Result<Value, String> {
+        let mut doc = llm_config_store::load(&self.platform.paths.config_dir)?;
+        llm_config_store::set_value(&mut doc, path, value)?;
+        llm_config_store::save(&self.platform.paths.config_dir, &doc)?;
+
+        if Self::llm_config_path_affects_backends(path) {
+            self.reload_backends().await;
+        }
+
+        llm_config_store::get_value(&doc, Some(path))
+    }
+
+    pub async fn unset_llm_config(&self, path: &str) -> Result<Value, String> {
+        let mut doc = llm_config_store::load(&self.platform.paths.config_dir)?;
+        let removed = llm_config_store::unset_value(&mut doc, path)?;
+        llm_config_store::save(&self.platform.paths.config_dir, &doc)?;
+
+        if Self::llm_config_path_affects_backends(path) {
+            self.reload_backends().await;
+        }
+
+        Ok(removed)
+    }
+
+    pub async fn reload_llm_backends(&self) -> Result<Value, String> {
+        self.reload_backends().await;
+        self.get_llm_config(None)
     }
 
     pub fn list_registered_paths(&self) -> RegisteredPaths {

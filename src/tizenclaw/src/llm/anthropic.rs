@@ -10,6 +10,8 @@ pub struct AnthropicBackend {
     api_key: String,
     model: String,
     endpoint: String,
+    temperature: Option<f64>,
+    default_max_tokens: Option<u32>,
 }
 
 impl Default for AnthropicBackend {
@@ -24,6 +26,8 @@ impl AnthropicBackend {
             api_key: String::new(),
             model: "claude-sonnet-4-20250514".into(),
             endpoint: "https://api.anthropic.com/v1".into(),
+            temperature: None,
+            default_max_tokens: Some(4096),
         }
     }
 }
@@ -40,6 +44,12 @@ impl LlmBackend for AnthropicBackend {
         if let Some(e) = config["endpoint"].as_str() {
             self.endpoint = e.into();
         }
+        if let Some(t) = config["temperature"].as_f64() {
+            self.temperature = Some(t);
+        }
+        if let Some(tokens) = config["max_tokens"].as_u64() {
+            self.default_max_tokens = Some(tokens as u32);
+        }
         !self.api_key.is_empty()
     }
 
@@ -51,7 +61,13 @@ impl LlmBackend for AnthropicBackend {
         system_prompt: &str,
         max_tokens: Option<u32>,
     ) -> LlmResponse {
-        let mut req = json!({"model": self.model, "max_tokens": max_tokens.unwrap_or(4096)});
+        let mut req = json!({
+            "model": self.model,
+            "max_tokens": max_tokens.or(self.default_max_tokens).unwrap_or(4096)
+        });
+        if let Some(temperature) = self.temperature {
+            req["temperature"] = json!(temperature);
+        }
         if !system_prompt.is_empty() {
             req["system"] = json!([{
                 "type": "text",

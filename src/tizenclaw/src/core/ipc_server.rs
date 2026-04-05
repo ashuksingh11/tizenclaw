@@ -266,6 +266,82 @@ impl IpcServer {
                 }
             }
 
+            "get_llm_config" => {
+                let path = params["path"].as_str();
+                match agent.get_llm_config(path) {
+                    Ok(value) => json!({
+                        "status": "ok",
+                        "path": path,
+                        "value": value
+                    }),
+                    Err(err) => {
+                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":err},"id":req_id})
+                            .to_string();
+                    }
+                }
+            }
+
+            "set_llm_config" => {
+                let path = params["path"].as_str().unwrap_or("");
+                if path.is_empty() {
+                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'path'"},"id":req_id})
+                        .to_string();
+                }
+                if params.get("value").is_none() {
+                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'value'"},"id":req_id})
+                        .to_string();
+                }
+
+                let value = params["value"].clone();
+                let fut = agent.set_llm_config(path, value);
+                match tokio::task::block_in_place(|| rt_handle.block_on(fut)) {
+                    Ok(saved) => json!({
+                        "status": "ok",
+                        "path": path,
+                        "value": saved
+                    }),
+                    Err(err) => {
+                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":err},"id":req_id})
+                            .to_string();
+                    }
+                }
+            }
+
+            "unset_llm_config" => {
+                let path = params["path"].as_str().unwrap_or("");
+                if path.is_empty() {
+                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'path'"},"id":req_id})
+                        .to_string();
+                }
+
+                let fut = agent.unset_llm_config(path);
+                match tokio::task::block_in_place(|| rt_handle.block_on(fut)) {
+                    Ok(removed) => json!({
+                        "status": "ok",
+                        "path": path,
+                        "removed": removed
+                    }),
+                    Err(err) => {
+                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":err},"id":req_id})
+                            .to_string();
+                    }
+                }
+            }
+
+            "reload_llm_backends" => {
+                let fut = agent.reload_llm_backends();
+                match tokio::task::block_in_place(|| rt_handle.block_on(fut)) {
+                    Ok(config) => json!({
+                        "status": "ok",
+                        "config": config
+                    }),
+                    Err(err) => {
+                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":err},"id":req_id})
+                            .to_string();
+                    }
+                }
+            }
+
             "start_channel" => {
                 let name = params["name"].as_str().unwrap_or("");
                 if name.is_empty() {
