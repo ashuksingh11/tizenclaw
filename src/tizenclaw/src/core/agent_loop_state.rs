@@ -110,6 +110,11 @@ pub struct AgentLoopState {
     pub tool_retry_count:   usize,
     pub max_tool_rounds:    usize,    // 10 default
 
+    // Workflow execution mode
+    pub active_workflow_id: Option<String>,
+    pub current_workflow_step: usize,
+    pub workflow_vars:      std::collections::HashMap<String, Value>,
+
     // Evaluation
     pub last_eval_verdict:  EvalVerdict,
     pub recent_outputs:     Vec<String>,   // for idle/stuck detection (window=3)
@@ -161,6 +166,9 @@ impl AgentLoopState {
             started_at:         Instant::now(),
             total_tool_calls:   0,
             stuck_retry_count:  0,
+            active_workflow_id: None,
+            current_workflow_step: 0,
+            workflow_vars:      std::collections::HashMap::new(),
         }
     }
 
