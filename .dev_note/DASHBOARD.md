@@ -1,7 +1,7 @@
 # TizenClaw Development Dashboard
 
 ## Active Cycle
-- **Stage**: Commit
+- **Stage**: Complete
 - **Goal**: Immediately address the remaining runtime hygiene,
   OpenClaw metadata, and role-aware prompt separation risks while
   keeping Claude Agent SDK alignment.
@@ -13,7 +13,7 @@
 3. [x] Development
 4. [x] Build/Deploy
 5. [x] Test/Review
-6. [ ] Commit
+6. [x] Commit
 
 ## Active Task List
 - [x] Record the immediate-response scope for the remaining risks
@@ -23,7 +23,7 @@
 - [x] Surface OpenClaw metadata in skill routing and reads
 - [x] Activate role/session prompt profiles and agent session tools
 - [x] Validate with `tizenclaw-cli` plus `./deploy.sh -a x86_64`
-- [ ] Commit the finalized implementation
+- [x] Commit the finalized implementation
 
 ### Supervisor Gate PASS: Stage 1 - Planning
 - Evidence: [immediate_risk_response_planning.md](/home/hjhun/samba/github/tizenclaw/docs/immediate_risk_response_planning.md)
@@ -92,6 +92,14 @@
 - Evidence: `tizenclaw-cli dashboard status` returned `Dashboard:
   running`, and `systemctl status tizenclaw -l --no-pager` showed only
   the current daemon plus current dashboard PID in the service cgroup.
+
+### Supervisor Gate PASS: Stage 6 - Commit
+- Evidence: `.agent/scripts/cleanup_workspace.sh` was executed before
+  commit, and only the intended immediate-response files were staged
+  while unrelated tracked modifications remained untouched.
+- Evidence: the commit message was written in `.tmp/commit_msg.txt` and
+  recorded with `git commit -F .tmp/commit_msg.txt`, producing commit
+  `b18b8c82` with the title `Fix dashboard hygiene and role sessions`.
 
 ### Supervisor Gate PASS: Stage 1 - Planning
 - Evidence: [agent_sdk_prompt_upgrade_planning.md](/home/hjhun/samba/github/tizenclaw/docs/agent_sdk_prompt_upgrade_planning.md)
