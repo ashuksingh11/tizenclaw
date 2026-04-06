@@ -161,8 +161,9 @@ on the host and stream progress back into chat.
 ## Install on Ubuntu or WSL
 
 If you want to try TizenClaw on host Linux first, the repository now includes a
-GitHub-friendly bootstrap script that installs prerequisites, clones or updates
-the repository, and delegates the actual host install to `deploy_host.sh`.
+GitHub-friendly bootstrap script that downloads a prebuilt host bundle from
+GitHub Releases, installs it under `~/.tizenclaw`, and launches the setup
+wizard.
 
 ### One-line bootstrap
 
@@ -173,18 +174,17 @@ curl -fsSL https://raw.githubusercontent.com/hjhun/tizenclaw/develRust/install.s
 Useful variants:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hjhun/tizenclaw/develRust/install.sh | bash -s -- --build-only
-curl -fsSL https://raw.githubusercontent.com/hjhun/tizenclaw/develRust/install.sh | bash -s -- --ref develRust
-curl -fsSL https://raw.githubusercontent.com/hjhun/tizenclaw/develRust/install.sh | bash -s -- --dir "$HOME/src/tizenclaw"
+curl -fsSL https://raw.githubusercontent.com/hjhun/tizenclaw/develRust/install.sh | bash -s -- --version v1.0.0
+curl -fsSL https://raw.githubusercontent.com/hjhun/tizenclaw/develRust/install.sh | bash -s -- --skip-setup
+curl -fsSL https://raw.githubusercontent.com/hjhun/tizenclaw/develRust/install.sh | bash -s -- --source-install --ref develRust
 ```
 
 What the bootstrap does:
 
-- installs Ubuntu packages needed for host builds
-- installs Rust through `rustup` when missing
-- clones or updates `https://github.com/hjhun/tizenclaw.git`
-- checks out the requested Git ref, defaulting to `develRust`
-- runs `deploy_host.sh` to build, install, and optionally start the host tools
+- installs the runtime packages needed for host execution
+- downloads the matching `tizenclaw-host-bundle-...tar.gz` asset from GitHub Releases
+- installs the bundled binaries, web assets, configs, and management script
+- starts the host services from the installed bundle
 - launches `tizenclaw-cli setup` so you can either configure now or defer
   setup and jump straight to the dashboard
 
@@ -195,7 +195,16 @@ After installation, the setup wizard can help with:
 - showing the local dashboard URL and the command to rerun setup later
 - letting you choose "configure later" so you can open the dashboard first
 
-### Manual host flow
+### Source Install for Contributors
+
+If you are actively developing TizenClaw and want a full repository checkout,
+switch the installer into source mode:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hjhun/tizenclaw/develRust/install.sh | bash -s -- --source-install --ref develRust
+```
+
+Or run the classic manual flow:
 
 ```bash
 git clone https://github.com/hjhun/tizenclaw.git

@@ -1,0 +1,79 @@
+name: Release Host Bundle
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version or tag string to embed in the bundle name'
+        required: false
+        default: ''
+      publish:
+        description: 'Publish the generated bundle to GitHub Releases'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build-host-bundle:
+    name: Build Host Bundle
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            cmake \
+            curl \
+            iproute2 \
+            libssl-dev \
+            make \
+            pkg-config \
+            perl \
+            python3
+
+      - name: Resolve bundle version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="dev-${GITHUB_SHA::7}"
+          fi
+          echo "value=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build host release bundle
+        run: |
+          chmod +x scripts/create_host_release_bundle.sh
+          scripts/create_host_release_bundle.sh \
+            --version "${{ steps.version.outputs.value }}" \
+            --output-dir dist
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-bundle-${{ steps.version.outputs.value }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release asset
+        if: github.ref_type == 'tag' || github.event.inputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.value }}
+          files: dist/*
