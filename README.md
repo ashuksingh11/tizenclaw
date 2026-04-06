@@ -154,7 +154,7 @@ tizenclaw-cli dashboard status
 
 ### Open the Dashboard
 
-The standalone dashboard process uses port `9090` on Tizen targets and `8080`
+The standalone dashboard process uses port `9090` on Tizen targets and `9091`
 on non-Tizen host environments by default. After deployment, the dashboard can
 be reached through the forwarded or device-exposed port configured in your
 environment.

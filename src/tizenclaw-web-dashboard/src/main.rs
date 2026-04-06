@@ -4,7 +4,7 @@
 //! tizenclaw daemon via IPC (Unix abstract socket) for chat requests.
 //!
 //! Usage:
-//!   tizenclaw-web-dashboard [--port 8080] [--web-root PATH]
+//!   tizenclaw-web-dashboard [--port 9091] [--web-root PATH]
 //!                           [--config-dir PATH] [--data-dir PATH]
 //!                           [--localhost-only]
 
@@ -90,8 +90,12 @@ fn default_dashboard_port() -> u16 {
     if is_tizen_runtime() {
         9090
     } else {
-        8080
+        9091
     }
+}
+
+fn default_dashboard_base_url() -> String {
+    format!("http://localhost:{}", default_dashboard_port())
 }
 
 // ─── Config ───────────────────────────────────────────────────
@@ -1422,7 +1426,7 @@ async fn api_agent_card() -> Json<Value> {
     Json(json!({
         "name": "TizenClaw Agent",
         "description": "TizenClaw AI Agent System for Tizen devices",
-        "url": "http://localhost:9090",
+        "url": default_dashboard_base_url(),
         "version": "1.0.0",
         "protocol": "a2a",
         "protocolVersion": "0.1",

@@ -73,8 +73,8 @@ impl A2aHandler {
             .settings
             .get("agent_url")
             .and_then(|v| v.as_str())
-            .unwrap_or("http://localhost:9090")
-            .to_string();
+            .map(str::to_owned)
+            .unwrap_or_else(crate::core::runtime_paths::default_dashboard_base_url);
 
         let mut bearer_tokens = Vec::new();
         if let Some(arr) = config

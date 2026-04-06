@@ -24,6 +24,7 @@ PKG_NAME="tizenclaw"
 TOOL_EXECUTOR_NAME="tizenclaw-tool-executor"
 CLI_NAME="tizenclaw-cli"
 WEB_DASHBOARD_NAME="tizenclaw-web-dashboard"
+HOST_DASHBOARD_PORT_DEFAULT=9091
 
 HOST_BASE_DIR="${HOME}/.tizenclaw"
 INSTALL_DIR="${HOST_BASE_DIR}/bin"
@@ -99,21 +100,78 @@ process_report() {
 }
 
 dashboard_port() {
-  python3 - <<'PY' "${CONFIG_DIR}/channel_config.json"
+  python3 - <<'PY' "${CONFIG_DIR}/channel_config.json" "${HOST_DASHBOARD_PORT_DEFAULT}"
 import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
-port = 9090
+default_port = int(sys.argv[2])
+port = default_port
 try:
     if path.exists():
         data = json.loads(path.read_text(encoding="utf-8"))
         for channel in data.get("channels", []):
             if channel.get("name") == "web_dashboard":
-                port = int(channel.get("settings", {}).get("port", 9090))
+                port = int(channel.get("settings", {}).get("port", default_port))
                 break
 except Exception:
-    port = 9090
+    port = default_port
 print(port)
 PY
+}
+
+normalize_host_dashboard_config() {
+  local config_path="${CONFIG_DIR}/channel_config.json"
+  log "Normalizing host dashboard port to ${HOST_DASHBOARD_PORT_DEFAULT}"
+  if [ "${DRY_RUN}" = false ]; then
+    python3 - <<'PY' "${config_path}" "${HOST_DASHBOARD_PORT_DEFAULT}"
+import json, pathlib, sys
+
+path = pathlib.Path(sys.argv[1])
+port = int(sys.argv[2])
+
+data = {"channels": []}
+if path.exists():
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        data = {"channels": []}
+
+channels = data.get("channels")
+if not isinstance(channels, list):
+    channels = []
+    data["channels"] = channels
+
+dashboard = None
+for channel in channels:
+    if isinstance(channel, dict) and channel.get("name") == "web_dashboard":
+        dashboard = channel
+        break
+
+if dashboard is None:
+    dashboard = {
+        "name": "web_dashboard",
+        "type": "web_dashboard",
+        "enabled": True,
+        "settings": {},
+    }
+    channels.append(dashboard)
+
+settings = dashboard.get("settings")
+if not isinstance(settings, dict):
+    settings = {}
+    dashboard["settings"] = settings
+
+dashboard.setdefault("type", "web_dashboard")
+dashboard.setdefault("enabled", True)
+settings["port"] = port
+settings.setdefault("localhost_only", False)
+
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PY
+  else
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} normalize ${config_path} to port ${HOST_DASHBOARD_PORT_DEFAULT}"
+  fi
+  ok "Host dashboard config uses port ${HOST_DASHBOARD_PORT_DEFAULT}"
 }
 
 port_report() {
@@ -499,6 +557,8 @@ EOF
     done < <(find "${BUNDLED_CONFIG_DIR}" -maxdepth 1 -type f ! -name '*.sample' | sort)
     ok "Default config seeding complete"
   fi
+
+  normalize_host_dashboard_config
 
   if [ -d "${EMBEDDED_TOOLS_SRC}" ]; then
     log "Installing embedded tool descriptors → ${DATA_DIR}/embedded"

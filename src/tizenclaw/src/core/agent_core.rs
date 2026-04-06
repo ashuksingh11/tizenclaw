@@ -1871,23 +1871,24 @@ impl AgentCore {
         }
 
         let is_tizen = std::path::Path::new("/etc/tizen-release").exists();
+        let dashboard_base_url = crate::core::runtime_paths::default_dashboard_base_url();
         let launched = self.launch_generated_web_app(app_id);
         let message = if is_tizen {
             if launched {
                 format!(
-                    "Web app created and launched at http://localhost:9090/apps/{}/",
-                    app_id
+                    "Web app created and launched at {}/apps/{}/",
+                    dashboard_base_url, app_id
                 )
             } else {
                 format!(
-                    "Web app created. Access at http://localhost:9090/apps/{}/",
-                    app_id
+                    "Web app created. Access at {}/apps/{}/",
+                    dashboard_base_url, app_id
                 )
             }
         } else {
             format!(
-                "Web app created. Open http://localhost:9090/apps/{}/ on the host.",
-                app_id
+                "Web app created. Open {}/apps/{}/ on the host.",
+                dashboard_base_url, app_id
             )
         };
         json!({
@@ -1934,7 +1935,11 @@ impl AgentCore {
             return false;
         }
 
-        let app_url = format!("http://localhost:9090/apps/{}/", app_id);
+        let app_url = format!(
+            "{}/apps/{}/",
+            crate::core::runtime_paths::default_dashboard_base_url(),
+            app_id
+        );
         if self.launch_app_with_bundle("QvaPeQ7RDA.tizenclawbridge", &[("url", app_url.as_str())]) {
             return true;
         }

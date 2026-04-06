@@ -5,7 +5,7 @@
 //!   tizenclaw-cli -s my_session "Run a skill"
 //!   tizenclaw-cli --stream "Tell me about Tizen"
 //!   tizenclaw-cli dashboard start
-//!   tizenclaw-cli dashboard start --port 8080
+//!   tizenclaw-cli dashboard start --port 9091
 //!   tizenclaw-cli dashboard stop
 //!   tizenclaw-cli dashboard status
 //!   tizenclaw-cli   (interactive mode)
