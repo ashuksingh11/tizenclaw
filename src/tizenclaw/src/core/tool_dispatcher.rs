@@ -403,10 +403,11 @@ impl ToolDispatcher {
         keywords: &[String],
     ) -> Vec<crate::llm::backend::LlmToolDecl> {
         if keywords.is_empty() {
-            return vec![];
+            return self.get_tool_declarations();
         }
 
-        self.tools
+        let filtered = self
+            .tools
             .values()
             .filter(|t| {
                 let name_lower = t.name.to_lowercase();
@@ -421,7 +422,13 @@ impl ToolDispatcher {
                 description: t.description.clone(),
                 parameters: t.parameters.clone(),
             })
-            .collect()
+            .collect::<Vec<_>>();
+
+        if filtered.is_empty() {
+            self.get_tool_declarations()
+        } else {
+            filtered
+        }
     }
 
     /// Execute a tool call.
@@ -506,7 +513,8 @@ impl ToolDispatcher {
 
 #[cfg(test)]
 mod tests {
-    use super::ToolDispatcher;
+    use super::{ToolDecl, ToolDispatcher};
+    use serde_json::json;
     use std::fs;
 
     #[test]
@@ -561,5 +569,34 @@ script: worker.sh
             decl.prepend_args,
             vec![script_path.to_string_lossy().to_string()]
         );
+    }
+
+    #[test]
+    fn get_tool_declarations_filtered_falls_back_to_all_when_keywords_missing() {
+        let mut dispatcher = ToolDispatcher::new();
+        dispatcher.register(ToolDecl {
+            name: "battery_tool".into(),
+            description: "Inspect battery health".into(),
+            parameters: json!({"type": "object"}),
+            binary_path: "/bin/echo".into(),
+            prepend_args: Vec::new(),
+            timeout_secs: 30,
+            side_effect: "none".into(),
+        });
+        dispatcher.register(ToolDecl {
+            name: "calendar_tool".into(),
+            description: "Inspect schedule".into(),
+            parameters: json!({"type": "object"}),
+            binary_path: "/bin/echo".into(),
+            prepend_args: Vec::new(),
+            timeout_secs: 30,
+            side_effect: "none".into(),
+        });
+
+        let empty_keywords = dispatcher.get_tool_declarations_filtered(&[]);
+        let miss_keywords = dispatcher.get_tool_declarations_filtered(&["nonexistent".into()]);
+
+        assert_eq!(empty_keywords.len(), 2);
+        assert_eq!(miss_keywords.len(), 2);
     }
 }

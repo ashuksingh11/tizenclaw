@@ -7,8 +7,12 @@ pub struct TextualSkill {
     pub file_name: String,
     pub absolute_path: String,
     pub description: String,
+    pub tags: Vec<String>,
+    pub triggers: Vec<String>,
+    pub examples: Vec<String>,
     pub openclaw_requires: Vec<String>,
     pub openclaw_install: Vec<String>,
+    pub searchable_text: String,
 }
 
 /// Scans a directory for Anthropic's OpenClaw-style Textual Skills.
@@ -39,13 +43,25 @@ pub fn scan_textual_skills(skills_dir: &str) -> Vec<TextualSkill> {
                     let absolute_path = skill_md_path.to_string_lossy().to_string();
                     let content = fs::read_to_string(&skill_md_path).unwrap_or_default();
                     let metadata = extract_skill_metadata(&content, &skill_name);
+                    let searchable_text = build_searchable_text(
+                        &skill_name,
+                        &metadata.description,
+                        &metadata.tags,
+                        &metadata.triggers,
+                        &metadata.examples,
+                        &content,
+                    );
 
                     skills.push(TextualSkill {
                         file_name: skill_name,
                         absolute_path,
                         description: metadata.description,
+                        tags: metadata.tags,
+                        triggers: metadata.triggers,
+                        examples: metadata.examples,
                         openclaw_requires: metadata.openclaw_requires,
                         openclaw_install: metadata.openclaw_install,
+                        searchable_text,
                     });
                 }
             }
@@ -70,6 +86,9 @@ where
 #[derive(Default)]
 struct SkillMetadata {
     description: String,
+    tags: Vec<String>,
+    triggers: Vec<String>,
+    examples: Vec<String>,
     openclaw_requires: Vec<String>,
     openclaw_install: Vec<String>,
 }
@@ -94,6 +113,9 @@ fn extract_skill_metadata(content: &str, skill_name: &str) -> SkillMetadata {
         if let Some(rest) = trimmed.strip_prefix("- ") {
             let item = rest.trim().trim_matches('"').trim_matches('\'').to_string();
             match active_list.as_deref() {
+                Some("tags") if !item.is_empty() => metadata.tags.push(item),
+                Some("triggers") if !item.is_empty() => metadata.triggers.push(item),
+                Some("examples") if !item.is_empty() => metadata.examples.push(item),
                 Some("metadata.openclaw.requires") if !item.is_empty() => {
                     metadata.openclaw_requires.push(item)
                 }
@@ -133,6 +155,9 @@ fn extract_skill_metadata(content: &str, skill_name: &str) -> SkillMetadata {
                 section_stack.push((indent, key));
                 if full_key == "metadata.openclaw.requires"
                     || full_key == "metadata.openclaw.install"
+                    || full_key == "tags"
+                    || full_key == "triggers"
+                    || full_key == "examples"
                 {
                     active_list = Some(full_key);
                 }
@@ -164,6 +189,43 @@ fn extract_frontmatter(content: &str) -> String {
     yaml_lines.join("\n")
 }
 
+fn build_searchable_text(
+    skill_name: &str,
+    description: &str,
+    tags: &[String],
+    triggers: &[String],
+    examples: &[String],
+    content: &str,
+) -> String {
+    let body = if content.starts_with("---") {
+        let mut lines = content.lines();
+        let _ = lines.next();
+        let mut past_frontmatter = false;
+        let mut remaining = Vec::new();
+        for line in lines {
+            if past_frontmatter {
+                remaining.push(line);
+            } else if line.trim() == "---" {
+                past_frontmatter = true;
+            }
+        }
+        remaining.join("\n")
+    } else {
+        content.to_string()
+    };
+
+    format!(
+        "{} {} {} {} {} {}",
+        skill_name,
+        description,
+        tags.join(" "),
+        triggers.join(" "),
+        examples.join(" "),
+        body
+    )
+    .to_lowercase()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,6 +245,8 @@ mod tests {
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].file_name, "hello_world");
         assert_eq!(skills[0].description, "A test skill");
+        assert!(skills[0].tags.is_empty());
+        assert!(skills[0].triggers.is_empty());
         assert!(skills[0].openclaw_requires.is_empty());
     }
 
@@ -226,6 +290,26 @@ mod tests {
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].openclaw_requires, vec!["uv", "node"]);
         assert_eq!(skills[0].openclaw_install, vec!["uv sync", "npm install"]);
+    }
+
+    #[test]
+    fn test_extracts_trigger_metadata_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = dir.path().join("battery_helper");
+        fs::create_dir_all(&skill_dir).unwrap();
+        let skill_file = skill_dir.join("SKILL.md");
+
+        let content = "---\ndescription: Battery helper\ntags:\n  - battery\n  - power\ntriggers:\n  - check battery\nexamples:\n  - battery status 알려줘\n---\n# Skill\nInspect device power state";
+        fs::write(&skill_file, content).unwrap();
+
+        let skills = scan_textual_skills(&dir.path().to_string_lossy());
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].tags, vec!["battery", "power"]);
+        assert_eq!(skills[0].triggers, vec!["check battery"]);
+        assert_eq!(skills[0].examples, vec!["battery status 알려줘"]);
+        assert!(skills[0]
+            .searchable_text
+            .contains("inspect device power state"));
     }
 
     #[test]

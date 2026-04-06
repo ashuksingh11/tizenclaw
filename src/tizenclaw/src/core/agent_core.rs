@@ -239,11 +239,7 @@ fn log_payload_breakdown(
 
 fn skill_relevance_score(prompt: &str, skill: &TextualSkill) -> usize {
     let prompt_lower = prompt.to_lowercase();
-    let searchable = format!(
-        "{} {}",
-        skill.file_name.to_lowercase(),
-        skill.description.to_lowercase()
-    );
+    let searchable = skill.searchable_text.as_str();
 
     let mut score = 0;
     if prompt_lower.len() >= 3 && searchable.contains(&prompt_lower) {
@@ -253,6 +249,27 @@ fn skill_relevance_score(prompt: &str, skill: &TextualSkill) -> usize {
     for token in prompt_lower.split(|c: char| !c.is_alphanumeric()) {
         if token.len() >= 2 && searchable.contains(token) {
             score += 1;
+        }
+    }
+
+    for trigger in &skill.triggers {
+        let trigger_lower = trigger.to_lowercase();
+        if !trigger_lower.is_empty() && prompt_lower.contains(&trigger_lower) {
+            score += 4;
+        }
+    }
+
+    for example in &skill.examples {
+        let example_lower = example.to_lowercase();
+        if !example_lower.is_empty() && prompt_lower.contains(&example_lower) {
+            score += 3;
+        }
+    }
+
+    for tag in &skill.tags {
+        let tag_lower = tag.to_lowercase();
+        if !tag_lower.is_empty() && prompt_lower.contains(&tag_lower) {
+            score += 2;
         }
     }
 
@@ -489,6 +506,12 @@ fn reasoning_policy_from_str(value: Option<&str>) -> Option<ReasoningPolicy> {
 
 fn format_skill_summary(skill: &TextualSkill) -> String {
     let mut parts = vec![skill.description.clone()];
+    if !skill.tags.is_empty() {
+        parts.push(format!("tags: {}", skill.tags.join(", ")));
+    }
+    if !skill.triggers.is_empty() {
+        parts.push(format!("triggers: {}", skill.triggers.join(" | ")));
+    }
     if !skill.openclaw_requires.is_empty() {
         parts.push(format!("requires: {}", skill.openclaw_requires.join(", ")));
     }
@@ -496,6 +519,17 @@ fn format_skill_summary(skill: &TextualSkill) -> String {
         parts.push(format!("install: {}", skill.openclaw_install.join(" | ")));
     }
     parts.join(" | ")
+}
+
+fn build_role_supervisor_hint(session_id: &str, goal: &str, role: &AgentRole) -> String {
+    format!(
+        "Supervisor goal from session '{}': {}\n\
+Role: {}\n\
+Focus: {}\n\
+Work only within this role's scope. Return concise role-specific findings, \
+recommended actions, and any missing information needed for the next step.",
+        session_id, goal, role.name, role.description
+    )
 }
 
 fn list_known_sessions(paths: &libtizenclaw_core::framework::paths::PlatformPaths) -> Vec<String> {
@@ -2597,7 +2631,11 @@ impl AgentCore {
                             let mut results = Vec::new();
                             for t in all_tools {
                                 if query == "ALL" || t.name.to_lowercase().contains(&query.to_lowercase()) || t.description.to_lowercase().contains(&query.to_lowercase()) {
-                                    results.push(format!("- name: {}, desc: {}", t.name, t.description));
+                                    results.push(serde_json::json!({
+                                        "name": t.name,
+                                        "description": t.description,
+                                        "parameters": t.parameters,
+                                    }));
                                 }
                             }
                             if results.is_empty() {
@@ -2693,7 +2731,8 @@ impl AgentCore {
                                     "status": "success",
                                     "name": doc.name,
                                     "path": doc.absolute_path,
-                                    "content": doc.description,
+                                    "description": doc.description,
+                                    "content": doc.content,
                                 }),
                                 Err(err) => serde_json::json!({"error": err}),
                             }
@@ -2883,12 +2922,6 @@ impl AgentCore {
                                         "error": "No worker roles are available for supervisor delegation"
                                     })
                                 } else {
-                                    let supervisor_hint = format!(
-                                        "Supervisor goal from session '{}': {}\nReturn concise role-specific findings and actions only.",
-                                        session_id,
-                                        goal
-                                    );
-
                                     let mut delegated_sessions = Vec::new();
                                     for role in &selected_roles {
                                         if let Ok(profile) = self.build_session_profile(
@@ -2928,7 +2961,8 @@ impl AgentCore {
                                     } else {
                                         let results = if strategy == "parallel" {
                                             join_all(delegated_sessions.iter().map(|(role, delegated_session_id)| {
-                                                let supervisor_hint = supervisor_hint.clone();
+                                                let supervisor_hint =
+                                                    build_role_supervisor_hint(session_id, goal, role);
                                                 async move {
                                                 let response = Box::pin(self.process_prompt(
                                                     delegated_session_id,
@@ -2946,6 +2980,8 @@ impl AgentCore {
                                         } else {
                                             let mut sequential_results = Vec::new();
                                             for (role, delegated_session_id) in &delegated_sessions {
+                                                let supervisor_hint =
+                                                    build_role_supervisor_hint(session_id, goal, role);
                                                 let response = Box::pin(self.process_prompt(
                                                     delegated_session_id,
                                                     &supervisor_hint,
@@ -3626,11 +3662,12 @@ impl<'a> SessionStoreRef<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_progress_marker, build_skill_prefetch_message, extract_final_text,
-        generated_code_runtime_spec, generated_code_script_path, manage_generated_code_tool,
-        normalize_conversation_log_text, parse_shell_like_args, prompt_mode_from_doc,
-        reasoning_policy_from_doc, role_relevance_score, sanitize_generated_code_name,
-        select_delegate_roles, select_relevant_skills, utf8_safe_preview, AgentRole,
+        build_progress_marker, build_role_supervisor_hint, build_skill_prefetch_message,
+        extract_final_text, generated_code_runtime_spec, generated_code_script_path,
+        manage_generated_code_tool, normalize_conversation_log_text, parse_shell_like_args,
+        prompt_mode_from_doc, reasoning_policy_from_doc, role_relevance_score,
+        sanitize_generated_code_name, select_delegate_roles, select_relevant_skills,
+        utf8_safe_preview, AgentRole,
     };
     use crate::core::prompt_builder::{PromptMode, ReasoningPolicy};
     use crate::core::textual_skill_scanner::TextualSkill;
@@ -3681,15 +3718,24 @@ mod tests {
                 file_name: "battery_monitor".into(),
                 absolute_path: "/tmp/battery/SKILL.md".into(),
                 description: "Inspect battery and power telemetry".into(),
+                tags: vec!["battery".into(), "power".into()],
+                triggers: vec!["check battery".into()],
+                examples: vec!["battery status 알려줘".into()],
                 openclaw_requires: Vec::new(),
                 openclaw_install: Vec::new(),
+                searchable_text:
+                    "battery_monitor inspect battery and power telemetry battery power check battery battery status 알려줘 inspect device power".into(),
             },
             TextualSkill {
                 file_name: "calendar_sync".into(),
                 absolute_path: "/tmp/calendar/SKILL.md".into(),
                 description: "Handle schedule sync tasks".into(),
+                tags: Vec::new(),
+                triggers: Vec::new(),
+                examples: Vec::new(),
                 openclaw_requires: Vec::new(),
                 openclaw_install: Vec::new(),
+                searchable_text: "calendar_sync handle schedule sync tasks".into(),
             },
         ];
 
@@ -3705,15 +3751,42 @@ mod tests {
             file_name: "battery_monitor".into(),
             absolute_path: "/tmp/battery/SKILL.md".into(),
             description: "Inspect battery and power telemetry".into(),
+            tags: vec!["battery".into()],
+            triggers: vec!["check battery".into()],
+            examples: Vec::new(),
             openclaw_requires: vec!["upower".into()],
             openclaw_install: vec!["apt install upower".into()],
+            searchable_text: "battery_monitor inspect battery and power telemetry".into(),
         }];
 
         let message = build_skill_prefetch_message(&skills).unwrap_or_default();
 
         assert!(message.contains("Prefetched Skill Snapshot"));
         assert!(message.contains("battery_monitor"));
+        assert!(message.contains("tags: battery"));
         assert!(message.contains("requires: upower"));
+    }
+
+    #[test]
+    fn build_role_supervisor_hint_includes_role_scope() {
+        let role = AgentRole {
+            name: "device_monitor".into(),
+            system_prompt: "monitor device".into(),
+            allowed_tools: Vec::new(),
+            max_iterations: 4,
+            description: "Inspect device health metrics".into(),
+            role_type: "worker".into(),
+            auto_start: false,
+            can_delegate_to: Vec::new(),
+            prompt_mode: Some(PromptMode::Minimal),
+            reasoning_policy: Some(ReasoningPolicy::Native),
+        };
+
+        let hint = build_role_supervisor_hint("sess-1", "check battery health", &role);
+
+        assert!(hint.contains("sess-1"));
+        assert!(hint.contains("device_monitor"));
+        assert!(hint.contains("Inspect device health metrics"));
     }
 
     #[test]

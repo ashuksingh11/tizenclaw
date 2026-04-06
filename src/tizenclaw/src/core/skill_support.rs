@@ -8,6 +8,7 @@ pub struct SkillReferenceDoc {
     pub name: String,
     pub absolute_path: String,
     pub description: String,
+    pub content: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -154,6 +155,7 @@ pub fn list_skill_reference_docs(docs_dir: &Path) -> Vec<SkillReferenceDoc> {
             name,
             absolute_path: path.to_string_lossy().to_string(),
             description,
+            content: content.clone(),
         });
     }
 
@@ -187,7 +189,8 @@ pub fn read_skill_reference_doc(
     Ok(SkillReferenceDoc {
         name,
         absolute_path: path.to_string_lossy().to_string(),
-        description: content,
+        description: extract_reference_description(&path, &content),
+        content,
     })
 }
 
@@ -297,6 +300,7 @@ mod tests {
 
         let doc = read_skill_reference_doc(dir.path(), "").unwrap();
         assert_eq!(doc.name, DEFAULT_SKILL_REFERENCE_DOC);
-        assert!(doc.description.contains("Body"));
+        assert_eq!(doc.description, "Best");
+        assert!(doc.content.contains("Body"));
     }
 }
