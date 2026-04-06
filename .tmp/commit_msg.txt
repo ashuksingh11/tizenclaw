@@ -1,0 +1,11 @@
+Record formatting-only Rust cleanup
+
+Separate the leftover Rust layout cleanups from the earlier
+document-only commit.
+
+- Keep the reviewed formatting changes in task_scheduler,
+  container_engine, and gemini without changing behavior.
+- Record the planning, design, deploy, and review evidence for this
+  follow-up cycle in the dashboard.
+- Validate the tree with ./deploy.sh -a x86_64 and confirm the
+  deployed service and socket returned to active state.

@@ -334,8 +334,7 @@ impl ContainerEngine {
             command.current_dir(cwd);
         }
 
-        match command.output().await
-        {
+        match command.output().await {
             Ok(output) => Ok(json!({
                 "exit_code": output.status.code().unwrap_or(-1),
                 "stdout": String::from_utf8_lossy(&output.stdout).to_string(),

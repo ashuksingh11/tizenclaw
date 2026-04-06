@@ -2,9 +2,9 @@
 
 ## Active Cycle
 - **Stage**: Commit
-- **Goal**: Remove legacy workflow documents from `docs/` and redirect
-  future stage artifacts to `.dev_note/docs/`.
-- **Status**: [ ] The document-cleanup 6-stage cycle is in progress.
+- **Goal**: Review the uncommitted Rust formatting-only diffs, confirm
+  they should remain, and commit them through the full 6-stage cycle.
+- **Status**: [x] The formatting-cleanup 6-stage cycle is complete.
 
 ## Active Cycle Progress
 1. [x] Planning
@@ -12,16 +12,70 @@
 3. [x] Development
 4. [x] Build/Deploy
 5. [x] Test/Review
-6. [ ] Commit
+6. [x] Commit
 
 ## Active Task List
-- [x] Confirm the legacy document cleanup scope under `docs/`
-- [x] Define the process-rule updates for `.dev_note/docs/`
-- [x] Remove tracked documents under `docs/`
-- [x] Update agent workflow rules and skill guidance to use
-  `.dev_note/docs/`
-- [x] Validate with `./deploy.sh -a x86_64`
-- [ ] Commit the finalized cleanup
+- [x] Confirm the remaining uncommitted Rust diffs are formatting-only
+- [x] Record the formatting-cleanup scope in `.dev_note/docs/`
+- [x] Preserve only the necessary formatting adjustments
+- [x] Validate the tree with `./deploy.sh -a x86_64`
+- [x] Review runtime logs and service health after deployment
+- [x] Commit the verified formatting cleanup
+
+### Supervisor Gate PASS: Stage 1 - Planning
+- Evidence:
+  [uncommitted_formatting_cleanup_planning.md](/home/hjhun/samba/github/tizenclaw/.dev_note/docs/uncommitted_formatting_cleanup_planning.md)
+  records the leftover diff scope, the x86_64-only validation path, and
+  the execution mode classification for review, deploy, and runtime
+  smoke verification.
+- Evidence: the cycle is explicitly limited to reviewing and committing
+  the uncommitted Rust cleanup with no runtime feature expansion and no
+  local `cargo` execution.
+
+### Supervisor Gate PASS: Stage 2 - Design
+- Evidence:
+  [uncommitted_formatting_cleanup_design.md](/home/hjhun/samba/github/tizenclaw/.dev_note/docs/uncommitted_formatting_cleanup_design.md)
+  documents that `task_scheduler.rs`, `container_engine.rs`, and
+  `gemini.rs` must keep identical control flow and data contracts while
+  restricting this cycle to formatting-only refactors.
+- Evidence: the design explicitly preserves current `Send + Sync`
+  behavior and records that the existing `libloading` dynamic loading
+  strategy is unchanged.
+
+### Supervisor Gate PASS: Stage 3 - Development
+- Evidence: the remaining diffs in `task_scheduler.rs`,
+  `container_engine.rs`, and `gemini.rs` were reviewed line-by-line and
+  kept only as formatting/layout adjustments with no control-flow,
+  literal, or interface change.
+- Evidence: no local `cargo build`, `cargo test`, `cargo check`, or
+  `cargo clippy` commands were executed while validating this refactor-
+  only cycle.
+
+### Supervisor Gate PASS: Stage 4 - Build/Deploy
+- Evidence: `./deploy.sh -a x86_64` completed successfully on
+  `2026-04-06 10:55 KST`, rebuilt `tizenclaw-1.0.0-3.x86_64.rpm`,
+  installed it on emulator `emulator-26101`, and resynced the web
+  dashboard assets.
+- Evidence: deploy-time release tests passed inside the managed build,
+  including `tizenclaw_core` 14 tests, `tizenclaw` 176 tests, metadata
+  plugin tests, and doc tests with no failures.
+- Evidence: post-deploy status returned `tizenclaw.service` to
+  `active (running)` with `/usr/bin/tizenclaw` PID `780940`, and
+  `tizenclaw-tool-executor.socket` to `active (listening)`.
+
+### Supervisor Gate PASS: Stage 5 - Test/Review
+- Evidence: `sdb shell systemctl status tizenclaw -l --no-pager`
+  reported `active (running)` since `2026-04-06 10:55:56 KST` with the
+  web dashboard child process attached to the service.
+- Evidence: `sdb shell systemctl status tizenclaw-tool-executor.socket
+  -l --no-pager` reported `active (listening)` since
+  `2026-04-06 10:55:54 KST`.
+- Evidence: `sdb shell journalctl -u tizenclaw -n 12 --no-pager`
+  captured the `2026-04-06 10:55:55-10:55:56 KST` stop/start cycle
+  ending in `Started TizenClaw Agent System Service.`
+- Residual risk: the existing SDB client/server version mismatch notice
+  remains visible during deploy commands, but it did not block this
+  validation cycle.
 
 ### Supervisor Gate PASS: Stage 1 - Planning
 - Evidence: the cleanup scope was constrained to tracked files currently

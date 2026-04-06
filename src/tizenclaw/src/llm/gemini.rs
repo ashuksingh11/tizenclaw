@@ -151,7 +151,11 @@ impl GeminiBackend {
             } else {
                 json!([])
             };
-            if parts.as_array().map(|items| items.is_empty()).unwrap_or(false) {
+            if parts
+                .as_array()
+                .map(|items| items.is_empty())
+                .unwrap_or(false)
+            {
                 continue;
             }
             contents.push(json!({"role": role, "parts": parts}));

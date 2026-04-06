@@ -63,11 +63,7 @@ impl TaskScheduler {
     }
 
     pub fn refresh_from_disk(&self) {
-        let dir_path = self
-            .task_dir
-            .lock()
-            .ok()
-            .and_then(|dir| dir.clone());
+        let dir_path = self.task_dir.lock().ok().and_then(|dir| dir.clone());
         let Some(dir_path) = dir_path else {
             return;
         };
@@ -93,8 +89,13 @@ impl TaskScheduler {
         if !dir_path.exists() {
             return Ok(tasks);
         }
-        let entries = std::fs::read_dir(dir_path)
-            .map_err(|e| format!("Failed to read task directory '{}': {}", dir_path.display(), e))?;
+        let entries = std::fs::read_dir(dir_path).map_err(|e| {
+            format!(
+                "Failed to read task directory '{}': {}",
+                dir_path.display(),
+                e
+            )
+        })?;
 
         for entry in entries.flatten() {
             if let Some(task) = Self::parse_task_file(&entry.path()) {
@@ -145,13 +146,8 @@ impl TaskScheduler {
             prompt
         );
 
-        std::fs::write(&file_path, content).map_err(|e| {
-            format!(
-                "Failed to write task file '{}': {}",
-                file_path.display(),
-                e
-            )
-        })?;
+        std::fs::write(&file_path, content)
+            .map_err(|e| format!("Failed to write task file '{}': {}", file_path.display(), e))?;
 
         Ok(ScheduledTask {
             id,
@@ -389,9 +385,7 @@ impl TaskScheduler {
                 if let Some((k, v)) = text.split_once(':') {
                     let val = v.trim().trim_matches(|c| c == '\'' || c == '"');
                     match k.trim() {
-                        "interval" | "interval_secs" => {
-                            interval_secs = val.parse().unwrap_or(3600)
-                        }
+                        "interval" | "interval_secs" => interval_secs = val.parse().unwrap_or(3600),
                         "schedule" => schedule_expr = Some(val.to_string()),
                         "one_shot" => one_shot = val == "true",
                         "enabled" => enabled = val != "false",
@@ -608,10 +602,7 @@ fn next_daily_due(
     hour: i32,
     minute: i32,
 ) -> Option<std::time::SystemTime> {
-    let after_epoch = after
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs() as libc::time_t;
+    let after_epoch = after.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as libc::time_t;
     let mut tm_buf: libc::tm = unsafe { std::mem::zeroed() };
     unsafe {
         libc::localtime_r(&after_epoch, &mut tm_buf);
@@ -634,10 +625,7 @@ fn next_weekly_due(
     hour: i32,
     minute: i32,
 ) -> Option<std::time::SystemTime> {
-    let after_epoch = after
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_secs() as libc::time_t;
+    let after_epoch = after.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as libc::time_t;
     let mut tm_buf: libc::tm = unsafe { std::mem::zeroed() };
     unsafe {
         libc::localtime_r(&after_epoch, &mut tm_buf);
@@ -766,10 +754,8 @@ mod tests {
 
     #[test]
     fn test_create_and_delete_task_file_round_trip() {
-        let temp_root = std::env::temp_dir().join(format!(
-            "tizenclaw-task-test-{}",
-            std::process::id()
-        ));
+        let temp_root =
+            std::env::temp_dir().join(format!("tizenclaw-task-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_root);
         std::fs::create_dir_all(&temp_root).unwrap();
 
