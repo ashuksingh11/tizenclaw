@@ -82,14 +82,14 @@ cli_res.txt
 journal.txt
 .plan/
 
-# Agents
-.agent/
+# Local workflow metadata
+/.agent/
 
 # Claude Code (local dev only)
 .claude/
 
 # Dev notes
-.dev_note/
+/.dev_note/
 docs/
 !docs/
 docs/*
@@ -100,7 +100,7 @@ docs/*
 !data/docs/**
 
 # Temporary files
-.tmp/
+/.tmp/
 src/tizenclaw/error.log
 
 # Prompts
