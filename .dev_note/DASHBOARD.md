@@ -1,6 +1,116 @@
 # TizenClaw Dashboard
 
 ## Current Task
+- Add outbound delivery support for user-facing responses
+- Support proactive delivery to `web_dashboard` and `telegram`
+- Add a shared outbound tool path so agent flows can send updates when
+  a direct reply channel is not enough
+- Surface queued outbound messages inside the web dashboard UI
+- Validate the new outbound flow through `./deploy.sh -a x86_64`
+- Keep local `cargo` commands unused during development
+
+## Stage 1: Planning
+- Status: Complete
+- Goal:
+  - Define outbound delivery requirements for dashboard and Telegram
+  - Keep implementation compatible with the current channel model
+  - Planning doc: `.dev_note/docs/outbound_delivery_planning.md`
+- Notes:
+  - `telegram` can already respond to inbound chats, but proactive daemon
+    delivery is not exposed as a reusable tool path
+  - `web_dashboard` currently treats `send_message()` as a no-op, so it
+    cannot surface pushed user notifications
+
+## Stage 2: Design
+- Status: Complete
+- Planned changes:
+  - Add a built-in `send_outbound_message` tool in `AgentCore`
+  - Deliver Telegram outbound messages directly from bot config without
+    depending on a running channel instance
+  - Persist dashboard outbound messages into a device-owned queue file
+  - Extend `tizenclaw-web-dashboard` with an outbound polling endpoint
+    and let the SPA display new messages as toast notifications
+  - Teach the `web_dashboard` channel to persist outbound messages via
+    the same queue path used by the HTTP API
+  - Design doc: `.dev_note/docs/outbound_delivery_design.md`
+- Risk notes:
+  - Keep queued dashboard messages bounded to avoid unbounded growth
+  - Fail softly when Telegram is not configured instead of panicking
+  - Preserve the existing pull-based dashboard chat/session flow
+
+## Stage 3: Development
+- Status: Complete
+- Implemented:
+  - Added the built-in `send_outbound_message` tool declaration
+  - Implemented `AgentCore` outbound delivery for `web_dashboard` and
+    `telegram`
+  - Added a persistent dashboard outbound queue under
+    `data_dir/outbound/web_dashboard.jsonl`
+  - Taught the `web_dashboard` channel to persist outbound messages
+    instead of ignoring `send_message()`
+  - Added `GET /api/outbound/messages` to the standalone dashboard
+  - Added dashboard SPA polling and toast delivery for new outbound
+    messages
+  - Added unit coverage for outbound tool declaration exposure and
+    dashboard queue retention
+
+- Stage 1 PASS: Outbound delivery scope recorded in dashboard and
+  planning doc added under `.dev_note/docs/`
+- Stage 2 PASS: Outbound delivery design captured before implementation
+- Stage 3 PASS: Outbound delivery implementation completed without local
+  cargo build/test usage
+
+## Stage 4: Build & Deploy
+- Status: Complete
+- Command:
+  - `./deploy.sh -a x86_64`
+  - `./deploy.sh -a x86_64 -n`
+- Results:
+  - First deploy/build pass succeeded but exposed missing test imports in
+    the new dashboard queue unit test during the deploy pipeline
+  - Patched the test module imports in `agent_core.rs`
+  - Re-ran the deploy pipeline with `-n` and completed a clean x86_64
+    build, package install, and service restart
+- Service proof:
+  - `tizenclaw.service`: active (running)
+  - `tizenclaw-web-dashboard`: running as the dashboard child process on
+    port `9090`
+  - `tizenclaw-tool-executor.socket`: active (listening)
+- Stage 4 PASS: x86_64 deploy pipeline completed successfully through
+  `./deploy.sh` without local cargo commands
+
+## Stage 5: Test & Review
+- Status: Complete
+- Build-time proof:
+  - `git diff --check` passed
+  - `node --check data/web/app.js` passed
+  - Deploy pipeline tests passed after the import fix
+  - Main Rust test suite in the deploy pipeline passed:
+    `183 passed; 0 failed`
+- Runtime verification:
+  - Confirmed the deployed service stayed healthy after redeploy on
+    `emulator-26101`
+  - Confirmed host `127.0.0.1:9090` is forwarded by `sdb` to the device
+    dashboard service
+  - Injected a verification record into the dashboard outbound queue on
+    device and confirmed `GET /api/outbound/messages` returned it
+  - Removed the verification queue file and confirmed the same endpoint
+    returned an empty message list afterward
+- Stage 5 PASS: outbound delivery path is reachable at runtime for the
+  web dashboard and the deploy pipeline test suite is green
+
+## Stage 6: Commit & Push
+- Status: Complete
+- Commit preparation:
+  - Ran `bash .agent/scripts/cleanup_workspace.sh`
+  - Verified the workspace contains only the intended source and
+    dashboard tracking changes for outbound delivery support
+  - Prepared the commit message via `.tmp/commit_msg.txt` in English with
+    the required title/body format
+- Stage 6 PASS: commit payload prepared under the version-management
+  rules and ready for final Git recording
+
+- Previous task history:
 - Improve the web dashboard admin workflow
 - Change the Linux host dashboard default port to `8080`
 - Allow `tizenclaw-cli dashboard start --port <n>`
@@ -14,7 +124,7 @@
 - Route semantic dashboard app requests to `generate_web_app` even when
   the user does not explicitly say "web app"
 
-## Stage 1: Planning
+## Historical Stage 1: Planning
 - Status: Complete
 - Goal:
   - Capture the web dashboard admin refresh scope in `.dev_note/docs/`
@@ -33,7 +143,7 @@
   - Legacy C++ implementation writes `manifest.json`, downloads assets,
     exposes bridge endpoints, and auto-launches bridge/webview apps
 
-## Stage 2: Design
+## Historical Stage 2: Design
 - Status: Complete
 - Planned changes:
   - Add a runtime-aware `default_dashboard_port()` helper
@@ -56,7 +166,7 @@
   - Keep path validation strict to avoid traversal via app ids or filenames
   - Use best-effort Tizen app launch so non-Tizen host paths do not panic
 
-## Stage 3: Development
+## Historical Stage 3: Development
 - Status: Complete
 - Implemented:
   - Added host-aware dashboard default port resolution and runtime channel
@@ -78,7 +188,7 @@
   - Kept Tizen-only app launch as best-effort runtime behavior guarded
     by Tizen environment detection
 
-## Stage 4: Build & Deploy
+## Historical Stage 4: Build & Deploy
 - Status: Complete
 - Command:
   - `./deploy.sh -a x86_64 -d emulator-26101`
@@ -99,7 +209,7 @@
   - `tizenclaw.service`: active (running)
   - `tizenclaw-tool-executor.socket`: active (listening)
 
-## Stage 5: Test & Review
+## Historical Stage 5: Test & Review
 - Status: Complete
 - Build-time test proof:
   - `node --check data/web/app.js` passed locally for SPA syntax
@@ -201,7 +311,7 @@
   Additional PASS: semantic update prompts modified the generated app and
   app delete removed the device files and dashboard listing
 
-## Stage 6: Commit & Push
+## Historical Stage 6: Commit & Push
 - Status: Complete
 - Notes:
   - Workspace cleaned with `.agent/scripts/cleanup_workspace.sh`

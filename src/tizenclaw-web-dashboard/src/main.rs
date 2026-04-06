@@ -157,6 +157,18 @@ struct DashboardSessionMessage {
     text: String,
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct OutboundMessage {
+    id: String,
+    channel: String,
+    title: String,
+    message: String,
+    created_at_ms: u64,
+    session_id: Option<String>,
+}
+
+const MAX_OUTBOUND_MESSAGES: usize = 200;
+
 // ─── Main ─────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -293,6 +305,7 @@ async fn main() {
         )
         .route("/api/apps", get(api_apps_list))
         .route("/api/apps/:id", get(api_app_detail).delete(api_app_delete))
+        .route("/api/outbound/messages", get(api_outbound_messages))
         .route("/api/bridge/tool", post(api_bridge_tool))
         .route("/api/bridge/tools", get(api_bridge_tools))
         .route(
@@ -463,6 +476,35 @@ fn render_session_markdown(messages: &[DashboardSessionMessage]) -> String {
         out.push_str(&format!("## {}\n{}\n\n", message.role, message.text));
     }
     out.trim_end().to_string()
+}
+
+fn outbound_queue_path(data_dir: &std::path::Path) -> PathBuf {
+    data_dir.join("outbound").join("web_dashboard.jsonl")
+}
+
+fn load_outbound_messages(
+    data_dir: &std::path::Path,
+    since: Option<u64>,
+    limit: usize,
+) -> Vec<OutboundMessage> {
+    let path = outbound_queue_path(data_dir);
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut messages = content
+        .lines()
+        .filter_map(|line| serde_json::from_str::<OutboundMessage>(line).ok())
+        .filter(|message| since.map(|cursor| message.created_at_ms > cursor).unwrap_or(true))
+        .collect::<Vec<_>>();
+
+    messages.sort_by(|left, right| left.created_at_ms.cmp(&right.created_at_ms));
+    if messages.len() > limit {
+        let start = messages.len() - limit;
+        messages = messages.split_off(start);
+    }
+    messages
 }
 
 fn session_display_title(messages: &[DashboardSessionMessage], fallback: &str) -> String {
@@ -702,6 +744,32 @@ async fn api_chat(Json(payload): Json<Value>) -> Result<Json<Value>, (StatusCode
             &format!("Agent error: {}", e),
         )),
     }
+}
+
+#[derive(serde::Deserialize)]
+struct OutboundQuery {
+    since: Option<u64>,
+    limit: Option<usize>,
+}
+
+async fn api_outbound_messages(
+    State(state): State<AppState>,
+    Query(query): Query<OutboundQuery>,
+) -> Json<Value> {
+    let limit = query
+        .limit
+        .unwrap_or(20)
+        .clamp(1, MAX_OUTBOUND_MESSAGES);
+    let messages = load_outbound_messages(&state.data_dir, query.since, limit);
+    let latest_cursor = messages
+        .last()
+        .map(|message| message.created_at_ms)
+        .unwrap_or(query.since.unwrap_or(0));
+
+    Json(json!({
+        "messages": messages,
+        "cursor": latest_cursor,
+    }))
 }
 
 async fn api_sessions(State(state): State<AppState>) -> Json<Value> {

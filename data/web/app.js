@@ -33,6 +33,10 @@
     const pages =
         document.querySelectorAll('.page');
     let metricsInterval = null;
+    let outboundPollTimer = null;
+    let outboundCursor =
+        parseInt(localStorage.getItem(
+            'dashboard_outbound_cursor') || '0', 10) || 0;
 
     function navigateTo(page) {
         navItems.forEach(n =>
@@ -109,6 +113,38 @@
             opts.body = JSON.stringify(body);
         }
         return apiFetch(endpoint, opts);
+    }
+
+    function persistOutboundCursor(cursor) {
+        outboundCursor = cursor || 0;
+        localStorage.setItem(
+            'dashboard_outbound_cursor',
+            String(outboundCursor));
+    }
+
+    async function pollOutboundMessages() {
+        const resp = await apiFetch(
+            'outbound/messages?since=' + outboundCursor);
+        if (!resp || !Array.isArray(resp.messages)) {
+            return;
+        }
+        resp.messages.forEach(msg => {
+            const text = msg.title
+                ? (msg.title + ': ' + msg.message)
+                : msg.message;
+            showToast(text, 'success', 5000);
+        });
+        if (typeof resp.cursor === 'number' &&
+            resp.cursor >= outboundCursor) {
+            persistOutboundCursor(resp.cursor);
+        }
+    }
+
+    function startOutboundPolling() {
+        if (outboundPollTimer) return;
+        pollOutboundMessages();
+        outboundPollTimer = setInterval(
+            pollOutboundMessages, 8000);
     }
 
     // --- Date Breadcrumb Navigator ---
@@ -2022,5 +2058,6 @@
 
     // --- Initial Load ---
     formatChatSessionMeta();
+    startOutboundPolling();
     loadDashboard();
 })();

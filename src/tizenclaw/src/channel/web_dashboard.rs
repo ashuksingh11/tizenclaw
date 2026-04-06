@@ -10,10 +10,14 @@
 //!   is_running() → libc::kill(pid, 0)
 
 use super::{Channel, ChannelConfig};
+use serde_json::json;
+use std::io::Write;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+
+const MAX_OUTBOUND_MESSAGES: usize = 200;
 
 pub struct WebDashboard {
     name: String,
@@ -88,6 +92,62 @@ impl WebDashboard {
         let _ = std::process::Command::new("pkill")
             .args(["-KILL", "-x", Self::PROCESS_COMM_NAME])
             .status();
+    }
+
+    fn outbound_queue_path(&self) -> PathBuf {
+        self.data_dir.join("outbound").join("web_dashboard.jsonl")
+    }
+
+    fn persist_outbound_message(&self, msg: &str) -> Result<(), String> {
+        let text = msg.trim();
+        if text.is_empty() {
+            return Err("Dashboard outbound message cannot be empty".to_string());
+        }
+
+        let path = self.outbound_queue_path();
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+
+        let mut entries = if let Ok(content) = std::fs::read_to_string(&path) {
+            content
+                .lines()
+                .filter_map(|line| {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        Some(trimmed.to_string())
+                    }
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        let record = json!({
+            "id": format!("dashboard-{}", now_ms),
+            "channel": "web_dashboard",
+            "title": "TizenClaw",
+            "message": text,
+            "created_at_ms": now_ms,
+        });
+        entries.push(record.to_string());
+        if entries.len() > MAX_OUTBOUND_MESSAGES {
+            let start = entries.len() - MAX_OUTBOUND_MESSAGES;
+            entries = entries.split_off(start);
+        }
+
+        let mut file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+        for entry in entries {
+            writeln!(file, "{}", entry).map_err(|e| e.to_string())?;
+        }
+
+        Ok(())
     }
 }
 
@@ -207,8 +267,8 @@ impl Channel for WebDashboard {
         unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
     }
 
-    fn send_message(&self, _msg: &str) -> Result<(), String> {
-        Ok(()) // pull-based; no push support needed
+    fn send_message(&self, msg: &str) -> Result<(), String> {
+        self.persist_outbound_message(msg)
     }
 
     fn configure(&mut self, settings: &serde_json::Value) -> Result<(), String> {

@@ -44,6 +44,8 @@ const CONTEXT_TOKEN_BUDGET: usize = 256_000;
 const CONTEXT_COMPACT_THRESHOLD: f32 = 0.90;
 const MAX_TOOL_RETRY: usize = 3;
 const MAX_PREFETCHED_SKILLS: usize = 3;
+const MAX_OUTBOUND_DASHBOARD_MESSAGES: usize = 200;
+const MAX_TELEGRAM_OUTBOUND_CHARS: usize = 4000;
 
 #[derive(Clone, Debug, Default)]
 struct SessionPromptProfile {
@@ -151,6 +153,72 @@ fn estimate_text_tokens(text: &str) -> usize {
 
 fn estimate_char_tokens(chars: usize) -> usize {
     (chars.saturating_add(3)) / 4
+}
+
+fn current_timestamp_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+fn dashboard_outbound_queue_path(base_dir: &Path) -> PathBuf {
+    base_dir.join("outbound").join("web_dashboard.jsonl")
+}
+
+fn append_dashboard_outbound_message(
+    base_dir: &Path,
+    title: Option<&str>,
+    message: &str,
+    session_id: Option<&str>,
+) -> Result<Value, String> {
+    let message = message.trim();
+    if message.is_empty() {
+        return Err("Outbound message cannot be empty".to_string());
+    }
+
+    let path = dashboard_outbound_queue_path(base_dir);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut entries = if let Ok(content) = std::fs::read_to_string(&path) {
+        content
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            })
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    let created_at_ms = current_timestamp_millis();
+    let record = json!({
+        "id": format!("dashboard-{}", created_at_ms),
+        "channel": "web_dashboard",
+        "title": title.unwrap_or("TizenClaw"),
+        "message": message,
+        "session_id": session_id,
+        "created_at_ms": created_at_ms,
+    });
+    entries.push(record.to_string());
+    if entries.len() > MAX_OUTBOUND_DASHBOARD_MESSAGES {
+        let start = entries.len() - MAX_OUTBOUND_DASHBOARD_MESSAGES;
+        entries = entries.split_off(start);
+    }
+
+    let mut file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+    for entry in entries {
+        writeln!(file, "{}", entry).map_err(|e| e.to_string())?;
+    }
+
+    Ok(record)
 }
 
 fn tool_schema_char_count(tools: &[backend::LlmToolDecl]) -> usize {
@@ -1461,6 +1529,181 @@ impl AgentCore {
 
         tools.sort_by(|left, right| left.name.cmp(&right.name));
         tools
+    }
+
+    async fn send_outbound_message(&self, args: &Value, default_session_id: Option<&str>) -> Value {
+        let channels = args
+            .get("channels")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(|item| item.trim().to_string()))
+                    .filter(|item| !item.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let message = args
+            .get("message")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .trim();
+        let title = args
+            .get("title")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let session_id = args
+            .get("session_id")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .or(default_session_id);
+
+        if channels.is_empty() {
+            return json!({"error": "At least one outbound channel is required"});
+        }
+        if message.is_empty() {
+            return json!({"error": "Outbound message cannot be empty"});
+        }
+
+        let mut results = Vec::new();
+        for channel in channels {
+            match channel.as_str() {
+                "web_dashboard" => match append_dashboard_outbound_message(
+                    &self.platform.paths.data_dir,
+                    title,
+                    message,
+                    session_id,
+                ) {
+                    Ok(record) => results.push(json!({
+                        "channel": "web_dashboard",
+                        "status": "sent",
+                        "record": record,
+                    })),
+                    Err(err) => results.push(json!({
+                        "channel": "web_dashboard",
+                        "status": "error",
+                        "error": err,
+                    })),
+                },
+                "telegram" => {
+                    results.push(self.send_telegram_outbound_message(title, message).await);
+                }
+                other => results.push(json!({
+                    "channel": other,
+                    "status": "error",
+                    "error": "Unsupported outbound channel",
+                })),
+            }
+        }
+
+        let success = results.iter().any(|item| {
+            item.get("status").and_then(|value| value.as_str()) == Some("sent")
+        });
+
+        json!({
+            "status": if success { "success" } else { "error" },
+            "message": message,
+            "session_id": session_id,
+            "results": results,
+        })
+    }
+
+    async fn send_telegram_outbound_message(&self, title: Option<&str>, message: &str) -> Value {
+        let config_path = self.platform.paths.config_dir.join("telegram_config.json");
+        let content = match std::fs::read_to_string(&config_path) {
+            Ok(content) => content,
+            Err(err) => {
+                return json!({
+                    "channel": "telegram",
+                    "status": "error",
+                    "error": format!("Failed to read telegram config: {}", err),
+                });
+            }
+        };
+
+        let config: Value = match serde_json::from_str(&content) {
+            Ok(config) => config,
+            Err(err) => {
+                return json!({
+                    "channel": "telegram",
+                    "status": "error",
+                    "error": format!("Invalid telegram config JSON: {}", err),
+                });
+            }
+        };
+
+        let bot_token = config
+            .get("bot_token")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if bot_token.is_empty() || bot_token == "YOUR_TELEGRAM_BOT_TOKEN_HERE" {
+            return json!({
+                "channel": "telegram",
+                "status": "error",
+                "error": "Telegram bot token is not configured",
+            });
+        }
+
+        let chat_ids = config
+            .get("allowed_chat_ids")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_i64())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if chat_ids.is_empty() {
+            return json!({
+                "channel": "telegram",
+                "status": "error",
+                "error": "No allowed_chat_ids configured for Telegram",
+            });
+        }
+
+        let composed = if let Some(title) = title {
+            format!("{}\n\n{}", title, message)
+        } else {
+            message.to_string()
+        };
+        let safe_text = if composed.chars().count() > MAX_TELEGRAM_OUTBOUND_CHARS {
+            format!(
+                "{}\n...(truncated)",
+                utf8_safe_preview(&composed, MAX_TELEGRAM_OUTBOUND_CHARS)
+            )
+        } else {
+            composed
+        };
+
+        let client = crate::infra::http_client::HttpClient::new();
+        let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
+        let mut delivered = Vec::new();
+        let mut errors = Vec::new();
+
+        for chat_id in chat_ids {
+            let payload = json!({
+                "chat_id": chat_id,
+                "text": safe_text.clone(),
+            })
+            .to_string();
+            match client.post(&url, &payload).await {
+                Ok(resp) if resp.status_code < 400 => delivered.push(chat_id),
+                Ok(resp) => errors.push(format!("chat {} returned HTTP {}", chat_id, resp.status_code)),
+                Err(err) => errors.push(format!("chat {} failed: {}", chat_id, err)),
+            }
+        }
+
+        json!({
+            "channel": "telegram",
+            "status": if delivered.is_empty() { "error" } else { "sent" },
+            "delivered_chat_ids": delivered,
+            "errors": errors,
+        })
     }
 
     async fn generate_web_app(&self, args: &Value) -> Value {
@@ -3905,6 +4148,8 @@ impl AgentCore {
                                 &session_workdir,
                                 &llm_doc,
                             ).await
+                        } else if tc_name == "send_outbound_message" {
+                            self.send_outbound_message(&tc_args, Some(session_id)).await
                         } else if tc_name == "generate_web_app" {
                             self.generate_web_app(&tc_args).await
                         } else if tc_name == "extract_document_text" {
@@ -4520,12 +4765,14 @@ impl<'a> SessionStoreRef<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_progress_marker, build_role_supervisor_hint, build_skill_prefetch_message,
-        extract_final_text, generated_code_runtime_spec, generated_code_script_path,
-        manage_generated_code_tool, normalize_conversation_log_text, parse_shell_like_args,
-        prompt_mode_from_doc, reasoning_policy_from_doc, role_relevance_score,
-        sanitize_generated_code_name, select_delegate_roles, select_relevant_skills,
-        utf8_safe_preview, AgentRole,
+        append_dashboard_outbound_message, build_progress_marker,
+        build_role_supervisor_hint, build_skill_prefetch_message,
+        dashboard_outbound_queue_path, extract_final_text, generated_code_runtime_spec,
+        generated_code_script_path, manage_generated_code_tool,
+        normalize_conversation_log_text, parse_shell_like_args, prompt_mode_from_doc,
+        reasoning_policy_from_doc, role_relevance_score, sanitize_generated_code_name,
+        select_delegate_roles, select_relevant_skills, utf8_safe_preview, AgentRole,
+        MAX_OUTBOUND_DASHBOARD_MESSAGES,
     };
     use crate::core::prompt_builder::{PromptMode, ReasoningPolicy};
     use crate::core::textual_skill_scanner::TextualSkill;
@@ -4747,6 +4994,38 @@ mod tests {
         );
         assert!(keep_path.exists());
         assert!(!delete_path.exists());
+
+        let _ = std::fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn append_dashboard_outbound_message_keeps_recent_entries() {
+        let unique = format!(
+            "tizenclaw-outbound-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let base_dir = std::env::temp_dir().join(unique);
+
+        for idx in 0..205 {
+            append_dashboard_outbound_message(
+                &base_dir,
+                Some("Alert"),
+                &format!("message-{}", idx),
+                Some("sess-1"),
+            )
+            .unwrap();
+        }
+
+        let queue_path = dashboard_outbound_queue_path(&base_dir);
+        let content = std::fs::read_to_string(&queue_path).unwrap();
+        let lines = content.lines().collect::<Vec<_>>();
+
+        assert_eq!(lines.len(), MAX_OUTBOUND_DASHBOARD_MESSAGES);
+        assert!(content.contains("message-204"));
+        assert!(!content.contains("message-0"));
 
         let _ = std::fs::remove_dir_all(base_dir);
     }

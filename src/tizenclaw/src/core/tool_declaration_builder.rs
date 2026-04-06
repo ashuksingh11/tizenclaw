@@ -153,6 +153,37 @@ impl ToolDeclarationBuilder {
             }),
         });
         tools.push(LlmToolDecl {
+            name: "send_outbound_message".into(),
+            description: "Send a user-facing outbound update to one or more channels such as web_dashboard or telegram.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "channels": {
+                        "type": "array",
+                        "description": "Target channel names",
+                        "items": {
+                            "type": "string",
+                            "enum": ["web_dashboard", "telegram"]
+                        },
+                        "minItems": 1
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Main message body to deliver"
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Optional short title for dashboards or rich notifications"
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional session id associated with the outbound update"
+                    }
+                },
+                "required": ["channels", "message"]
+            }),
+        });
+        tools.push(LlmToolDecl {
             name: "run_generated_code".into(),
             description: "Write generated Python, Node.js, or Bash code under the device-owned codes directory and execute it immediately. Use this for executable scripts only. Do not use it for HTML/CSS/JS browser apps or webview content; use generate_web_app for those.".into(),
             parameters: json!({
@@ -625,6 +656,7 @@ mod tests {
         ToolDeclarationBuilder::append_builtin_tools(&mut tools, "what is my agent status?");
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"get_agent_status"));
+        assert!(names.contains(&"send_outbound_message"));
         assert!(names.contains(&"run_generated_code"));
         assert!(names.contains(&"manage_generated_code"));
         // Task tools shouldn't be here since task intent is missing
