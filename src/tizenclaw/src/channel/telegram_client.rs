@@ -142,11 +142,14 @@ impl TelegramCliUsageStats {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 struct TelegramChatState {
     interaction_mode: TelegramInteractionMode,
     cli_backend: TelegramCliBackend,
     execution_mode: TelegramExecutionMode,
     auto_approve: bool,
+    chat_session_index: u64,
+    coding_session_index: u64,
     usage: HashMap<String, TelegramCliUsageStats>,
 }
 
@@ -157,6 +160,8 @@ impl Default for TelegramChatState {
             cli_backend: TelegramCliBackend::Codex,
             execution_mode: TelegramExecutionMode::Plan,
             auto_approve: false,
+            chat_session_index: 1,
+            coding_session_index: 1,
             usage: HashMap::new(),
         }
     }
@@ -168,6 +173,21 @@ impl TelegramChatState {
             .get(backend.as_str())
             .cloned()
             .unwrap_or_default()
+    }
+
+    fn session_index_for(&self, mode: TelegramInteractionMode) -> u64 {
+        match mode {
+            TelegramInteractionMode::Chat => self.chat_session_index,
+            TelegramInteractionMode::Coding => self.coding_session_index,
+        }
+    }
+
+    fn session_label_for(&self, mode: TelegramInteractionMode) -> String {
+        format!("{}-{:04}", mode.as_str(), self.session_index_for(mode))
+    }
+
+    fn active_session_label(&self) -> String {
+        self.session_label_for(self.interaction_mode)
     }
 }
 
@@ -414,6 +434,114 @@ impl TelegramClient {
             .as_millis() as u64
     }
 
+    fn telegram_session_root() -> PathBuf {
+        crate::core::runtime_paths::default_data_dir().join("telegram_sessions")
+    }
+
+    fn session_file_path(
+        chat_id: i64,
+        mode: TelegramInteractionMode,
+        state: &TelegramChatState,
+    ) -> PathBuf {
+        let session_label = state.session_label_for(mode);
+        Self::telegram_session_root()
+            .join(chat_id.to_string())
+            .join(mode.as_str())
+            .join(format!("{}.md", session_label))
+    }
+
+    fn ensure_session_file(
+        chat_id: i64,
+        mode: TelegramInteractionMode,
+        state: &TelegramChatState,
+    ) -> PathBuf {
+        let path = Self::session_file_path(chat_id, mode, state);
+        if let Some(parent) = path.parent() {
+            if let Err(err) = std::fs::create_dir_all(parent) {
+                log::warn!(
+                    "TelegramClient: failed to create session dir '{}': {}",
+                    parent.display(),
+                    err
+                );
+                return path;
+            }
+        }
+
+        if !path.exists() {
+            let header = format!(
+                "# Telegram {} session {}\n\nChat ID: `{}`\nMode: `{}`\n\n",
+                mode.as_str(),
+                state.session_label_for(mode),
+                chat_id,
+                mode.as_str()
+            );
+            if let Err(err) = std::fs::write(&path, header) {
+                log::warn!(
+                    "TelegramClient: failed to initialize session file '{}': {}",
+                    path.display(),
+                    err
+                );
+            }
+        }
+
+        path
+    }
+
+    fn append_session_transcript(
+        chat_id: i64,
+        mode: TelegramInteractionMode,
+        state: &TelegramChatState,
+        user_text: &str,
+        assistant_text: &str,
+    ) {
+        let path = Self::ensure_session_file(chat_id, mode, state);
+        let entry = format!(
+            "## User\n\n{}\n\n## Assistant\n\n{}\n\n",
+            user_text.trim(),
+            assistant_text.trim()
+        );
+
+        if let Err(err) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| {
+                use std::io::Write;
+                file.write_all(entry.as_bytes())
+            })
+        {
+            log::warn!(
+                "TelegramClient: failed to append session transcript '{}': {}",
+                path.display(),
+                err
+            );
+        }
+    }
+
+    fn read_recent_session_excerpt(
+        chat_id: i64,
+        mode: TelegramInteractionMode,
+        state: &TelegramChatState,
+        max_chars: usize,
+    ) -> String {
+        let path = Self::session_file_path(chat_id, mode, state);
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(_) => return String::new(),
+        };
+
+        let char_count = content.chars().count();
+        if char_count <= max_chars {
+            return content;
+        }
+
+        let excerpt = content
+            .chars()
+            .skip(char_count.saturating_sub(max_chars))
+            .collect::<String>();
+        format!("...(recent excerpt)\n{}", excerpt)
+    }
+
     fn truncate_chars(text: &str, max_chars: usize) -> String {
         if text.chars().count() <= max_chars {
             return text.to_string();
@@ -440,6 +568,7 @@ impl TelegramClient {
         vec![
             ("select", "Switch between chat and coding mode"),
             ("cli_backend", "Choose codex, gemini, or claude"),
+            ("new_session", "Start a fresh chat or coding session"),
             ("usage", "Show local usage for the selected CLI"),
             ("mode", "Set coding mode to plan or fast"),
             ("status", "Show the current Telegram channel state"),
@@ -479,14 +608,6 @@ impl TelegramClient {
             "resize_keyboard": true,
             "one_time_keyboard": true
         })
-    }
-
-    fn top_level_keyboard() -> Value {
-        Self::build_reply_keyboard(&[
-            &["/select", "/cli_backend"],
-            &["/mode", "/status"],
-            &["/usage", "/auto_approve"],
-        ])
     }
 
     fn select_keyboard() -> Value {
@@ -545,6 +666,7 @@ impl TelegramClient {
             "Telegram coding-agent commands:",
             "/select <chat|coding> - switch between normal chat and local CLI coding mode",
             "/cli_backend <codex|gemini|claude> - choose the coding-agent backend",
+            "/new_session - start a fresh session for the current mode",
             "/usage - show locally tracked usage for the selected CLI backend",
             "/mode <plan|fast> - switch planning style for coding mode prompts",
             "/status - show the current Telegram channel control state",
@@ -758,6 +880,38 @@ impl TelegramClient {
         ))
     }
 
+    fn start_new_session(
+        chat_states: &Arc<Mutex<HashMap<i64, TelegramChatState>>>,
+        state_path: &Path,
+        chat_id: i64,
+    ) -> TelegramOutgoingMessage {
+        let mut prepared_state = None;
+        let reply = Self::mutate_chat_state(chat_states, state_path, chat_id, |state| {
+            let mode = state.interaction_mode;
+            match mode {
+                TelegramInteractionMode::Chat => {
+                    state.chat_session_index = state.chat_session_index.saturating_add(1);
+                }
+                TelegramInteractionMode::Coding => {
+                    state.coding_session_index = state.coding_session_index.saturating_add(1);
+                }
+            }
+
+            prepared_state = Some(state.clone());
+            format!(
+                "Started a new `{}` session: `{}`.",
+                mode.as_str(),
+                state.session_label_for(mode)
+            )
+        });
+
+        if let Some(state) = prepared_state {
+            Self::ensure_session_file(chat_id, state.interaction_mode, &state);
+        }
+
+        TelegramOutgoingMessage::plain(reply)
+    }
+
     fn format_usage_text(state: &TelegramChatState, backend: TelegramCliBackend) -> String {
         let usage = state.usage_for(backend);
         format!(
@@ -806,6 +960,9 @@ last completed: {}",
             "Telegram channel status:\n\
 chat_id: `{}`\n\
 interaction mode: `{}`\n\
+active session: `{}`\n\
+chat session: `{}`\n\
+coding session: `{}`\n\
 cli backend: `{}`\n\
 execution mode: `{}`\n\
 auto approve: `{}`\n\
@@ -817,6 +974,9 @@ backend successes: `{}`\n\
 backend failures: `{}`",
             chat_id,
             state.interaction_mode.as_str(),
+            state.active_session_label(),
+            state.session_label_for(TelegramInteractionMode::Chat),
+            state.session_label_for(TelegramInteractionMode::Coding),
             state.cli_backend.as_str(),
             state.execution_mode.as_str(),
             if state.auto_approve { "on" } else { "off" },
@@ -841,14 +1001,12 @@ backend failures: `{}`",
         let (command, args) = Self::parse_command(text)?;
 
         let reply = match command.as_str() {
-            "start" | "help" => TelegramOutgoingMessage::with_markup(
-                Self::supported_commands_text(),
-                Self::top_level_keyboard(),
-            ),
+            "start" | "help" => TelegramOutgoingMessage::plain(Self::supported_commands_text()),
             "select" => Self::set_interaction_mode(chat_states, state_path, chat_id, &args),
             "cli-backend" | "cli_backend" => {
                 Self::set_cli_backend(chat_states, state_path, chat_id, &args, cli_backend_paths)
             }
+            "new_session" => Self::start_new_session(chat_states, state_path, chat_id),
             "mode" => Self::set_execution_mode(chat_states, state_path, chat_id, &args),
             "auto-approve" | "auto_approve" => {
                 Self::set_auto_approve(chat_states, state_path, chat_id, &args)
@@ -873,7 +1031,7 @@ backend failures: `{}`",
                     command,
                     Self::supported_commands_text()
                 ),
-                Self::top_level_keyboard(),
+                Self::build_reply_keyboard(&[&["/help"]]),
             ),
         };
 
@@ -897,7 +1055,7 @@ backend failures: `{}`",
             }
             Err(err) => {
                 log::warn!("TelegramClient: state lock poisoned while ensuring chat state: {}", err);
-                (TelegramChatState::default(), false.then_some(HashMap::new()), false)
+                (TelegramChatState::default(), None, false)
             }
         };
 
@@ -905,21 +1063,72 @@ backend failures: `{}`",
             Self::persist_chat_states(state_path, &snapshot);
         }
 
+        if is_new {
+            Self::ensure_session_file(chat_id, TelegramInteractionMode::Chat, &state);
+            Self::ensure_session_file(chat_id, TelegramInteractionMode::Coding, &state);
+        }
+
         (state, is_new)
     }
 
     fn build_connected_message(state: &TelegramChatState) -> TelegramOutgoingMessage {
-        TelegramOutgoingMessage::with_markup(
-            format!(
-                "Telegram mobile connected.\nCurrent interaction mode: `{}`.\nSelected CLI backend: `{}`.",
-                state.interaction_mode.as_str(),
-                state.cli_backend.as_str()
-            ),
-            Self::top_level_keyboard(),
+        TelegramOutgoingMessage::plain(format!(
+            "Telegram mobile connected.\nCurrent interaction mode: `{}`.\nCurrent session: `{}`.\nSelected CLI backend: `{}`.",
+            state.interaction_mode.as_str(),
+            state.active_session_label(),
+            state.cli_backend.as_str()
+        )
         )
     }
 
+    fn build_startup_message(state: &TelegramChatState) -> TelegramOutgoingMessage {
+        TelegramOutgoingMessage::plain(format!(
+            "TizenClaw device started and Telegram channel is online.\nCurrent interaction mode: `{}`.\nCurrent session: `{}`.\nSelected CLI backend: `{}`.",
+            state.interaction_mode.as_str(),
+            state.active_session_label(),
+            state.cli_backend.as_str()
+        )
+        )
+    }
+
+    fn startup_notification_targets(
+        allowed_chat_ids: &Arc<HashSet<i64>>,
+        chat_states: &Arc<Mutex<HashMap<i64, TelegramChatState>>>,
+    ) -> Vec<(i64, TelegramChatState)> {
+        let mut snapshot = match chat_states.lock() {
+            Ok(states) => states.clone(),
+            Err(err) => {
+                log::warn!(
+                    "TelegramClient: state lock poisoned while gathering startup targets: {}",
+                    err
+                );
+                HashMap::new()
+            }
+        };
+
+        for chat_id in allowed_chat_ids.iter() {
+            snapshot.entry(*chat_id).or_default();
+        }
+
+        let mut targets = snapshot.into_iter().collect::<Vec<_>>();
+        targets.sort_by_key(|(chat_id, _)| *chat_id);
+        targets
+    }
+
+    fn broadcast_startup_status(
+        bot_token: &str,
+        allowed_chat_ids: &Arc<HashSet<i64>>,
+        chat_states: &Arc<Mutex<HashMap<i64, TelegramChatState>>>,
+    ) {
+        for (chat_id, state) in Self::startup_notification_targets(allowed_chat_ids, chat_states) {
+            let message = Self::build_startup_message(&state);
+            Self::send_telegram_message(bot_token, chat_id, &message);
+        }
+    }
+
     fn build_cli_prompt(
+        chat_id: i64,
+        state: &TelegramChatState,
         execution_mode: TelegramExecutionMode,
         backend: TelegramCliBackend,
         cli_workdir: &Path,
@@ -933,22 +1142,38 @@ backend failures: `{}`",
                 "You are operating in TizenClaw Telegram coding mode. Optimize for speed, keep the response concise, and take the fastest reasonable path."
             }
         };
+        let session_label = state.session_label_for(TelegramInteractionMode::Coding);
+        let recent_context =
+            Self::read_recent_session_excerpt(chat_id, TelegramInteractionMode::Coding, state, 5000);
+        let history_block = if recent_context.trim().is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\nCurrent Telegram coding session history ({})\n{}\n",
+                session_label, recent_context
+            )
+        };
 
         format!(
             "{}\n\
 \n\
 Selected backend: {}\n\
+Session: {}\n\
 Workspace: {}\n\
 \n\
+{}\
 User request:\n{}",
             mode_prefix,
             backend.as_str(),
+            session_label,
             cli_workdir.display(),
+            history_block,
             text.trim()
         )
     }
 
     fn build_cli_invocation(
+        chat_id: i64,
         state: &TelegramChatState,
         cli_workdir: &Path,
         cli_backend_paths: &HashMap<TelegramCliBackend, String>,
@@ -965,6 +1190,8 @@ User request:\n{}",
             })?;
 
         let prompt = Self::build_cli_prompt(
+            chat_id,
+            &state,
             state.execution_mode,
             state.cli_backend,
             cli_workdir,
@@ -1056,7 +1283,13 @@ User request:\n{}",
         let started_at = Self::current_timestamp_millis();
 
         let invocation =
-            match Self::build_cli_invocation(&state, &cli_workdir, &cli_backend_paths, text) {
+            match Self::build_cli_invocation(
+                chat_id,
+                &state,
+                &cli_workdir,
+                &cli_backend_paths,
+                text,
+            ) {
                 Ok(invocation) => invocation,
                 Err(err) => return err,
             };
@@ -1238,15 +1471,24 @@ User request:\n{}",
                     ));
                     return replies;
                 };
-                let session_id = format!("tg_{}", chat_id);
-                replies.push(TelegramOutgoingMessage::plain(
-                    agent_core.process_prompt(&session_id, text, None).await,
-                ));
+                let session_id = format!(
+                    "tg_{}_{}",
+                    chat_id,
+                    state.session_label_for(TelegramInteractionMode::Chat)
+                );
+                let response = agent_core.process_prompt(&session_id, text, None).await;
+                Self::append_session_transcript(
+                    chat_id,
+                    TelegramInteractionMode::Chat,
+                    &state,
+                    text,
+                    &response,
+                );
+                replies.push(TelegramOutgoingMessage::plain(response));
                 replies
             }
             TelegramInteractionMode::Coding => {
-                replies.push(TelegramOutgoingMessage::plain(
-                    Self::execute_cli_request(
+                let response = Self::execute_cli_request(
                     chat_id,
                     text,
                     cli_workdir,
@@ -1255,8 +1497,15 @@ User request:\n{}",
                     chat_states,
                     state_path,
                 )
-                    .await,
-                ));
+                .await;
+                Self::append_session_transcript(
+                    chat_id,
+                    TelegramInteractionMode::Coding,
+                    &state,
+                    text,
+                    &response,
+                );
+                replies.push(TelegramOutgoingMessage::plain(response));
                 replies
             }
         }
@@ -1296,6 +1545,8 @@ impl Channel for TelegramClient {
         let cli_backend_paths = self.cli_backend_paths.clone();
         let chat_states = self.chat_states.clone();
         let chat_state_path = self.chat_state_path.clone();
+
+        Self::broadcast_startup_status(&self.bot_token, &self.allowed_chat_ids, &self.chat_states);
 
         tokio::spawn(async move {
             log::debug!("TelegramClient async epoll reactor started");
@@ -1434,6 +1685,8 @@ mod tests {
         TelegramCliBackend, TelegramChatState, TelegramExecutionMode, TelegramInteractionMode,
         TelegramClient,
     };
+    use std::collections::{HashMap, HashSet};
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn parse_command_handles_bot_mentions() {
@@ -1459,6 +1712,11 @@ mod tests {
         assert_eq!(state.cli_backend, TelegramCliBackend::Codex);
         assert_eq!(state.execution_mode, TelegramExecutionMode::Plan);
         assert!(!state.auto_approve);
+        assert_eq!(state.session_label_for(TelegramInteractionMode::Chat), "chat-0001");
+        assert_eq!(
+            state.session_label_for(TelegramInteractionMode::Coding),
+            "coding-0001"
+        );
     }
 
     #[test]
@@ -1477,6 +1735,7 @@ mod tests {
         let help = TelegramClient::supported_commands_text();
         assert!(help.contains("/cli_backend <codex|gemini|claude>"));
         assert!(help.contains("/auto_approve <on|off>"));
+        assert!(help.contains("/new_session - start a fresh session for the current mode"));
         assert!(!help.contains("/cli-backend <codex|gemini|claude>"));
         assert!(!help.contains("/auto-approve <on|off>"));
     }
@@ -1496,6 +1755,7 @@ mod tests {
             vec![
                 "select",
                 "cli_backend",
+                "new_session",
                 "usage",
                 "mode",
                 "status",
@@ -1524,6 +1784,77 @@ mod tests {
         let message = TelegramClient::build_connected_message(&TelegramChatState::default());
         assert!(message.text.contains("Telegram mobile connected."));
         assert!(message.text.contains("Current interaction mode: `chat`"));
-        assert!(message.reply_markup.is_some());
+        assert!(message.text.contains("Current session: `chat-0001`"));
+        assert!(message.reply_markup.is_none());
+    }
+
+    #[test]
+    fn startup_message_mentions_current_mode() {
+        let message = TelegramClient::build_startup_message(&TelegramChatState::default());
+        assert!(message.text.contains("TizenClaw device started and Telegram channel is online."));
+        assert!(message.text.contains("Current session: `chat-0001`"));
+        assert!(message.reply_markup.is_none());
+    }
+
+    #[test]
+    fn select_without_args_shows_only_select_submenu() {
+        let chat_states = Arc::new(Mutex::new(HashMap::new()));
+        let state_path = std::env::temp_dir().join(format!(
+            "telegram_select_state_{}_{}.json",
+            std::process::id(),
+            TelegramClient::current_timestamp_millis()
+        ));
+        let reply = TelegramClient::handle_command(
+            77,
+            "/select",
+            &chat_states,
+            &state_path,
+            &HashMap::new(),
+            std::path::Path::new("/tmp"),
+            0,
+        )
+        .unwrap();
+
+        assert!(reply.text.contains("Choose the interaction mode"));
+        assert_eq!(reply.reply_markup.as_ref().unwrap()["keyboard"][0][0], "/select chat");
+        assert_eq!(reply.reply_markup.as_ref().unwrap()["keyboard"][0][1], "/select coding");
+    }
+
+    #[test]
+    fn startup_targets_include_allowed_chat_ids_without_saved_state() {
+        let chat_states = Arc::new(Mutex::new(HashMap::new()));
+        let allowed = Arc::new(HashSet::from([12345_i64]));
+        let targets = TelegramClient::startup_notification_targets(&allowed, &chat_states);
+
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].0, 12345);
+        assert_eq!(
+            targets[0].1.session_label_for(TelegramInteractionMode::Chat),
+            "chat-0001"
+        );
+    }
+
+    #[test]
+    fn new_session_increments_current_mode_counter() {
+        let state_path = std::env::temp_dir().join(format!(
+            "telegram_state_{}_{}.json",
+            std::process::id(),
+            TelegramClient::current_timestamp_millis()
+        ));
+        let chat_states = Arc::new(Mutex::new(HashMap::new()));
+
+        let first = TelegramClient::start_new_session(&chat_states, &state_path, 77);
+        assert!(first.text.contains("Started a new `chat` session: `chat-0002`."));
+
+        {
+            let mut states = chat_states.lock().unwrap();
+            let state = states.entry(77).or_default();
+            state.interaction_mode = TelegramInteractionMode::Coding;
+        }
+
+        let second = TelegramClient::start_new_session(&chat_states, &state_path, 77);
+        assert!(second
+            .text
+            .contains("Started a new `coding` session: `coding-0002`."));
     }
 }
