@@ -24,6 +24,29 @@ impl Default for IpcServer {
 }
 
 impl IpcServer {
+    fn configure_client_fd(fd: i32) {
+        unsafe {
+            let timeout = libc::timeval {
+                tv_sec: 5,
+                tv_usec: 0,
+            };
+            let _ = libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVTIMEO,
+                &timeout as *const _ as *const libc::c_void,
+                std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+            );
+            let _ = libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_SNDTIMEO,
+                &timeout as *const _ as *const libc::c_void,
+                std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+            );
+        }
+    }
+
     pub fn new() -> Self {
         IpcServer {
             running: Arc::new(AtomicBool::new(false)),
@@ -93,7 +116,7 @@ impl IpcServer {
                 libc::close(fd);
                 return;
             }
-            if libc::listen(fd, 5) < 0 {
+            if libc::listen(fd, 64) < 0 {
                 log::error!("Failed to listen IPC socket");
                 libc::close(fd);
                 return;
@@ -119,8 +142,16 @@ impl IpcServer {
             let client_fd =
                 unsafe { libc::accept(sock, std::ptr::null_mut(), std::ptr::null_mut()) };
             if client_fd < 0 {
+                let errno = std::io::Error::last_os_error()
+                    .raw_os_error()
+                    .unwrap_or_default();
+                if errno != libc::EAGAIN && errno != libc::EWOULDBLOCK {
+                    log::error!("IPC accept failed: errno={}", errno);
+                }
                 continue;
             }
+
+            Self::configure_client_fd(client_fd);
 
             if active_clients.load(Ordering::SeqCst) >= MAX_CONCURRENT_CLIENTS {
                 log::warn!("Max concurrent clients reached");
@@ -190,8 +221,6 @@ impl IpcServer {
             if raw_msg.is_empty() {
                 break;
             }
-
-            log::debug!("IPC msg received ({} bytes)", raw_msg.len());
 
             let response = Self::dispatch_request(&rt_handle, &raw_msg, &agent, &registry, fd);
             Self::send_response(fd, &response);

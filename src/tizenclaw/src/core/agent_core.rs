@@ -456,6 +456,111 @@ fn extract_final_text(response_text: &str) -> String {
     }
 }
 
+fn extract_json_block(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("```") {
+        let after_lang = rest.find('\n')?;
+        let body = &rest[after_lang + 1..];
+        let end = body.rfind("```")?;
+        return Some(body[..end].trim().to_string());
+    }
+
+    let start = trimmed.find('{')?;
+    let end = trimmed.rfind('}')?;
+    if end < start {
+        return None;
+    }
+    Some(trimmed[start..=end].trim().to_string())
+}
+
+fn generated_web_app_args_from_text(text: &str) -> Option<Value> {
+    let candidate = extract_json_block(text)?;
+    let parsed: Value = serde_json::from_str(&candidate).ok()?;
+    let obj = parsed.as_object()?;
+
+    let app_id = obj.get("app_id")?.as_str()?.trim();
+    if app_id.is_empty() {
+        return None;
+    }
+    let title = obj
+        .get("title")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(app_id);
+
+    let mut html = obj
+        .get("html")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string();
+    let mut css = obj
+        .get("css")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string();
+    let mut js = obj
+        .get("js")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    if let Some(pages) = obj.get("pages").and_then(|value| value.as_array()) {
+        for page in pages {
+            let name = page
+                .get("name")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            let content = page
+                .get("content")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .to_string();
+            if content.is_empty() {
+                continue;
+            }
+            match name.as_str() {
+                "index.html" | "index.htm" => html = content,
+                "style.css" if css.is_empty() => css = content,
+                "app.js" | "index.js" | "script.js" if js.is_empty() => js = content,
+                _ if html.is_empty() && name.ends_with(".html") => html = content,
+                _ => {}
+            }
+        }
+    }
+
+    if html.trim().is_empty() {
+        return None;
+    }
+
+    let mut args = json!({
+        "app_id": app_id,
+        "title": title,
+        "html": html,
+    });
+    if !css.trim().is_empty() {
+        args["css"] = Value::String(css);
+    }
+    if !js.trim().is_empty() {
+        args["js"] = Value::String(js);
+    }
+    if let Some(allowed_tools) = obj.get("allowed_tools").and_then(|value| value.as_array()) {
+        args["allowed_tools"] = Value::Array(
+            allowed_tools
+                .iter()
+                .filter_map(|value| value.as_str().map(|item| Value::String(item.to_string())))
+                .collect(),
+        );
+    }
+    Some(args)
+}
+
 fn prompt_mode_from_doc(doc: &Value, backend_name: &str) -> PromptMode {
     match doc
         .get("prompt")
@@ -1030,6 +1135,19 @@ async fn run_generated_code_tool(
     base_dir: &Path,
     workdir: Option<&Path>,
 ) -> Value {
+    let code_trimmed = code.trim_start();
+    let looks_like_web_markup = code_trimmed.starts_with("<!DOCTYPE html")
+        || code_trimmed.starts_with("<html")
+        || code_trimmed.contains("<head")
+        || code_trimmed.contains("<body")
+        || code_trimmed.contains("<script")
+        || code_trimmed.contains("<style");
+    if looks_like_web_markup {
+        return json!({
+            "error": "HTML/CSS/JS browser content is not supported by run_generated_code. Use generate_web_app instead."
+        });
+    }
+
     let binary = match generated_code_runtime_spec(runtime) {
         Some((binary, _suffix)) => binary,
         None => {
@@ -2467,6 +2585,73 @@ impl AgentCore {
         keywords
     }
 
+    fn is_web_dashboard_app_request(session_id: &str, prompt: &str) -> bool {
+        if !session_id.starts_with("web_") {
+            return false;
+        }
+
+        let p = prompt.to_lowercase();
+        let asks_to_create = [
+            "create",
+            "make",
+            "build",
+            "generate",
+            "write",
+            "update",
+            "improve",
+            "enhance",
+            "modify",
+            "edit",
+            "만들",
+            "생성",
+            "작성",
+            "구현",
+            "수정",
+            "개선",
+            "업데이트",
+        ]
+        .iter()
+        .any(|needle| p.contains(needle));
+        let mentions_browser_ui = [
+            "web app",
+            "browser app",
+            "browser",
+            "html",
+            "css",
+            "javascript",
+            "js",
+            "webview",
+            "dashboard",
+            "ui",
+            "interface",
+            "screen",
+            "panel",
+            "visualization",
+            "chart",
+            "monitor",
+            "웹앱",
+            "웹 앱",
+            "브라우저",
+            "웹뷰",
+            "대시보드",
+            "화면",
+            "패널",
+            "시각화",
+            "차트",
+            "모니터",
+            "테트리스",
+            "tetris",
+            "game",
+            "게임",
+            "page",
+            "페이지",
+        ]
+        .iter()
+        .any(|needle| p.contains(needle));
+
+        asks_to_create && mentions_browser_ui
+    }
+
     /// Process a user prompt through the 15-phase autonomous agent loop.
     ///
     /// ## Loop Phases
@@ -2594,7 +2779,21 @@ impl AgentCore {
         let textual_skills = crate::core::textual_skill_scanner::scan_textual_skills_from_roots(
             skill_roots.iter().map(|root| root.as_str()),
         );
-        let session_profile = self.resolve_session_profile(session_id);
+        let is_dashboard_web_app_request = Self::is_web_dashboard_app_request(session_id, prompt);
+        let mut session_profile = self.resolve_session_profile(session_id);
+        if session_profile.is_none() && is_dashboard_web_app_request {
+            session_profile = Some(SessionPromptProfile {
+                system_prompt: Some(
+                    "For browser-based apps in dashboard web sessions, use only the \
+                     generate_web_app tool. Do not write raw HTML files into the \
+                     session workdir, do not use run_generated_code for HTML, and do \
+                     not open file:// or local workdir paths."
+                        .to_string(),
+                ),
+                allowed_tools: Some(vec!["generate_web_app".to_string()]),
+                ..SessionPromptProfile::default()
+            });
+        }
         if let Some(max_iterations) = session_profile
             .as_ref()
             .and_then(|profile| profile.max_iterations)
@@ -2625,6 +2824,56 @@ impl AgentCore {
         crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_builtin_tools(
             &mut tools, prompt,
         );
+        if is_dashboard_web_app_request
+            && !tools.iter().any(|tool| tool.name == "generate_web_app")
+        {
+            tools.push(crate::llm::backend::LlmToolDecl {
+                name: "generate_web_app".into(),
+                description: "Generate or update a web application served by the web dashboard at /apps/<app_id>/. Supports HTML/CSS/JS files, optional asset downloads, bridge tool allowlists, and best-effort bridge or webview launch on Tizen.".into(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "app_id": {
+                            "type": "string",
+                            "description": "Unique identifier for the app (lowercase alphanumeric + underscore, max 64 chars)"
+                        },
+                        "title": {
+                            "type": "string",
+                            "description": "Display title for the web app"
+                        },
+                        "html": {
+                            "type": "string",
+                            "description": "Complete HTML content. Can be a single-file app or reference style.css and app.js"
+                        },
+                        "css": {
+                            "type": "string",
+                            "description": "Optional separate CSS stylesheet saved as style.css"
+                        },
+                        "js": {
+                            "type": "string",
+                            "description": "Optional separate JavaScript code saved as app.js"
+                        },
+                        "assets": {
+                            "type": "array",
+                            "description": "Optional external assets to download. Each item is {url, filename}. Max 10MB per file.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "url": {"type": "string", "description": "Asset download URL"},
+                                    "filename": {"type": "string", "description": "Local filename such as logo.png"}
+                                }
+                            }
+                        },
+                        "allowed_tools": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional tool names this app may call via the bridge API"
+                        }
+                    },
+                    "required": ["app_id", "title", "html"]
+                }),
+            });
+        }
         if let Ok(bridge) = self.action_bridge.lock() {
             tools.extend(bridge.get_action_declarations());
         }
@@ -2635,18 +2884,26 @@ impl AgentCore {
             tools.retain(|tool| allowed_tools.iter().any(|name| name == &tool.name));
         }
 
-        // Add search_tools meta-tool for Two-Tier router
-        tools.push(crate::llm::backend::LlmToolDecl {
-            name: "search_tools".into(),
-            description: "전체 또는 특정 카테고리의 사용가능한 도구들을 검색합니다. 필요한 기능이 컨텍스트에 없을 때 필수적으로 사용하세요.".into(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Keyword to search tools, or 'ALL'."}
-                },
-                "required": ["query"]
-            })
-        });
+        let restrict_to_generate_web_app = is_dashboard_web_app_request
+            && session_profile
+                .as_ref()
+                .and_then(|profile| profile.allowed_tools.as_ref())
+                .map(|tools| tools.len() == 1 && tools[0] == "generate_web_app")
+                .unwrap_or(false);
+        if !restrict_to_generate_web_app {
+            // Add search_tools meta-tool for Two-Tier router
+            tools.push(crate::llm::backend::LlmToolDecl {
+                name: "search_tools".into(),
+                description: "전체 또는 특정 카테고리의 사용가능한 도구들을 검색합니다. 필요한 기능이 컨텍스트에 없을 때 필수적으로 사용하세요.".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Keyword to search tools, or 'ALL'."}
+                    },
+                    "required": ["query"]
+                })
+            });
+        }
 
         // Build System Prompt
         let (system_prompt, dynamic_context) = {
@@ -3878,7 +4135,20 @@ impl AgentCore {
                 // Enforce reasoning extraction for final user response
                 let final_text = extract_final_text(&response.text);
 
-                let text = final_text;
+                let mut text = final_text;
+                if is_dashboard_web_app_request {
+                    if let Some(args) = generated_web_app_args_from_text(&text) {
+                        let generated = self.generate_web_app(&args).await;
+                        if generated.get("error").is_none() {
+                            text = generated.to_string();
+                        } else {
+                            log::warn!(
+                                "[WebAppFallback] Parsed web app response but generation failed: {}",
+                                generated
+                            );
+                        }
+                    }
+                }
                 if let Ok(ss) = self.session_store.lock() {
                     if let Some(store) = ss.as_ref() {
                         store.add_message(session_id, "assistant", &text);
