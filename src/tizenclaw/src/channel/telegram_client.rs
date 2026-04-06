@@ -50,48 +50,605 @@ impl TelegramInteractionMode {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum TelegramCliBackend {
-    Codex,
-    Gemini,
-    Claude,
-}
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+struct TelegramCliBackend(String);
 
 impl Default for TelegramCliBackend {
     fn default() -> Self {
-        Self::Codex
+        Self::new("codex")
     }
 }
 
 impl TelegramCliBackend {
-    fn parse(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "codex" => Some(Self::Codex),
-            "gemini" => Some(Self::Gemini),
-            "claude" | "claude-code" | "claude_code" => Some(Self::Claude),
-            _ => None,
+    fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    fn normalized(value: &str) -> String {
+        value.trim().to_ascii_lowercase()
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TelegramCliOutputSource {
+    #[default]
+    Stdout,
+    Stderr,
+    Combined,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum TelegramCliOutputFormat {
+    #[default]
+    Json,
+    JsonLines,
+    PlainText,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct TelegramCliInvocationTemplate {
+    args: Vec<String>,
+    approval_placeholder: Option<String>,
+    default_approval_value: Option<String>,
+    auto_approve_value: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct TelegramCliResponseExtractor {
+    source: TelegramCliOutputSource,
+    format: TelegramCliOutputFormat,
+    match_fields: HashMap<String, String>,
+    text_path: Option<String>,
+    join_matches: bool,
+    reject_json_input: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct TelegramCliUsageExtractor {
+    source: TelegramCliOutputSource,
+    format: TelegramCliOutputFormat,
+    match_fields: HashMap<String, String>,
+    input_tokens_path: Option<String>,
+    output_tokens_path: Option<String>,
+    total_tokens_path: Option<String>,
+    cached_input_tokens_path: Option<String>,
+    cache_creation_input_tokens_path: Option<String>,
+    cache_read_input_tokens_path: Option<String>,
+    thought_tokens_path: Option<String>,
+    tool_tokens_path: Option<String>,
+    model_path: Option<String>,
+    model_key_path: Option<String>,
+    session_id_path: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct TelegramCliErrorHint {
+    source: TelegramCliOutputSource,
+    patterns: Vec<String>,
+    message: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+struct TelegramCliBackendDefinition {
+    display_name: Option<String>,
+    aliases: Vec<String>,
+    binary_candidates: Vec<String>,
+    binary_path: Option<String>,
+    model: Option<String>,
+    auth_hint: String,
+    usage_hint: String,
+    auto_approve_usage_hint: Option<String>,
+    invocation: TelegramCliInvocationTemplate,
+    response_extractors: Vec<TelegramCliResponseExtractor>,
+    usage_extractors: Vec<TelegramCliUsageExtractor>,
+    error_hints: Vec<TelegramCliErrorHint>,
+}
+
+impl TelegramCliBackendDefinition {
+    fn usage_hint_for(&self, auto_approve: bool) -> &str {
+        if auto_approve {
+            self.auto_approve_usage_hint
+                .as_deref()
+                .unwrap_or(self.usage_hint.as_str())
+        } else {
+            self.usage_hint.as_str()
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct TelegramCliBackendRegistry {
+    order: Vec<TelegramCliBackend>,
+    definitions: HashMap<TelegramCliBackend, TelegramCliBackendDefinition>,
+    aliases: HashMap<String, TelegramCliBackend>,
+    default_backend: TelegramCliBackend,
+}
+
+impl Default for TelegramCliBackendRegistry {
+    fn default() -> Self {
+        let mut registry = Self {
+            order: Vec::new(),
+            definitions: HashMap::new(),
+            aliases: HashMap::new(),
+            default_backend: TelegramCliBackend::default(),
+        };
+
+        registry.insert_builtin(
+            "codex",
+            TelegramCliBackendDefinition {
+                display_name: Some("Codex".to_string()),
+                aliases: vec!["codex".to_string()],
+                binary_candidates: vec!["codex".to_string()],
+                auth_hint: "Codex CLI must already be logged in on the host.".to_string(),
+                usage_hint:
+                    "`codex exec --json --full-auto -C <project> <prompt>`".to_string(),
+                auto_approve_usage_hint: Some(
+                    "`codex exec --json --dangerously-bypass-approvals-and-sandbox -C <project> <prompt>`"
+                        .to_string(),
+                ),
+                invocation: TelegramCliInvocationTemplate {
+                    args: vec![
+                        "exec".to_string(),
+                        "--json".to_string(),
+                        "{approval_mode}".to_string(),
+                        "-C".to_string(),
+                        "{project_dir}".to_string(),
+                        "--skip-git-repo-check".to_string(),
+                        "{prompt}".to_string(),
+                    ],
+                    approval_placeholder: Some("{approval_mode}".to_string()),
+                    default_approval_value: Some("--full-auto".to_string()),
+                    auto_approve_value: Some(
+                        "--dangerously-bypass-approvals-and-sandbox".to_string(),
+                    ),
+                },
+                response_extractors: vec![TelegramCliResponseExtractor {
+                    source: TelegramCliOutputSource::Stdout,
+                    format: TelegramCliOutputFormat::JsonLines,
+                    match_fields: HashMap::from([
+                        ("type".to_string(), "item.completed".to_string()),
+                        ("item.type".to_string(), "agent_message".to_string()),
+                    ]),
+                    text_path: Some("item.text".to_string()),
+                    join_matches: true,
+                    reject_json_input: false,
+                }],
+                usage_extractors: vec![TelegramCliUsageExtractor {
+                    source: TelegramCliOutputSource::Stdout,
+                    format: TelegramCliOutputFormat::JsonLines,
+                    match_fields: HashMap::from([(
+                        "type".to_string(),
+                        "turn.completed".to_string(),
+                    )]),
+                    input_tokens_path: Some("usage.input_tokens".to_string()),
+                    output_tokens_path: Some("usage.output_tokens".to_string()),
+                    cached_input_tokens_path: Some("usage.cached_input_tokens".to_string()),
+                    ..TelegramCliUsageExtractor::default()
+                }],
+                ..TelegramCliBackendDefinition::default()
+            },
+        );
+
+        registry.insert_builtin(
+            "gemini",
+            TelegramCliBackendDefinition {
+                display_name: Some("Gemini".to_string()),
+                aliases: vec!["gemini".to_string()],
+                binary_candidates: vec!["gemini".to_string(), "/snap/bin/gemini".to_string()],
+                model: Some(DEFAULT_GEMINI_CLI_MODEL.to_string()),
+                auth_hint: "Gemini CLI must be authenticated on the host before Telegram can use it non-interactively.".to_string(),
+                usage_hint: "`gemini --model <model> --prompt <prompt> --output-format json --approval-mode auto_edit`".to_string(),
+                auto_approve_usage_hint: Some(
+                    "`gemini --model <model> --prompt <prompt> --output-format json -y --approval-mode yolo`"
+                        .to_string(),
+                ),
+                invocation: TelegramCliInvocationTemplate {
+                    args: vec![
+                        "--model".to_string(),
+                        "{model}".to_string(),
+                        "{approval_mode}".to_string(),
+                        "--prompt".to_string(),
+                        "{prompt}".to_string(),
+                        "--output-format".to_string(),
+                        "json".to_string(),
+                    ],
+                    approval_placeholder: Some("{approval_mode}".to_string()),
+                    default_approval_value: Some("--approval-mode auto_edit".to_string()),
+                    auto_approve_value: Some("-y --approval-mode yolo".to_string()),
+                },
+                response_extractors: vec![
+                    TelegramCliResponseExtractor {
+                        source: TelegramCliOutputSource::Stdout,
+                        format: TelegramCliOutputFormat::Json,
+                        match_fields: HashMap::new(),
+                        text_path: Some("response".to_string()),
+                        join_matches: false,
+                        reject_json_input: false,
+                    },
+                    TelegramCliResponseExtractor {
+                        source: TelegramCliOutputSource::Stdout,
+                        format: TelegramCliOutputFormat::PlainText,
+                        match_fields: HashMap::new(),
+                        text_path: None,
+                        join_matches: false,
+                        reject_json_input: true,
+                    },
+                    TelegramCliResponseExtractor {
+                        source: TelegramCliOutputSource::Stderr,
+                        format: TelegramCliOutputFormat::PlainText,
+                        match_fields: HashMap::new(),
+                        text_path: None,
+                        join_matches: false,
+                        reject_json_input: false,
+                    },
+                ],
+                usage_extractors: vec![TelegramCliUsageExtractor {
+                    source: TelegramCliOutputSource::Stdout,
+                    format: TelegramCliOutputFormat::Json,
+                    match_fields: HashMap::new(),
+                    input_tokens_path: Some("stats.models.@first_value.tokens.input".to_string()),
+                    output_tokens_path: Some(
+                        "stats.models.@first_value.tokens.candidates".to_string(),
+                    ),
+                    total_tokens_path: Some("stats.models.@first_value.tokens.total".to_string()),
+                    cached_input_tokens_path: Some(
+                        "stats.models.@first_value.tokens.cached".to_string(),
+                    ),
+                    thought_tokens_path: Some(
+                        "stats.models.@first_value.tokens.thoughts".to_string(),
+                    ),
+                    tool_tokens_path: Some("stats.models.@first_value.tokens.tool".to_string()),
+                    model_key_path: Some("stats.models".to_string()),
+                    session_id_path: Some("session_id".to_string()),
+                    ..TelegramCliUsageExtractor::default()
+                }],
+                error_hints: vec![
+                    TelegramCliErrorHint {
+                        source: TelegramCliOutputSource::Combined,
+                        patterns: vec![
+                            "Opening authentication page in your browser".to_string(),
+                        ],
+                        message: "Gemini CLI requires interactive host login before Telegram can use it. Run `gemini` once on the host and finish authentication, then retry.".to_string(),
+                    },
+                    TelegramCliErrorHint {
+                        source: TelegramCliOutputSource::Combined,
+                        patterns: vec![
+                            "MODEL_CAPACITY_EXHAUSTED".to_string(),
+                            "No capacity available for model".to_string(),
+                            "\"status\": \"RESOURCE_EXHAUSTED\"".to_string(),
+                        ],
+                        message: "Gemini CLI hit a model-capacity limit on the host. Telegram now supports an explicit Gemini model; use a stable model such as `gemini-2.5-flash` in the host config and retry.".to_string(),
+                    },
+                ],
+                ..TelegramCliBackendDefinition::default()
+            },
+        );
+
+        registry.insert_builtin(
+            "claude",
+            TelegramCliBackendDefinition {
+                display_name: Some("Claude".to_string()),
+                aliases: vec![
+                    "claude".to_string(),
+                    "claude-code".to_string(),
+                    "claude_code".to_string(),
+                ],
+                binary_candidates: vec!["claude".to_string(), "claude-code".to_string()],
+                auth_hint: "Claude Code must already be authenticated on the host.".to_string(),
+                usage_hint:
+                    "`claude --print --output-format json --permission-mode auto <prompt>`"
+                        .to_string(),
+                auto_approve_usage_hint: Some(
+                    "`claude --print --output-format json --permission-mode bypassPermissions <prompt>`"
+                        .to_string(),
+                ),
+                invocation: TelegramCliInvocationTemplate {
+                    args: vec![
+                        "--print".to_string(),
+                        "--output-format".to_string(),
+                        "json".to_string(),
+                        "--permission-mode".to_string(),
+                        "{approval_mode}".to_string(),
+                        "{prompt}".to_string(),
+                    ],
+                    approval_placeholder: Some("{approval_mode}".to_string()),
+                    default_approval_value: Some("auto".to_string()),
+                    auto_approve_value: Some("bypassPermissions".to_string()),
+                },
+                response_extractors: vec![
+                    TelegramCliResponseExtractor {
+                        source: TelegramCliOutputSource::Stdout,
+                        format: TelegramCliOutputFormat::Json,
+                        match_fields: HashMap::new(),
+                        text_path: Some("result".to_string()),
+                        join_matches: false,
+                        reject_json_input: false,
+                    },
+                    TelegramCliResponseExtractor {
+                        source: TelegramCliOutputSource::Stdout,
+                        format: TelegramCliOutputFormat::PlainText,
+                        match_fields: HashMap::new(),
+                        text_path: None,
+                        join_matches: false,
+                        reject_json_input: true,
+                    },
+                    TelegramCliResponseExtractor {
+                        source: TelegramCliOutputSource::Stderr,
+                        format: TelegramCliOutputFormat::PlainText,
+                        match_fields: HashMap::new(),
+                        text_path: None,
+                        join_matches: false,
+                        reject_json_input: false,
+                    },
+                ],
+                usage_extractors: vec![TelegramCliUsageExtractor {
+                    source: TelegramCliOutputSource::Stdout,
+                    format: TelegramCliOutputFormat::Json,
+                    match_fields: HashMap::new(),
+                    input_tokens_path: Some("usage.input_tokens".to_string()),
+                    output_tokens_path: Some("usage.output_tokens".to_string()),
+                    cache_creation_input_tokens_path: Some(
+                        "usage.cache_creation_input_tokens".to_string(),
+                    ),
+                    cache_read_input_tokens_path: Some(
+                        "usage.cache_read_input_tokens".to_string(),
+                    ),
+                    model_key_path: Some("modelUsage".to_string()),
+                    session_id_path: Some("session_id".to_string()),
+                    ..TelegramCliUsageExtractor::default()
+                }],
+                ..TelegramCliBackendDefinition::default()
+            },
+        );
+
+        registry.rebuild_aliases();
+        registry
+    }
+}
+
+impl TelegramCliBackendRegistry {
+    fn insert_builtin(&mut self, key: &str, definition: TelegramCliBackendDefinition) {
+        let backend = TelegramCliBackend::new(key);
+        if self.order.is_empty() {
+            self.default_backend = backend.clone();
+        }
+        self.order.push(backend.clone());
+        self.definitions.insert(backend, definition);
+    }
+
+    fn rebuild_aliases(&mut self) {
+        self.aliases.clear();
+        for backend in &self.order {
+            self.aliases.insert(
+                TelegramCliBackend::normalized(backend.as_str()),
+                backend.clone(),
+            );
+            if let Some(definition) = self.definitions.get(backend) {
+                for alias in &definition.aliases {
+                    self.aliases
+                        .insert(TelegramCliBackend::normalized(alias), backend.clone());
+                }
+            }
         }
     }
 
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Codex => "codex",
-            Self::Gemini => "gemini",
-            Self::Claude => "claude",
+    fn parse(&self, value: &str) -> Option<TelegramCliBackend> {
+        self.aliases
+            .get(&TelegramCliBackend::normalized(value))
+            .cloned()
+    }
+
+    fn contains(&self, backend: &TelegramCliBackend) -> bool {
+        self.definitions.contains_key(backend)
+    }
+
+    fn get(&self, backend: &TelegramCliBackend) -> Option<&TelegramCliBackendDefinition> {
+        self.definitions.get(backend)
+    }
+
+    fn default_backend(&self) -> TelegramCliBackend {
+        self.default_backend.clone()
+    }
+
+    fn backend_choices_text(&self) -> String {
+        self.order
+            .iter()
+            .map(|backend| backend.as_str())
+            .collect::<Vec<_>>()
+            .join("|")
+    }
+
+    fn backends(&self) -> impl Iterator<Item = &TelegramCliBackend> {
+        self.order.iter()
+    }
+
+    fn merge_config_value(&mut self, value: Option<&Value>) {
+        let Some(value) = value else {
+            return;
+        };
+        let Some(object) = value.as_object() else {
+            return;
+        };
+
+        if let Some(backends) = object.get("backends") {
+            self.merge_backend_map(backends);
+        } else {
+            self.merge_legacy_backend_map(value);
+        }
+
+        self.rebuild_aliases();
+
+        if let Some(default_backend) = object
+            .get("default_backend")
+            .and_then(Value::as_str)
+            .and_then(|value| self.parse(value))
+        {
+            self.default_backend = default_backend;
         }
     }
 
-    fn binary_candidates(&self) -> &'static [&'static str] {
-        match self {
-            Self::Codex => &["codex"],
-            Self::Gemini => &["gemini", "/snap/bin/gemini"],
-            Self::Claude => &["claude", "claude-code"],
+    fn merge_backend_map(&mut self, value: &Value) {
+        let Some(backends) = value.as_object() else {
+            return;
+        };
+
+        for (key, entry) in backends {
+            let backend = TelegramCliBackend::new(TelegramCliBackend::normalized(key));
+            let mut definition = self
+                .definitions
+                .get(&backend)
+                .cloned()
+                .unwrap_or_else(TelegramCliBackendDefinition::default);
+            let Some(entry_object) = entry.as_object() else {
+                continue;
+            };
+
+            if let Some(display_name) = entry_object.get("display_name").and_then(Value::as_str) {
+                let trimmed = display_name.trim();
+                if !trimmed.is_empty() {
+                    definition.display_name = Some(trimmed.to_string());
+                }
+            }
+            if let Some(aliases) = entry_object.get("aliases").and_then(Value::as_array) {
+                definition.aliases = aliases
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+                    .collect();
+            }
+            if let Some(candidates) = entry_object
+                .get("binary_candidates")
+                .and_then(Value::as_array)
+            {
+                definition.binary_candidates = candidates
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+                    .collect();
+            }
+            if let Some(path) = entry_object.get("binary_path").and_then(Value::as_str) {
+                let trimmed = path.trim();
+                definition.binary_path = (!trimmed.is_empty()).then(|| trimmed.to_string());
+            }
+            if let Some(model) = entry_object.get("model").and_then(Value::as_str) {
+                let trimmed = model.trim();
+                definition.model = (!trimmed.is_empty()).then(|| trimmed.to_string());
+            }
+            if let Some(auth_hint) = entry_object.get("auth_hint").and_then(Value::as_str) {
+                definition.auth_hint = auth_hint.to_string();
+            }
+            if let Some(usage_hint) = entry_object.get("usage_hint").and_then(Value::as_str) {
+                definition.usage_hint = usage_hint.to_string();
+            }
+            if let Some(usage_hint) = entry_object
+                .get("auto_approve_usage_hint")
+                .and_then(Value::as_str)
+            {
+                definition.auto_approve_usage_hint = Some(usage_hint.to_string());
+            }
+            if let Some(invocation) = entry_object.get("invocation") {
+                if let Ok(parsed) =
+                    serde_json::from_value::<TelegramCliInvocationTemplate>(invocation.clone())
+                {
+                    definition.invocation = parsed;
+                }
+            }
+            if let Some(extractors) = entry_object.get("response_extractors") {
+                if let Ok(parsed) =
+                    serde_json::from_value::<Vec<TelegramCliResponseExtractor>>(extractors.clone())
+                {
+                    definition.response_extractors = parsed;
+                }
+            }
+            if let Some(extractors) = entry_object.get("usage_extractors") {
+                if let Ok(parsed) =
+                    serde_json::from_value::<Vec<TelegramCliUsageExtractor>>(extractors.clone())
+                {
+                    definition.usage_extractors = parsed;
+                }
+            }
+            if let Some(error_hints) = entry_object.get("error_hints") {
+                if let Ok(parsed) =
+                    serde_json::from_value::<Vec<TelegramCliErrorHint>>(error_hints.clone())
+                {
+                    definition.error_hints = parsed;
+                }
+            }
+
+            if !self.order.contains(&backend) {
+                self.order.push(backend.clone());
+            }
+            self.definitions.insert(backend, definition);
         }
     }
 
-    fn all() -> [Self; 3] {
-        [Self::Codex, Self::Gemini, Self::Claude]
+    fn merge_legacy_backend_map(&mut self, value: &Value) {
+        let Some(backends) = value.as_object() else {
+            return;
+        };
+
+        for (key, entry) in backends {
+            if key == "default_backend" || key == "backends" {
+                continue;
+            }
+
+            let backend = TelegramCliBackend::new(TelegramCliBackend::normalized(key));
+            let mut definition = self
+                .definitions
+                .get(&backend)
+                .cloned()
+                .unwrap_or_else(TelegramCliBackendDefinition::default);
+
+            if let Some(path) = entry.as_str() {
+                let trimmed = path.trim();
+                if !trimmed.is_empty() {
+                    definition.binary_path = Some(trimmed.to_string());
+                }
+            } else if let Some(entry_object) = entry.as_object() {
+                if let Some(path) = entry_object.get("binary_path").and_then(Value::as_str) {
+                    let trimmed = path.trim();
+                    if !trimmed.is_empty() {
+                        definition.binary_path = Some(trimmed.to_string());
+                    }
+                }
+                if let Some(model) = entry_object.get("model").and_then(Value::as_str) {
+                    let trimmed = model.trim();
+                    if !trimmed.is_empty() {
+                        definition.model = Some(trimmed.to_string());
+                    }
+                }
+            } else {
+                continue;
+            }
+
+            if definition.aliases.is_empty() {
+                definition.aliases.push(backend.as_str().to_string());
+            }
+            if definition.display_name.is_none() {
+                definition.display_name = Some(backend.as_str().to_string());
+            }
+
+            if !self.order.contains(&backend) {
+                self.order.push(backend.clone());
+            }
+            self.definitions.insert(backend, definition);
+        }
     }
 }
 
@@ -212,7 +769,7 @@ impl Default for TelegramChatState {
     fn default() -> Self {
         Self {
             interaction_mode: TelegramInteractionMode::Chat,
-            cli_backend: TelegramCliBackend::Codex,
+            cli_backend: TelegramCliBackend::default(),
             execution_mode: TelegramExecutionMode::Plan,
             auto_approve: false,
             project_dir: None,
@@ -224,11 +781,22 @@ impl Default for TelegramChatState {
 }
 
 impl TelegramChatState {
-    fn usage_for(&self, backend: TelegramCliBackend) -> TelegramCliUsageStats {
+    fn usage_for(&self, backend: &TelegramCliBackend) -> TelegramCliUsageStats {
         self.usage
             .get(backend.as_str())
             .cloned()
             .unwrap_or_default()
+    }
+
+    fn effective_cli_backend(
+        &self,
+        cli_backends: &TelegramCliBackendRegistry,
+    ) -> TelegramCliBackend {
+        if cli_backends.contains(&self.cli_backend) {
+            self.cli_backend.clone()
+        } else {
+            cli_backends.default_backend()
+        }
     }
 
     fn session_index_for(&self, mode: TelegramInteractionMode) -> u64 {
@@ -302,8 +870,8 @@ pub struct TelegramClient {
     agent: Option<Arc<crate::core::agent_core::AgentCore>>,
     cli_workdir: Arc<PathBuf>,
     cli_timeout_secs: u64,
+    cli_backends: Arc<TelegramCliBackendRegistry>,
     cli_backend_paths: Arc<HashMap<TelegramCliBackend, String>>,
-    cli_backend_models: Arc<HashMap<TelegramCliBackend, String>>,
     chat_states: Arc<Mutex<HashMap<i64, TelegramChatState>>>,
     chat_state_path: Arc<PathBuf>,
     /// UNIX seconds of the last user message; used for idle-trim scheduling.
@@ -348,10 +916,8 @@ impl TelegramClient {
             .get("cli_timeout_secs")
             .and_then(|v| v.as_u64())
             .unwrap_or(DEFAULT_CLI_TIMEOUT_SECS);
-        let mut backend_overrides = HashMap::new();
-        let mut backend_models = HashMap::new();
-        Self::read_backend_overrides(config.settings.get("cli_backends"), &mut backend_overrides);
-        Self::read_backend_models(config.settings.get("cli_backends"), &mut backend_models);
+        let mut cli_backends = TelegramCliBackendRegistry::default();
+        cli_backends.merge_config_value(config.settings.get("cli_backends"));
 
         let config_dir = crate::core::runtime_paths::default_data_dir().join("config");
         let telegram_config = config_dir.join("telegram_config.json");
@@ -381,18 +947,14 @@ impl TelegramClient {
                 if let Some(timeout) = json.get("cli_timeout_secs").and_then(|v| v.as_u64()) {
                     cli_timeout_secs = timeout;
                 }
-                Self::read_backend_overrides(json.get("cli_backends"), &mut backend_overrides);
-                Self::read_backend_models(json.get("cli_backends"), &mut backend_models);
+                cli_backends.merge_config_value(json.get("cli_backends"));
             }
         }
 
-        Self::read_backend_models_from_llm_config(&config_dir, &mut backend_models);
-        backend_models
-            .entry(TelegramCliBackend::Gemini)
-            .or_insert_with(|| DEFAULT_GEMINI_CLI_MODEL.to_string());
+        Self::read_backend_models_from_llm_config(&config_dir, &mut cli_backends);
 
-        let cli_backend_paths = Arc::new(Self::resolve_cli_backend_paths(&backend_overrides));
-        let cli_backend_models = Arc::new(backend_models);
+        let cli_backend_paths = Arc::new(Self::resolve_cli_backend_paths(&cli_backends));
+        let cli_backends = Arc::new(cli_backends);
         let chat_state_path = Arc::new(config_dir.join("telegram_channel_state.json"));
         let chat_states = Arc::new(Mutex::new(Self::load_chat_states(&chat_state_path)));
 
@@ -409,74 +971,24 @@ impl TelegramClient {
             agent,
             cli_workdir: Arc::new(cli_workdir),
             cli_timeout_secs,
+            cli_backends,
             cli_backend_paths,
-            cli_backend_models,
             chat_states,
             chat_state_path,
             last_user_input: Arc::new(AtomicU64::new(now_secs)),
         }
     }
 
-    fn read_backend_overrides(
-        value: Option<&Value>,
-        overrides: &mut HashMap<TelegramCliBackend, String>,
-    ) {
-        let Some(value) = value else {
-            return;
-        };
-        let Some(object) = value.as_object() else {
-            return;
-        };
-
-        for backend in TelegramCliBackend::all() {
-            let Some(entry) = object.get(backend.as_str()) else {
-                continue;
-            };
-            if let Some(path) = entry.as_str() {
-                if !path.trim().is_empty() {
-                    overrides.insert(backend, path.to_string());
-                }
-                continue;
-            }
-
-            if let Some(path) = entry.get("binary_path").and_then(|v| v.as_str()) {
-                if !path.trim().is_empty() {
-                    overrides.insert(backend, path.to_string());
-                }
-            }
-        }
-    }
-
-    fn read_backend_models(
-        value: Option<&Value>,
-        models: &mut HashMap<TelegramCliBackend, String>,
-    ) {
-        let Some(value) = value else {
-            return;
-        };
-        let Some(object) = value.as_object() else {
-            return;
-        };
-
-        for backend in TelegramCliBackend::all() {
-            let Some(entry) = object.get(backend.as_str()) else {
-                continue;
-            };
-            let Some(model) = entry.get("model").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            let trimmed = model.trim();
-            if !trimmed.is_empty() {
-                models.insert(backend, trimmed.to_string());
-            }
-        }
-    }
-
     fn read_backend_models_from_llm_config(
         config_dir: &Path,
-        models: &mut HashMap<TelegramCliBackend, String>,
+        cli_backends: &mut TelegramCliBackendRegistry,
     ) {
-        if models.contains_key(&TelegramCliBackend::Gemini) {
+        let gemini_backend = TelegramCliBackend::new("gemini");
+        if cli_backends
+            .get(&gemini_backend)
+            .and_then(|definition| definition.model.as_deref())
+            .is_some()
+        {
             return;
         }
 
@@ -498,22 +1010,36 @@ impl TelegramClient {
             return;
         };
 
-        models.insert(TelegramCliBackend::Gemini, model.to_string());
+        if let Some(definition) = cli_backends.definitions.get_mut(&gemini_backend) {
+            definition.model = Some(model.to_string());
+        }
     }
 
     fn resolve_cli_backend_paths(
-        overrides: &HashMap<TelegramCliBackend, String>,
+        cli_backends: &TelegramCliBackendRegistry,
     ) -> HashMap<TelegramCliBackend, String> {
         let mut resolved = HashMap::new();
 
-        for backend in TelegramCliBackend::all() {
-            if let Some(path) = overrides.get(&backend) {
-                resolved.insert(backend, path.clone());
+        for backend in cli_backends.backends() {
+            let Some(definition) = cli_backends.get(backend) else {
                 continue;
+            };
+
+            if let Some(path) = definition.binary_path.as_deref().map(str::trim) {
+                if !path.is_empty() {
+                    resolved.insert(backend.clone(), path.to_string());
+                    continue;
+                }
             }
 
-            if let Some(path) = Self::lookup_binary_on_path(backend.binary_candidates()) {
-                resolved.insert(backend, path);
+            let candidates = definition
+                .binary_candidates
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            if let Some(path) = Self::lookup_binary_on_path(&candidates) {
+                resolved.insert(backend.clone(), path);
+                continue;
             }
         }
 
@@ -746,7 +1272,7 @@ impl TelegramClient {
     fn command_menu_entries() -> Vec<(&'static str, &'static str)> {
         vec![
             ("select", "Switch between chat and coding mode"),
-            ("coding_agent", "Choose codex, gemini, or claude"),
+            ("coding_agent", "Choose the coding-agent backend"),
             ("project", "Set the project directory for coding mode"),
             ("new_session", "Start a fresh chat or coding session"),
             ("usage", "Show chat tokens or coding-agent tokens"),
@@ -800,12 +1326,17 @@ impl TelegramClient {
         Self::build_reply_keyboard(&[&["/select chat", "/select coding"]])
     }
 
-    fn cli_backend_keyboard() -> Value {
-        Self::build_reply_keyboard(&[
-            &["/coding_agent codex"],
-            &["/coding_agent gemini"],
-            &["/coding_agent claude"],
-        ])
+    fn cli_backend_keyboard(cli_backends: &TelegramCliBackendRegistry) -> Value {
+        let rows = cli_backends
+            .backends()
+            .map(|backend| vec![format!("/coding_agent {}", backend.as_str())])
+            .collect::<Vec<_>>();
+        let row_refs = rows
+            .iter()
+            .map(|row| row.iter().map(String::as_str).collect::<Vec<_>>())
+            .collect::<Vec<_>>();
+        let borrowed = row_refs.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        Self::build_reply_keyboard(&borrowed)
     }
 
     fn mode_keyboard() -> Value {
@@ -940,11 +1471,15 @@ impl TelegramClient {
         });
     }
 
-    fn supported_commands_text() -> String {
+    fn supported_commands_text(cli_backends: &TelegramCliBackendRegistry) -> String {
+        let backend_choices = cli_backends.backend_choices_text();
         [
             "Telegram coding-agent commands:",
             "/select <chat|coding> - switch between normal chat and local CLI coding mode",
-            "/coding_agent <codex|gemini|claude> - choose the coding-agent backend",
+            &format!(
+                "/coding_agent <{}> - choose the coding-agent backend",
+                backend_choices
+            ),
             "/project <path> - set the project directory used by coding mode",
             "/project reset - clear the per-chat project override",
             "/new_session - start a fresh session for the current mode",
@@ -956,41 +1491,25 @@ impl TelegramClient {
         .join("\n")
     }
 
-    fn backend_usage_template(backend: TelegramCliBackend, auto_approve: bool) -> &'static str {
-        match (backend, auto_approve) {
-            (TelegramCliBackend::Codex, false) => {
-                "`codex exec --json --full-auto -C <project> <prompt>`"
-            }
-            (TelegramCliBackend::Codex, true) => {
-                "`codex exec --json --dangerously-bypass-approvals-and-sandbox -C <project> <prompt>`"
-            }
-            (TelegramCliBackend::Gemini, false) => {
-                "`gemini --model <model> --prompt <prompt> --output-format json --approval-mode auto_edit`"
-            }
-            (TelegramCliBackend::Gemini, true) => {
-                "`gemini --model <model> --prompt <prompt> --output-format json -y --approval-mode yolo`"
-            }
-            (TelegramCliBackend::Claude, false) => {
-                "`claude --print --output-format json --permission-mode auto <prompt>`"
-            }
-            (TelegramCliBackend::Claude, true) => {
-                "`claude --print --output-format json --permission-mode bypassPermissions <prompt>`"
-            }
-        }
+    fn backend_usage_template(
+        cli_backends: &TelegramCliBackendRegistry,
+        backend: &TelegramCliBackend,
+        auto_approve: bool,
+    ) -> String {
+        cli_backends
+            .get(backend)
+            .map(|definition| definition.usage_hint_for(auto_approve).to_string())
+            .unwrap_or_else(|| "`<backend invocation unavailable>`".to_string())
     }
 
-    fn backend_auth_hint(backend: TelegramCliBackend) -> &'static str {
-        match backend {
-            TelegramCliBackend::Codex => {
-                "Codex CLI must already be logged in on the host."
-            }
-            TelegramCliBackend::Gemini => {
-                "Gemini CLI must be authenticated on the host before Telegram can use it non-interactively."
-            }
-            TelegramCliBackend::Claude => {
-                "Claude Code must already be authenticated on the host."
-            }
-        }
+    fn backend_auth_hint(
+        cli_backends: &TelegramCliBackendRegistry,
+        backend: &TelegramCliBackend,
+    ) -> String {
+        cli_backends
+            .get(backend)
+            .map(|definition| definition.auth_hint.clone())
+            .unwrap_or_else(|| "No authentication hint is available for this backend.".to_string())
     }
 
     fn parse_command(text: &str) -> Option<(String, Vec<String>)> {
@@ -1090,18 +1609,22 @@ impl TelegramClient {
         state_path: &Path,
         chat_id: i64,
         args: &[String],
+        cli_backends: &TelegramCliBackendRegistry,
         cli_backend_paths: &HashMap<TelegramCliBackend, String>,
     ) -> TelegramOutgoingMessage {
         let Some(backend_raw) = args.first() else {
             return TelegramOutgoingMessage::with_markup(
                 "Choose the CLI backend for coding mode.",
-                Self::cli_backend_keyboard(),
+                Self::cli_backend_keyboard(cli_backends),
             );
         };
-        let Some(backend) = TelegramCliBackend::parse(backend_raw) else {
+        let Some(backend) = cli_backends.parse(backend_raw) else {
             return TelegramOutgoingMessage::with_markup(
-                "Invalid CLI backend. Choose `codex`, `gemini`, or `claude`.",
-                Self::cli_backend_keyboard(),
+                format!(
+                    "Invalid CLI backend. Choose `{}`.",
+                    cli_backends.backend_choices_text().replace('|', "`, `")
+                ),
+                Self::cli_backend_keyboard(cli_backends),
             );
         };
 
@@ -1117,13 +1640,13 @@ impl TelegramClient {
             state_path,
             chat_id,
             move |state| {
-                state.cli_backend = backend;
+                state.cli_backend = backend.clone();
                 format!(
                     "CLI backend set to `{}`.\n{}\nUsage: {}\n{}",
                     backend.as_str(),
                     availability,
-                    Self::backend_usage_template(backend, state.auto_approve),
-                    Self::backend_auth_hint(backend)
+                    Self::backend_usage_template(cli_backends, &backend, state.auto_approve),
+                    Self::backend_auth_hint(cli_backends, &backend)
                 )
             },
         ))
@@ -1353,7 +1876,7 @@ total requests: `{}`",
 
     fn format_coding_usage_report(
         state: &TelegramChatState,
-        backend: TelegramCliBackend,
+        backend: &TelegramCliBackend,
     ) -> String {
         let usage = state.usage_for(backend);
         let mut lines = vec![
@@ -1495,7 +2018,7 @@ total requests: `{}`",
     fn format_usage_text(
         chat_id: i64,
         state: &TelegramChatState,
-        backend: TelegramCliBackend,
+        cli_backends: &TelegramCliBackendRegistry,
         agent: Option<&crate::core::agent_core::AgentCore>,
     ) -> String {
         match state.interaction_mode {
@@ -1519,7 +2042,10 @@ total requests: `{}`",
                     .to_json();
                 Self::format_chat_usage_report(&session_id, &usage)
             }
-            TelegramInteractionMode::Coding => Self::format_coding_usage_report(state, backend),
+            TelegramInteractionMode::Coding => {
+                let backend = state.effective_cli_backend(cli_backends);
+                Self::format_coding_usage_report(state, &backend)
+            }
         }
     }
 
@@ -1527,15 +2053,17 @@ total requests: `{}`",
         chat_id: i64,
         state: &TelegramChatState,
         cli_workdir: &Path,
+        cli_backends: &TelegramCliBackendRegistry,
         cli_backend_paths: &HashMap<TelegramCliBackend, String>,
         active_handlers: i32,
     ) -> String {
         let effective_workdir = state.effective_cli_workdir(cli_workdir);
+        let backend = state.effective_cli_backend(cli_backends);
         let backend_path = cli_backend_paths
-            .get(&state.cli_backend)
+            .get(&backend)
             .map(|path| path.as_str())
             .unwrap_or("not found");
-        let usage = state.usage_for(state.cli_backend);
+        let usage = state.usage_for(&backend);
 
         format!(
             "Telegram channel status:\n\
@@ -1560,13 +2088,13 @@ backend failures: `{}`",
             state.active_session_label(),
             state.session_label_for(TelegramInteractionMode::Chat),
             state.session_label_for(TelegramInteractionMode::Coding),
-            state.cli_backend.as_str(),
+            backend.as_str(),
             state.execution_mode.as_str(),
             if state.auto_approve { "on" } else { "off" },
             backend_path,
             effective_workdir.display(),
-            Self::backend_usage_template(state.cli_backend, state.auto_approve),
-            Self::backend_auth_hint(state.cli_backend),
+            Self::backend_usage_template(cli_backends, &backend, state.auto_approve),
+            Self::backend_auth_hint(cli_backends, &backend),
             active_handlers,
             usage.requests,
             usage.successes,
@@ -1580,6 +2108,7 @@ backend failures: `{}`",
         agent: Option<&crate::core::agent_core::AgentCore>,
         chat_states: &Arc<Mutex<HashMap<i64, TelegramChatState>>>,
         state_path: &Path,
+        cli_backends: &TelegramCliBackendRegistry,
         cli_backend_paths: &HashMap<TelegramCliBackend, String>,
         cli_workdir: &Path,
         active_handlers: i32,
@@ -1587,12 +2116,19 @@ backend failures: `{}`",
         let (command, args) = Self::parse_command(text)?;
 
         let reply = match command.as_str() {
-            "start" | "help" => TelegramOutgoingMessage::plain(Self::supported_commands_text()),
+            "start" | "help" => {
+                TelegramOutgoingMessage::plain(Self::supported_commands_text(cli_backends))
+            }
             "select" => Self::set_interaction_mode(chat_states, state_path, chat_id, &args),
             "coding-agent" | "coding_agent" | "agent-cli" | "agent_cli" | "cli-backend"
-            | "cli_backend" => {
-                Self::set_cli_backend(chat_states, state_path, chat_id, &args, cli_backend_paths)
-            }
+            | "cli_backend" => Self::set_cli_backend(
+                chat_states,
+                state_path,
+                chat_id,
+                &args,
+                cli_backends,
+                cli_backend_paths,
+            ),
             "project" => {
                 Self::set_project_directory(chat_states, state_path, chat_id, &args, cli_workdir)
             }
@@ -1606,7 +2142,7 @@ backend failures: `{}`",
                 TelegramOutgoingMessage::plain(Self::format_usage_text(
                     chat_id,
                     &state,
-                    state.cli_backend,
+                    cli_backends,
                     agent,
                 ))
             }
@@ -1616,6 +2152,7 @@ backend failures: `{}`",
                     chat_id,
                     &state,
                     cli_workdir,
+                    cli_backends,
                     cli_backend_paths,
                     active_handlers,
                 ))
@@ -1624,7 +2161,7 @@ backend failures: `{}`",
                 format!(
                     "Unknown command `/{}`.\n\n{}",
                     command,
-                    Self::supported_commands_text()
+                    Self::supported_commands_text(cli_backends)
                 ),
                 Self::build_reply_keyboard(&[&["/help"]]),
             ),
@@ -1728,7 +2265,7 @@ backend failures: `{}`",
         chat_id: i64,
         state: &TelegramChatState,
         execution_mode: TelegramExecutionMode,
-        backend: TelegramCliBackend,
+        backend: &TelegramCliBackend,
         cli_workdir: &Path,
         text: &str,
     ) -> String {
@@ -1778,82 +2315,105 @@ User request:\n{}",
         chat_id: i64,
         state: &TelegramChatState,
         effective_cli_workdir: &Path,
+        cli_backends: &TelegramCliBackendRegistry,
         cli_backend_paths: &HashMap<TelegramCliBackend, String>,
-        cli_backend_models: &HashMap<TelegramCliBackend, String>,
         text: &str,
     ) -> Result<(String, Vec<String>), String> {
-        let binary = cli_backend_paths
-            .get(&state.cli_backend)
-            .cloned()
-            .ok_or_else(|| {
-                format!(
-                    "Selected backend `{}` is not available on PATH.",
-                    state.cli_backend.as_str()
-                )
-            })?;
+        let backend = state.effective_cli_backend(cli_backends);
+        let definition = cli_backends.get(&backend).ok_or_else(|| {
+            format!(
+                "Selected backend `{}` is not defined in Telegram config.",
+                backend.as_str()
+            )
+        })?;
+        let binary = cli_backend_paths.get(&backend).cloned().ok_or_else(|| {
+            format!(
+                "Selected backend `{}` is not available on PATH.",
+                backend.as_str()
+            )
+        })?;
 
         let prompt = Self::build_cli_prompt(
             chat_id,
-            &state,
+            state,
             state.execution_mode,
-            state.cli_backend,
+            &backend,
             effective_cli_workdir,
             text,
         );
+        let approval_value = if state.auto_approve {
+            definition
+                .invocation
+                .auto_approve_value
+                .as_deref()
+                .or(definition.invocation.default_approval_value.as_deref())
+                .unwrap_or("")
+        } else {
+            definition
+                .invocation
+                .default_approval_value
+                .as_deref()
+                .unwrap_or("")
+        };
         let mut args = Vec::new();
-
-        match state.cli_backend {
-            TelegramCliBackend::Codex => {
-                args.push("exec".to_string());
-                args.push("--json".to_string());
-                if state.auto_approve {
-                    args.push("--dangerously-bypass-approvals-and-sandbox".to_string());
-                } else {
-                    args.push("--full-auto".to_string());
-                }
-                args.push("-C".to_string());
-                args.push(effective_cli_workdir.to_string_lossy().to_string());
-                args.push("--skip-git-repo-check".to_string());
-                args.push(prompt);
-            }
-            TelegramCliBackend::Gemini => {
-                if let Some(model) = cli_backend_models.get(&TelegramCliBackend::Gemini) {
-                    args.push("--model".to_string());
-                    args.push(model.clone());
-                }
-                if state.auto_approve {
-                    args.push("-y".to_string());
-                    args.push("--approval-mode".to_string());
-                    args.push("yolo".to_string());
-                } else {
-                    args.push("--approval-mode".to_string());
-                    args.push("auto_edit".to_string());
-                }
-                args.push("--prompt".to_string());
-                args.push(prompt);
-                args.push("--output-format".to_string());
-                args.push("json".to_string());
-            }
-            TelegramCliBackend::Claude => {
-                args.push("--print".to_string());
-                args.push("--output-format".to_string());
-                args.push("json".to_string());
-                args.push("--permission-mode".to_string());
-                args.push(if state.auto_approve {
-                    "bypassPermissions".to_string()
-                } else {
-                    "auto".to_string()
-                });
-                args.push(prompt);
-            }
+        for template in &definition.invocation.args {
+            args.extend(Self::render_cli_arg_template(
+                template,
+                &prompt,
+                effective_cli_workdir,
+                definition.model.as_deref(),
+                definition.invocation.approval_placeholder.as_deref(),
+                approval_value,
+            ));
         }
 
         Ok((binary, args))
     }
 
+    fn render_cli_arg_template(
+        template: &str,
+        prompt: &str,
+        project_dir: &Path,
+        model: Option<&str>,
+        approval_placeholder: Option<&str>,
+        approval_value: &str,
+    ) -> Vec<String> {
+        let trimmed = template.trim();
+        if trimmed.is_empty() {
+            return Vec::new();
+        }
+
+        if trimmed == "{model}" && model.is_none() {
+            return Vec::new();
+        }
+
+        if let Some(placeholder) = approval_placeholder {
+            if trimmed == placeholder {
+                return approval_value
+                    .split_whitespace()
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+                    .collect();
+            }
+        }
+
+        let mut rendered = trimmed.replace("{prompt}", prompt);
+        rendered = rendered.replace("{project_dir}", project_dir.to_string_lossy().as_ref());
+        if rendered.contains("{model}") {
+            let Some(model) = model else {
+                return Vec::new();
+            };
+            rendered = rendered.replace("{model}", model);
+        }
+        if let Some(placeholder) = approval_placeholder {
+            rendered = rendered.replace(placeholder, approval_value);
+        }
+        vec![rendered]
+    }
+
     fn build_cli_streaming_message(
         state: &TelegramChatState,
-        backend: TelegramCliBackend,
+        backend: &TelegramCliBackend,
         effective_cli_workdir: &Path,
         phase: &str,
         elapsed_secs: u64,
@@ -1888,43 +2448,6 @@ User request:\n{}",
         )
     }
 
-    fn extract_codex_json_response(stdout: &str) -> Option<String> {
-        let mut messages = Vec::new();
-
-        for line in stdout.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
-                continue;
-            };
-            if value.get("type").and_then(Value::as_str) != Some("item.completed") {
-                continue;
-            }
-            let Some(item) = value.get("item") else {
-                continue;
-            };
-            if item.get("type").and_then(Value::as_str) != Some("agent_message") {
-                continue;
-            }
-            let Some(text) = item.get("text").and_then(Value::as_str) else {
-                continue;
-            };
-            let text = text.trim();
-            if !text.is_empty() {
-                messages.push(text.to_string());
-            }
-        }
-
-        if messages.is_empty() {
-            None
-        } else {
-            Some(messages.join("\n\n"))
-        }
-    }
-
     fn extract_json_value(text: &str) -> Option<Value> {
         let trimmed = text.trim();
         if trimmed.is_empty() {
@@ -1934,199 +2457,221 @@ User request:\n{}",
         }
     }
 
-    fn extract_non_json_text(text: &str) -> Option<String> {
+    fn extract_plain_text(text: &str, reject_json_input: bool) -> Option<String> {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return None;
         }
-        if (trimmed.starts_with('{') || trimmed.starts_with('['))
-            && Self::extract_json_value(trimmed).is_none()
-        {
+        if reject_json_input && (trimmed.starts_with('{') || trimmed.starts_with('[')) {
             return None;
         }
         Some(trimmed.to_string())
     }
 
-    fn extract_codex_json_usage(stdout: &str) -> Option<TelegramCliActualUsage> {
-        let mut latest = None;
-
-        for line in stdout.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
+    fn output_text_by_source<'a>(
+        source: TelegramCliOutputSource,
+        stdout: &'a str,
+        stderr: &'a str,
+    ) -> std::borrow::Cow<'a, str> {
+        match source {
+            TelegramCliOutputSource::Stdout => std::borrow::Cow::Borrowed(stdout),
+            TelegramCliOutputSource::Stderr => std::borrow::Cow::Borrowed(stderr),
+            TelegramCliOutputSource::Combined => {
+                std::borrow::Cow::Owned(format!("{}\n{}", stdout, stderr))
             }
-
-            let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
-                continue;
-            };
-            if value.get("type").and_then(Value::as_str) != Some("turn.completed") {
-                continue;
-            }
-            let Some(usage) = value.get("usage") else {
-                continue;
-            };
-            let input_tokens = usage
-                .get("input_tokens")
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
-            let output_tokens = usage
-                .get("output_tokens")
-                .and_then(Value::as_i64)
-                .unwrap_or(0);
-            latest = Some(TelegramCliActualUsage {
-                input_tokens,
-                output_tokens,
-                total_tokens: input_tokens.saturating_add(output_tokens),
-                cached_input_tokens: usage
-                    .get("cached_input_tokens")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(0),
-                ..TelegramCliActualUsage::default()
-            });
         }
-
-        latest
     }
 
-    fn extract_gemini_json_response(stdout: &str) -> Option<String> {
-        Self::extract_json_value(stdout)?
-            .get("response")
-            .and_then(Value::as_str)
+    fn json_documents(text: &str, format: TelegramCliOutputFormat) -> Vec<Value> {
+        match format {
+            TelegramCliOutputFormat::Json => Self::extract_json_value(text).into_iter().collect(),
+            TelegramCliOutputFormat::JsonLines => {
+                text.lines().filter_map(Self::extract_json_value).collect()
+            }
+            TelegramCliOutputFormat::PlainText => Vec::new(),
+        }
+    }
+
+    fn value_at_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+        let mut current = value;
+        for part in path
+            .split('.')
             .map(str::trim)
-            .filter(|text| !text.is_empty())
-            .map(ToString::to_string)
+            .filter(|part| !part.is_empty())
+        {
+            if part == "@first_value" {
+                current = current.as_object()?.values().next()?;
+                continue;
+            }
+            current = current.get(part)?;
+        }
+        Some(current)
     }
 
-    fn extract_gemini_json_usage(stdout: &str) -> Option<TelegramCliActualUsage> {
-        let doc = Self::extract_json_value(stdout)?;
-        let models = doc.get("stats")?.get("models")?.as_object()?;
-        let (model_name, model_doc) = models.iter().next()?;
-        let tokens = model_doc.get("tokens")?;
+    fn string_at_path(value: &Value, path: &str) -> Option<String> {
+        let value = Self::value_at_path(value, path)?;
+        value
+            .as_str()
+            .map(ToString::to_string)
+            .or_else(|| value.as_i64().map(|value| value.to_string()))
+            .or_else(|| value.as_u64().map(|value| value.to_string()))
+            .or_else(|| value.as_bool().map(|value| value.to_string()))
+    }
 
-        let input_tokens = tokens
-            .get("input")
-            .and_then(Value::as_i64)
-            .or_else(|| tokens.get("prompt").and_then(Value::as_i64))
-            .unwrap_or(0);
-        let output_tokens = tokens
-            .get("candidates")
-            .and_then(Value::as_i64)
-            .unwrap_or(0);
+    fn i64_at_path(value: &Value, path: Option<&str>) -> Option<i64> {
+        let path = path?;
+        let value = Self::value_at_path(value, path)?;
+        value
+            .as_i64()
+            .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
+            .or_else(|| value.as_str().and_then(|value| value.parse::<i64>().ok()))
+    }
 
-        Some(TelegramCliActualUsage {
-            input_tokens,
-            output_tokens,
-            total_tokens: tokens
-                .get("total")
-                .and_then(Value::as_i64)
-                .unwrap_or_else(|| input_tokens.saturating_add(output_tokens)),
-            cached_input_tokens: tokens.get("cached").and_then(Value::as_i64).unwrap_or(0),
-            thought_tokens: tokens.get("thoughts").and_then(Value::as_i64).unwrap_or(0),
-            tool_tokens: tokens.get("tool").and_then(Value::as_i64).unwrap_or(0),
-            model: Some(model_name.to_string()),
-            session_id: doc
-                .get("session_id")
-                .and_then(Value::as_str)
-                .map(ToString::to_string),
-            ..TelegramCliActualUsage::default()
+    fn document_matches(document: &Value, match_fields: &HashMap<String, String>) -> bool {
+        match_fields.iter().all(|(path, expected)| {
+            Self::string_at_path(document, path)
+                .map(|actual| actual == *expected)
+                .unwrap_or(false)
         })
     }
 
-    fn extract_claude_json_response(stdout: &str) -> Option<String> {
-        Self::extract_json_value(stdout)?
-            .get("result")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-            .map(ToString::to_string)
+    fn extract_response_from_extractor(
+        extractor: &TelegramCliResponseExtractor,
+        stdout: &str,
+        stderr: &str,
+    ) -> Option<String> {
+        match extractor.format {
+            TelegramCliOutputFormat::PlainText => {
+                let text = Self::output_text_by_source(extractor.source, stdout, stderr);
+                Self::extract_plain_text(&text, extractor.reject_json_input)
+            }
+            TelegramCliOutputFormat::Json | TelegramCliOutputFormat::JsonLines => {
+                let text = Self::output_text_by_source(extractor.source, stdout, stderr);
+                let mut matches = Vec::new();
+                for document in Self::json_documents(&text, extractor.format) {
+                    if !Self::document_matches(&document, &extractor.match_fields) {
+                        continue;
+                    }
+                    let Some(path) = extractor.text_path.as_deref() else {
+                        continue;
+                    };
+                    let Some(text) = Self::string_at_path(&document, path) else {
+                        continue;
+                    };
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        matches.push(trimmed.to_string());
+                    }
+                }
+
+                if matches.is_empty() {
+                    None
+                } else if extractor.join_matches {
+                    Some(matches.join("\n\n"))
+                } else {
+                    matches.pop()
+                }
+            }
+        }
     }
 
-    fn extract_claude_json_usage(stdout: &str) -> Option<TelegramCliActualUsage> {
-        let doc = Self::extract_json_value(stdout)?;
-        let usage = doc.get("usage")?;
-        let input_tokens = usage
-            .get("input_tokens")
-            .and_then(Value::as_i64)
-            .unwrap_or(0);
-        let output_tokens = usage
-            .get("output_tokens")
-            .and_then(Value::as_i64)
-            .unwrap_or(0);
-        let model = doc
-            .get("modelUsage")
-            .and_then(Value::as_object)
-            .and_then(|models| models.keys().next().cloned());
+    fn extract_usage_from_extractor(
+        extractor: &TelegramCliUsageExtractor,
+        stdout: &str,
+        stderr: &str,
+    ) -> Option<TelegramCliActualUsage> {
+        let text = Self::output_text_by_source(extractor.source, stdout, stderr);
+        let document = Self::json_documents(&text, extractor.format)
+            .into_iter()
+            .filter(|document| Self::document_matches(document, &extractor.match_fields))
+            .last()?;
+        let input_tokens =
+            Self::i64_at_path(&document, extractor.input_tokens_path.as_deref()).unwrap_or(0);
+        let output_tokens =
+            Self::i64_at_path(&document, extractor.output_tokens_path.as_deref()).unwrap_or(0);
 
         Some(TelegramCliActualUsage {
             input_tokens,
             output_tokens,
-            total_tokens: input_tokens.saturating_add(output_tokens),
-            cache_creation_input_tokens: usage
-                .get("cache_creation_input_tokens")
-                .and_then(Value::as_i64)
+            total_tokens: Self::i64_at_path(&document, extractor.total_tokens_path.as_deref())
+                .unwrap_or_else(|| input_tokens.saturating_add(output_tokens)),
+            cached_input_tokens: Self::i64_at_path(
+                &document,
+                extractor.cached_input_tokens_path.as_deref(),
+            )
+            .unwrap_or(0),
+            cache_creation_input_tokens: Self::i64_at_path(
+                &document,
+                extractor.cache_creation_input_tokens_path.as_deref(),
+            )
+            .unwrap_or(0),
+            cache_read_input_tokens: Self::i64_at_path(
+                &document,
+                extractor.cache_read_input_tokens_path.as_deref(),
+            )
+            .unwrap_or(0),
+            thought_tokens: Self::i64_at_path(&document, extractor.thought_tokens_path.as_deref())
                 .unwrap_or(0),
-            cache_read_input_tokens: usage
-                .get("cache_read_input_tokens")
-                .and_then(Value::as_i64)
+            tool_tokens: Self::i64_at_path(&document, extractor.tool_tokens_path.as_deref())
                 .unwrap_or(0),
-            model,
-            session_id: doc
-                .get("session_id")
-                .and_then(Value::as_str)
-                .map(ToString::to_string),
-            ..TelegramCliActualUsage::default()
+            model: extractor
+                .model_path
+                .as_deref()
+                .and_then(|path| Self::string_at_path(&document, path))
+                .or_else(|| {
+                    extractor.model_key_path.as_deref().and_then(|path| {
+                        Self::value_at_path(&document, path)?
+                            .as_object()?
+                            .keys()
+                            .next()
+                            .cloned()
+                    })
+                }),
+            session_id: extractor
+                .session_id_path
+                .as_deref()
+                .and_then(|path| Self::string_at_path(&document, path)),
         })
     }
 
     fn extract_cli_actual_usage(
-        backend: TelegramCliBackend,
+        cli_backends: &TelegramCliBackendRegistry,
+        backend: &TelegramCliBackend,
         stdout: &str,
-        _stderr: &str,
+        stderr: &str,
     ) -> Option<TelegramCliActualUsage> {
-        match backend {
-            TelegramCliBackend::Codex => Self::extract_codex_json_usage(stdout),
-            TelegramCliBackend::Gemini => Self::extract_gemini_json_usage(stdout),
-            TelegramCliBackend::Claude => Self::extract_claude_json_usage(stdout),
+        let definition = cli_backends.get(backend)?;
+        for extractor in &definition.usage_extractors {
+            if let Some(usage) = Self::extract_usage_from_extractor(extractor, stdout, stderr) {
+                return Some(usage);
+            }
         }
+        None
     }
 
     fn extract_cli_response_text(
-        backend: TelegramCliBackend,
+        cli_backends: &TelegramCliBackendRegistry,
+        backend: &TelegramCliBackend,
         stdout: &str,
         stderr: &str,
     ) -> Option<String> {
-        match backend {
-            TelegramCliBackend::Codex => Self::extract_codex_json_response(stdout)
-                .or_else(|| {
-                    let text = stdout.trim();
-                    (!text.is_empty()).then(|| text.to_string())
-                })
-                .or_else(|| {
-                    let text = stderr.trim();
-                    (!text.is_empty()).then(|| text.to_string())
-                }),
-            TelegramCliBackend::Gemini => Self::extract_gemini_json_response(stdout)
-                .or_else(|| Self::extract_non_json_text(stdout))
-                .or_else(|| {
-                    let text = stderr.trim();
-                    (!text.is_empty()).then(|| text.to_string())
-                }),
-            TelegramCliBackend::Claude => Self::extract_claude_json_response(stdout)
-                .or_else(|| Self::extract_non_json_text(stdout))
-                .or_else(|| {
-                    let text = stderr.trim();
-                    (!text.is_empty()).then(|| text.to_string())
-                }),
+        let definition = cli_backends.get(backend)?;
+        for extractor in &definition.response_extractors {
+            if let Some(text) = Self::extract_response_from_extractor(extractor, stdout, stderr) {
+                return Some(text);
+            }
         }
+        None
     }
 
     fn extract_incremental_cli_response(
-        backend: TelegramCliBackend,
+        cli_backends: &TelegramCliBackendRegistry,
+        backend: &TelegramCliBackend,
         stdout: &str,
         stderr: &str,
         last_sent_text: &str,
     ) -> Option<String> {
-        let current = Self::extract_cli_response_text(backend, stdout, stderr)?;
+        let current = Self::extract_cli_response_text(cli_backends, backend, stdout, stderr)?;
         let current = current.trim();
         if current.is_empty() || current == last_sent_text {
             return None;
@@ -2187,27 +2732,30 @@ User request:\n{}",
     }
 
     fn format_cli_result(
-        backend: TelegramCliBackend,
+        cli_backends: &TelegramCliBackendRegistry,
+        backend: &TelegramCliBackend,
         exit_code: i32,
         duration_ms: u64,
         stdout: &str,
         stderr: &str,
     ) -> String {
-        if backend == TelegramCliBackend::Gemini {
-            let combined = format!("{}\n{}", stdout, stderr);
-            if combined.contains("Opening authentication page in your browser") {
-                return "Gemini CLI requires interactive host login before Telegram can use it. Run `gemini` once on the host and finish authentication, then retry.".to_string();
-            }
-            if combined.contains("MODEL_CAPACITY_EXHAUSTED")
-                || combined.contains("No capacity available for model")
-                || combined.contains("\"status\": \"RESOURCE_EXHAUSTED\"")
-            {
-                return "Gemini CLI hit a model-capacity limit on the host. Telegram now supports an explicit Gemini model; use a stable model such as `gemini-2.5-flash` in the host config and retry.".to_string();
+        if let Some(definition) = cli_backends.get(backend) {
+            for hint in &definition.error_hints {
+                let haystack = Self::output_text_by_source(hint.source, stdout, stderr);
+                if hint
+                    .patterns
+                    .iter()
+                    .any(|pattern| haystack.contains(pattern))
+                {
+                    return hint.message.clone();
+                }
             }
         }
 
         if exit_code == 0 {
-            if let Some(text) = Self::extract_cli_response_text(backend, stdout, stderr) {
+            if let Some(text) =
+                Self::extract_cli_response_text(cli_backends, backend, stdout, stderr)
+            {
                 return Self::truncate_chars(text.trim(), 3400);
             }
 
@@ -2218,7 +2766,7 @@ User request:\n{}",
             );
         }
 
-        let body = Self::extract_cli_response_text(backend, stdout, stderr)
+        let body = Self::extract_cli_response_text(cli_backends, backend, stdout, stderr)
             .unwrap_or_else(|| "CLI failed with no output.".to_string());
 
         format!(
@@ -2236,13 +2784,13 @@ User request:\n{}",
         text: &str,
         cli_workdir: Arc<PathBuf>,
         cli_timeout_secs: u64,
+        cli_backends: Arc<TelegramCliBackendRegistry>,
         cli_backend_paths: Arc<HashMap<TelegramCliBackend, String>>,
-        cli_backend_models: Arc<HashMap<TelegramCliBackend, String>>,
         chat_states: Arc<Mutex<HashMap<i64, TelegramChatState>>>,
         state_path: Arc<PathBuf>,
     ) -> TelegramCliExecutionResult {
         let state = Self::load_chat_state_snapshot(&chat_states, chat_id);
-        let backend = state.cli_backend;
+        let backend = state.effective_cli_backend(&cli_backends);
         let started_at = Self::current_timestamp_millis();
         let effective_cli_workdir = state.effective_cli_workdir(&cli_workdir);
 
@@ -2250,8 +2798,8 @@ User request:\n{}",
             chat_id,
             &state,
             &effective_cli_workdir,
+            &cli_backends,
             &cli_backend_paths,
-            &cli_backend_models,
             text,
         ) {
             Ok(invocation) => invocation,
@@ -2318,7 +2866,7 @@ User request:\n{}",
 
         let initial_progress = TelegramOutgoingMessage::plain(Self::build_cli_streaming_message(
             &state,
-            backend,
+            &backend,
             &effective_cli_workdir,
             "running",
             0,
@@ -2347,7 +2895,7 @@ User request:\n{}",
             if let Some(message_id) = initial_message_id {
                 let message = TelegramOutgoingMessage::plain(Self::build_cli_streaming_message(
                     &state,
-                    backend,
+                    &backend,
                     &effective_cli_workdir,
                     "failed",
                     0,
@@ -2366,7 +2914,7 @@ User request:\n{}",
             if let Some(message_id) = initial_message_id {
                 let message = TelegramOutgoingMessage::plain(Self::build_cli_streaming_message(
                     &state,
-                    backend,
+                    &backend,
                     &effective_cli_workdir,
                     "failed",
                     0,
@@ -2384,6 +2932,8 @@ User request:\n{}",
         let started = Instant::now();
         let progress_state = state.clone();
         let progress_workdir = effective_cli_workdir.clone();
+        let execution_backend = backend.clone();
+        let execution_cli_backends = cli_backends.clone();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         tokio::spawn(Self::read_cli_stream(stdout_reader, true, tx.clone()));
         tokio::spawn(Self::read_cli_stream(stderr_reader, false, tx));
@@ -2438,8 +2988,12 @@ User request:\n{}",
                             }
                         }
 
-                        if let Some(current_text) =
-                            Self::extract_cli_response_text(backend, &stdout, &stderr)
+                        if let Some(current_text) = Self::extract_cli_response_text(
+                            &execution_cli_backends,
+                            &execution_backend,
+                            &stdout,
+                            &stderr,
+                        )
                         {
                             let current_text = current_text.trim().to_string();
                             if !current_text.is_empty() {
@@ -2449,7 +3003,8 @@ User request:\n{}",
 
                         if stream_message_usable
                             && Self::extract_incremental_cli_response(
-                                backend,
+                                &execution_cli_backends,
+                                &execution_backend,
                                 &stdout,
                                 &stderr,
                                 &last_partial_text,
@@ -2465,7 +3020,7 @@ User request:\n{}",
                                 let message = TelegramOutgoingMessage::plain(
                                     Self::build_cli_streaming_message(
                                         &progress_state,
-                                        backend,
+                                        &execution_backend,
                                         &progress_workdir,
                                         "running",
                                         elapsed_secs,
@@ -2505,7 +3060,7 @@ User request:\n{}",
                                 let message = TelegramOutgoingMessage::plain(
                                     Self::build_cli_streaming_message(
                                         &progress_state,
-                                        backend,
+                                        &execution_backend,
                                         &progress_workdir,
                                         "running",
                                         elapsed_secs,
@@ -2576,7 +3131,8 @@ User request:\n{}",
                 let exit_code = status.code().unwrap_or(-1);
                 let success = status.success();
                 let completed_at_ms = Self::current_timestamp_millis();
-                let actual_cli_usage = Self::extract_cli_actual_usage(backend, &stdout, &stderr);
+                let actual_cli_usage =
+                    Self::extract_cli_actual_usage(&cli_backends, &backend, &stdout, &stderr);
 
                 let snapshot = match chat_states.lock() {
                     Ok(mut states) => {
@@ -2602,8 +3158,14 @@ User request:\n{}",
                     Self::persist_chat_states(&state_path, &snapshot);
                 }
 
-                let response_text =
-                    Self::format_cli_result(backend, exit_code, duration_ms, &stdout, &stderr);
+                let response_text = Self::format_cli_result(
+                    &cli_backends,
+                    &backend,
+                    exit_code,
+                    duration_ms,
+                    &stdout,
+                    &stderr,
+                );
                 let mut send_followup = streaming_message_id.is_none() || !stream_message_usable;
 
                 if let Some(message_id) = streaming_message_id {
@@ -2617,7 +3179,7 @@ User request:\n{}",
                     let message =
                         TelegramOutgoingMessage::plain(Self::build_cli_streaming_message(
                             &state,
-                            backend,
+                            &backend,
                             &effective_cli_workdir,
                             phase,
                             started.elapsed().as_secs(),
@@ -2665,7 +3227,7 @@ User request:\n{}",
                     let message =
                         TelegramOutgoingMessage::plain(Self::build_cli_streaming_message(
                             &state,
-                            backend,
+                            &backend,
                             &effective_cli_workdir,
                             "failed",
                             started.elapsed().as_secs(),
@@ -2720,7 +3282,7 @@ User request:\n{}",
                     let message =
                         TelegramOutgoingMessage::plain(Self::build_cli_streaming_message(
                             &state,
-                            backend,
+                            &backend,
                             &effective_cli_workdir,
                             &format!("timed out after `{}` second(s)", cli_timeout_secs),
                             cli_timeout_secs,
@@ -2760,8 +3322,8 @@ User request:\n{}",
         agent: Option<Arc<crate::core::agent_core::AgentCore>>,
         cli_workdir: Arc<PathBuf>,
         cli_timeout_secs: u64,
+        cli_backends: Arc<TelegramCliBackendRegistry>,
         cli_backend_paths: Arc<HashMap<TelegramCliBackend, String>>,
-        cli_backend_models: Arc<HashMap<TelegramCliBackend, String>>,
         chat_states: Arc<Mutex<HashMap<i64, TelegramChatState>>>,
         state_path: Arc<PathBuf>,
         active_handlers: i32,
@@ -2779,6 +3341,7 @@ User request:\n{}",
             agent.as_deref(),
             &chat_states,
             &state_path,
+            &cli_backends,
             &cli_backend_paths,
             &cli_workdir,
             active_handlers,
@@ -2819,8 +3382,8 @@ User request:\n{}",
                     text,
                     cli_workdir,
                     cli_timeout_secs,
+                    cli_backends,
                     cli_backend_paths,
-                    cli_backend_models,
                     chat_states,
                     state_path,
                 )
@@ -2871,8 +3434,8 @@ impl Channel for TelegramClient {
         let agent = self.agent.clone();
         let cli_workdir = self.cli_workdir.clone();
         let cli_timeout_secs = self.cli_timeout_secs;
+        let cli_backends = self.cli_backends.clone();
         let cli_backend_paths = self.cli_backend_paths.clone();
-        let cli_backend_models = self.cli_backend_models.clone();
         let chat_states = self.chat_states.clone();
         let chat_state_path = self.chat_state_path.clone();
         let last_user_input = self.last_user_input.clone();
@@ -2993,8 +3556,8 @@ impl Channel for TelegramClient {
                         let agent_clone = agent.clone();
                         let active_handlers_clone = active_handlers.clone();
                         let cli_workdir_clone = cli_workdir.clone();
+                        let cli_backends_clone = cli_backends.clone();
                         let cli_backend_paths_clone = cli_backend_paths.clone();
-                        let cli_backend_models_clone = cli_backend_models.clone();
                         let chat_states_clone = chat_states.clone();
                         let chat_state_path_clone = chat_state_path.clone();
 
@@ -3006,8 +3569,8 @@ impl Channel for TelegramClient {
                                 agent_clone,
                                 cli_workdir_clone,
                                 cli_timeout_secs,
+                                cli_backends_clone,
                                 cli_backend_paths_clone,
-                                cli_backend_models_clone,
                                 chat_states_clone,
                                 chat_state_path_clone,
                                 current_handlers + 1,
@@ -3055,11 +3618,19 @@ impl Channel for TelegramClient {
 #[cfg(test)]
 mod tests {
     use super::{
-        TelegramChatState, TelegramCliActualUsage, TelegramCliBackend, TelegramCliUsageStats,
-        TelegramClient, TelegramExecutionMode, TelegramInteractionMode,
+        TelegramChatState, TelegramCliActualUsage, TelegramCliBackend, TelegramCliBackendRegistry,
+        TelegramCliUsageStats, TelegramClient, TelegramExecutionMode, TelegramInteractionMode,
     };
     use std::collections::{HashMap, HashSet};
     use std::sync::{Arc, Mutex};
+
+    fn backend(value: &str) -> TelegramCliBackend {
+        TelegramCliBackend::new(value)
+    }
+
+    fn default_registry() -> TelegramCliBackendRegistry {
+        TelegramCliBackendRegistry::default()
+    }
 
     #[test]
     fn parse_command_handles_bot_mentions() {
@@ -3079,8 +3650,8 @@ mod tests {
             Some(TelegramExecutionMode::Fast)
         );
         assert_eq!(
-            TelegramCliBackend::parse("claude-code"),
-            Some(TelegramCliBackend::Claude)
+            default_registry().parse("claude-code"),
+            Some(backend("claude"))
         );
     }
 
@@ -3088,7 +3659,7 @@ mod tests {
     fn default_chat_state_prefers_codex_plan_chat_mode() {
         let state = TelegramChatState::default();
         assert_eq!(state.interaction_mode, TelegramInteractionMode::Chat);
-        assert_eq!(state.cli_backend, TelegramCliBackend::Codex);
+        assert_eq!(state.cli_backend, backend("codex"));
         assert_eq!(state.execution_mode, TelegramExecutionMode::Plan);
         assert!(!state.auto_approve);
         assert_eq!(
@@ -3113,7 +3684,7 @@ mod tests {
 
     #[test]
     fn supported_commands_text_uses_coding_agent_name() {
-        let help = TelegramClient::supported_commands_text();
+        let help = TelegramClient::supported_commands_text(&default_registry());
         assert!(help.contains("/coding_agent <codex|gemini|claude>"));
         assert!(help.contains("/usage - show chat token usage"));
         assert!(help.contains("/auto_approve <on|off>"));
@@ -3178,10 +3749,47 @@ mod tests {
 
     #[test]
     fn coding_agent_keyboard_uses_new_command_name() {
-        let keyboard = TelegramClient::cli_backend_keyboard();
+        let keyboard = TelegramClient::cli_backend_keyboard(&default_registry());
         assert_eq!(keyboard["keyboard"][0][0], "/coding_agent codex");
         assert_eq!(keyboard["keyboard"][1][0], "/coding_agent gemini");
         assert_eq!(keyboard["keyboard"][2][0], "/coding_agent claude");
+    }
+
+    #[test]
+    fn custom_backend_from_config_is_exposed_in_help_and_keyboard() {
+        let mut registry = default_registry();
+        registry.merge_config_value(Some(&serde_json::json!({
+            "default_backend": "custom_agent",
+            "backends": {
+                "custom_agent": {
+                    "aliases": ["custom"],
+                    "binary_path": "/usr/bin/custom-agent",
+                    "usage_hint": "`custom-agent run --json <prompt>`",
+                    "invocation": {
+                        "args": ["run", "--json", "{prompt}"]
+                    },
+                    "response_extractors": [
+                        { "source": "stdout", "format": "json", "text_path": "result" }
+                    ],
+                    "usage_extractors": [
+                        {
+                            "source": "stdout",
+                            "format": "json",
+                            "input_tokens_path": "usage.input_tokens",
+                            "output_tokens_path": "usage.output_tokens"
+                        }
+                    ]
+                }
+            }
+        })));
+
+        let help = TelegramClient::supported_commands_text(&registry);
+        let keyboard = TelegramClient::cli_backend_keyboard(&registry);
+
+        assert!(help.contains("/coding_agent <codex|gemini|claude|custom_agent>"));
+        assert_eq!(keyboard["keyboard"][3][0], "/coding_agent custom_agent");
+        assert_eq!(registry.parse("custom"), Some(backend("custom_agent")));
+        assert_eq!(registry.default_backend(), backend("custom_agent"));
     }
 
     #[test]
@@ -3217,6 +3825,7 @@ mod tests {
             None,
             &chat_states,
             &state_path,
+            &default_registry(),
             &HashMap::new(),
             std::path::Path::new("/tmp"),
             0,
@@ -3248,6 +3857,7 @@ mod tests {
             None,
             &chat_states,
             &state_path,
+            &default_registry(),
             &HashMap::new(),
             std::path::Path::new("/tmp"),
             0,
@@ -3275,6 +3885,7 @@ mod tests {
             None,
             &chat_states,
             &state_path,
+            &default_registry(),
             &HashMap::new(),
             std::path::Path::new("/tmp"),
             0,
@@ -3302,6 +3913,7 @@ mod tests {
             None,
             &chat_states,
             &state_path,
+            &default_registry(),
             &HashMap::new(),
             std::path::Path::new("/work"),
             0,
@@ -3326,8 +3938,8 @@ mod tests {
             std::process::id(),
             TelegramClient::current_timestamp_millis()
         ));
-        let backend_paths =
-            HashMap::from([(TelegramCliBackend::Claude, "/usr/bin/claude".to_string())]);
+        let backend_paths = HashMap::from([(backend("claude"), "/usr/bin/claude".to_string())]);
+        let registry = default_registry();
 
         let new_reply = TelegramClient::handle_command(
             77,
@@ -3335,6 +3947,7 @@ mod tests {
             None,
             &chat_states,
             &state_path,
+            &registry,
             &backend_paths,
             std::path::Path::new("/tmp"),
             0,
@@ -3352,6 +3965,7 @@ mod tests {
             None,
             &chat_states,
             &state_path,
+            &registry,
             &HashMap::new(),
             std::path::Path::new("/tmp"),
             0,
@@ -3369,6 +3983,7 @@ mod tests {
             None,
             &chat_states,
             &state_path,
+            &registry,
             &backend_paths,
             std::path::Path::new("/tmp"),
             0,
@@ -3384,23 +3999,22 @@ mod tests {
     }
 
     #[test]
-    fn extract_codex_json_response_reads_agent_message() {
+    fn config_driven_codex_response_and_usage_are_parsed() {
         let output = concat!(
             "{\"type\":\"thread.started\",\"thread_id\":\"abc\"}\n",
             "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"HELLO\"}}\n",
             "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1}}\n"
         );
+        let registry = default_registry();
+        let codex = backend("codex");
 
         assert_eq!(
-            TelegramClient::extract_codex_json_response(output).as_deref(),
+            TelegramClient::extract_cli_response_text(&registry, &codex, output, "").as_deref(),
             Some("HELLO")
         );
-    }
-
-    #[test]
-    fn extract_codex_json_usage_reads_turn_completed_usage() {
         let output = "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":12,\"cached_input_tokens\":3,\"output_tokens\":4}}\n";
-        let usage = TelegramClient::extract_codex_json_usage(output).unwrap();
+        let usage =
+            TelegramClient::extract_cli_actual_usage(&registry, &codex, output, "").unwrap();
         assert_eq!(usage.input_tokens, 12);
         assert_eq!(usage.cached_input_tokens, 3);
         assert_eq!(usage.output_tokens, 4);
@@ -3419,7 +4033,7 @@ mod tests {
         let state = TelegramChatState::default();
         let message = TelegramClient::build_cli_streaming_message(
             &state,
-            TelegramCliBackend::Codex,
+            &backend("codex"),
             std::path::Path::new("/tmp/project"),
             "running",
             15,
@@ -3442,7 +4056,7 @@ mod tests {
         };
         let message = TelegramClient::build_cli_streaming_message(
             &state,
-            TelegramCliBackend::Claude,
+            &backend("claude"),
             std::path::Path::new("/tmp/project"),
             "completed",
             22,
@@ -3458,9 +4072,11 @@ mod tests {
 
     #[test]
     fn incremental_cli_response_uses_new_text_delta() {
+        let registry = default_registry();
         let stdout = "First line of output\nSecond line of output with enough detail";
         let partial = TelegramClient::extract_incremental_cli_response(
-            TelegramCliBackend::Claude,
+            &registry,
+            &backend("claude"),
             stdout,
             "",
             "",
@@ -3473,7 +4089,8 @@ mod tests {
             stdout
         );
         let partial = TelegramClient::extract_incremental_cli_response(
-            TelegramCliBackend::Claude,
+            &registry,
+            &backend("claude"),
             &next_stdout,
             "",
             stdout,
@@ -3486,7 +4103,7 @@ mod tests {
     fn codex_invocation_uses_json_mode_and_project_directory() {
         let state = TelegramChatState {
             interaction_mode: TelegramInteractionMode::Coding,
-            cli_backend: TelegramCliBackend::Codex,
+            cli_backend: backend("codex"),
             execution_mode: TelegramExecutionMode::Plan,
             auto_approve: false,
             project_dir: None,
@@ -3494,14 +4111,13 @@ mod tests {
             coding_session_index: 1,
             usage: HashMap::new(),
         };
-        let backend_paths =
-            HashMap::from([(TelegramCliBackend::Codex, "/usr/bin/codex".to_string())]);
+        let backend_paths = HashMap::from([(backend("codex"), "/usr/bin/codex".to_string())]);
         let (binary, args) = TelegramClient::build_cli_invocation(
             77,
             &state,
             std::path::Path::new("/tmp/project"),
+            &default_registry(),
             &backend_paths,
-            &HashMap::new(),
             "hello",
         )
         .unwrap();
@@ -3518,7 +4134,7 @@ mod tests {
     fn gemini_invocation_uses_explicit_model() {
         let state = TelegramChatState {
             interaction_mode: TelegramInteractionMode::Coding,
-            cli_backend: TelegramCliBackend::Gemini,
+            cli_backend: backend("gemini"),
             execution_mode: TelegramExecutionMode::Plan,
             auto_approve: false,
             project_dir: None,
@@ -3526,17 +4142,14 @@ mod tests {
             coding_session_index: 1,
             usage: HashMap::new(),
         };
-        let backend_paths =
-            HashMap::from([(TelegramCliBackend::Gemini, "/snap/bin/gemini".to_string())]);
-        let backend_models =
-            HashMap::from([(TelegramCliBackend::Gemini, "gemini-2.5-flash".to_string())]);
+        let backend_paths = HashMap::from([(backend("gemini"), "/snap/bin/gemini".to_string())]);
 
         let (binary, args) = TelegramClient::build_cli_invocation(
             77,
             &state,
             std::path::Path::new("/tmp/project"),
+            &default_registry(),
             &backend_paths,
-            &backend_models,
             "hello",
         )
         .unwrap();
@@ -3575,11 +4188,14 @@ mod tests {
   }
 }"#;
 
+        let registry = default_registry();
+        let gemini = backend("gemini");
         assert_eq!(
-            TelegramClient::extract_gemini_json_response(output).as_deref(),
+            TelegramClient::extract_cli_response_text(&registry, &gemini, output, "").as_deref(),
             Some("OK")
         );
-        let usage = TelegramClient::extract_gemini_json_usage(output).unwrap();
+        let usage =
+            TelegramClient::extract_cli_actual_usage(&registry, &gemini, output, "").unwrap();
         assert_eq!(usage.session_id.as_deref(), Some("gemini-session"));
         assert_eq!(usage.model.as_deref(), Some("gemini-2.5-flash"));
         assert_eq!(usage.input_tokens, 10);
@@ -3608,11 +4224,14 @@ mod tests {
   }
 }"#;
 
+        let registry = default_registry();
+        let claude = backend("claude");
         assert_eq!(
-            TelegramClient::extract_claude_json_response(output).as_deref(),
+            TelegramClient::extract_cli_response_text(&registry, &claude, output, "").as_deref(),
             Some("DONE")
         );
-        let usage = TelegramClient::extract_claude_json_usage(output).unwrap();
+        let usage =
+            TelegramClient::extract_cli_actual_usage(&registry, &claude, output, "").unwrap();
         assert_eq!(usage.session_id.as_deref(), Some("claude-session"));
         assert_eq!(usage.model.as_deref(), Some("claude-sonnet-4-6"));
         assert_eq!(usage.input_tokens, 5);
@@ -3626,7 +4245,7 @@ mod tests {
     fn coding_usage_report_includes_actual_cli_tokens() {
         let mut state = TelegramChatState {
             interaction_mode: TelegramInteractionMode::Coding,
-            cli_backend: TelegramCliBackend::Gemini,
+            cli_backend: backend("gemini"),
             execution_mode: TelegramExecutionMode::Plan,
             auto_approve: false,
             project_dir: None,
@@ -3653,9 +4272,9 @@ mod tests {
         );
         state
             .usage
-            .insert(TelegramCliBackend::Gemini.as_str().to_string(), usage);
+            .insert(backend("gemini").as_str().to_string(), usage);
 
-        let report = TelegramClient::format_coding_usage_report(&state, TelegramCliBackend::Gemini);
+        let report = TelegramClient::format_coding_usage_report(&state, &backend("gemini"));
         assert!(report.contains("Coding-agent usage for `gemini`"));
         assert!(report.contains("latest CLI session: `gemini-session`"));
         assert!(report.contains("latest total tokens: `15`"));
@@ -3664,8 +4283,10 @@ mod tests {
 
     #[test]
     fn gemini_capacity_errors_are_summarized() {
+        let registry = default_registry();
         let message = TelegramClient::format_cli_result(
-            TelegramCliBackend::Gemini,
+            &registry,
+            &backend("gemini"),
             1,
             100,
             "",
@@ -3674,6 +4295,85 @@ mod tests {
 
         assert!(message.contains("model-capacity limit"));
         assert!(message.contains("gemini-2.5-flash"));
+    }
+
+    #[test]
+    fn custom_backend_invocation_and_usage_can_be_loaded_from_config() {
+        let mut registry = default_registry();
+        registry.merge_config_value(Some(&serde_json::json!({
+            "backends": {
+                "custom_agent": {
+                    "binary_path": "/usr/bin/custom-agent",
+                    "usage_hint": "`custom-agent run --cwd <project> --prompt <prompt>`",
+                    "invocation": {
+                        "args": ["run", "--cwd", "{project_dir}", "--prompt", "{prompt}"]
+                    },
+                    "response_extractors": [
+                        { "source": "stdout", "format": "json", "text_path": "reply" }
+                    ],
+                    "usage_extractors": [
+                        {
+                            "source": "stdout",
+                            "format": "json",
+                            "input_tokens_path": "usage.prompt",
+                            "output_tokens_path": "usage.completion",
+                            "total_tokens_path": "usage.total",
+                            "session_id_path": "session"
+                        }
+                    ]
+                }
+            }
+        })));
+
+        let state = TelegramChatState {
+            interaction_mode: TelegramInteractionMode::Coding,
+            cli_backend: backend("custom_agent"),
+            execution_mode: TelegramExecutionMode::Plan,
+            auto_approve: false,
+            project_dir: None,
+            chat_session_index: 1,
+            coding_session_index: 1,
+            usage: HashMap::new(),
+        };
+        let backend_paths =
+            HashMap::from([(backend("custom_agent"), "/usr/bin/custom-agent".to_string())]);
+
+        let (binary, args) = TelegramClient::build_cli_invocation(
+            77,
+            &state,
+            std::path::Path::new("/tmp/project"),
+            &registry,
+            &backend_paths,
+            "hello",
+        )
+        .unwrap();
+        assert_eq!(binary, "/usr/bin/custom-agent");
+        assert_eq!(args[0], "run");
+        assert!(args.iter().any(|arg| arg == "/tmp/project"));
+
+        let stdout =
+            r#"{"reply":"DONE","session":"sess-1","usage":{"prompt":4,"completion":6,"total":10}}"#;
+        assert_eq!(
+            TelegramClient::extract_cli_response_text(
+                &registry,
+                &backend("custom_agent"),
+                stdout,
+                ""
+            )
+            .as_deref(),
+            Some("DONE")
+        );
+        let usage = TelegramClient::extract_cli_actual_usage(
+            &registry,
+            &backend("custom_agent"),
+            stdout,
+            "",
+        )
+        .unwrap();
+        assert_eq!(usage.input_tokens, 4);
+        assert_eq!(usage.output_tokens, 6);
+        assert_eq!(usage.total_tokens, 10);
+        assert_eq!(usage.session_id.as_deref(), Some("sess-1"));
     }
 
     #[test]
@@ -3690,11 +4390,16 @@ mod tests {
         )
         .unwrap();
 
-        let mut models = HashMap::new();
-        TelegramClient::read_backend_models_from_llm_config(&temp_root, &mut models);
+        let mut cli_backends = default_registry();
+        if let Some(definition) = cli_backends.definitions.get_mut(&backend("gemini")) {
+            definition.model = None;
+        }
+        TelegramClient::read_backend_models_from_llm_config(&temp_root, &mut cli_backends);
 
         assert_eq!(
-            models.get(&TelegramCliBackend::Gemini).map(String::as_str),
+            cli_backends
+                .get(&backend("gemini"))
+                .and_then(|definition| definition.model.as_deref()),
             Some("gemini-2.5-pro")
         );
 

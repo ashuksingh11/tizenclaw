@@ -93,6 +93,9 @@ bolted onto the daemon as afterthoughts.
 TizenClaw can use Telegram as a remote control surface for coding workflows.
 This is not just "send a prompt to the daemon" behavior. The Telegram channel
 can switch into a host-backed coding mode that runs real coding-agent CLIs.
+The backend list is config-driven, so `codex`, `gemini`, `claude`, or
+additional host CLIs can be described in `telegram_config.json` without
+changing Rust code.
 
 ### Supported flow
 
@@ -114,9 +117,44 @@ can switch into a host-backed coding mode that runs real coding-agent CLIs.
 - Chat token usage plus backend-reported CLI token usage
 - Host-auth hints when a CLI has not been logged in yet
 
-### Backend examples
+### Backend configuration
 
-TizenClaw maps Telegram coding requests onto the real installed CLIs:
+The built-in defaults cover `codex`, `gemini`, and `claude`, but
+`telegram_config.json` can now carry richer backend definitions:
+
+```json
+{
+  "cli_backends": {
+    "default_backend": "codex",
+    "backends": {
+      "custom_agent": {
+        "aliases": ["custom", "agentx"],
+        "binary_path": "/home/user/.local/bin/custom-agent",
+        "usage_hint": "`custom-agent run --json --cwd <project> --prompt <prompt>`",
+        "auth_hint": "Custom Agent CLI must already be authenticated.",
+        "invocation": {
+          "args": ["run", "--json", "--cwd", "{project_dir}", "--prompt", "{prompt}"]
+        },
+        "response_extractors": [
+          { "source": "stdout", "format": "json", "text_path": "result" }
+        ],
+        "usage_extractors": [
+          {
+            "source": "stdout",
+            "format": "json",
+            "input_tokens_path": "usage.input_tokens",
+            "output_tokens_path": "usage.output_tokens",
+            "total_tokens_path": "usage.total_tokens"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+That means the command help shown in Telegram, the CLI invocation shape,
+and the token usage extraction rules can all be supplied through config.
 
 | Backend | Example execution shape |
 | --- | --- |

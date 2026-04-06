@@ -10,7 +10,7 @@
 //!   tizenclaw-cli dashboard status
 //!   tizenclaw-cli   (interactive mode)
 
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
@@ -74,7 +74,11 @@ fn channel_config_path() -> PathBuf {
 }
 
 fn default_dashboard_port() -> u16 {
-    if is_tizen_runtime() { 9090 } else { 9091 }
+    if is_tizen_runtime() {
+        9090
+    } else {
+        9091
+    }
 }
 
 fn dashboard_port_from_doc(doc: &Value) -> u16 {
@@ -193,8 +197,47 @@ fn default_telegram_config() -> Value {
         "bot_token": "",
         "allowed_chat_ids": [],
         "cli_workdir": default_workdir,
-        "cli_backends": {}
+        "cli_backends": {
+            "default_backend": "codex",
+            "backends": {}
+        }
     })
+}
+
+fn telegram_cli_default_backend(doc: &Value) -> String {
+    doc.get("cli_backends")
+        .and_then(|value| value.get("default_backend"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("codex")
+        .to_string()
+}
+
+fn telegram_cli_backend_entries(doc: &Value) -> Map<String, Value> {
+    doc.get("cli_backends")
+        .and_then(|value| value.get("backends"))
+        .and_then(Value::as_object)
+        .cloned()
+        .or_else(|| {
+            doc.get("cli_backends")
+                .and_then(Value::as_object)
+                .map(|object| {
+                    object
+                        .iter()
+                        .filter(|(key, _)| key.as_str() != "default_backend")
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect()
+                })
+        })
+        .unwrap_or_default()
+}
+
+fn set_telegram_cli_backends(doc: &mut Value, default_backend: &str, backends: Map<String, Value>) {
+    doc["cli_backends"] = json!({
+        "default_backend": default_backend,
+        "backends": backends
+    });
 }
 
 fn load_json_or_default(path: &Path, default_value: Value) -> Value {
@@ -277,7 +320,11 @@ fn prompt_choice(prompt: &str, options: &[&str], default_index: usize) -> Result
 
 fn parse_chat_ids(raw: &str) -> Result<Vec<i64>, String> {
     let mut ids = Vec::new();
-    for token in raw.split(',').map(str::trim).filter(|part| !part.is_empty()) {
+    for token in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
         let value = token
             .parse::<i64>()
             .map_err(|_| format!("Invalid chat id '{}'", token))?;
@@ -492,9 +539,8 @@ fn configure_telegram(doc: &mut Value) -> Result<bool, String> {
             let raw = prompt_with_default("Comma-separated allowed chat IDs", prompt_default)?;
             match parse_chat_ids(&raw) {
                 Ok(ids) => {
-                    doc["allowed_chat_ids"] = Value::Array(
-                        ids.into_iter().map(|id| Value::Number(id.into())).collect(),
-                    );
+                    doc["allowed_chat_ids"] =
+                        Value::Array(ids.into_iter().map(|id| Value::Number(id.into())).collect());
                     break;
                 }
                 Err(err) => println!("{}", err),
@@ -531,11 +577,8 @@ fn configure_telegram(doc: &mut Value) -> Result<bool, String> {
         println!("\nNo coding-agent CLI binaries were auto-detected in PATH.");
     }
 
-    let existing_paths = doc
-        .get("cli_backends")
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let default_backend = telegram_cli_default_backend(doc);
+    let existing_paths = telegram_cli_backend_entries(doc);
     let backend_path_choice = prompt_choice(
         "How should Telegram CLI backend paths be configured?",
         &[
@@ -548,33 +591,39 @@ fn configure_telegram(doc: &mut Value) -> Result<bool, String> {
 
     match backend_path_choice {
         0 => {
-            let merged = if detected.is_empty() {
-                existing_paths
-            } else {
-                detected
-            };
-            doc["cli_backends"] = Value::Object(merged);
+            let mut merged = existing_paths.clone();
+            for (backend, value) in detected {
+                merged.insert(backend, value);
+            }
+            set_telegram_cli_backends(doc, &default_backend, merged);
         }
         1 => {
-            let mut manual = Map::new();
+            let mut manual = existing_paths.clone();
             for backend in ["codex", "gemini", "claude"] {
                 let fallback = existing_paths
                     .get(backend)
-                    .and_then(Value::as_str)
+                    .and_then(|value| {
+                        value
+                            .as_str()
+                            .or_else(|| value.get("binary_path").and_then(Value::as_str))
+                    })
                     .or_else(|| detected.get(backend).and_then(Value::as_str));
-                let value = prompt_with_default(
-                    &format!("Path for the {} CLI binary", backend),
-                    fallback,
-                )?;
+                let value =
+                    prompt_with_default(&format!("Path for the {} CLI binary", backend), fallback)?;
                 if !value.trim().is_empty() {
-                    manual.insert(backend.to_string(), Value::String(value));
+                    manual.insert(
+                        backend.to_string(),
+                        json!({
+                            "binary_path": value
+                        }),
+                    );
                 }
             }
-            doc["cli_backends"] = Value::Object(manual);
+            set_telegram_cli_backends(doc, &default_backend, manual);
         }
         _ => {
             if doc.get("cli_backends").is_none() {
-                doc["cli_backends"] = Value::Object(existing_paths);
+                set_telegram_cli_backends(doc, &default_backend, existing_paths);
             }
         }
     }
