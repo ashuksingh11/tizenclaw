@@ -594,7 +594,7 @@ impl TelegramClient {
     fn command_menu_entries() -> Vec<(&'static str, &'static str)> {
         vec![
             ("select", "Switch between chat and coding mode"),
-            ("cli_backend", "Choose codex, gemini, or claude"),
+            ("agent_cli", "Choose codex, gemini, or claude"),
             ("project", "Set the project directory for coding mode"),
             ("new_session", "Start a fresh chat or coding session"),
             ("usage", "Show local usage for the selected CLI"),
@@ -643,7 +643,7 @@ impl TelegramClient {
     }
 
     fn cli_backend_keyboard() -> Value {
-        Self::build_reply_keyboard(&[&["/cli_backend codex"], &["/cli_backend gemini"], &["/cli_backend claude"]])
+        Self::build_reply_keyboard(&[&["/agent_cli codex"], &["/agent_cli gemini"], &["/agent_cli claude"]])
     }
 
     fn mode_keyboard() -> Value {
@@ -693,7 +693,7 @@ impl TelegramClient {
         [
             "Telegram coding-agent commands:",
             "/select <chat|coding> - switch between normal chat and local CLI coding mode",
-            "/cli_backend <codex|gemini|claude> - choose the coding-agent backend",
+            "/agent_cli <codex|gemini|claude> - choose the coding-agent backend",
             "/project <path> - set the project directory used by coding mode",
             "/project reset - clear the per-chat project override",
             "/new_session - start a fresh session for the current mode",
@@ -1170,7 +1170,7 @@ backend failures: `{}`",
         let reply = match command.as_str() {
             "start" | "help" => TelegramOutgoingMessage::plain(Self::supported_commands_text()),
             "select" => Self::set_interaction_mode(chat_states, state_path, chat_id, &args),
-            "cli-backend" | "cli_backend" => {
+            "agent-cli" | "agent_cli" | "cli-backend" | "cli_backend" => {
                 Self::set_cli_backend(chat_states, state_path, chat_id, &args, cli_backend_paths)
             }
             "project" => {
@@ -2247,12 +2247,13 @@ mod tests {
     }
 
     #[test]
-    fn supported_commands_text_uses_underscored_names() {
+    fn supported_commands_text_uses_agent_cli_name() {
         let help = TelegramClient::supported_commands_text();
-        assert!(help.contains("/cli_backend <codex|gemini|claude>"));
+        assert!(help.contains("/agent_cli <codex|gemini|claude>"));
         assert!(help.contains("/auto_approve <on|off>"));
         assert!(help.contains("/project <path>"));
         assert!(help.contains("/new_session - start a fresh session for the current mode"));
+        assert!(!help.contains("/cli_backend <codex|gemini|claude>"));
         assert!(!help.contains("/cli-backend <codex|gemini|claude>"));
         assert!(!help.contains("/auto-approve <on|off>"));
     }
@@ -2271,7 +2272,7 @@ mod tests {
             names,
             vec![
                 "select",
-                "cli_backend",
+                "agent_cli",
                 "project",
                 "new_session",
                 "usage",
@@ -2295,6 +2296,14 @@ mod tests {
         assert_eq!(json["reply_markup"]["one_time_keyboard"], true);
         assert_eq!(json["reply_markup"]["keyboard"][0][0], "/mode plan");
         assert_eq!(json["reply_markup"]["keyboard"][0][1], "/mode fast");
+    }
+
+    #[test]
+    fn agent_cli_keyboard_uses_new_command_name() {
+        let keyboard = TelegramClient::cli_backend_keyboard();
+        assert_eq!(keyboard["keyboard"][0][0], "/agent_cli codex");
+        assert_eq!(keyboard["keyboard"][1][0], "/agent_cli gemini");
+        assert_eq!(keyboard["keyboard"][2][0], "/agent_cli claude");
     }
 
     #[test]
@@ -2394,6 +2403,44 @@ mod tests {
             state.project_dir.as_deref(),
             Some(expected.as_str())
         );
+    }
+
+    #[test]
+    fn agent_cli_command_and_legacy_alias_both_route_to_backend_selection() {
+        let chat_states = Arc::new(Mutex::new(HashMap::new()));
+        let state_path = std::env::temp_dir().join(format!(
+            "telegram_agent_cli_state_{}_{}.json",
+            std::process::id(),
+            TelegramClient::current_timestamp_millis()
+        ));
+        let backend_paths = HashMap::from([(
+            TelegramCliBackend::Claude,
+            "/usr/bin/claude".to_string(),
+        )]);
+
+        let new_reply = TelegramClient::handle_command(
+            77,
+            "/agent_cli claude",
+            &chat_states,
+            &state_path,
+            &backend_paths,
+            std::path::Path::new("/tmp"),
+            0,
+        )
+        .unwrap();
+        assert!(new_reply.text.contains("CLI backend set to `claude`."));
+
+        let legacy_reply = TelegramClient::handle_command(
+            77,
+            "/cli_backend codex",
+            &chat_states,
+            &state_path,
+            &HashMap::new(),
+            std::path::Path::new("/tmp"),
+            0,
+        )
+        .unwrap();
+        assert!(legacy_reply.text.contains("CLI backend set to `codex`."));
     }
 
     #[test]
