@@ -156,18 +156,6 @@ struct TelegramCliBackendDefinition {
     error_hints: Vec<TelegramCliErrorHint>,
 }
 
-impl TelegramCliBackendDefinition {
-    fn usage_hint_for(&self, auto_approve: bool) -> &str {
-        if auto_approve {
-            self.auto_approve_usage_hint
-                .as_deref()
-                .unwrap_or(self.usage_hint.as_str())
-        } else {
-            self.usage_hint.as_str()
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 struct TelegramCliBackendRegistry {
     order: Vec<TelegramCliBackend>,
@@ -320,7 +308,7 @@ impl Default for TelegramCliBackendRegistry {
                         patterns: vec![
                             "Opening authentication page in your browser".to_string(),
                         ],
-                        message: "Gemini CLI requires interactive host login before Telegram can use it. Run `gemini` once on the host and finish authentication, then retry.".to_string(),
+                        message: "[gemini] Login required on the host.\nRun `gemini` once, finish authentication, then retry.".to_string(),
                     },
                     TelegramCliErrorHint {
                         source: TelegramCliOutputSource::Combined,
@@ -329,7 +317,7 @@ impl Default for TelegramCliBackendRegistry {
                             "No capacity available for model".to_string(),
                             "\"status\": \"RESOURCE_EXHAUSTED\"".to_string(),
                         ],
-                        message: "Gemini CLI hit a model-capacity limit on the host. Telegram now supports an explicit Gemini model; use a stable model such as `gemini-2.5-flash` in the host config and retry.".to_string(),
+                        message: "[gemini] Model capacity reached.\nTry a stable model such as `gemini-2.5-flash` and retry.".to_string(),
                     },
                 ],
                 ..TelegramCliBackendDefinition::default()
@@ -1271,14 +1259,14 @@ impl TelegramClient {
 
     fn command_menu_entries() -> Vec<(&'static str, &'static str)> {
         vec![
-            ("select", "Switch between chat and coding mode"),
-            ("coding_agent", "Choose the coding-agent backend"),
-            ("project", "Set the project directory for coding mode"),
-            ("new_session", "Start a fresh chat or coding session"),
-            ("usage", "Show chat tokens or coding-agent tokens"),
-            ("mode", "Set coding mode to plan or fast"),
-            ("status", "Show the current Telegram channel state"),
-            ("auto_approve", "Toggle automatic approval when supported"),
+            ("select", "Switch mode"),
+            ("coding_agent", "Choose backend"),
+            ("project", "Set project path"),
+            ("new_session", "Start new session"),
+            ("usage", "Show usage"),
+            ("mode", "Choose plan or fast"),
+            ("status", "Show current state"),
+            ("auto_approve", "Toggle auto approve"),
         ]
     }
 
@@ -1474,42 +1462,57 @@ impl TelegramClient {
     fn supported_commands_text(cli_backends: &TelegramCliBackendRegistry) -> String {
         let backend_choices = cli_backends.backend_choices_text();
         [
-            "Telegram coding-agent commands:",
-            "/select <chat|coding> - switch between normal chat and local CLI coding mode",
-            &format!(
-                "/coding_agent <{}> - choose the coding-agent backend",
-                backend_choices
-            ),
-            "/project <path> - set the project directory used by coding mode",
-            "/project reset - clear the per-chat project override",
-            "/new_session - start a fresh session for the current mode",
-            "/usage - show chat token usage or the latest coding-agent token usage",
-            "/mode <plan|fast> - switch planning style for coding mode prompts",
-            "/status - show the current Telegram channel control state",
-            "/auto_approve <on|off> - toggle backend auto approval when supported",
+            "Commands",
+            "/select [chat|coding]",
+            &format!("/coding_agent [{}]", backend_choices),
+            "/project [path]",
+            "/project reset",
+            "/new_session",
+            "/usage",
+            "/mode [plan|fast]",
+            "/status",
+            "/auto_approve [on|off]",
         ]
         .join("\n")
     }
 
-    fn backend_usage_template(
-        cli_backends: &TelegramCliBackendRegistry,
-        backend: &TelegramCliBackend,
-        auto_approve: bool,
-    ) -> String {
-        cli_backends
-            .get(backend)
-            .map(|definition| definition.usage_hint_for(auto_approve).to_string())
-            .unwrap_or_else(|| "`<backend invocation unavailable>`".to_string())
+    fn value_label(value: impl AsRef<str>) -> String {
+        format!("[{}]", value.as_ref())
     }
 
-    fn backend_auth_hint(
-        cli_backends: &TelegramCliBackendRegistry,
-        backend: &TelegramCliBackend,
+    fn backend_label(backend: &TelegramCliBackend) -> String {
+        Self::value_label(backend.as_str())
+    }
+
+    fn session_number(session_label: &str) -> &str {
+        session_label
+            .rsplit('-')
+            .next()
+            .filter(|value| !value.is_empty())
+            .unwrap_or(session_label)
+    }
+
+    fn session_value_label(session_label: &str) -> String {
+        Self::value_label(Self::session_number(session_label))
+    }
+
+    fn active_session_value_label(state: &TelegramChatState) -> String {
+        Self::session_value_label(&state.active_session_label())
+    }
+
+    fn session_value_label_for_mode(
+        state: &TelegramChatState,
+        mode: TelegramInteractionMode,
     ) -> String {
+        Self::session_value_label(&state.session_label_for(mode))
+    }
+
+    fn backend_choices_labels_text(cli_backends: &TelegramCliBackendRegistry) -> String {
         cli_backends
-            .get(backend)
-            .map(|definition| definition.auth_hint.clone())
-            .unwrap_or_else(|| "No authentication hint is available for this backend.".to_string())
+            .backends()
+            .map(Self::backend_label)
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     fn parse_command(text: &str) -> Option<(String, Vec<String>)> {
@@ -1577,14 +1580,11 @@ impl TelegramClient {
         args: &[String],
     ) -> TelegramOutgoingMessage {
         let Some(mode_raw) = args.first() else {
-            return TelegramOutgoingMessage::with_markup(
-                "Choose the interaction mode for this chat.",
-                Self::select_keyboard(),
-            );
+            return TelegramOutgoingMessage::with_markup("Select Mode.", Self::select_keyboard());
         };
         let Some(mode) = TelegramInteractionMode::parse(mode_raw) else {
             return TelegramOutgoingMessage::with_markup(
-                "Invalid mode. Choose `chat` or `coding` from the menu.",
+                "Choose [chat] or [coding].",
                 Self::select_keyboard(),
             );
         };
@@ -1596,9 +1596,9 @@ impl TelegramClient {
             move |state| {
                 state.interaction_mode = mode;
                 format!(
-                    "Interaction mode set to `{}`.\nSelected CLI backend remains `{}`.",
-                    mode.as_str(),
-                    state.cli_backend.as_str()
+                    "Mode: {}\nCodingAgent: {}",
+                    Self::value_label(mode.as_str()),
+                    Self::backend_label(&state.cli_backend)
                 )
             },
         ))
@@ -1614,15 +1614,15 @@ impl TelegramClient {
     ) -> TelegramOutgoingMessage {
         let Some(backend_raw) = args.first() else {
             return TelegramOutgoingMessage::with_markup(
-                "Choose the CLI backend for coding mode.",
+                "Select CodingAgent.",
                 Self::cli_backend_keyboard(cli_backends),
             );
         };
         let Some(backend) = cli_backends.parse(backend_raw) else {
             return TelegramOutgoingMessage::with_markup(
                 format!(
-                    "Invalid CLI backend. Choose `{}`.",
-                    cli_backends.backend_choices_text().replace('|', "`, `")
+                    "Choose CodingAgent: {}.",
+                    Self::backend_choices_labels_text(cli_backends)
                 ),
                 Self::cli_backend_keyboard(cli_backends),
             );
@@ -1630,10 +1630,8 @@ impl TelegramClient {
 
         let availability = cli_backend_paths
             .get(&backend)
-            .map(|path| format!("Resolved binary: `{}`", path))
-            .unwrap_or_else(|| {
-                "Warning: backend binary was not found on PATH. You can still keep it selected, but execution will fail until the binary is installed or configured.".to_string()
-            });
+            .map(|path| format!("Binary: {}", Self::value_label(path)))
+            .unwrap_or_else(|| format!("Binary: {}", Self::value_label("not found")));
 
         TelegramOutgoingMessage::with_removed_keyboard(Self::mutate_chat_state(
             chat_states,
@@ -1641,12 +1639,11 @@ impl TelegramClient {
             chat_id,
             move |state| {
                 state.cli_backend = backend.clone();
+                let availability = availability.replace('`', "");
                 format!(
-                    "CLI backend set to `{}`.\n{}\nUsage: {}\n{}",
-                    backend.as_str(),
-                    availability,
-                    Self::backend_usage_template(cli_backends, &backend, state.auto_approve),
-                    Self::backend_auth_hint(cli_backends, &backend)
+                    "CodingAgent: {}\n{}",
+                    Self::backend_label(&backend),
+                    availability
                 )
             },
         ))
@@ -1698,8 +1695,8 @@ impl TelegramClient {
             let state = Self::load_chat_state_snapshot(chat_states, chat_id);
             let effective = state.effective_cli_workdir(default_cli_workdir);
             return TelegramOutgoingMessage::plain(format!(
-                "Current project directory: `{}`.\nUse `/project <path>` to change it or `/project reset` to return to the default directory.",
-                effective.display()
+                "Project: {}\nUse: /project [path] | /project reset",
+                Self::value_label(effective.display().to_string())
             ));
         }
 
@@ -1714,8 +1711,9 @@ impl TelegramClient {
                     move |state| {
                         state.project_dir = None;
                         format!(
-                            "Project directory reset.\nCoding mode will use the default CLI workdir: `{}`.",
-                            default_display
+                            "Project: {}\nPath: {}",
+                            Self::value_label("default"),
+                            Self::value_label(&default_display)
                         )
                     },
                 ));
@@ -1737,10 +1735,7 @@ impl TelegramClient {
             chat_id,
             move |state| {
                 state.project_dir = Some(project_dir_text.clone());
-                format!(
-                    "Project directory set to `{}`.\nCoding mode will run inside this directory for this chat.",
-                    project_dir_text
-                )
+                format!("Project: {}", Self::value_label(&project_dir_text))
             },
         ))
     }
@@ -1753,13 +1748,13 @@ impl TelegramClient {
     ) -> TelegramOutgoingMessage {
         let Some(mode_raw) = args.first() else {
             return TelegramOutgoingMessage::with_markup(
-                "Choose the coding execution mode.",
+                "Select CodingMode.",
                 Self::mode_keyboard(),
             );
         };
         let Some(mode) = TelegramExecutionMode::parse(mode_raw) else {
             return TelegramOutgoingMessage::with_markup(
-                "Invalid execution mode. Choose `plan` or `fast`.",
+                "Choose [plan] or [fast].",
                 Self::mode_keyboard(),
             );
         };
@@ -1770,10 +1765,7 @@ impl TelegramClient {
             chat_id,
             move |state| {
                 state.execution_mode = mode;
-                format!(
-                    "Execution mode set to `{}` for Telegram coding-agent prompts.",
-                    mode.as_str()
-                )
+                format!("CodingMode: {}", Self::value_label(mode.as_str()))
             },
         ))
     }
@@ -1786,7 +1778,7 @@ impl TelegramClient {
     ) -> TelegramOutgoingMessage {
         let Some(value_raw) = args.first() else {
             return TelegramOutgoingMessage::with_markup(
-                "Choose whether approvals should be automatic.",
+                "Select AutoApprove.",
                 Self::auto_approve_keyboard(),
             );
         };
@@ -1795,7 +1787,7 @@ impl TelegramClient {
             "off" | "false" | "no" | "0" => false,
             _ => {
                 return TelegramOutgoingMessage::with_markup(
-                    "Invalid value. Choose `on` or `off`.",
+                    "Choose [on] or [off].",
                     Self::auto_approve_keyboard(),
                 )
             }
@@ -1808,9 +1800,9 @@ impl TelegramClient {
             move |state| {
                 state.auto_approve = enabled;
                 format!(
-                    "Auto-approve is now `{}` for the `{}` backend.",
-                    if enabled { "on" } else { "off" },
-                    state.cli_backend.as_str()
+                    "AutoApprove: {}\nCodingAgent: {}",
+                    Self::value_label(if enabled { "on" } else { "off" }),
+                    Self::backend_label(&state.cli_backend)
                 )
             },
         ))
@@ -1835,9 +1827,8 @@ impl TelegramClient {
 
             prepared_state = Some(state.clone());
             format!(
-                "Started a new `{}` session: `{}`.",
-                mode.as_str(),
-                state.session_label_for(mode)
+                "Session: {}",
+                Self::session_value_label(&state.session_label_for(mode))
             )
         });
 
@@ -1856,21 +1847,23 @@ impl TelegramClient {
         )
     }
 
-    fn format_chat_usage_report(session_id: &str, usage: &Value) -> String {
+    fn format_chat_usage_report(state: &TelegramChatState, usage: &Value) -> String {
         let read = |name: &str| usage.get(name).and_then(Value::as_i64).unwrap_or(0);
         format!(
-            "Chat token usage for `{}`:\n\
-prompt tokens: `{}`\n\
-completion tokens: `{}`\n\
-cache creation input tokens: `{}`\n\
-cache read input tokens: `{}`\n\
-total requests: `{}`",
-            session_id,
-            read("prompt_tokens"),
-            read("completion_tokens"),
-            read("cache_creation_input_tokens"),
-            read("cache_read_input_tokens"),
-            read("total_requests")
+            "Mode: {}\n\
+Session: {}\n\
+Prompt: {}\n\
+Completion: {}\n\
+CacheWrite: {}\n\
+CacheRead: {}\n\
+Requests: {}",
+            Self::value_label(TelegramInteractionMode::Chat.as_str()),
+            Self::session_value_label_for_mode(state, TelegramInteractionMode::Chat),
+            Self::value_label(read("prompt_tokens").to_string()),
+            Self::value_label(read("completion_tokens").to_string()),
+            Self::value_label(read("cache_creation_input_tokens").to_string()),
+            Self::value_label(read("cache_read_input_tokens").to_string()),
+            Self::value_label(read("total_requests").to_string())
         )
     }
 
@@ -1881,135 +1874,121 @@ total requests: `{}`",
         let usage = state.usage_for(backend);
         let mut lines = vec![
             format!(
-                "Coding-agent usage for `{}` via Telegram:",
-                backend.as_str()
+                "Mode: {}",
+                Self::value_label(TelegramInteractionMode::Coding.as_str())
             ),
             format!(
-                "session: `{}`",
-                state.session_label_for(TelegramInteractionMode::Coding)
+                "Session: {}",
+                Self::session_value_label_for_mode(state, TelegramInteractionMode::Coding)
             ),
+            format!("CodingAgent: {}", Self::backend_label(backend)),
         ];
 
         if let Some(actual) = &usage.last_actual_usage {
             lines.push(format!(
-                "latest CLI session: `{}`",
-                actual.session_id.as_deref().unwrap_or("-")
+                "LatestCLI: {}",
+                Self::value_label(actual.session_id.as_deref().unwrap_or("-"))
             ));
             lines.push(format!(
-                "latest model: `{}`",
-                actual.model.as_deref().unwrap_or("-")
+                "Model: {}",
+                Self::value_label(actual.model.as_deref().unwrap_or("-"))
             ));
-            lines.push(format!("latest input tokens: `{}`", actual.input_tokens));
-            lines.push(format!("latest output tokens: `{}`", actual.output_tokens));
-            lines.push(format!("latest total tokens: `{}`", actual.total_tokens));
+            lines.push(format!(
+                "Latest: {}",
+                Self::value_label(format!(
+                    "in {} | out {} | total {}",
+                    actual.input_tokens, actual.output_tokens, actual.total_tokens
+                ))
+            ));
             if actual.cached_input_tokens > 0 {
                 lines.push(format!(
-                    "latest cached input tokens: `{}`",
-                    actual.cached_input_tokens
+                    "Cached: {}",
+                    Self::value_label(actual.cached_input_tokens.to_string())
                 ));
             }
             if actual.cache_creation_input_tokens > 0 {
                 lines.push(format!(
-                    "latest cache creation input tokens: `{}`",
-                    actual.cache_creation_input_tokens
+                    "CacheWrite: {}",
+                    Self::value_label(actual.cache_creation_input_tokens.to_string())
                 ));
             }
             if actual.cache_read_input_tokens > 0 {
                 lines.push(format!(
-                    "latest cache read input tokens: `{}`",
-                    actual.cache_read_input_tokens
+                    "CacheRead: {}",
+                    Self::value_label(actual.cache_read_input_tokens.to_string())
                 ));
             }
             if actual.thought_tokens > 0 {
                 lines.push(format!(
-                    "latest thought tokens: `{}`",
-                    actual.thought_tokens
+                    "Thought: {}",
+                    Self::value_label(actual.thought_tokens.to_string())
                 ));
             }
             if actual.tool_tokens > 0 {
-                lines.push(format!("latest tool tokens: `{}`", actual.tool_tokens));
+                lines.push(format!(
+                    "Tool: {}",
+                    Self::value_label(actual.tool_tokens.to_string())
+                ));
             }
-            lines.push(format!(
-                "latest usage updated: `{}`",
-                usage
-                    .last_actual_usage_at_ms
-                    .map(|ts| ts.to_string())
-                    .unwrap_or_else(|| "-".to_string())
-            ));
         } else {
-            lines.push("latest CLI tokens: `not reported yet`".to_string());
+            lines.push(format!("Latest: {}", Self::value_label("not reported yet")));
         }
 
         lines.push(format!(
-            "cumulative input tokens: `{}`",
-            usage.total_cli_input_tokens
-        ));
-        lines.push(format!(
-            "cumulative output tokens: `{}`",
-            usage.total_cli_output_tokens
-        ));
-        lines.push(format!(
-            "cumulative total tokens: `{}`",
-            usage.total_cli_tokens
+            "Total: {}",
+            Self::value_label(format!(
+                "in {} | out {} | total {}",
+                usage.total_cli_input_tokens, usage.total_cli_output_tokens, usage.total_cli_tokens
+            ))
         ));
         if usage.total_cli_cached_input_tokens > 0 {
             lines.push(format!(
-                "cumulative cached input tokens: `{}`",
-                usage.total_cli_cached_input_tokens
+                "TotalCached: {}",
+                Self::value_label(usage.total_cli_cached_input_tokens.to_string())
             ));
         }
         if usage.total_cli_cache_creation_input_tokens > 0 {
             lines.push(format!(
-                "cumulative cache creation input tokens: `{}`",
-                usage.total_cli_cache_creation_input_tokens
+                "TotalCacheWrite: {}",
+                Self::value_label(usage.total_cli_cache_creation_input_tokens.to_string())
             ));
         }
         if usage.total_cli_cache_read_input_tokens > 0 {
             lines.push(format!(
-                "cumulative cache read input tokens: `{}`",
-                usage.total_cli_cache_read_input_tokens
+                "TotalCacheRead: {}",
+                Self::value_label(usage.total_cli_cache_read_input_tokens.to_string())
             ));
         }
         if usage.total_cli_thought_tokens > 0 {
             lines.push(format!(
-                "cumulative thought tokens: `{}`",
-                usage.total_cli_thought_tokens
+                "TotalThought: {}",
+                Self::value_label(usage.total_cli_thought_tokens.to_string())
             ));
         }
         if usage.total_cli_tool_tokens > 0 {
             lines.push(format!(
-                "cumulative tool tokens: `{}`",
-                usage.total_cli_tool_tokens
+                "TotalTool: {}",
+                Self::value_label(usage.total_cli_tool_tokens.to_string())
             ));
         }
 
-        lines.push(format!("local requests: `{}`", usage.requests));
-        lines.push(format!("local successes: `{}`", usage.successes));
-        lines.push(format!("local failures: `{}`", usage.failures));
         lines.push(format!(
-            "local avg duration: `{}` ms",
-            usage.average_duration_ms()
+            "Runs: {}",
+            Self::value_label(format!(
+                "req {} | ok {} | fail {}",
+                usage.requests, usage.successes, usage.failures
+            ))
         ));
         lines.push(format!(
-            "last exit code: `{}`",
-            usage
-                .last_exit_code
-                .map(|code| code.to_string())
-                .unwrap_or_else(|| "-".to_string())
-        ));
-        lines.push(format!(
-            "last started: `{}`",
-            usage
-                .last_started_at_ms
-                .map(|ts| ts.to_string())
-                .unwrap_or_else(|| "-".to_string())
-        ));
-        lines.push(format!(
-            "last completed: `{}`",
-            usage
-                .last_completed_at_ms
-                .map(|ts| ts.to_string())
-                .unwrap_or_else(|| "-".to_string())
+            "Last: {}",
+            Self::value_label(format!(
+                "avg {}ms | exit {}",
+                usage.average_duration_ms(),
+                usage
+                    .last_exit_code
+                    .map(|code| code.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ))
         ));
 
         lines.join("\n")
@@ -2023,24 +2002,28 @@ total requests: `{}`",
     ) -> String {
         match state.interaction_mode {
             TelegramInteractionMode::Chat => {
-                let session_id = Self::chat_session_id(chat_id, state);
                 let Some(agent) = agent else {
                     return format!(
-                        "Chat token usage is unavailable because AgentCore is not attached.\nSession: `{}`",
-                        session_id
+                        "Mode: {}\nSession: {}\nStatus: {}",
+                        Self::value_label(TelegramInteractionMode::Chat.as_str()),
+                        Self::session_value_label_for_mode(state, TelegramInteractionMode::Chat),
+                        Self::value_label("usage unavailable")
                     );
                 };
                 let Some(session_store) = agent.get_session_store() else {
                     return format!(
-                        "Chat token usage is unavailable because the session store is not ready.\nSession: `{}`",
-                        session_id
+                        "Mode: {}\nSession: {}\nStatus: {}",
+                        Self::value_label(TelegramInteractionMode::Chat.as_str()),
+                        Self::session_value_label_for_mode(state, TelegramInteractionMode::Chat),
+                        Self::value_label("usage unavailable")
                     );
                 };
+                let session_id = Self::chat_session_id(chat_id, state);
                 let usage = session_store
                     .store()
                     .load_token_usage(&session_id)
                     .to_json();
-                Self::format_chat_usage_report(&session_id, &usage)
+                Self::format_chat_usage_report(state, &usage)
             }
             TelegramInteractionMode::Coding => {
                 let backend = state.effective_cli_backend(cli_backends);
@@ -2066,39 +2049,29 @@ total requests: `{}`",
         let usage = state.usage_for(&backend);
 
         format!(
-            "Telegram channel status:\n\
-chat_id: `{}`\n\
-interaction mode: `{}`\n\
-active session: `{}`\n\
-chat session: `{}`\n\
-coding session: `{}`\n\
-cli backend: `{}`\n\
-execution mode: `{}`\n\
-auto approve: `{}`\n\
-cli binary: `{}`\n\
-project directory: `{}`\n\
-backend usage: {}\n\
-backend auth: {}\n\
-active handlers: `{}`\n\
-backend requests: `{}`\n\
-backend successes: `{}`\n\
-backend failures: `{}`",
-            chat_id,
-            state.interaction_mode.as_str(),
-            state.active_session_label(),
-            state.session_label_for(TelegramInteractionMode::Chat),
-            state.session_label_for(TelegramInteractionMode::Coding),
-            backend.as_str(),
-            state.execution_mode.as_str(),
-            if state.auto_approve { "on" } else { "off" },
-            backend_path,
-            effective_workdir.display(),
-            Self::backend_usage_template(cli_backends, &backend, state.auto_approve),
-            Self::backend_auth_hint(cli_backends, &backend),
-            active_handlers,
-            usage.requests,
-            usage.successes,
-            usage.failures
+            "TizenClaw: {}\n\
+Mode: {}\n\
+Session: {}\n\
+CodingAgent: {}\n\
+CodingMode: {}\n\
+AutoApprove: {}\n\
+Project: {}\n\
+Binary: {}\n\
+Handlers: {}\n\
+Runs: {}",
+            Self::value_label("online"),
+            Self::value_label(state.interaction_mode.as_str()),
+            Self::active_session_value_label(state),
+            Self::backend_label(&backend),
+            Self::value_label(state.execution_mode.as_str()),
+            Self::value_label(if state.auto_approve { "on" } else { "off" }),
+            Self::value_label(effective_workdir.display().to_string()),
+            Self::value_label(backend_path),
+            Self::value_label(active_handlers.to_string()),
+            Self::value_label(format!(
+                "req {} | ok {} | fail {}",
+                usage.requests, usage.successes, usage.failures
+            ))
         )
     }
 
@@ -2159,9 +2132,9 @@ backend failures: `{}`",
             }
             _ => TelegramOutgoingMessage::with_markup(
                 format!(
-                    "Unknown command `/{}`.\n\n{}",
-                    command,
-                    Self::supported_commands_text(cli_backends)
+                    "Unknown: {}\nUse: {}",
+                    Self::value_label(format!("/{}", command)),
+                    Self::value_label("/help")
                 ),
                 Self::build_reply_keyboard(&[&["/help"]]),
             ),
@@ -2208,22 +2181,22 @@ backend failures: `{}`",
 
     fn build_connected_message(state: &TelegramChatState) -> TelegramOutgoingMessage {
         TelegramOutgoingMessage::plain(format!(
-            "Telegram mobile connected.\nCurrent interaction mode: `{}`.\nCurrent session: `{}`.\nSelected CLI backend: `{}`.",
-            state.interaction_mode.as_str(),
-            state.active_session_label(),
-            state.cli_backend.as_str()
-        )
-        )
+            "Telegram: {}\nMode: {}\nSession: {}\nCodingAgent: {}",
+            Self::value_label("connected"),
+            Self::value_label(state.interaction_mode.as_str()),
+            Self::active_session_value_label(state),
+            Self::backend_label(&state.cli_backend)
+        ))
     }
 
     fn build_startup_message(state: &TelegramChatState) -> TelegramOutgoingMessage {
         TelegramOutgoingMessage::plain(format!(
-            "TizenClaw device started and Telegram channel is online.\nCurrent interaction mode: `{}`.\nCurrent session: `{}`.\nSelected CLI backend: `{}`.",
-            state.interaction_mode.as_str(),
-            state.active_session_label(),
-            state.cli_backend.as_str()
-        )
-        )
+            "TizenClaw: {}\nMode: {}\nSession: {}\nCodingAgent: {}",
+            Self::value_label("online"),
+            Self::value_label(state.interaction_mode.as_str()),
+            Self::active_session_value_label(state),
+            Self::backend_label(&state.cli_backend)
+        ))
     }
 
     fn startup_notification_targets(
@@ -2421,29 +2394,27 @@ User request:\n{}",
         output_text: Option<&str>,
     ) -> String {
         let phase_text = match phase {
-            "running" => "is running".to_string(),
+            "running" => "running".to_string(),
             "completed" | "failed" => phase.to_string(),
             other if other.starts_with("timed out") => other.to_string(),
-            other => format!("is {}", other),
+            other => other.to_string(),
         };
-        let activity = last_output_secs.map_or_else(
-            || "Waiting for CLI output...".to_string(),
-            |secs| format!("Last CLI output observed `{}` second(s) ago.", secs),
-        );
+        let activity =
+            last_output_secs.map_or_else(|| "waiting".to_string(), |secs| format!("{}s ago", secs));
         let latest_output = output_text
             .map(str::trim)
             .filter(|text| !text.is_empty())
             .map(|text| Self::truncate_chars(text, 2600))
-            .unwrap_or_else(|| "Waiting for CLI output...".to_string());
+            .unwrap_or_else(|| "waiting...".to_string());
 
         format!(
-            "`{}` coding request {}.\nSession: `{}`.\nProject directory: `{}`.\nElapsed: `{}` second(s).\n{}\n\nLatest output:\n{}",
-            backend.as_str(),
-            phase_text,
-            state.session_label_for(TelegramInteractionMode::Coding),
-            effective_cli_workdir.display(),
-            elapsed_secs,
-            activity,
+            "CodingAgent: {}\nStatus: {}\nSession: {}\nProject: {}\nElapsed: {}\nLastOutput: {}\n\nOutput:\n{}",
+            Self::backend_label(backend),
+            Self::value_label(phase_text),
+            Self::session_value_label_for_mode(state, TelegramInteractionMode::Coding),
+            Self::value_label(effective_cli_workdir.display().to_string()),
+            Self::value_label(format!("{}s", elapsed_secs)),
+            Self::value_label(activity),
             latest_output
         )
     }
@@ -2760,9 +2731,11 @@ User request:\n{}",
             }
 
             return format!(
-                "`{}` completed successfully in `{}` ms, but no response text was captured.",
-                backend.as_str(),
-                duration_ms
+                "CodingAgent: {}\nStatus: {}\nElapsed: {}\nOutput: {}",
+                Self::backend_label(backend),
+                Self::value_label("done"),
+                Self::value_label(format!("{}ms", duration_ms)),
+                Self::value_label("not captured")
             );
         }
 
@@ -2770,10 +2743,11 @@ User request:\n{}",
             .unwrap_or_else(|| "CLI failed with no output.".to_string());
 
         format!(
-            "`{}` finished with exit code `{}` in `{}` ms.\n\n{}",
-            backend.as_str(),
-            exit_code,
-            duration_ms,
+            "CodingAgent: {}\nStatus: {}\nElapsed: {}\nExitCode: {}\n\n{}",
+            Self::backend_label(backend),
+            Self::value_label("failed"),
+            Self::value_label(format!("{}ms", duration_ms)),
+            Self::value_label(exit_code.to_string()),
             Self::truncate_chars(body.trim(), 3400)
         )
     }
@@ -3685,15 +3659,15 @@ mod tests {
     #[test]
     fn supported_commands_text_uses_coding_agent_name() {
         let help = TelegramClient::supported_commands_text(&default_registry());
-        assert!(help.contains("/coding_agent <codex|gemini|claude>"));
-        assert!(help.contains("/usage - show chat token usage"));
-        assert!(help.contains("/auto_approve <on|off>"));
-        assert!(help.contains("/project <path>"));
-        assert!(help.contains("/new_session - start a fresh session for the current mode"));
-        assert!(!help.contains("/agent_cli <codex|gemini|claude>"));
-        assert!(!help.contains("/cli_backend <codex|gemini|claude>"));
-        assert!(!help.contains("/cli-backend <codex|gemini|claude>"));
-        assert!(!help.contains("/auto-approve <on|off>"));
+        assert!(help.contains("/coding_agent [codex|gemini|claude]"));
+        assert!(help.contains("/usage"));
+        assert!(help.contains("/auto_approve [on|off]"));
+        assert!(help.contains("/project [path]"));
+        assert!(help.contains("/new_session"));
+        assert!(!help.contains("/agent_cli [codex|gemini|claude]"));
+        assert!(!help.contains("/cli_backend [codex|gemini|claude]"));
+        assert!(!help.contains("/cli-backend [codex|gemini|claude]"));
+        assert!(!help.contains("/auto-approve [on|off]"));
     }
 
     #[test]
@@ -3786,7 +3760,7 @@ mod tests {
         let help = TelegramClient::supported_commands_text(&registry);
         let keyboard = TelegramClient::cli_backend_keyboard(&registry);
 
-        assert!(help.contains("/coding_agent <codex|gemini|claude|custom_agent>"));
+        assert!(help.contains("/coding_agent [codex|gemini|claude|custom_agent]"));
         assert_eq!(keyboard["keyboard"][3][0], "/coding_agent custom_agent");
         assert_eq!(registry.parse("custom"), Some(backend("custom_agent")));
         assert_eq!(registry.default_backend(), backend("custom_agent"));
@@ -3795,19 +3769,20 @@ mod tests {
     #[test]
     fn connected_message_mentions_current_mode() {
         let message = TelegramClient::build_connected_message(&TelegramChatState::default());
-        assert!(message.text.contains("Telegram mobile connected."));
-        assert!(message.text.contains("Current interaction mode: `chat`"));
-        assert!(message.text.contains("Current session: `chat-0001`"));
+        assert!(message.text.contains("Telegram: [connected]"));
+        assert!(message.text.contains("Mode: [chat]"));
+        assert!(message.text.contains("Session: [0001]"));
+        assert!(message.text.contains("CodingAgent: [codex]"));
         assert!(message.reply_markup.is_none());
     }
 
     #[test]
     fn startup_message_mentions_current_mode() {
         let message = TelegramClient::build_startup_message(&TelegramChatState::default());
-        assert!(message
-            .text
-            .contains("TizenClaw device started and Telegram channel is online."));
-        assert!(message.text.contains("Current session: `chat-0001`"));
+        assert!(message.text.contains("TizenClaw: [online]"));
+        assert!(message.text.contains("Mode: [chat]"));
+        assert!(message.text.contains("Session: [0001]"));
+        assert!(message.text.contains("CodingAgent: [codex]"));
         assert!(message.reply_markup.is_none());
     }
 
@@ -3832,7 +3807,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(reply.text.contains("Choose the interaction mode"));
+        assert!(reply.text.contains("Select Mode."));
         assert_eq!(
             reply.reply_markup.as_ref().unwrap()["keyboard"][0][0],
             "/select chat"
@@ -3864,7 +3839,8 @@ mod tests {
         )
         .unwrap();
 
-        assert!(reply.text.contains("Interaction mode set to `coding`."));
+        assert!(reply.text.contains("Mode: [coding]"));
+        assert!(reply.text.contains("CodingAgent: [codex]"));
         assert_eq!(
             reply.reply_markup.as_ref().unwrap()["remove_keyboard"],
             true
@@ -3892,7 +3868,8 @@ mod tests {
         )
         .unwrap();
 
-        assert!(reply.text.contains("Current project directory: `/tmp`"));
+        assert!(reply.text.contains("Project: [/tmp]"));
+        assert!(reply.text.contains("Use: /project [path] | /project reset"));
     }
 
     #[test]
@@ -3920,7 +3897,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(reply.text.contains("Project directory set to"));
+        assert!(reply.text.contains("Project: ["));
         let state = TelegramClient::load_chat_state_snapshot(&chat_states, 77);
         let expected = project_dir
             .canonicalize()
@@ -3953,7 +3930,8 @@ mod tests {
             0,
         )
         .unwrap();
-        assert!(new_reply.text.contains("CLI backend set to `claude`."));
+        assert!(new_reply.text.contains("CodingAgent: [claude]"));
+        assert!(new_reply.text.contains("Binary: [/usr/bin/claude]"));
         assert_eq!(
             new_reply.reply_markup.as_ref().unwrap()["remove_keyboard"],
             true
@@ -3971,7 +3949,8 @@ mod tests {
             0,
         )
         .unwrap();
-        assert!(legacy_reply.text.contains("CLI backend set to `codex`."));
+        assert!(legacy_reply.text.contains("CodingAgent: [codex]"));
+        assert!(legacy_reply.text.contains("Binary: [not found]"));
         assert_eq!(
             legacy_reply.reply_markup.as_ref().unwrap()["remove_keyboard"],
             true
@@ -3989,9 +3968,8 @@ mod tests {
             0,
         )
         .unwrap();
-        assert!(older_alias_reply
-            .text
-            .contains("CLI backend set to `claude`."));
+        assert!(older_alias_reply.text.contains("CodingAgent: [claude]"));
+        assert!(older_alias_reply.text.contains("Binary: [/usr/bin/claude]"));
         assert_eq!(
             older_alias_reply.reply_markup.as_ref().unwrap()["remove_keyboard"],
             true
@@ -4041,11 +4019,13 @@ mod tests {
             None,
         );
 
-        assert!(message.contains("`codex` coding request is running."));
-        assert!(message.contains("Session: `coding-0001`."));
-        assert!(message.contains("Project directory: `/tmp/project`."));
-        assert!(message.contains("Elapsed: `15` second(s)."));
-        assert!(message.contains("Waiting for CLI output"));
+        assert!(message.contains("CodingAgent: [codex]"));
+        assert!(message.contains("Status: [running]"));
+        assert!(message.contains("Session: [0001]"));
+        assert!(message.contains("Project: [/tmp/project]"));
+        assert!(message.contains("Elapsed: [15s]"));
+        assert!(message.contains("LastOutput: [waiting]"));
+        assert!(message.contains("waiting..."));
     }
 
     #[test]
@@ -4064,9 +4044,10 @@ mod tests {
             Some("Third line extends the response"),
         );
 
-        assert!(message.contains("`claude` coding request completed."));
-        assert!(message.contains("Last CLI output observed `3` second(s) ago."));
-        assert!(message.contains("Latest output:"));
+        assert!(message.contains("CodingAgent: [claude]"));
+        assert!(message.contains("Status: [completed]"));
+        assert!(message.contains("LastOutput: [3s ago]"));
+        assert!(message.contains("Output:"));
         assert!(message.contains("Third line extends the response"));
     }
 
@@ -4275,10 +4256,15 @@ mod tests {
             .insert(backend("gemini").as_str().to_string(), usage);
 
         let report = TelegramClient::format_coding_usage_report(&state, &backend("gemini"));
-        assert!(report.contains("Coding-agent usage for `gemini`"));
-        assert!(report.contains("latest CLI session: `gemini-session`"));
-        assert!(report.contains("latest total tokens: `15`"));
-        assert!(report.contains("cumulative thought tokens: `3`"));
+        assert!(report.contains("Mode: [coding]"));
+        assert!(report.contains("Session: [0002]"));
+        assert!(report.contains("CodingAgent: [gemini]"));
+        assert!(report.contains("LatestCLI: [gemini-session]"));
+        assert!(report.contains("Model: [gemini-2.5-flash]"));
+        assert!(report.contains("Latest: [in 10 | out 2 | total 15]"));
+        assert!(report.contains("Cached: [1]"));
+        assert!(report.contains("Thought: [3]"));
+        assert!(report.contains("TotalThought: [3]"));
     }
 
     #[test]
@@ -4293,7 +4279,7 @@ mod tests {
             "No capacity available for model gemini-3-flash-preview",
         );
 
-        assert!(message.contains("model-capacity limit"));
+        assert!(message.contains("[gemini] Model capacity reached."));
         assert!(message.contains("gemini-2.5-flash"));
     }
 
@@ -4433,9 +4419,7 @@ mod tests {
         let chat_states = Arc::new(Mutex::new(HashMap::new()));
 
         let first = TelegramClient::start_new_session(&chat_states, &state_path, 77);
-        assert!(first
-            .text
-            .contains("Started a new `chat` session: `chat-0002`."));
+        assert!(first.text.contains("Session: [0002]"));
 
         {
             let mut states = chat_states.lock().unwrap();
@@ -4444,8 +4428,6 @@ mod tests {
         }
 
         let second = TelegramClient::start_new_session(&chat_states, &state_path, 77);
-        assert!(second
-            .text
-            .contains("Started a new `coding` session: `coding-0002`."));
+        assert!(second.text.contains("Session: [0002]"));
     }
 }
