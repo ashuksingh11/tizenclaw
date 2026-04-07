@@ -1290,6 +1290,8 @@
     let adminConfigsCache = [];
     let activeConfigName = null;
     let activeConfigParsed = null;
+    let activeConfigStructuredRendered =
+        false;
 
     async function loadAdmin() {
         if (!authToken) {
@@ -1552,6 +1554,8 @@
                 '<span class="config-field-label">' +
                 escHtml(key) + '</span>' +
                 '<textarea class="config-field-input config-field-code"' +
+                ' spellcheck="false" autocapitalize="off"' +
+                ' autocorrect="off"' +
                 ' data-config-key="' + escHtml(key) + '"' +
                 ' data-config-type="json">' +
                 escHtml(JSON.stringify(value, null, 2)) +
@@ -1562,6 +1566,8 @@
             '<span class="config-field-label">' +
             escHtml(key) + '</span>' +
             '<textarea class="config-field-input"' +
+            ' spellcheck="false" autocapitalize="off"' +
+            ' autocorrect="off"' +
             ' data-config-key="' + escHtml(key) + '"' +
             ' data-config-type="string">' +
             escHtml(value === null ? '' : String(value)) +
@@ -1649,7 +1655,15 @@
                 return;
             }
             activeConfigParsed = parsed;
+            activeConfigStructuredRendered =
+                false;
+        }
+
+        if (mode === 'structured' &&
+            !activeConfigStructuredRendered) {
             renderConfigStructuredEditor();
+            activeConfigStructuredRendered =
+                true;
         }
 
         structured.style.display =
@@ -1699,6 +1713,8 @@
 
         raw.value = loaded.content || '';
         activeConfigParsed = tryParseJson(raw.value);
+        activeConfigStructuredRendered =
+            false;
         status.textContent = loaded.exists
             ? 'Active'
             : 'Sample';
@@ -1708,8 +1724,7 @@
         format.textContent = activeConfigParsed
             ? 'JSON'
             : 'TEXT';
-        renderConfigStructuredEditor();
-        setConfigModalMode('structured');
+        setConfigModalMode('raw');
 
         if (loaded.message) {
             msg.textContent = loaded.message;
@@ -1731,6 +1746,8 @@
         document.body.classList.remove('modal-open');
         activeConfigName = null;
         activeConfigParsed = null;
+        activeConfigStructuredRendered =
+            false;
     }
 
     function collectStructuredConfig() {

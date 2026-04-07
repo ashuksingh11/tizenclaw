@@ -56,6 +56,45 @@ impl AnthropicBackend {
     fn trimmed_text(text: &str) -> String {
         text.trim().to_string()
     }
+
+    fn normalized_model(model: &str) -> String {
+        if model.starts_with("claude-") && model.contains('.') {
+            let normalized = model.replace('.', "-");
+            if normalized != model {
+                log::info!(
+                    "[Anthropic] Normalized model alias '{}' -> '{}'",
+                    model,
+                    normalized
+                );
+            }
+            normalized
+        } else {
+            model.to_string()
+        }
+    }
+
+    fn request_url(endpoint: &str) -> String {
+        let trimmed = endpoint.trim().trim_end_matches('/');
+        if trimmed.ends_with("/messages") {
+            trimmed.to_string()
+        } else {
+            format!("{}/messages", trimmed)
+        }
+    }
+
+    fn extract_error_message(body: &str) -> Option<String> {
+        let json = serde_json::from_str::<Value>(body).ok()?;
+        if let Some(message) = json
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .and_then(Value::as_str)
+        {
+            return Some(message.to_string());
+        }
+        json.get("message")
+            .and_then(Value::as_str)
+            .map(|message| message.to_string())
+    }
 }
 
 #[async_trait::async_trait]
@@ -88,7 +127,7 @@ impl LlmBackend for AnthropicBackend {
         max_tokens: Option<u32>,
     ) -> LlmResponse {
         let mut req = json!({
-            "model": self.model,
+            "model": Self::normalized_model(&self.model),
             "max_tokens": max_tokens.or(self.default_max_tokens).unwrap_or(4096)
         });
         if let Some(temperature) = self.temperature {
@@ -182,7 +221,7 @@ impl LlmBackend for AnthropicBackend {
             req["tools"] = Value::Array(arr);
         }
 
-        let url = format!("{}/messages", self.endpoint);
+        let url = Self::request_url(&self.endpoint);
         let headers = [
             ("x-api-key", self.api_key.as_str()),
             ("anthropic-version", "2023-06-01"),
@@ -193,7 +232,9 @@ impl LlmBackend for AnthropicBackend {
         let mut resp = LlmResponse::default();
         resp.http_status = http_resp.status_code;
         if !http_resp.success {
-            resp.error_message = http_resp.error;
+            resp.error_message = Self::extract_error_message(&http_resp.body)
+                .map(|message| format!("{} ({})", message, http_resp.error))
+                .unwrap_or(http_resp.error);
             return resp;
         }
 
@@ -249,5 +290,42 @@ mod tests {
         assert_eq!(resp.total_tokens, 1250);
         assert_eq!(resp.cache_creation_input_tokens, 800);
         assert_eq!(resp.cache_read_input_tokens, 640);
+    }
+
+    #[test]
+    fn normalized_model_accepts_short_alias_with_dot() {
+        assert_eq!(
+            AnthropicBackend::normalized_model("claude-sonnet-4.6"),
+            "claude-sonnet-4-6"
+        );
+        assert_eq!(
+            AnthropicBackend::normalized_model("claude-opus-4.1"),
+            "claude-opus-4-1"
+        );
+    }
+
+    #[test]
+    fn request_url_accepts_base_or_messages_endpoint() {
+        assert_eq!(
+            AnthropicBackend::request_url("https://api.anthropic.com/v1"),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            AnthropicBackend::request_url("https://api.anthropic.com/v1/"),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            AnthropicBackend::request_url("https://api.anthropic.com/v1/messages"),
+            "https://api.anthropic.com/v1/messages"
+        );
+    }
+
+    #[test]
+    fn extract_error_message_reads_nested_anthropic_error() {
+        let body = r#"{"type":"error","error":{"type":"not_found_error","message":"model not found"}}"#;
+        assert_eq!(
+            AnthropicBackend::extract_error_message(body).as_deref(),
+            Some("model not found")
+        );
     }
 }
