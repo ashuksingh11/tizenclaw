@@ -1402,7 +1402,12 @@ fn validate_generated_code_grounding(
 
     let missing_paths = prompt_files
         .iter()
-        .filter(|path| !grounded_paths.contains(path.as_str()))
+        .filter(|path| {
+            // Only require prior inspection for files that actually exist on disk.
+            // Files referenced in the prompt that don't exist yet are likely output
+            // targets — the agent is creating them, not reading them.
+            !grounded_paths.contains(path.as_str()) && Path::new(path).exists()
+        })
         .cloned()
         .collect::<Vec<_>>();
     if !missing_paths.is_empty() {
