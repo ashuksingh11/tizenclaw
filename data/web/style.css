@@ -845,6 +845,7 @@ body {
     .chat-container { flex-direction: column; height: auto; }
     .chat-sidebar   { width: 100%; max-height: 240px; }
     .chat-messages  { min-height: 320px; }
+    .auth-link-card { flex-direction: column; }
 }
 
 /* ─── Buttons ─────────────────────────────────────────────── */
@@ -1058,6 +1059,57 @@ body {
     font-size: 0.76rem;
     margin-top: 7px;
     min-height: 1.2em;
+}
+
+.auth-link-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 16px 18px;
+    margin-bottom: 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-card);
+}
+
+.auth-link-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+}
+
+.auth-link-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.auth-link-header h3 {
+    margin: 0;
+    font-size: 0.96rem;
+    color: var(--text-primary);
+}
+
+.auth-link-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.auth-link-hint {
+    margin: 0;
+    font-size: 0.77rem;
+    color: var(--text-secondary);
+}
+
+.auth-link-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
 /* Config Cards */

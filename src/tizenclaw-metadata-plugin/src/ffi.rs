@@ -44,10 +44,19 @@ pub const PM_PRIVILEGE_PARTNER: c_int = 2;
 /// Platform-level privilege (highest tier).
 pub const PM_PRIVILEGE_PLATFORM: c_int = 3;
 
+#[cfg(tizen_native)]
 extern "C" {
     /// Query the privilege level of the current package installer session.
     ///
     /// From `<pkgmgr_installer_info.h>`.
     /// Returns 0 on success, non-zero on failure.
     pub fn pkgmgr_installer_info_get_privilege_level(level: *mut c_int) -> c_int;
+}
+
+#[cfg(not(tizen_native))]
+pub unsafe fn pkgmgr_installer_info_get_privilege_level(level: *mut c_int) -> c_int {
+    if !level.is_null() {
+        *level = PM_PRIVILEGE_PLATFORM;
+    }
+    0
 }

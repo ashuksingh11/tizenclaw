@@ -19,6 +19,7 @@ use axum::{
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tower_http::{
@@ -302,6 +303,8 @@ async fn main() {
         .route("/api/auth/logout", post(api_auth_logout))
         .route("/api/auth/session", get(api_auth_session))
         .route("/api/auth/change_password", post(api_auth_change_password))
+        .route("/api/codex/auth/status", get(api_codex_auth_status))
+        .route("/api/codex/auth/connect", post(api_codex_auth_connect))
         .route("/api/config/list", get(api_config_list))
         .route(
             "/api/config/:name",
@@ -1043,6 +1046,75 @@ async fn api_auth_change_password(
         json!({"password_hash": new_hash}).to_string(),
     );
     Ok(Json(json!({"status": "ok"})))
+}
+
+fn resolve_tizenclaw_cli_path() -> Option<PathBuf> {
+    let current_exe = std::env::current_exe().ok()?;
+    let sibling = current_exe.parent()?.join("tizenclaw-cli");
+    if sibling.is_file() {
+        return Some(sibling);
+    }
+
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        let candidate = dir.join("tizenclaw-cli");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn run_tizenclaw_cli_json(args: &[&str]) -> Result<Value, String> {
+    let cli_path =
+        resolve_tizenclaw_cli_path().ok_or_else(|| "tizenclaw-cli binary was not found".to_string())?;
+    let output = Command::new(&cli_path)
+        .args(args)
+        .output()
+        .map_err(|err| format!("Failed to run '{}': {}", cli_path.display(), err))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() { stderr } else { stdout };
+        return Err(if detail.is_empty() {
+            format!("'{}' exited with {}", cli_path.display(), output.status)
+        } else {
+            detail
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    serde_json::from_str(&stdout)
+        .map_err(|err| format!("Failed to parse JSON from '{}': {}", cli_path.display(), err))
+}
+
+async fn api_codex_auth_status(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !validate_token(&headers, &state).await {
+        return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+    }
+
+    match run_tizenclaw_cli_json(&["auth", "openai-codex", "status", "--json"]) {
+        Ok(result) => Ok(Json(result)),
+        Err(err) => Err(json_error(StatusCode::BAD_GATEWAY, &err)),
+    }
+}
+
+async fn api_codex_auth_connect(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    if !validate_token(&headers, &state).await {
+        return Err(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+    }
+
+    match run_tizenclaw_cli_json(&["auth", "openai-codex", "connect", "--json"]) {
+        Ok(result) => Ok(Json(result)),
+        Err(err) => Err(json_error(StatusCode::BAD_GATEWAY, &err)),
+    }
 }
 
 async fn api_config_list(

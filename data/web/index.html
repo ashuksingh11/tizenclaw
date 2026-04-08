@@ -374,6 +374,28 @@
             <p class="pw-change-msg" id="pw-change-msg"></p>
           </div>
 
+          <div class="auth-link-card">
+            <div class="auth-link-copy">
+              <div class="auth-link-header">
+                <h3>ChatGPT Session Link</h3>
+                <span id="codex-auth-badge" class="config-chip neutral">Checking...</span>
+              </div>
+              <p id="codex-auth-summary" class="admin-toolbar-copy">
+                TizenClaw can reuse a local Codex CLI ChatGPT login session for the
+                <code>openai-codex</code> backend.
+              </p>
+              <div id="codex-auth-meta" class="auth-link-meta"></div>
+              <p id="codex-auth-hint" class="auth-link-hint">
+                If no session is available, run <code>tizenclaw-cli auth openai-codex login</code>
+                in your terminal first, then come back here and connect it.
+              </p>
+            </div>
+            <div class="auth-link-actions">
+              <button id="codex-auth-refresh-btn" class="btn-outline" type="button">Refresh</button>
+              <button id="codex-auth-connect-btn" class="btn-primary" type="button">Link Session</button>
+            </div>
+          </div>
+
           <div class="config-list" id="config-list">
             <p class="empty-state">Loading configurations...</p>
           </div>

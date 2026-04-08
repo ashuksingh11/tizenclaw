@@ -27,6 +27,21 @@
       "model": "gpt-4o",
       "endpoint": "https://api.openai.com/v1"
     },
+    "openai-codex": {
+      "auth_mode": "oauth",
+      "model": "gpt-5.4",
+      "endpoint": "https://chatgpt.com/backend-api",
+      "transport": "responses",
+      "api_path": "/responses",
+      "service_tier": "priority",
+      "oauth": {
+        "access_token": "",
+        "refresh_token": "",
+        "expires_at": 0,
+        "account_id": "",
+        "source": "codex_cli"
+      }
+    },
     "anthropic": {
       "api_key": "",
       "model": "claude-sonnet-4-20250514",

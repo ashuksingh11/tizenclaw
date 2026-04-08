@@ -85,6 +85,15 @@ install_data_if_present() {
   fi
 }
 
+require_build_artifact() {
+  local path="$1"
+  local label="$2"
+  if [[ ! -f "${path}" ]]; then
+    echo "Missing build artifact for ${label}: ${path}" >&2
+    exit 1
+  fi
+}
+
 copy_tree_contents() {
   local src="$1"
   local dest="$2"
@@ -171,6 +180,13 @@ main() {
   bundle_root="${stage_dir}/${asset_basename}"
   archive_path="${OUTPUT_DIR}/${asset_basename}.tar.gz"
   checksum_path="${archive_path}.sha256"
+
+  require_build_artifact "${build_dir}/${PKG_NAME}" "${PKG_NAME}"
+  require_build_artifact "${build_dir}/${TOOL_EXECUTOR_NAME}" "${TOOL_EXECUTOR_NAME}"
+  require_build_artifact "${build_dir}/${CLI_NAME}" "${CLI_NAME}"
+  require_build_artifact "${build_dir}/${WEB_DASHBOARD_NAME}" "${WEB_DASHBOARD_NAME}"
+  require_build_artifact "${build_dir}/libtizenclaw.so" "libtizenclaw.so"
+  require_build_artifact "${build_dir}/libtizenclaw.rlib" "libtizenclaw.rlib"
 
   mkdir -p \
     "${bundle_root}/bin" \

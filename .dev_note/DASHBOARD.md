@@ -2,6 +2,26 @@
 
 ## Current Cycle
 
+- Request: Prepare the current OpenAI Codex session-link work for commit
+  and review Cargo-related build paths to reduce GitHub CI risk.
+- Date: 2026-04-09
+- Language: Korean
+- Request: Add a `tizenclaw-cli` login-session bridge for `openai-codex`
+  and connect the same flow into the web dashboard so admins can inspect
+  and link a local Codex CLI ChatGPT session.
+- Date: 2026-04-09
+- Language: Korean
+- Request: Upgrade `openai-codex` from the earlier experimental bridge to
+  full OpenClaw-level support including Codex CLI auth reuse, OAuth
+  refresh exchange, rotated-token persistence, and ChatGPT Responses
+  protocol compatibility.
+- Date: 2026-04-09
+- Language: Korean
+- Request: `~/samba/github/openclaw`의 ChatGPT 로그인 기반 연동 방식을
+  참고해 TizenClaw용 실험적 `openai-codex` backend 도입 가능성을
+  계획하고, 후속 개발을 위한 `PLAN.md`를 작성한다.
+- Date: 2026-04-08
+- Language: Korean
 - Request: 개발속도 향상을 위해 빌드 관련 규칙을 변경하고, 사용자의
   입력이 없으면 `devel_host.sh` 기준으로 개발을 진행하도록 관련 룰과
   스킬을 업데이트한다.
@@ -107,6 +127,282 @@
 
 ## Stage Status
 
+- [x] Supervisor Gate after Commit & Push
+  - PASS: Workspace cleanup completed, unrelated pre-existing deletions
+    were left unstaged, and the finalized changes were committed through
+    `.tmp/commit_msg.txt`.
+- [x] Stage 6: Commit & Push
+  - Summary:
+    - Ran `.agent/scripts/cleanup_workspace.sh` before staging.
+    - Kept the existing deleted docs outside the commit scope because
+      they were unrelated to this cycle.
+    - Prepared a single commit covering the Codex session-link feature
+      and the Cargo-path CI hardening updates.
+- [x] Supervisor Gate after Test & Review
+  - PASS: Commit preparation included a Cargo-path review, host tests with
+    `--locked`, and a local host-bundle smoke build mirroring the GitHub
+    CI bundle job.
+- [x] Stage 5: Test & Review
+  - Verdict: PASS
+  - Evidence:
+    - `./devel_host.sh --test` passed after switching host Cargo
+      invocations to `--offline --locked`.
+    - `bash scripts/create_host_release_bundle.sh --version
+      local-ci-check-locked --output-dir
+      /tmp/tizenclaw-dist-check-locked` succeeded.
+    - The latest public `develRust` commit checks page for
+      `b37c636b72ebc1765a80b3a3283d97c325cda0fc` showed the visible CI jobs
+      in a succeeded state.
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: The host-default script path remained the source of truth for
+    verification and packaging, and the bundle build completed after the
+    Cargo review changes.
+- [x] Stage 4: Build & Deploy
+  - Summary:
+    - Re-ran the host verification path with `./devel_host.sh --test`.
+    - Re-ran the host bundle packaging path through
+      `scripts/create_host_release_bundle.sh`.
+- [x] Supervisor Gate after Development
+  - PASS: Development improved Cargo reproducibility and bundle error
+    reporting without stepping outside the script-first workflow.
+- [x] Stage 3: Development
+  - Summary:
+    - Added `--locked` to host Cargo build/test invocations in
+      `deploy_host.sh`.
+    - Added explicit required-artifact checks in
+      `scripts/create_host_release_bundle.sh` so bundle failures report
+      missing Cargo outputs immediately.
+- [x] Supervisor Gate after Design
+  - PASS: Design narrowed the CI hardening work to Cargo reproducibility
+    and artifact validation instead of speculative workflow churn.
+- [x] Stage 2: Design
+  - Artifact:
+    `.dev_note/DASHBOARD.md`
+  - Summary:
+    - Focused the review on the host bundle workflow and the shared host
+      build scripts that GitHub CI already exercises.
+- [x] Supervisor Gate after Planning
+  - PASS: Planning recorded the commit-preparation scope and the Cargo
+    review request as a host-default cycle.
+- [x] Stage 1: Planning
+  - Artifact:
+    `.dev_note/DASHBOARD.md`
+  - Summary:
+    - Classified the task as commit preparation plus CI-oriented Cargo
+      review.
+    - Preserved the existing implementation scope and excluded unrelated
+      pre-existing deletions from the planned commit.
+- [x] Supervisor Gate after Test & Review
+  - PASS: The CLI bridge and dashboard integration were verified through
+    the host-default script path, installed binaries, and a live
+    dashboard API call.
+- [x] Stage 5: Test & Review
+  - Verdict: PASS
+  - Evidence:
+    - `./devel_host.sh --test` completed successfully after the new CLI
+      auth and dashboard integration changes.
+    - Installed binary check:
+      `~/.tizenclaw/bin/tizenclaw-cli auth openai-codex status --json`
+      returned the linked Codex session state.
+    - Installed binary check:
+      `~/.tizenclaw/bin/tizenclaw-cli auth openai-codex connect --json`
+      returned a successful daemon reload result.
+    - Live dashboard API check:
+      `POST /api/auth/login` and
+      `GET /api/codex/auth/status` succeeded on `http://localhost:9091`.
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: The host-default install/start path completed through
+    `./devel_host.sh`, refreshing the installed CLI/dashboard binaries
+    and restarting the daemon successfully.
+- [x] Stage 4: Build & Deploy
+  - Summary:
+    - `./devel_host.sh` rebuilt and installed `tizenclaw-cli`,
+      `tizenclaw-web-dashboard`, and the daemon on the host path.
+    - The host daemon restart completed successfully and the dashboard
+      was started for API verification.
+- [x] Supervisor Gate after Development
+  - PASS: Development added the requested CLI session bridge and exposed
+    the same flow in the dashboard without leaving the host-first,
+    script-driven workflow.
+- [x] Stage 3: Development
+  - Summary:
+    - Added `tizenclaw-cli auth openai-codex status|connect|import|login`
+      commands with JSON output support.
+    - Updated the CLI-side default LLM config and setup wizard to
+      recognize `openai-codex`.
+    - Added dashboard API routes for Codex auth status/connect and an
+      admin UI card for refresh/link actions.
+- [x] Supervisor Gate after Design
+  - PASS: Design chose the lower-risk integration path of reusing the
+    CLI bridge from the dashboard instead of duplicating Codex auth
+    mutation logic inside the web service.
+- [x] Stage 2: Design
+  - Artifact:
+    `.dev_note/PLAN.md`
+  - Summary:
+    - Scoped the session-link feature around a shared CLI contract:
+      terminal login/import for `tizenclaw-cli`, dashboard status/link
+      on top of the same bridge.
+- [x] Supervisor Gate after Planning
+  - PASS: Planning recorded the new request as a host-default cycle that
+    extends the existing `openai-codex` work into `tizenclaw-cli` and
+    the web dashboard.
+- [x] Stage 1: Planning
+  - Artifact:
+    `.dev_note/PLAN.md`
+  - Summary:
+    - Classified the request as host-default implementation work.
+    - Preserved the existing English artifact rule and focused the cycle
+      on executable integration rather than more documentation.
+- [x] Supervisor Gate after Test & Review
+  - PASS: Host-default verification completed through
+    `./devel_host.sh --test` after the full Codex OAuth/Responses
+    implementation, and the new `openai-codex` tests passed alongside
+    the existing host suite.
+- [x] Stage 5: Test & Review
+  - Verdict: PASS
+  - Evidence:
+    - `./devel_host.sh --test` completed successfully on the host path.
+    - New tests
+      `llm::openai::tests::openai_codex_accepts_oauth_access_token`,
+      `llm::openai::tests::openai_codex_imports_codex_cli_auth_json`,
+      `llm::openai::tests::openai_codex_defaults_to_responses_transport`,
+      and
+      `llm::openai::tests::parse_responses_response_extracts_text_and_tool_calls`
+      passed.
+    - `git diff --check` passed before the host test cycle.
+  - Review Notes:
+    - `openai-codex` now uses the ChatGPT Responses path and attempts
+      Codex OAuth token refresh before request execution.
+    - Host tests still emit harmless non-Tizen metadata logging warnings,
+      but the suite remains green.
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: The host-default runtime path was exercised through
+    `./devel_host.sh --status` and showed recent successful daemon
+    startup logs ending in `Daemon ready`.
+- [x] Stage 4: Build & Deploy
+  - Summary:
+    - `./devel_host.sh --status` was executed after the Codex OAuth and
+      Responses changes.
+    - The host status output confirmed recent successful daemon startup
+      logs ending in `Daemon ready`.
+- [x] Supervisor Gate after Development
+  - PASS: Development extended `openai-codex` beyond the earlier
+    experimental bridge and kept the implementation on the host-first
+    script-driven workflow.
+- [x] Stage 3: Development
+  - Summary:
+    - Reworked `openai-codex` to use `chatgpt.com/backend-api/responses`
+      instead of the earlier chat-completions placeholder path.
+    - Added Codex CLI auth-store reuse from `~/.codex/auth.json`,
+      runtime OAuth refresh exchange against `auth.openai.com`, and
+      rotated-token persistence back to the external auth store.
+    - Added `ChatGPT-Account-Id` request header support and Responses
+      response parsing for text, reasoning, and function calls.
+    - Updated default/sample backend config to the supported Codex
+      layout with `transport: "responses"`, `service_tier`, and OAuth
+      account/source fields.
+- [x] Supervisor Gate after Design
+  - PASS: Design updated the backend target from experimental bootstrap
+    scope to full Codex OAuth/Responses support while keeping the direct
+    OpenAI API-key path separate.
+- [x] Stage 2: Design
+  - Artifact:
+    `.dev_note/docs/openai_codex_oauth_design.md`
+  - Summary:
+    - Documented full `openai-codex` behavior covering Codex CLI auth
+      reuse, refresh-token rotation, persisted writes, and the
+      `responses` transport.
+    - Fixed the supported config shape and request/response adaptation
+      boundaries for the implementation cycle.
+- [x] Supervisor Gate after Planning
+  - PASS: Planning re-scoped the cycle from the earlier experimental
+    bridge to full OpenClaw-level Codex OAuth/Responses support and
+    recorded the new scope in `.dev_note/PLAN.md`.
+- [x] Stage 1: Planning
+  - Artifact:
+    `.dev_note/PLAN.md`
+  - Summary:
+    - Replaced the earlier experimental scope with a full support target
+      covering external Codex auth reuse, OAuth refresh exchange, and
+      ChatGPT Responses compatibility.
+    - Preserved the host-default execution path for implementation and
+      verification.
+- [x] Supervisor Gate after Test & Review
+  - PASS: Host-default verification completed through
+    `./devel_host.sh --test`, the new `openai-codex` initialization tests
+    passed, and the host test path was unblocked without direct cargo
+    commands outside the managed script flow.
+- [x] Stage 5: Test & Review
+  - Verdict: PASS
+  - Evidence:
+    - `./devel_host.sh --test` completed successfully on the host path.
+    - New unit tests
+      `llm::openai::tests::openai_codex_accepts_oauth_access_token` and
+      `llm::openai::tests::openai_codex_rejects_expired_oauth_access_token`
+      passed.
+    - Metadata plugin crates no longer fail host tests on missing Tizen
+      linker libraries.
+    - `git diff --check` passed after the implementation updates.
+  - Review Notes:
+    - The current cycle implements an experimental credential and
+      transport foundation, not a full OpenClaw-equivalent OAuth refresh
+      flow.
+    - Host tests still emit harmless non-Tizen warnings for unused
+      metadata logging constants, but the linker failure path is removed.
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: The host-default path was exercised through the managed
+    wrapper, and status verification confirmed the daemon startup logs
+    without requiring a direct cargo invocation.
+- [x] Stage 4: Build & Deploy
+  - Summary:
+    - `./devel_host.sh --status` was executed to verify the host-default
+      runtime path after the code changes.
+    - The host status output confirmed recent successful daemon startup
+      logs ending in `Daemon ready`.
+    - The build/test wrapper path remained `./devel_host.sh`.
+- [x] Supervisor Gate after Development
+  - PASS: Development added the experimental `openai-codex` backend
+    path, expanded auth merge behavior, and stayed within the host-first
+    script-driven workflow.
+- [x] Stage 3: Development
+  - Summary:
+    - built-in backend registry에 `openai-codex`를 추가해
+      experimental backend 선택 경로를 열었다.
+    - OpenAI-compatible backend가 `oauth.access_token`,
+      `oauth.expires_at`, `api_path`를 읽도록 확장했다.
+    - `KeyStore` 병합 경로를 `api_key` 중심에서 OAuth access token과
+      refresh token까지 다룰 수 있게 넓혔다.
+    - 기본/sample LLM config에 `openai-codex` experimental 구성을
+      추가하고 초기화 unit test를 보강했다.
+- [x] Supervisor Gate after Design
+  - PASS: Design documented the experimental `openai-codex` backend
+    boundary, the OAuth credential resolution order, and the host-default
+    implementation constraints without introducing a direct cargo path.
+- [x] Stage 2: Design
+  - Artifact:
+    `.dev_note/docs/openai_codex_oauth_design.md`
+  - Summary:
+    - `openai-codex`를 기존 `openai` 경로와 분리된 experimental backend로
+      설계했다.
+    - OAuth access token, refresh token, expires_at의 최소 저장/검증
+      구조를 정의했다.
+    - 이번 사이클은 refresh 교환 전체가 아니라 credential/transport
+      기반을 우선 구현하는 범위로 제한했다.
+- [x] Supervisor Gate after Planning
+  - PASS: Planning classified this cycle as a host-default preparation
+    task, documented the experimental `openai-codex` scope, and recorded
+    the implementation constraints in `.dev_note/PLAN.md`.
+- [x] Stage 1: Planning
+  - Artifact:
+    `.dev_note/PLAN.md`
+  - Summary:
+    - `openclaw`의 ChatGPT OAuth 계열 구조와 현재 TizenClaw의
+      `api_key` 중심 구조 차이를 정리했다.
+    - 이번 사이클은 구현이 아니라 실험용 backend 도입 준비 단계로
+      분류했다.
+    - 후속 Stage 2~6에서 필요한 범위, 리스크, 저장 전략, 검증 경로를
+      `PLAN.md`에 고정했다.
 - [x] Supervisor Gate after Commit
   - PASS: Commit stage cleaned the workspace, recorded the host-default
     cycle in `.dev_note/DASHBOARD.md`, and uses `.tmp/commit_msg.txt`

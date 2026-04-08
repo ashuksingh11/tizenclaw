@@ -371,7 +371,7 @@ cleanup_legacy_host_install() {
 do_build() {
   header "Step 1/3: Cargo Build (Host — Generic Linux)"
 
-  local cargo_args=("build" "--offline")
+  local cargo_args=("build" "--offline" "--locked")
   if [ "${BUILD_MODE}" = "release" ]; then
     cargo_args+=("--release")
   fi
@@ -416,18 +416,18 @@ do_test() {
     process_report || true
   fi
 
-  log "Running: cargo test --offline"
+  log "Running: cargo test --offline --locked"
   cd "${PROJECT_DIR}"
 
   if [ "${DRY_RUN}" = true ]; then
     echo -e "  ${YELLOW}[DRY-RUN]${NC} export CARGO_TARGET_DIR='${CARGO_TARGET_DIR_HOST}'"
-    echo -e "  ${YELLOW}[DRY-RUN]${NC} cargo test --offline"
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} cargo test --offline --locked"
     return 0
   fi
 
   mkdir -p "${CARGO_TARGET_DIR_HOST}"
 
-  if CARGO_TARGET_DIR="${CARGO_TARGET_DIR_HOST}" cargo test --offline -- --test-threads=1 2>&1; then
+  if CARGO_TARGET_DIR="${CARGO_TARGET_DIR_HOST}" cargo test --offline --locked -- --test-threads=1 2>&1; then
     ok "All tests passed"
   else
     warn "Some tests failed (see output above)"

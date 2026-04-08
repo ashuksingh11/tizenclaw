@@ -1292,6 +1292,7 @@
     let activeConfigParsed = null;
     let activeConfigStructuredRendered =
         false;
+    let codexAuthStatusCache = null;
 
     async function loadAdmin() {
         if (!authToken) {
@@ -1320,6 +1321,7 @@
         document.getElementById('admin-panel')
             .style.display = '';
         loadConfigs();
+        loadCodexAuthStatus();
     }
 
     function handleAdminUnauthorized(message) {
@@ -1433,6 +1435,133 @@
                 msg.style.color = 'var(--danger)';
             }
         });
+
+    document.getElementById('codex-auth-refresh-btn')
+        .addEventListener('click', () => {
+            loadCodexAuthStatus(true);
+        });
+
+    document.getElementById('codex-auth-connect-btn')
+        .addEventListener('click', async () => {
+            const button = document.getElementById(
+                'codex-auth-connect-btn');
+            button.disabled = true;
+            try {
+                const resp = await apiPost(
+                    'codex/auth/connect', {});
+                if (resp && resp.status === 'ok') {
+                    showToast(resp.message ||
+                        'ChatGPT session linked',
+                        'success');
+                } else {
+                    showToast((resp && resp.error) ||
+                        'Failed to link session',
+                        'error');
+                }
+            } finally {
+                button.disabled = false;
+                loadCodexAuthStatus();
+                loadConfigs();
+            }
+        });
+
+    function renderCodexAuthStatus(data) {
+        codexAuthStatusCache = data || null;
+        const badge = document.getElementById(
+            'codex-auth-badge');
+        const summary = document.getElementById(
+            'codex-auth-summary');
+        const meta = document.getElementById(
+            'codex-auth-meta');
+        const hint = document.getElementById(
+            'codex-auth-hint');
+        const connectBtn = document.getElementById(
+            'codex-auth-connect-btn');
+
+        if (!data) {
+            badge.textContent = 'Unavailable';
+            badge.className = 'config-chip danger';
+            summary.textContent =
+                'Could not query the local Codex CLI link state.';
+            meta.innerHTML = '';
+            hint.innerHTML =
+                'Check that <code>tizenclaw-cli</code> is installed and accessible from the dashboard process.';
+            connectBtn.disabled = true;
+            return;
+        }
+
+        const linked = !!data.linked;
+        const loggedIn =
+            data.codex_login_state === 'logged_in';
+        const cliAvailable =
+            data.codex_cli_available !== false;
+
+        badge.textContent = linked
+            ? 'Linked'
+            : loggedIn ? 'Ready to Link' : 'Not Logged In';
+        badge.className = 'config-chip ' +
+            (linked ? 'success' :
+                loggedIn ? 'warning' : 'neutral');
+
+        summary.textContent = data.message ||
+            'Manage the ChatGPT session link for openai-codex.';
+
+        const chips = [];
+        if (data.config_active_backend) {
+            chips.push(
+                '<span class="config-chip neutral">Active backend: ' +
+                escHtml(data.config_active_backend) +
+                '</span>');
+        }
+        if (data.account_id) {
+            chips.push(
+                '<span class="config-chip neutral">Account: ' +
+                escHtml(data.account_id) +
+                '</span>');
+        }
+        if (data.oauth_source) {
+            chips.push(
+                '<span class="config-chip neutral">Source: ' +
+                escHtml(data.oauth_source) +
+                '</span>');
+        }
+        meta.innerHTML = chips.join('');
+
+        if (linked) {
+            hint.innerHTML =
+                'TizenClaw is already pointed at <code>openai-codex</code>. Refresh to verify the external session is still present.';
+        } else if (loggedIn) {
+            hint.innerHTML =
+                'A Codex CLI ChatGPT session is available locally. Click <code>Link Session</code> to switch TizenClaw to <code>openai-codex</code>.';
+        } else {
+            hint.innerHTML =
+                'Run <code>tizenclaw-cli auth openai-codex login</code> in a terminal first, then return here and click <code>Link Session</code>.';
+        }
+
+        connectBtn.disabled = !cliAvailable || !loggedIn;
+    }
+
+    async function loadCodexAuthStatus(showLoading) {
+        const badge = document.getElementById(
+            'codex-auth-badge');
+        if (showLoading) {
+            badge.textContent = 'Checking...';
+            badge.className = 'config-chip neutral';
+        }
+
+        const data = await apiFetch(
+            'codex/auth/status');
+        if (data && data.status === 'ok') {
+            renderCodexAuthStatus(data);
+        } else if (data && data.error) {
+            renderCodexAuthStatus(null);
+            document.getElementById(
+                'codex-auth-summary').textContent =
+                data.error;
+        } else {
+            renderCodexAuthStatus(null);
+        }
+    }
 
     // --- Config Management ---
     async function loadConfigs() {

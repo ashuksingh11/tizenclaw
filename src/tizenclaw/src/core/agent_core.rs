@@ -2272,28 +2272,59 @@ impl LlmConfig {
     }
 }
 
-/// Merge an `api_key` from `KeyStore` into a backend config `Value`.
+/// Merge backend auth material from `KeyStore` into a backend config `Value`.
 ///
 /// Priority:
-///  1. Explicit `api_key` in the JSON config block (non-empty) — unchanged.
-///  2. `keys.json` entry keyed by backend name (or env var via `KeyStore::get`).
-///  3. Nothing found — config returned as-is (backend will fail init gracefully).
-fn merge_api_key(mut cfg: Value, name: &str, ks: &crate::infra::key_store::KeyStore) -> Value {
-    // If the config already contains a non-empty api_key, trust it as-is.
-    if cfg
+///  1. Explicit `api_key` in the JSON config block (non-empty)
+///  2. Explicit `oauth.access_token` in the JSON config block (non-empty)
+///  3. `keys.json` entry keyed by backend name
+///  4. `keys.json` entry keyed by `<backend>.access_token`
+///  5. `keys.json` entry keyed by `<backend>.refresh_token`
+fn merge_backend_auth(mut cfg: Value, name: &str, ks: &crate::infra::key_store::KeyStore) -> Value {
+    let has_api_key = cfg
         .get("api_key")
         .and_then(|v| v.as_str())
         .map(|s| !s.is_empty())
-        .unwrap_or(false)
-    {
-        return cfg;
-    }
-    // Fall back to KeyStore (also checks env vars internally).
-    if let Some(key) = ks.get(name) {
-        if !key.is_empty() {
-            cfg["api_key"] = Value::String(key);
+        .unwrap_or(false);
+    let has_access_token = cfg
+        .get("oauth")
+        .and_then(|v| v.get("access_token"))
+        .and_then(|v| v.as_str())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+
+    if !has_api_key && !has_access_token {
+        if let Some(key) = ks.get(name) {
+            if !key.is_empty() {
+                cfg["api_key"] = Value::String(key);
+            }
+        } else if let Some(access_token) = ks.get(&format!("{}.access_token", name)) {
+            if !access_token.is_empty() {
+                if !cfg.get("oauth").map(|v| v.is_object()).unwrap_or(false) {
+                    cfg["oauth"] = json!({});
+                }
+                cfg["oauth"]["access_token"] = Value::String(access_token);
+            }
         }
     }
+
+    let has_refresh_token = cfg
+        .get("oauth")
+        .and_then(|v| v.get("refresh_token"))
+        .and_then(|v| v.as_str())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    if !has_refresh_token {
+        if let Some(refresh_token) = ks.get(&format!("{}.refresh_token", name)) {
+            if !refresh_token.is_empty() {
+                if !cfg.get("oauth").map(|v| v.is_object()).unwrap_or(false) {
+                    cfg["oauth"] = json!({});
+                }
+                cfg["oauth"]["refresh_token"] = Value::String(refresh_token);
+            }
+        }
+    }
+
     cfg
 }
 
@@ -3285,7 +3316,7 @@ impl AgentCore {
             let merged_cfg = {
                 let ks_guard = self.key_store.lock().unwrap_or_else(|e| e.into_inner());
                 let base = config.backend_config(&cand.name);
-                merge_api_key(base, &cand.name, &ks_guard)
+                merge_backend_auth(base, &cand.name, &ks_guard)
             };
 
             if let Some(be) =
@@ -3442,7 +3473,7 @@ impl AgentCore {
             let merged_cfg = {
                 let ks_guard = self.key_store.lock().unwrap_or_else(|e| e.into_inner());
                 let base = config.backend_config(&cand.name);
-                merge_api_key(base, &cand.name, &ks_guard)
+                merge_backend_auth(base, &cand.name, &ks_guard)
             };
 
             if let Some(be) =

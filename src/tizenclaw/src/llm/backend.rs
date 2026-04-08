@@ -140,7 +140,9 @@ pub trait LlmBackend: Send + Sync {
 pub fn create_backend(name: &str) -> Option<Box<dyn LlmBackend>> {
     match name {
         "gemini" => Some(Box::new(super::gemini::GeminiBackend::new())),
-        "openai" | "xai" => Some(Box::new(super::openai::OpenAiBackend::new(name))),
+        "openai" | "openai-codex" | "xai" => {
+            Some(Box::new(super::openai::OpenAiBackend::new(name)))
+        }
         "anthropic" => Some(Box::new(super::anthropic::AnthropicBackend::new())),
         "ollama" => Some(Box::new(super::ollama::OllamaBackend::new())),
         _ => None,

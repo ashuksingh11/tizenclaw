@@ -144,13 +144,33 @@ pub async fn http_post(
     max_retries: u32,
     timeout_secs: u64,
 ) -> HttpResponse {
+    http_post_with_content_type(
+        url,
+        headers,
+        json_body,
+        "application/json",
+        max_retries,
+        timeout_secs,
+    )
+    .await
+}
+
+/// POST with an explicit content type and retry/backoff.
+pub async fn http_post_with_content_type(
+    url: &str,
+    headers: &[(&str, &str)],
+    body: &str,
+    content_type: &str,
+    max_retries: u32,
+    timeout_secs: u64,
+) -> HttpResponse {
     for attempt in 0..=max_retries {
         if attempt > 0 {
             let delay = std::time::Duration::from_millis(500 * (1 << (attempt - 1)));
             log::debug!("HTTP retry {} after {}ms", attempt, delay.as_millis());
             tokio::time::sleep(delay).await;
         }
-        match do_post(url, headers, json_body, timeout_secs).await {
+        match do_post(url, headers, body, content_type, timeout_secs).await {
             Ok(resp) if resp.status_code == 429 || resp.status_code >= 500 => {
                 log::warn!(
                     "HTTP {}, retrying ({}/{})",
@@ -278,6 +298,7 @@ async fn do_post(
     url: &str,
     headers: &[(&str, &str)],
     body: &str,
+    content_type: &str,
     _timeout_secs: u64,
 ) -> Result<HttpResponse, String> {
     let agent = default_client();
@@ -286,7 +307,7 @@ async fn do_post(
     for (k, v) in headers {
         req = req.header(*k, *v);
     }
-    req = req.header("Content-Type", "application/json");
+    req = req.header("Content-Type", content_type);
 
     match req.body(body.to_string()).send().await {
         Ok(resp) => {

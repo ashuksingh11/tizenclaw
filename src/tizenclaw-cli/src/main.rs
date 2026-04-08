@@ -14,6 +14,7 @@ use serde_json::{json, Map, Value};
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tizenclaw::api::TizenClaw;
 
@@ -67,6 +68,15 @@ fn setup_data_dir() -> PathBuf {
 
 fn setup_config_dir() -> PathBuf {
     setup_data_dir().join("config")
+}
+
+fn llm_config_path() -> PathBuf {
+    setup_config_dir().join("llm_config.json")
+}
+
+fn codex_auth_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    PathBuf::from(home).join(".codex").join("auth.json")
 }
 
 fn channel_config_path() -> PathBuf {
@@ -131,7 +141,7 @@ fn set_path_value(doc: &mut Value, path: &[&str], new_value: Value) {
 fn default_llm_config() -> Value {
     json!({
         "active_backend": "gemini",
-        "fallback_backends": ["anthropic", "openai", "ollama"],
+        "fallback_backends": ["anthropic", "openai", "openai-codex", "ollama"],
         "benchmark": {
             "pinchbench": {
                 "actual_tokens": {
@@ -157,6 +167,21 @@ fn default_llm_config() -> Value {
                 "api_key": "",
                 "model": "gpt-4o",
                 "endpoint": "https://api.openai.com/v1"
+            },
+            "openai-codex": {
+                "auth_mode": "oauth",
+                "model": "gpt-5.4",
+                "endpoint": "https://chatgpt.com/backend-api",
+                "transport": "responses",
+                "api_path": "/responses",
+                "service_tier": "priority",
+                "oauth": {
+                    "access_token": "",
+                    "refresh_token": "",
+                    "expires_at": 0,
+                    "account_id": "",
+                    "source": "codex_cli"
+                }
             },
             "anthropic": {
                 "api_key": "",
@@ -384,7 +409,14 @@ fn configure_llm(doc: &mut Value) -> Result<(), String> {
         .get("active_backend")
         .and_then(Value::as_str)
         .unwrap_or("gemini");
-    let backends = ["gemini", "openai", "anthropic", "xai", "ollama"];
+    let backends = [
+        "gemini",
+        "openai",
+        "openai-codex",
+        "anthropic",
+        "xai",
+        "ollama",
+    ];
     let default_index = backends
         .iter()
         .position(|backend| *backend == current_backend)
@@ -392,6 +424,7 @@ fn configure_llm(doc: &mut Value) -> Result<(), String> {
     let labels = [
         "Gemini",
         "OpenAI",
+        "OpenAI Codex (ChatGPT session)",
         "Anthropic (Claude API)",
         "xAI",
         "Ollama",
@@ -410,6 +443,7 @@ fn configure_llm(doc: &mut Value) -> Result<(), String> {
         .unwrap_or(match backend {
             "gemini" => "gemini-2.5-flash",
             "openai" => "gpt-4o",
+            "openai-codex" => "gpt-5.4",
             "anthropic" => "claude-sonnet-4-20250514",
             "xai" => "grok-3",
             "ollama" => "llama3",
@@ -431,6 +465,11 @@ fn configure_llm(doc: &mut Value) -> Result<(), String> {
                 doc,
                 &["backends", "ollama", "endpoint"],
                 Value::String(endpoint),
+            );
+        }
+        "openai-codex" => {
+            println!(
+                "OpenAI Codex uses the ChatGPT/Codex CLI session. Run `tizenclaw-cli auth openai-codex login` to link it."
             );
         }
         _ => {
@@ -472,6 +511,341 @@ fn configure_llm(doc: &mut Value) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn merge_missing(target: &mut Value, defaults: &Value) {
+    if let Value::Object(default_map) = defaults {
+        if let Value::Object(target_map) = target {
+            for (key, default_value) in default_map {
+                match target_map.get_mut(key) {
+                    Some(existing) => merge_missing(existing, default_value),
+                    None => {
+                        target_map.insert(key.clone(), default_value.clone());
+                    }
+                }
+            }
+            return;
+        }
+    }
+
+    if matches!(target, Value::Null) {
+        *target = defaults.clone();
+    }
+}
+
+fn codex_cli_path() -> Option<PathBuf> {
+    detect_backend_path("codex").map(PathBuf::from)
+}
+
+fn parse_codex_login_state(output: &str) -> &'static str {
+    let normalized = output.to_ascii_lowercase();
+    if normalized.contains("logged in") {
+        "logged_in"
+    } else if normalized.contains("logged out") || normalized.contains("not logged in") {
+        "logged_out"
+    } else {
+        "unknown"
+    }
+}
+
+fn read_codex_auth_doc() -> Result<Value, String> {
+    let path = codex_auth_path();
+    let content = fs::read_to_string(&path)
+        .map_err(|err| format!("Failed to read '{}': {}", path.display(), err))?;
+    serde_json::from_str(&content)
+        .map_err(|err| format!("Failed to parse '{}': {}", path.display(), err))
+}
+
+fn codex_login_status() -> Value {
+    let cli_path = codex_cli_path();
+    let auth_path = codex_auth_path();
+    let auth_doc = read_codex_auth_doc().ok();
+    let mut state = json!({
+        "status": "ok",
+        "provider": "openai-codex",
+        "codex_cli_available": cli_path.is_some(),
+        "codex_cli_path": cli_path.as_ref().map(|path| path.display().to_string()),
+        "codex_auth_file_exists": auth_path.exists(),
+        "codex_auth_path": auth_path.display().to_string(),
+        "codex_login_state": "unknown",
+        "codex_login_output": "",
+        "config_backend_present": false,
+        "config_active_backend": "",
+        "oauth_source": "",
+        "account_id": "",
+        "linked": false,
+        "message": ""
+    });
+
+    if let Some(path) = cli_path {
+        match Command::new(&path).args(["login", "status"]).output() {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                let combined = if stdout.is_empty() {
+                    stderr.clone()
+                } else if stderr.is_empty() {
+                    stdout.clone()
+                } else {
+                    format!("{}\n{}", stdout, stderr)
+                };
+                state["codex_login_state"] =
+                    Value::String(parse_codex_login_state(&combined).to_string());
+                state["codex_login_output"] = Value::String(combined);
+            }
+            Err(err) => {
+                state["status"] = Value::String("error".to_string());
+                state["message"] =
+                    Value::String(format!("Failed to run Codex CLI login status: {}", err));
+            }
+        }
+    } else {
+        state["status"] = Value::String("error".to_string());
+        state["message"] = Value::String("Codex CLI binary was not found in PATH".to_string());
+    }
+
+    if let Ok(llm_doc) = fs::read_to_string(llm_config_path())
+        .map_err(|err| err.to_string())
+        .and_then(|content| serde_json::from_str::<Value>(&content).map_err(|err| err.to_string()))
+    {
+        let active_backend = llm_doc
+            .get("active_backend")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let backend = llm_doc
+            .get("backends")
+            .and_then(|backends| backends.get("openai-codex"));
+        state["config_active_backend"] = Value::String(active_backend.clone());
+        state["config_backend_present"] = Value::Bool(backend.is_some());
+        state["oauth_source"] = Value::String(
+            backend
+                .and_then(|value| value.get("oauth"))
+                .and_then(|value| value.get("source"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+        );
+        if active_backend == "openai-codex" && backend.is_some() {
+            state["linked"] = Value::Bool(true);
+        }
+    }
+
+    if let Some(doc) = auth_doc {
+        let account_id = doc
+            .get("tokens")
+            .and_then(|value| value.get("account_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if !account_id.is_empty() {
+            state["account_id"] = Value::String(account_id);
+        }
+    }
+
+    if state["message"].as_str().unwrap_or("").is_empty() {
+        let logged_in = state["codex_login_state"].as_str() == Some("logged_in");
+        let linked = state["linked"].as_bool().unwrap_or(false);
+        let auth_exists = state["codex_auth_file_exists"].as_bool().unwrap_or(false);
+        state["message"] = Value::String(match (logged_in, auth_exists, linked) {
+            (true, true, true) => {
+                "Codex CLI session is available and TizenClaw is linked to openai-codex."
+                    .to_string()
+            }
+            (true, true, false) => {
+                "Codex CLI session is available. Run `tizenclaw-cli auth openai-codex connect` to link TizenClaw."
+                    .to_string()
+            }
+            (true, false, _) => {
+                "Codex CLI reports a login session, but the local auth store was not found yet."
+                    .to_string()
+            }
+            (false, _, _) => {
+                "No Codex CLI login session is active. Run `tizenclaw-cli auth openai-codex login` first."
+                    .to_string()
+            }
+        });
+    }
+
+    state
+}
+
+fn try_reload_llm_backends() -> (bool, Option<String>) {
+    match create_client() {
+        Ok(client) => match client.reload_llm_backends() {
+            Ok(_) => (true, None),
+            Err(err) => (false, Some(err)),
+        },
+        Err(err) => (false, Some(err)),
+    }
+}
+
+fn connect_codex_session() -> Result<Value, String> {
+    let status = codex_login_status();
+    if status
+        .get("codex_login_state")
+        .and_then(Value::as_str)
+        != Some("logged_in")
+    {
+        return Err(status
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("Codex CLI is not logged in")
+            .to_string());
+    }
+
+    if !status
+        .get("codex_auth_file_exists")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(format!(
+            "Codex auth file '{}' was not found",
+            codex_auth_path().display()
+        ));
+    }
+
+    let config_path = llm_config_path();
+    let mut doc = load_json_or_default(&config_path, default_llm_config());
+    merge_missing(&mut doc, &default_llm_config());
+
+    if doc.get("backends").and_then(Value::as_object).is_none() {
+        doc["backends"] = Value::Object(Map::new());
+    }
+    if doc["backends"].get("openai-codex").is_none() {
+        doc["backends"]["openai-codex"] =
+            default_llm_config()["backends"]["openai-codex"].clone();
+    } else {
+        let defaults = default_llm_config()["backends"]["openai-codex"].clone();
+        merge_missing(&mut doc["backends"]["openai-codex"], &defaults);
+    }
+
+    doc["active_backend"] = Value::String("openai-codex".to_string());
+
+    let fallback_backends = doc
+        .get("fallback_backends")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if !fallback_backends
+        .iter()
+        .any(|value| value.as_str() == Some("openai-codex"))
+    {
+        let mut updated = fallback_backends;
+        updated.push(Value::String("openai-codex".to_string()));
+        doc["fallback_backends"] = Value::Array(updated);
+    }
+
+    doc["backends"]["openai-codex"]["oauth"]["source"] = Value::String("codex_cli".to_string());
+    if let Ok(auth_doc) = read_codex_auth_doc() {
+        if let Some(account_id) = auth_doc
+            .get("tokens")
+            .and_then(|value| value.get("account_id"))
+            .and_then(Value::as_str)
+        {
+            if !account_id.is_empty() {
+                doc["backends"]["openai-codex"]["oauth"]["account_id"] =
+                    Value::String(account_id.to_string());
+            }
+        }
+    }
+
+    write_pretty_json(&config_path, &doc)?;
+    let (reloaded, reload_error) = try_reload_llm_backends();
+
+    Ok(json!({
+        "status": "ok",
+        "provider": "openai-codex",
+        "linked": true,
+        "config_path": config_path.display().to_string(),
+        "active_backend": "openai-codex",
+        "reloaded": reloaded,
+        "reload_error": reload_error,
+        "dashboard_url": dashboard_url(),
+        "message": if reloaded {
+            "TizenClaw is now linked to the Codex CLI session and the daemon reloaded the backend."
+        } else {
+            "TizenClaw is now linked to the Codex CLI session. Start or reload the daemon to activate it."
+        }
+    }))
+}
+
+fn print_auth_result(result: &Value, as_json: bool) {
+    if as_json {
+        print_json(result);
+        return;
+    }
+
+    let message = result
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("Done.");
+    println!("{}", message);
+
+    if let Some(path) = result.get("config_path").and_then(Value::as_str) {
+        println!("LLM config: {}", path);
+    }
+    if let Some(output) = result.get("codex_login_output").and_then(Value::as_str) {
+        if !output.trim().is_empty() {
+            println!("Codex CLI: {}", output.trim());
+        }
+    }
+    if let Some(error) = result.get("reload_error").and_then(Value::as_str) {
+        if !error.trim().is_empty() {
+            println!("Daemon reload note: {}", error.trim());
+        }
+    }
+}
+
+fn cmd_auth(args: &[String]) {
+    if args.len() < 2 || args[0] != "openai-codex" {
+        eprintln!("Usage:");
+        eprintln!("  tizenclaw-cli auth openai-codex status [--json]");
+        eprintln!("  tizenclaw-cli auth openai-codex connect [--json]");
+        eprintln!("  tizenclaw-cli auth openai-codex import [--json]");
+        eprintln!("  tizenclaw-cli auth openai-codex login [--json]");
+        std::process::exit(1);
+    }
+
+    let action = args[1].as_str();
+    let as_json = args[2..]
+        .iter()
+        .any(|arg| arg == "--json" || arg == "--strict-json");
+
+    match action {
+        "status" => {
+            let result = codex_login_status();
+            print_auth_result(&result, as_json);
+        }
+        "connect" | "import" => match connect_codex_session() {
+            Ok(result) => print_auth_result(&result, as_json),
+            Err(error) => print_error_and_exit(&error),
+        },
+        "login" => {
+            let cli_path = codex_cli_path()
+                .ok_or_else(|| "Codex CLI binary was not found in PATH".to_string())
+                .unwrap_or_else(|err| print_error_and_exit(&err));
+            let status = Command::new(&cli_path)
+                .args(["login"])
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+                .map_err(|err| format!("Failed to launch Codex CLI login: {}", err))
+                .unwrap_or_else(|err| print_error_and_exit(&err));
+            if !status.success() {
+                print_error_and_exit("Codex CLI login did not complete successfully");
+            }
+            match connect_codex_session() {
+                Ok(result) => print_auth_result(&result, as_json),
+                Err(error) => print_error_and_exit(&error),
+            }
+        }
+        _ => {
+            eprintln!("Unknown auth action '{}'", action);
+            std::process::exit(1);
+        }
+    }
 }
 
 fn print_botfather_guide() {
@@ -954,6 +1328,10 @@ fn print_usage() {
     eprintln!("  tizenclaw-cli config reload\n");
     eprintln!("Setup commands:");
     eprintln!("  tizenclaw-cli setup         Interactive host setup wizard\n");
+    eprintln!("Auth commands:");
+    eprintln!("  tizenclaw-cli auth openai-codex status [--json]");
+    eprintln!("  tizenclaw-cli auth openai-codex connect [--json]");
+    eprintln!("  tizenclaw-cli auth openai-codex login [--json]\n");
     eprintln!("If no prompt given, starts interactive mode.");
 }
 
@@ -1047,6 +1425,10 @@ fn main() {
                 cmd_config(&client, &args[i + 1..]);
                 return;
             }
+            "auth" => {
+                cmd_auth(&args[i + 1..]);
+                return;
+            }
             "setup" => {
                 cmd_setup();
                 return;
@@ -1100,7 +1482,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{dashboard_port_from_doc, parse_chat_ids};
+    use super::{dashboard_port_from_doc, merge_missing, parse_chat_ids, parse_codex_login_state};
     use serde_json::json;
 
     #[test]
@@ -1126,5 +1508,35 @@ mod tests {
             ]
         });
         assert_eq!(dashboard_port_from_doc(&doc), 9191);
+    }
+
+    #[test]
+    fn parse_codex_login_state_detects_logged_in() {
+        assert_eq!(
+            parse_codex_login_state("Logged in using ChatGPT"),
+            "logged_in"
+        );
+    }
+
+    #[test]
+    fn merge_missing_only_fills_absent_fields() {
+        let mut doc = json!({
+            "backends": {
+                "openai-codex": {
+                    "model": "custom-model"
+                }
+            }
+        });
+        let defaults = json!({
+            "backends": {
+                "openai-codex": {
+                    "model": "gpt-5.4",
+                    "transport": "responses"
+                }
+            }
+        });
+        merge_missing(&mut doc, &defaults);
+        assert_eq!(doc["backends"]["openai-codex"]["model"], json!("custom-model"));
+        assert_eq!(doc["backends"]["openai-codex"]["transport"], json!("responses"));
     }
 }
