@@ -1,11 +1,8 @@
-Harden Telegram OAuth backend linkage
+Fix Codex assistant history payload
 
-Persist Codex OAuth auth_path and token snapshots when linking
-the openai-codex backend through the CLI.
+Correct OpenAI Codex Responses history serialization for assistant turns.
+Send assistant replay content as output_text instead of input_text so
+ChatGPT OAuth web and chat sessions no longer fail on follow-up turns.
 
-Prefer the explicit auth path during backend initialization and
-fall back to stored OAuth tokens when the Codex auth file is not
-reachable from the daemon runtime.
-
-Refresh default config documents and add regression tests for the
-new auth path and fallback behavior.
+Add a regression test that locks the assistant and user text-part
+mapping for responses input construction.

@@ -2,6 +2,12 @@
 
 ## Current Cycle
 
+- Request: `~/samba/github/openclaw`의 OpenAI OAuth 연동 방식을
+  참고해 `openai-codex` web/chat 실패 원인을 수정하고, ChatGPT
+  OAuth로 일반 `chat` 계열 `gpt-5.4`를 대체 사용할 수 있는지도
+  검증한다.
+- Date: 2026-04-09
+- Language: Korean
 - Request: `openai-codex`는 `codex cli` fallback 없이 OpenClaw 식
   OAuth transport로 직접 연결되도록 수정하고, Telegram/Web/CLI에서
   간헐적으로 발생하는 `All LLM backends failed` 원인을 제거한다.
@@ -144,6 +150,87 @@
 
 ## Stage Status
 
+- [ ] Supervisor Gate after Commit & Push
+- [ ] Stage 6: Commit & Push
+- [x] Supervisor Gate after Test & Review
+  - PASS: `./deploy_host.sh --test` 전체 통과와 동일 세션 후속 턴
+    재현 성공, daemon 로그상 기존 `Invalid value: 'input_text'`
+    오류 제거를 확인했다.
+- [x] Stage 5: Test & Review
+  - Verdict: PASS
+  - Evidence:
+    - `./deploy_host.sh --test` 성공, 전체 테스트 통과
+    - 신규 회귀 테스트
+      `llm::openai::tests::responses_input_uses_output_text_for_assistant_history`
+      통과
+    - 실제 재현:
+      `tizenclaw-cli -s codex_history_fix_test '안녕'`
+      이후
+      `tizenclaw-cli -s codex_history_fix_test '너는 누구야?'`
+      성공
+    - daemon log 증거:
+      후속 턴 세션 `codex_history_fix_test`가 정상 응답했고,
+      기존 web 세션에서 보이던
+      `Invalid value: 'input_text'. Supported values are:
+      'output_text' and 'refusal'.`
+      오류 원인을 코드/로그로 확인 후 제거했다.
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: host 기본 경로인 `./deploy_host.sh`로 수정본을 재배포했고,
+    최종 상태에서 daemon, tool executor, web dashboard가 모두
+    정상 기동함을 확인했다.
+- [x] Stage 4: Build & Deploy
+  - Summary:
+    - `./deploy_host.sh`로 assistant-history payload 수정본을 host
+      runtime에 배포했다.
+    - 테스트 후 다시 `./deploy_host.sh`를 실행해 host daemon을
+      정상 실행 상태로 복구했다.
+- [x] Supervisor Gate after Development
+  - PASS: `openai-codex` Responses history 직렬화가 Codex route 계약에
+    맞게 수정되었고, assistant turn용 content type 회귀 테스트가
+    추가됐다.
+- [x] Stage 3: Development
+  - Summary:
+    - web/telegram 후속 턴 실패 로그를 통해 assistant history가
+      `input_text`로 직렬화되는 버그를 확인했다.
+    - `openai-codex` Responses payload에서 assistant message는
+      `output_text`, user message는 `input_text`로 보내도록 수정했다.
+    - 같은 규칙이 유지되도록 unit test를 추가했다.
+- [x] Supervisor Gate after Design
+  - PASS: `openclaw`와 실제 daemon 로그를 근거로, ChatGPT OAuth를
+    일반 `openai/gpt-5.4` provider로 옮기는 대신
+    `openai-codex` payload 직렬화를 보정해야 한다는 설계를
+    확정했다.
+- [x] Stage 2: Design
+  - Artifact:
+    `.dev_note/DASHBOARD.md`
+  - Summary:
+    - `openclaw` 기준으로 ChatGPT OAuth는 `openai-codex` 전용
+      `chatgpt.com/backend-api` 경로에 연결되며, 일반
+      `openai/gpt-5.4`는 API key 기반 `api.openai.com/v1` 경로를
+      전제로 한다는 점을 확인했다.
+    - 따라서 이번 수정은 `chat` 모델로 provider를 바꾸는 것이 아니라,
+      `openai-codex` Responses payload를 OpenClaw/실서비스 계약에
+      맞추는 방향으로 설계한다.
+    - 현재 web 실패의 직접 원인은 OAuth 부재가 아니라 assistant
+      history를 `input_text`로 직렬화해 Codex route가
+      `output_text`만 허용하며 HTTP 400을 반환하는 점으로 확정했다.
+- [x] Supervisor Gate after Planning
+  - PASS: 이번 요청을 host 기본 사이클로 분류했고, 비교 저장소와
+    OAuth 세션 상태, 실제 실패 로그를 먼저 확인해 원인을 payload
+    직렬화 계층으로 좁히는 계획이 충족됐다.
+- [x] Stage 1: Planning
+  - Artifact:
+    `.dev_note/DASHBOARD.md`
+  - Summary:
+    - 이번 요청은 Tizen/device 검증이 아니라 host 기본 사이클로
+      분류하고 `./deploy_host.sh`, `./deploy_host.sh --test`로
+      검증하기로 했다.
+    - `~/samba/github/chatgpt` 경로는 존재하지 않아 인접 저장소를
+      확인했고, 실제 비교 대상은 `~/samba/github/openclaw`로
+      정정했다.
+    - `tizenclaw-cli auth openai-codex status --json`과 실제
+      `~/.codex/auth.json`을 통해 OAuth 세션 자체는 정상 연결됨을
+      확인했고, 문제를 transport/payload 계층으로 좁혔다.
 - [ ] Supervisor Gate after Commit & Push
 - [x] Stage 6: Commit & Push
   - Summary:

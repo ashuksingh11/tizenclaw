@@ -565,13 +565,20 @@ impl OpenAiBackend {
         msgs
     }
 
+    fn responses_text_part_type(role: &str) -> &'static str {
+        match role {
+            "assistant" => "output_text",
+            _ => "input_text",
+        }
+    }
+
     fn responses_message(role: &str, text: &str) -> Value {
         json!({
             "type": "message",
             "role": role,
             "content": [
                 {
-                    "type": "input_text",
+                    "type": Self::responses_text_part_type(role),
                     "text": text
                 }
             ]
@@ -1463,6 +1470,23 @@ mod tests {
         assert_eq!(request["stream"], json!(true));
         assert!(request.get("max_output_tokens").is_none());
         assert!(request.get("service_tier").is_none());
+    }
+
+    #[test]
+    fn responses_input_uses_output_text_for_assistant_history() {
+        let backend = OpenAiBackend::new("openai-codex");
+        let input = backend.build_responses_input(
+            &[
+                LlmMessage::user("질문"),
+                LlmMessage::assistant("답변"),
+                LlmMessage::user("후속 질문"),
+            ],
+            &[],
+        );
+
+        assert_eq!(input[0]["content"][0]["type"], json!("input_text"));
+        assert_eq!(input[1]["content"][0]["type"], json!("output_text"));
+        assert_eq!(input[2]["content"][0]["type"], json!("input_text"));
     }
 
     #[test]
