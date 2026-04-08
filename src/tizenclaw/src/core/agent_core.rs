@@ -3284,13 +3284,18 @@ impl AgentCore {
                         *bn = cand.name.clone();
                     }
                     primary_initialized = true;
-                } else {
+                } else if fallback_names.contains(&cand.name) {
                     log::info!(
                         "Fallback LLM backend '{}' initialized (priority {})",
                         cand.name,
                         cand.priority
                     );
                     fallbacks.push(be);
+                } else {
+                    log::debug!(
+                        "Backend '{}' initialized but not in fallback_backends, skipping as fallback",
+                        cand.name
+                    );
                 }
             }
         }
