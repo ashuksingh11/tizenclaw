@@ -807,6 +807,28 @@ fn normalize_explicit_path_token(token: &str) -> Option<String> {
     Some(candidate.to_string())
 }
 
+/// Filter out path-like tokens that are actually fragments of URLs,
+/// user-agent strings, or shebang lines — not real filesystem paths.
+fn is_likely_false_positive_path(path: &str) -> bool {
+    // Version-like fragments: /5.0, /7.68.0, /1.1, /2.0
+    if path.trim_start_matches('/').chars().next().map_or(false, |ch| ch.is_ascii_digit()) {
+        return true;
+    }
+    // Common well-known non-file paths from code strings
+    let known_fp = [
+        "/bin/bash", "/bin/sh", "/usr/bin/env", "/usr/bin/python",
+        "/usr/bin/python3", "/usr/bin/node", "/dev/null",
+    ];
+    if known_fp.contains(&path) {
+        return true;
+    }
+    // Very short paths (< 4 chars) like /v1, /v2 are likely API fragments
+    if path.len() < 4 {
+        return true;
+    }
+    false
+}
+
 fn extract_explicit_paths(text: &str) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut paths = Vec::new();
@@ -1404,7 +1426,9 @@ fn validate_generated_code_grounding(
     let unexpected_paths = combined_paths
         .into_iter()
         .filter(|path| {
-            !known_paths.contains(path) && !path_is_within_any_directory(path, &prompt_directories)
+            !known_paths.contains(path)
+                && !path_is_within_any_directory(path, &prompt_directories)
+                && !is_likely_false_positive_path(path)
         })
         .collect::<Vec<_>>();
     if !unexpected_paths.is_empty() {
@@ -1419,7 +1443,12 @@ fn validate_generated_code_grounding(
         .chain(grounded_paths.iter().filter(|path| path_looks_like_file(path)))
         .cloned()
         .collect::<HashSet<_>>();
-    if !script_references_any_known_input(&combined, &known_input_paths) {
+    // Only enforce input-grounding when there are known input files.
+    // Tasks without input files (e.g. "create a weather script") should
+    // not be blocked by the grounding check.
+    if !known_input_paths.is_empty()
+        && !script_references_any_known_input(&combined, &known_input_paths)
+    {
         return Err(
             "Generated code is not grounded in the inspected input files. Do not substitute mock data or invented datasets; reference the real inputs or pass them through args."
                 .to_string(),
