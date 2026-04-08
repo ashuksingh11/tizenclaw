@@ -44,6 +44,7 @@ LEGACY_HOST_BIN_DIR="${HOME}/.local/bin"
 DOCS_SRC="${PROJECT_DIR}/data/docs"
 EMBEDDED_TOOLS_SRC="${PROJECT_DIR}/tools/embedded"
 WEB_SRC="${PROJECT_DIR}/data/web"
+IMG_SRC="${PROJECT_DIR}/data/img"
 BUNDLED_CONFIG_DIR="${PROJECT_DIR}/data/config"
 BASHRC_PATH="${HOME}/.bashrc"
 PATH_EXPORT='export PATH="$HOME/.tizenclaw/bin:$PATH"'
@@ -540,6 +541,14 @@ EOF
     log "Installing web dashboard → ${DATA_DIR}/web"
     run cp -r "${WEB_SRC}/." "${DATA_DIR}/web/"
     ok "Web dashboard installed"
+  fi
+
+  if [ -f "${IMG_SRC}/tizenclaw.svg" ]; then
+    log "Installing shared dashboard logo → ${DATA_DIR}/web/img"
+    run mkdir -p "${DATA_DIR}/web/img"
+    run install -m 644 "${IMG_SRC}/tizenclaw.svg" \
+      "${DATA_DIR}/web/img/tizenclaw.svg"
+    ok "Shared dashboard logo installed"
   fi
 
   if [ -d "${DOCS_SRC}" ]; then

@@ -231,6 +231,9 @@ main() {
   )
 
   copy_tree_contents "${PROJECT_DIR}/data/web" "${bundle_root}/web"
+  install_data_if_present \
+    "${PROJECT_DIR}/data/img/tizenclaw.svg" \
+    "${bundle_root}/web/img/tizenclaw.svg"
   copy_tree_contents "${PROJECT_DIR}/data/docs" "${bundle_root}/docs"
   copy_tree_contents "${PROJECT_DIR}/tools/embedded" "${bundle_root}/embedded"
   install -m 755 \
