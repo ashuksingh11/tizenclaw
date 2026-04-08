@@ -3552,6 +3552,13 @@ impl AgentCore {
         state.last_failure_time = None;
     }
 
+    /// Reset all circuit breakers. Called at the start of each new session
+    /// so that failures from a prior session do not block new requests.
+    fn reset_circuit_breakers(&self) {
+        let mut cb_guard = self.circuit_breakers.write().unwrap();
+        cb_guard.clear();
+    }
+
     fn record_failure(&self, name: &str) {
         let mut cb_guard = self.circuit_breakers.write().unwrap();
         let state = cb_guard
@@ -3738,6 +3745,9 @@ impl AgentCore {
         on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
     ) -> String {
         // ── Phase 1: GoalParsing ─────────────────────────────────────────
+        // Reset circuit breakers at the start of each session so failures
+        // from a prior session do not cascade into new requests.
+        self.reset_circuit_breakers();
         let mut loop_state = AgentLoopState::new(session_id, prompt);
 
         // Load context token budget from config if available

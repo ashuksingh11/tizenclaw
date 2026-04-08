@@ -359,7 +359,18 @@ impl LlmBackend for GeminiBackend {
             self.parse_response(&http_resp.body)
         } else {
             let mut r = LlmResponse::default();
-            r.error_message = http_resp.error;
+            // Include response body in error for diagnostics (Gemini error messages are in the body).
+            let body_preview = if http_resp.body.len() > 500 {
+                format!("{}...", &http_resp.body[..500])
+            } else {
+                http_resp.body.clone()
+            };
+            r.error_message = format!("{} — {}", http_resp.error, body_preview);
+            log::warn!(
+                "[Gemini] generateContent failed (HTTP {}): {}",
+                http_resp.status_code,
+                &r.error_message
+            );
             r
         };
         resp.http_status = http_resp.status_code;
