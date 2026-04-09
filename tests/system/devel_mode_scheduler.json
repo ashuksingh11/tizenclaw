@@ -2,8 +2,8 @@
   "name": "devel-mode-scheduler",
   "steps": [
     {
-      "name": "list-devel-tasks",
-      "method": "list_tasks",
+      "name": "inspect-devel-status",
+      "method": "get_devel_status",
       "params": {},
       "assertions": [
         {
@@ -11,36 +11,24 @@
           "equals": "success"
         },
         {
-          "path": "count",
-          "equals": 1
-        },
-        {
-          "path": "tasks.0.id",
-          "equals": "devel-autonomous-cycle"
-        },
-        {
-          "path": "tasks.0.schedule",
-          "equals": "interval 30m"
-        },
-        {
-          "path": "tasks.0.project_dir",
-          "exists": true
-        },
-        {
-          "path": "tasks.0.coding_backend",
-          "equals": "codex"
-        },
-        {
-          "path": "tasks.0.execution_mode",
-          "equals": "plan"
-        },
-        {
-          "path": "tasks.0.auto_approve",
+          "path": "recurring_task_present",
           "equals": true
         },
         {
-          "path": "tasks.0.prompt",
-          "contains": ".dev_note/ROADMAP.md"
+          "path": "roadmap_has_pending_work",
+          "equals": true
+        },
+        {
+          "path": "status_done",
+          "equals": false
+        },
+        {
+          "path": "task_path",
+          "exists": true
+        },
+        {
+          "path": "task_path",
+          "contains": "devel-autonomous-cycle.md"
         }
       ]
     }

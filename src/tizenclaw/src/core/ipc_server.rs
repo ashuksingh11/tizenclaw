@@ -1,6 +1,7 @@
 //! IPC server — Unix domain socket with JSON-RPC 2.0 protocol.
 
 use serde_json::{json, Value};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -362,6 +363,15 @@ impl IpcServer {
                             .to_string();
                     }
                 }
+            }
+
+            "get_devel_status" => {
+                let task_dir = crate::core::runtime_paths::default_data_dir().join("tasks");
+                let repo_root = std::env::current_dir()
+                    .ok()
+                    .and_then(|cwd| crate::core::devel_mode::detect_repo_root(&cwd))
+                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+                crate::core::devel_mode::devel_status_json(&task_dir, &repo_root)
             }
 
             "clear_agent_data" => {

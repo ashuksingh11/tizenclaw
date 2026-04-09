@@ -164,13 +164,14 @@ async fn main() {
             .ok()
             .and_then(|cwd| core::devel_mode::detect_repo_root(&cwd));
         match repo_root {
-            Some(repo_root) => match core::devel_mode::sync_devel_task(&task_dir, &repo_root) {
+            Some(repo_root) => match core::devel_mode::sync_devel_tasks(&task_dir, &repo_root) {
                 Ok(sync) => {
                     devel_detail = Some(sync.detail.clone());
                     if sync.task_enabled {
                         devel_sync_handle = Some(core::devel_mode::spawn_devel_task_sync(
                             task_dir.clone(),
                             repo_root,
+                            sync.last_prompt_fingerprint.clone(),
                         ));
                     }
                 }
