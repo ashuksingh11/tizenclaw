@@ -24,6 +24,33 @@ impl OllamaBackend {
             endpoint: "http://localhost:11434".into(),
         }
     }
+
+    fn build_request(
+        &self,
+        messages: &[LlmMessage],
+        system_prompt: &str,
+        max_tokens: Option<u32>,
+    ) -> Value {
+        let mut msgs = vec![];
+        if !system_prompt.is_empty() {
+            msgs.push(json!({"role": "system", "content": system_prompt}));
+        }
+        for msg in messages {
+            msgs.push(json!({"role": msg.role, "content": msg.text}));
+        }
+
+        let mut req = json!({
+            "model": self.model,
+            "messages": msgs,
+            "stream": false
+        });
+        if let Some(tokens) = max_tokens {
+            req["options"] = json!({
+                "num_predict": tokens
+            });
+        }
+        req
+    }
 }
 
 #[async_trait::async_trait]
@@ -46,21 +73,7 @@ impl LlmBackend for OllamaBackend {
         system_prompt: &str,
         max_tokens: Option<u32>,
     ) -> LlmResponse {
-        let mut msgs = vec![];
-        if !system_prompt.is_empty() {
-            msgs.push(json!({"role": "system", "content": system_prompt}));
-        }
-        for msg in messages {
-            msgs.push(json!({"role": msg.role, "content": msg.text}));
-        }
-        let req = json!({
-            "model": self.model,
-            "messages": msgs,
-            "stream": false,
-            "options": {
-                "num_predict": max_tokens.unwrap_or(4096)
-            }
-        });
+        let req = self.build_request(messages, system_prompt, max_tokens);
 
         let url = format!("{}/api/chat", self.endpoint);
         let http_resp = http_client::http_post(&url, &[], &req.to_string(), 1, 120).await;
@@ -81,5 +94,18 @@ impl LlmBackend for OllamaBackend {
 
     fn get_name(&self) -> &str {
         "ollama"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ollama_request_omits_num_predict_when_unset() {
+        let backend = OllamaBackend::new();
+        let req = backend.build_request(&[LlmMessage::user("hello")], "", None);
+
+        assert!(req.get("options").is_none());
     }
 }

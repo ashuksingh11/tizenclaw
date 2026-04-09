@@ -212,6 +212,22 @@ impl TizenClaw {
         Err("clear_session is not exposed by the daemon IPC server".into())
     }
 
+    /// Clear daemon-managed memory and/or session data.
+    pub fn clear_agent_data(
+        &self,
+        include_memory: bool,
+        include_sessions: bool,
+    ) -> Result<Value, String> {
+        self.ensure_initialized()?;
+        self.call_method(
+            "clear_agent_data",
+            json!({
+                "include_memory": include_memory,
+                "include_sessions": include_sessions
+            }),
+        )
+    }
+
     /// Get agent status as JSON string.
     pub fn get_status(&self) -> Result<String, String> {
         Ok(json!({

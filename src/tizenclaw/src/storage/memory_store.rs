@@ -289,6 +289,42 @@ impl MemoryStore {
         }
     }
 
+    pub fn clear_all(&self) -> Result<usize, String> {
+        let deleted_rows = {
+            let conn = self.db.lock().unwrap();
+            conn.execute("DELETE FROM memories", [])
+                .map_err(|err| format!("Failed to clear memories table: {}", err))?
+        };
+
+        {
+            let _g = self.file_lock.write().unwrap();
+            if self.base_dir.exists() {
+                for entry in fs::read_dir(&self.base_dir)
+                    .map_err(|err| format!("Failed to read '{}': {}", self.base_dir.display(), err))?
+                {
+                    let path = entry
+                        .map_err(|err| format!("Failed to inspect memory entry: {}", err))?
+                        .path();
+                    if path.is_dir() {
+                        fs::remove_dir_all(&path).map_err(|err| {
+                            format!("Failed to remove memory directory '{}': {}", path.display(), err)
+                        })?;
+                    } else {
+                        fs::remove_file(&path).map_err(|err| {
+                            format!("Failed to remove memory file '{}': {}", path.display(), err)
+                        })?;
+                    }
+                }
+            }
+        }
+
+        self.ensure_subdirs()
+            .map_err(|err| format!("Failed to recreate memory directories: {}", err))?;
+        self.regenerate_summary();
+
+        Ok(deleted_rows)
+    }
+
     /// Loads subset of memory files by semantics using RAG OnDeviceEmbedding
     pub fn load_relevant_for_prompt(&self, prompt: &str, top_k: usize, threshold: f32) -> String {
         let mut engine_guard = self.embedding_engine.lock().unwrap();
@@ -612,5 +648,31 @@ mod tests {
         // Should have moved to long-term
         assert!(!md_dir.join(&filename).exists());
         assert!(md_dir.join("long-term").join(&filename).exists());
+    }
+
+    #[test]
+    fn test_clear_all_removes_memory_entries_and_files() {
+        let tmp = tempdir().unwrap();
+        let md_dir = tmp.path().join("memory");
+        let db_path = tmp.path().join("mem.db");
+
+        let store = MemoryStore::new(
+            md_dir.to_str().unwrap(),
+            db_path.to_str().unwrap(),
+            tmp.path().to_str().unwrap(),
+        )
+        .unwrap();
+
+        store.set("fact::alpha", "Alpha", "facts");
+        store.set("chat::beta", "Beta", "general");
+
+        let deleted = store.clear_all().unwrap();
+
+        assert!(deleted >= 2);
+        assert!(store.get("fact::alpha").is_none());
+        assert!(store.get("chat::beta").is_none());
+        assert!(md_dir.join("memory.md").exists());
+        assert_eq!(store.get_by_category("facts", 10).len(), 0);
+        assert_eq!(store.get_by_category("general", 10).len(), 0);
     }
 }

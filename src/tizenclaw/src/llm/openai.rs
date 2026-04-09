@@ -678,13 +678,40 @@ impl OpenAiBackend {
         input
     }
 
-    fn codex_instructions(system_prompt: &str) -> String {
-        let trimmed = system_prompt.trim();
-        if trimmed.is_empty() {
+    fn build_codex_input_and_instructions(
+        &self,
+        messages: &[LlmMessage],
+        tools: &[LlmToolDecl],
+        system_prompt: &str,
+    ) -> (Vec<Value>, String) {
+        let mut filtered_messages = Vec::with_capacity(messages.len());
+        let mut instruction_parts = Vec::new();
+
+        if !system_prompt.trim().is_empty() {
+            instruction_parts.push(system_prompt.trim().to_string());
+        }
+
+        for msg in messages {
+            if msg.role == "system" {
+                let text = Self::trimmed_text(&msg.text);
+                if !text.is_empty() {
+                    instruction_parts.push(text);
+                }
+                continue;
+            }
+            filtered_messages.push(msg.clone());
+        }
+
+        let instructions = if instruction_parts.is_empty() {
             OPENAI_CODEX_DEFAULT_INSTRUCTIONS.to_string()
         } else {
-            trimmed.to_string()
-        }
+            instruction_parts.join("\n\n")
+        };
+
+        (
+            self.build_responses_input(&filtered_messages, tools),
+            instructions,
+        )
     }
 
     fn build_codex_responses_request(
@@ -693,12 +720,14 @@ impl OpenAiBackend {
         tools: &[LlmToolDecl],
         system_prompt: &str,
     ) -> Value {
+        let (input, instructions) =
+            self.build_codex_input_and_instructions(messages, tools, system_prompt);
         let mut req = json!({
             "model": self.model,
-            "instructions": Self::codex_instructions(system_prompt),
+            "instructions": instructions,
             "store": false,
             "stream": true,
-            "input": self.build_responses_input(messages, tools)
+            "input": input
         });
         if !tools.is_empty() {
             req["tools"] = Value::Array(
@@ -1205,9 +1234,11 @@ impl LlmBackend for OpenAiBackend {
             OpenAiTransport::ChatCompletions => {
                 let mut req = json!({
                     "model": self.model,
-                    "messages": self.build_chat_completions_messages(messages, tools, system_prompt),
-                    "max_tokens": max_tokens.unwrap_or(4096)
+                    "messages": self.build_chat_completions_messages(messages, tools, system_prompt)
                 });
+                if let Some(tokens) = max_tokens {
+                    req["max_tokens"] = json!(tokens);
+                }
                 if !tools.is_empty() {
                     req["tools"] = Value::Array(
                         tools
@@ -1230,9 +1261,11 @@ impl LlmBackend for OpenAiBackend {
             OpenAiTransport::Responses => {
                 let mut req = json!({
                     "model": self.model,
-                    "input": self.build_responses_input(messages, tools),
-                    "max_output_tokens": max_tokens.unwrap_or(4096)
+                    "input": self.build_responses_input(messages, tools)
                 });
+                if let Some(tokens) = max_tokens {
+                    req["max_output_tokens"] = json!(tokens);
+                }
                 if !system_prompt.trim().is_empty() {
                     req["instructions"] = json!(system_prompt);
                 }
@@ -1473,6 +1506,31 @@ mod tests {
     }
 
     #[test]
+    fn openai_codex_moves_system_messages_into_instructions() {
+        let backend = OpenAiBackend::new("openai-codex");
+        let request = backend.build_codex_responses_request(
+            &[
+                LlmMessage {
+                    role: "system".to_string(),
+                    text: "추가 시스템 규칙".to_string(),
+                    ..Default::default()
+                },
+                LlmMessage::user("파일을 정리해줘"),
+            ],
+            &[],
+            "기본 시스템 프롬프트",
+        );
+
+        assert_eq!(
+            request["instructions"],
+            json!("기본 시스템 프롬프트\n\n추가 시스템 규칙")
+        );
+        let input = request["input"].as_array().unwrap();
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0]["role"], json!("user"));
+    }
+
+    #[test]
     fn responses_input_uses_output_text_for_assistant_history() {
         let backend = OpenAiBackend::new("openai-codex");
         let input = backend.build_responses_input(
@@ -1487,6 +1545,33 @@ mod tests {
         assert_eq!(input[0]["content"][0]["type"], json!("input_text"));
         assert_eq!(input[1]["content"][0]["type"], json!("output_text"));
         assert_eq!(input[2]["content"][0]["type"], json!("input_text"));
+    }
+
+    #[test]
+    fn openai_chat_completions_requests_do_not_force_default_max_tokens() {
+        let backend = OpenAiBackend::new("openai");
+        let request = json!({
+            "model": backend.model,
+            "messages": backend.build_chat_completions_messages(
+                &[LlmMessage::user("질문")],
+                &[],
+                ""
+            )
+        });
+
+        assert!(request.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn openai_responses_requests_do_not_force_default_output_tokens() {
+        let backend = OpenAiBackend::new("openai");
+        let mut request = json!({
+            "model": backend.model,
+            "input": backend.build_responses_input(&[LlmMessage::user("질문")], &[])
+        });
+        request["instructions"] = json!("시스템");
+
+        assert!(request.get("max_output_tokens").is_none());
     }
 
     #[test]

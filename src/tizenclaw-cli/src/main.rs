@@ -160,8 +160,7 @@ fn default_llm_config() -> Value {
             "gemini": {
                 "api_key": "",
                 "model": "gemini-2.5-flash",
-                "temperature": 0.7,
-                "max_tokens": 4096
+                "temperature": 0.7
             },
             "openai": {
                 "api_key": "",
@@ -188,8 +187,7 @@ fn default_llm_config() -> Value {
                 "api_key": "",
                 "model": "claude-sonnet-4-20250514",
                 "endpoint": "https://api.anthropic.com/v1",
-                "temperature": 0.7,
-                "max_tokens": 4096
+                "temperature": 0.7
             },
             "xai": {
                 "api_key": "",
@@ -1202,6 +1200,73 @@ fn cmd_dashboard(client: &TizenClaw, command: &str) {
     }
 }
 
+fn cmd_clear_data(client: &TizenClaw, args: &[String]) {
+    let mut include_memory = true;
+    let mut include_sessions = true;
+    let mut json_output = false;
+
+    for arg in args {
+        match arg.as_str() {
+            "--memory-only" => {
+                include_memory = true;
+                include_sessions = false;
+            }
+            "--sessions-only" => {
+                include_memory = false;
+                include_sessions = true;
+            }
+            "--json" => {
+                json_output = true;
+            }
+            _ => {
+                eprintln!(
+                    "Usage: tizenclaw-cli clear-data [--memory-only|--sessions-only] [--json]"
+                );
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if !include_memory && !include_sessions {
+        eprintln!("Error: at least one clear-data target must be enabled.");
+        std::process::exit(1);
+    }
+
+    match client.clear_agent_data(include_memory, include_sessions) {
+        Ok(result) => {
+            if json_output {
+                print_json(&result);
+                return;
+            }
+
+            println!("Agent data cleared.");
+            if include_memory {
+                let cleared = result
+                    .get("memory")
+                    .and_then(|value| value.get("records_deleted"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                println!("  Memory records deleted: {}", cleared);
+            }
+            if include_sessions {
+                let sessions_deleted = result
+                    .get("sessions")
+                    .and_then(|value| value.get("sessions_deleted"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                let workdirs_deleted = result
+                    .get("sessions")
+                    .and_then(|value| value.get("workdirs_deleted"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                println!("  Session files deleted: {}", sessions_deleted);
+                println!("  Workdirs deleted: {}", workdirs_deleted);
+            }
+        }
+        Err(error) => print_error_and_exit(&error),
+    }
+}
+
 /// Interactive REPL mode.
 fn interactive_mode(client: &TizenClaw, explicit_session_id: Option<&str>, stream: bool) {
     match explicit_session_id {
@@ -1229,6 +1294,7 @@ fn interactive_mode(client: &TizenClaw, explicit_session_id: Option<&str>, strea
             "/help" => {
                 println!("Commands:");
                 println!("  /usage            Show token usage");
+                println!("  /clear-data       Clear memory and session data");
                 println!("  /dashboard start [--port N] Start web dashboard");
                 println!("  /dashboard stop   Stop web dashboard");
                 println!("  /dashboard status Show dashboard status");
@@ -1238,6 +1304,14 @@ fn interactive_mode(client: &TizenClaw, explicit_session_id: Option<&str>, strea
             }
             cmd if cmd.starts_with("/usage") => {
                 show_usage(client, explicit_session_id, None);
+            }
+            cmd if cmd.starts_with("/clear-data") => {
+                let args = cmd
+                    .trim_start_matches("/clear-data")
+                    .split_whitespace()
+                    .map(ToOwned::to_owned)
+                    .collect::<Vec<_>>();
+                cmd_clear_data(client, &args);
             }
             cmd if cmd.starts_with("/dashboard ") => {
                 let action = cmd.trim_start_matches("/dashboard ").trim();
@@ -1346,6 +1420,9 @@ fn print_usage() {
     eprintln!("                                   Start the web dashboard");
     eprintln!("  tizenclaw-cli dashboard stop    Stop the web dashboard");
     eprintln!("  tizenclaw-cli dashboard status  Show dashboard status\n");
+    eprintln!("Agent data commands:");
+    eprintln!("  tizenclaw-cli clear-data [--memory-only|--sessions-only] [--json]");
+    eprintln!("                                   Clear persisted memory/session data\n");
     eprintln!("Registration commands:");
     eprintln!("  tizenclaw-cli register tool <path>");
     eprintln!("  tizenclaw-cli register skill <path>");
@@ -1454,6 +1531,11 @@ fn main() {
             "config" => {
                 let client = create_client().unwrap_or_else(|err| print_error_and_exit(&err));
                 cmd_config(&client, &args[i + 1..]);
+                return;
+            }
+            "clear-data" => {
+                let client = create_client().unwrap_or_else(|err| print_error_and_exit(&err));
+                cmd_clear_data(&client, &args[i + 1..]);
                 return;
             }
             "auth" => {

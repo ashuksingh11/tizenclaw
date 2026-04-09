@@ -46,8 +46,7 @@ pub fn default_document() -> Value {
             "gemini": {
                 "api_key": "",
                 "model": "gemini-2.5-flash",
-                "temperature": 0.7,
-                "max_tokens": 4096
+                "temperature": 0.7
             },
             "openai": {
                 "api_key": "",
@@ -74,8 +73,7 @@ pub fn default_document() -> Value {
                 "api_key": "",
                 "model": "claude-sonnet-4-20250514",
                 "endpoint": "https://api.anthropic.com/v1",
-                "temperature": 0.7,
-                "max_tokens": 4096
+                "temperature": 0.7
             },
             "xai": {
                 "api_key": "",

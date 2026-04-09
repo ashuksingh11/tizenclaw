@@ -40,7 +40,7 @@ struct PolicyConfig {
 impl Default for PolicyConfig {
     fn default() -> Self {
         PolicyConfig {
-            max_repeat_count: 3,
+            max_repeat_count: 0,
             max_iterations: 0,
             blocked_skills: HashSet::new(),
             risk_levels: HashMap::new(),
@@ -144,7 +144,7 @@ impl ToolPolicy {
             let session = history.entry(session_id.to_string()).or_default();
             let count = session.entry(hash).or_insert(0);
             *count += 1;
-            if *count > self.config.max_repeat_count {
+            if self.config.max_repeat_count > 0 && *count > self.config.max_repeat_count {
                 return Err(format!(
                     "Tool '{}' with identical arguments called {} times (limit: {}). Blocked to prevent infinite loop.",
                     skill_name, count, self.config.max_repeat_count
@@ -246,12 +246,22 @@ mod tests {
 
     #[test]
     fn test_check_policy_blocks_repeated() {
-        let policy = ToolPolicy::new();
+        let mut policy = ToolPolicy::new();
+        policy.config.max_repeat_count = 3;
         let args = json!({"key": "same"});
         assert!(policy.check_policy("s1", "t", &args).is_ok());
         assert!(policy.check_policy("s1", "t", &args).is_ok());
         assert!(policy.check_policy("s1", "t", &args).is_ok());
         assert!(policy.check_policy("s1", "t", &args).is_err());
+    }
+
+    #[test]
+    fn test_zero_repeat_limit_means_unlimited() {
+        let policy = ToolPolicy::new();
+        let args = json!({"key": "same"});
+        for _ in 0..32 {
+            assert!(policy.check_policy("s1", "t", &args).is_ok());
+        }
     }
 
     #[test]

@@ -6,6 +6,8 @@ use super::backend::*;
 use crate::infra::http_client;
 use serde_json::{json, Value};
 
+const ANTHROPIC_REQUIRED_FALLBACK_MAX_TOKENS: u32 = 4096;
+
 pub struct AnthropicBackend {
     api_key: String,
     model: String,
@@ -33,7 +35,7 @@ impl AnthropicBackend {
             model: "claude-sonnet-4-20250514".into(),
             endpoint: "https://api.anthropic.com/v1".into(),
             temperature: None,
-            default_max_tokens: Some(4096),
+            default_max_tokens: None,
             thinking_level: None,
             prompt_cache_enabled: false,
         }
@@ -142,7 +144,9 @@ impl LlmBackend for AnthropicBackend {
     ) -> LlmResponse {
         let mut req = json!({
             "model": Self::normalized_model(&self.model),
-            "max_tokens": max_tokens.or(self.default_max_tokens).unwrap_or(4096)
+            "max_tokens": max_tokens
+                .or(self.default_max_tokens)
+                .unwrap_or(ANTHROPIC_REQUIRED_FALLBACK_MAX_TOKENS)
         });
         if let Some(temperature) = self.temperature {
             req["temperature"] = json!(temperature);
@@ -172,7 +176,9 @@ impl LlmBackend for AnthropicBackend {
                     obj.remove("temperature");
                 }
                 // Ensure max_tokens can accommodate thinking budget + output
-                let current_max = req["max_tokens"].as_u64().unwrap_or(4096);
+                let current_max = req["max_tokens"]
+                    .as_u64()
+                    .unwrap_or(ANTHROPIC_REQUIRED_FALLBACK_MAX_TOKENS as u64);
                 if current_max < (budget as u64 + 4096) {
                     req["max_tokens"] = json!(budget + 4096);
                 }

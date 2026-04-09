@@ -335,6 +335,24 @@ impl IpcServer {
                 }
             }
 
+            "clear_agent_data" => {
+                let include_memory = params
+                    .get("include_memory")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(true);
+                let include_sessions = params
+                    .get("include_sessions")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(true);
+                match agent.clear_agent_data(include_memory, include_sessions) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":err},"id":req_id})
+                            .to_string();
+                    }
+                }
+            }
+
             "bridge_tool" => {
                 let tool_name = params["tool_name"].as_str().unwrap_or("").trim();
                 if tool_name.is_empty() {

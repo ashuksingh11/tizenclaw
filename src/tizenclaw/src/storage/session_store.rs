@@ -446,6 +446,77 @@ impl SessionStore {
         let _ = fs::remove_file(path);
     }
 
+    pub fn clear_all(&self) -> Result<Value, String> {
+        let sessions_root = self.base_dir.join("sessions");
+        let workdirs_root = self.base_dir.join("workdirs");
+        let audit_root = self.base_dir.join("audit");
+
+        let session_entries = fs::read_dir(&sessions_root)
+            .ok()
+            .map(|entries| entries.filter_map(|entry| entry.ok()).count())
+            .unwrap_or(0);
+        let workdir_entries = fs::read_dir(&workdirs_root)
+            .ok()
+            .map(|entries| entries.filter_map(|entry| entry.ok()).count())
+            .unwrap_or(0);
+
+        if let Ok(conn) = self.db.lock() {
+            conn.execute("DELETE FROM session_index", [])
+                .map_err(|err| format!("Failed to clear session_index: {}", err))?;
+            conn.execute("DELETE FROM token_usage", [])
+                .map_err(|err| format!("Failed to clear token_usage: {}", err))?;
+        }
+
+        {
+            let _g = self.lock.write().unwrap();
+            if sessions_root.exists() {
+                fs::remove_dir_all(&sessions_root).map_err(|err| {
+                    format!(
+                        "Failed to remove sessions directory '{}': {}",
+                        sessions_root.display(),
+                        err
+                    )
+                })?;
+            }
+            if workdirs_root.exists() {
+                fs::remove_dir_all(&workdirs_root).map_err(|err| {
+                    format!(
+                        "Failed to remove workdirs directory '{}': {}",
+                        workdirs_root.display(),
+                        err
+                    )
+                })?;
+            }
+        }
+
+        fs::create_dir_all(&sessions_root).map_err(|err| {
+            format!(
+                "Failed to recreate sessions directory '{}': {}",
+                sessions_root.display(),
+                err
+            )
+        })?;
+        fs::create_dir_all(&workdirs_root).map_err(|err| {
+            format!(
+                "Failed to recreate workdirs directory '{}': {}",
+                workdirs_root.display(),
+                err
+            )
+        })?;
+        fs::create_dir_all(&audit_root).map_err(|err| {
+            format!(
+                "Failed to ensure audit directory '{}': {}",
+                audit_root.display(),
+                err
+            )
+        })?;
+
+        Ok(json!({
+            "sessions_deleted": session_entries,
+            "workdirs_deleted": workdir_entries,
+        }))
+    }
+
     // ── Token usage ──────────────────────────────────────────────────────────
 
     pub fn record_usage(
@@ -1029,6 +1100,27 @@ mod tests {
         assert!(lines[1].contains("\"role\":\"assistant\""));
         assert!(lines[2].contains("\"toolCall\""));
         assert!(lines[3].contains("\"role\":\"toolResult\""));
+    }
+
+    #[test]
+    fn test_clear_all_removes_sessions_workdirs_and_usage() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+
+        store.add_message("wipe_s1", "user", "hello");
+        store.add_structured_user_message("wipe_s1", "hello");
+        store.record_usage("wipe_s1", 10, 5, 0, 0, "demo");
+        let workdir = store.session_workdir("wipe_s1");
+        std::fs::write(workdir.join("sample.txt"), "demo").unwrap();
+
+        let result = store.clear_all().unwrap();
+
+        assert_eq!(result["sessions_deleted"].as_u64().unwrap_or(0), 1);
+        assert_eq!(result["workdirs_deleted"].as_u64().unwrap_or(0), 1);
+        assert!(tmp.path().join("sessions").exists());
+        assert!(tmp.path().join("workdirs").exists());
+        assert!(store.load_session_context("wipe_s1", 10).0.is_empty());
+        assert_eq!(store.load_token_usage("wipe_s1").total_requests, 0);
     }
 
     #[test]

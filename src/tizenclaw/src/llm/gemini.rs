@@ -46,7 +46,7 @@ impl GeminiBackend {
             model: "gemini-2.5-flash".into(),
             endpoint: "https://generativelanguage.googleapis.com/v1beta".into(),
             temperature: None,
-            default_max_tokens: Some(4096),
+            default_max_tokens: None,
             thinking_level: None,
             cached_content_name: RwLock::new(None),
             prompt_cache_enabled: false,
@@ -432,6 +432,7 @@ mod tests {
         let req = backend.build_request(&msgs, &[], "You are TizenClaw.", None, None);
         assert!(req.get("system_instruction").is_some());
         assert!(req.get("cachedContent").is_none());
+        assert!(req.get("generationConfig").is_none());
     }
 
     #[test]
