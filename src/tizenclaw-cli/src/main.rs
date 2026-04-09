@@ -1429,6 +1429,9 @@ fn print_usage() {
     eprintln!("  tizenclaw-cli unregister tool <path>");
     eprintln!("  tizenclaw-cli unregister skill <path>");
     eprintln!("  tizenclaw-cli list registrations\n");
+    eprintln!("Task commands:");
+    eprintln!("  tizenclaw-cli list tasks");
+    eprintln!("  tizenclaw-cli devel status\n");
     eprintln!("LLM config commands:");
     eprintln!("  tizenclaw-cli config get [path]");
     eprintln!("  tizenclaw-cli config set <path> <value> [--strict-json]");
@@ -1459,6 +1462,20 @@ fn cmd_unregister(client: &TizenClaw, kind: &str, path: &str) {
 
 fn cmd_list_registrations(client: &TizenClaw) {
     match client.list_registered_paths() {
+        Ok(result) => print_json(&result),
+        Err(error) => print_error_and_exit(&error),
+    }
+}
+
+fn cmd_list_tasks(client: &TizenClaw) {
+    match client.list_tasks() {
+        Ok(result) => print_json(&result),
+        Err(error) => print_error_and_exit(&error),
+    }
+}
+
+fn cmd_devel_status(client: &TizenClaw) {
+    match client.get_devel_status() {
         Ok(result) => print_json(&result),
         Err(error) => print_error_and_exit(&error),
     }
@@ -1528,6 +1545,16 @@ fn main() {
                 cmd_list_registrations(&client);
                 return;
             }
+            "list" if i + 1 < args.len() && args[i + 1] == "tasks" => {
+                let client = create_client().unwrap_or_else(|err| print_error_and_exit(&err));
+                cmd_list_tasks(&client);
+                return;
+            }
+            "devel" if i + 1 < args.len() && args[i + 1] == "status" => {
+                let client = create_client().unwrap_or_else(|err| print_error_and_exit(&err));
+                cmd_devel_status(&client);
+                return;
+            }
             "config" => {
                 let client = create_client().unwrap_or_else(|err| print_error_and_exit(&err));
                 cmd_config(&client, &args[i + 1..]);
@@ -1556,6 +1583,14 @@ fn main() {
             }
             "unregister" => {
                 eprintln!("Usage: tizenclaw-cli unregister <tool|skill> <path>");
+                std::process::exit(1);
+            }
+            "list" => {
+                eprintln!("Usage: tizenclaw-cli list <registrations|tasks>");
+                std::process::exit(1);
+            }
+            "devel" => {
+                eprintln!("Usage: tizenclaw-cli devel status");
                 std::process::exit(1);
             }
             _ => {

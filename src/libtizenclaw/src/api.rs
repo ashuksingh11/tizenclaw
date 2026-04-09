@@ -390,6 +390,18 @@ impl TizenClaw {
         self.call_method("list_registered_paths", json!({}))
     }
 
+    /// List scheduler tasks visible through the daemon IPC channel.
+    pub fn list_tasks(&self) -> Result<Value, String> {
+        self.ensure_initialized()?;
+        self.call_method("list_tasks", json!({}))
+    }
+
+    /// Read the current devel-mode state exposed through the daemon IPC channel.
+    pub fn get_devel_status(&self) -> Result<Value, String> {
+        self.ensure_initialized()?;
+        self.call_method("get_devel_status", json!({}))
+    }
+
     /// Shutdown and release resources.
     pub fn shutdown(&mut self) {
         if self.initialized {
