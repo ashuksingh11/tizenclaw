@@ -29,6 +29,10 @@
         {
           "path": "task_path",
           "contains": "devel-autonomous-cycle.md"
+        },
+        {
+          "path": "telegram_notifications_enabled",
+          "exists": true
         }
       ]
     }

@@ -34,6 +34,7 @@ pub struct DevelStatus {
     pub roadmap_has_pending_work: bool,
     pub recurring_task_present: bool,
     pub bootstrap_task_present: bool,
+    pub telegram_notifications_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,6 +196,7 @@ pub fn devel_status(task_dir: &Path, repo_root: &Path) -> DevelStatus {
     let paths = DevelPaths::new(repo_root);
     let task_path = task_dir.join(DEVEL_TASK_FILE_NAME);
     let bootstrap_task_path = task_dir.join(DEVEL_BOOTSTRAP_TASK_FILE_NAME);
+    let telegram_notifications_enabled = telegram_notifications_enabled();
     DevelStatus {
         repo_root: repo_root.to_path_buf(),
         task_path: task_path.clone(),
@@ -205,6 +207,7 @@ pub fn devel_status(task_dir: &Path, repo_root: &Path) -> DevelStatus {
         roadmap_has_pending_work: roadmap_has_pending_work(&paths.roadmap_path),
         recurring_task_present: task_path.is_file(),
         bootstrap_task_present: bootstrap_task_path.is_file(),
+        telegram_notifications_enabled,
     }
 }
 
@@ -221,7 +224,40 @@ pub fn devel_status_json(task_dir: &Path, repo_root: &Path) -> Value {
         "roadmap_has_pending_work": status.roadmap_has_pending_work,
         "recurring_task_present": status.recurring_task_present,
         "bootstrap_task_present": status.bootstrap_task_present,
+        "telegram_notifications_enabled": status.telegram_notifications_enabled,
     })
+}
+
+fn telegram_notifications_enabled() -> bool {
+    let config_path = crate::core::runtime_paths::default_data_dir()
+        .join("config")
+        .join("telegram_config.json");
+    telegram_notifications_enabled_for_config(&config_path)
+}
+
+fn telegram_notifications_enabled_for_config(config_path: &Path) -> bool {
+    let content = match fs::read_to_string(config_path) {
+        Ok(content) => content,
+        Err(_) => return false,
+    };
+    let config: Value = match serde_json::from_str(&content) {
+        Ok(config) => config,
+        Err(_) => return false,
+    };
+    let bot_token = config
+        .get("bot_token")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if bot_token.is_empty() || bot_token == "YOUR_TELEGRAM_BOT_TOKEN_HERE" {
+        return false;
+    }
+
+    config
+        .get("allowed_chat_ids")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().any(|item| item.as_i64().is_some()))
+        .unwrap_or(false)
 }
 
 fn current_prompt_fingerprint(prompt_path: &Path) -> Option<String> {
@@ -378,6 +414,11 @@ fn current_local_timestamp_minute() -> String {
 }
 
 fn render_devel_prompt(paths: &DevelPaths) -> String {
+    let telegram_stage_reports = if telegram_notifications_enabled() {
+        "enabled"
+    } else {
+        "disabled"
+    };
     format!(
         "\
 Run the TizenClaw self-development cycle for this repository.
@@ -393,6 +434,7 @@ Authoritative files:
 - prompt: {prompt}
 - status: {status}
 - rust rule: .agent/rules/rust.md
+- telegram stage reports: {telegram_stage_reports}
 
 Execution policy:
 - Work inside this repository and use Codex CLI through the normal TizenClaw coding-agent path.
@@ -401,6 +443,11 @@ Execution policy:
 - When daemon-visible behavior changes, add or update a tizenclaw-tests scenario first and use it as the system-test contract.
 - During code review, inspect .agent/rules/rust.md, the roadmap goal, runtime safety, and unit/system tests in detail.
 - Complete the cycle through commit and push when the implemented roadmap slice is verified.
+- When `telegram stage reports` is `enabled`, call `send_outbound_message`
+  with channel `telegram` immediately after each `Supervisor Gate after ...`
+  PASS entry is written into `.dev_note/DASHBOARD.md`.
+- Each Telegram update should include the completed stage, current goal,
+  key result, and next step. Delivery failure is a warning, not a blocker.
 
 Required workflow:
 1. Open .dev_note/DASHBOARD.md first. If earlier devel work looks incomplete or suspicious, verify it before starting new implementation.
@@ -431,6 +478,7 @@ Behavior goals:
         dashboard = paths.dashboard_path.display(),
         prompt = paths.prompt_path.display(),
         status = paths.status_path.display(),
+        telegram_stage_reports = telegram_stage_reports,
     )
 }
 
@@ -520,6 +568,31 @@ mod tests {
         let status = devel_status(&tasks, repo.path());
         assert!(status.roadmap_has_pending_work);
         assert!(status.recurring_task_present);
+        assert_eq!(
+            status.telegram_notifications_enabled,
+            super::telegram_notifications_enabled()
+        );
+    }
+
+    #[test]
+    fn telegram_notification_readiness_requires_token_and_chat_id() {
+        let repo = sample_repo();
+        let config_dir = repo.path().join(".tizenclaw/config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let config_path = config_dir.join("telegram_config.json");
+
+        std::fs::write(
+            &config_path,
+            r#"{"bot_token":"YOUR_TELEGRAM_BOT_TOKEN_HERE","allowed_chat_ids":[1]}"#,
+        )
+        .unwrap();
+        assert!(!super::telegram_notifications_enabled_for_config(&config_path));
+
+        std::fs::write(&config_path, r#"{"bot_token":"abc","allowed_chat_ids":[]}"#).unwrap();
+        assert!(!super::telegram_notifications_enabled_for_config(&config_path));
+
+        std::fs::write(&config_path, r#"{"bot_token":"abc","allowed_chat_ids":[1]}"#).unwrap();
+        assert!(super::telegram_notifications_enabled_for_config(&config_path));
     }
 
     #[test]
@@ -531,5 +604,7 @@ mod tests {
         assert!(prompt.contains("Detect whether immediate development is required"));
         assert!(prompt.contains("generate or refresh ROADMAP.md and ANALYSIS.md in English"));
         assert!(prompt.contains("write done into .dev_note/.status"));
+        assert!(prompt.contains("telegram stage reports"));
+        assert!(prompt.contains("send_outbound_message"));
     }
 }
