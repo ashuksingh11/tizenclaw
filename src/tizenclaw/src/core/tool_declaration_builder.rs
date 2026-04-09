@@ -172,6 +172,45 @@ impl ToolDeclarationBuilder {
             }),
         });
         tools.push(LlmToolDecl {
+            name: "file_manager".into(),
+            description: "Manage files and directories directly in the workspace using explicit operations such as read, write, append, list, mkdir, stat, copy, move, remove, and download. Prefer this over generated-code execution for normal file management tasks.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["read", "write", "append", "remove", "mkdir", "list", "stat", "copy", "move", "download"],
+                        "description": "File operation to execute"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Target file or directory path for operations that use a single path"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write or append"
+                    },
+                    "src": {
+                        "type": "string",
+                        "description": "Source path for copy or move"
+                    },
+                    "dst": {
+                        "type": "string",
+                        "description": "Destination path for copy or move"
+                    },
+                    "url": {
+                        "type": "string",
+                        "description": "Download URL for the download operation"
+                    },
+                    "dest": {
+                        "type": "string",
+                        "description": "Destination path for the download operation"
+                    }
+                },
+                "required": ["operation"]
+            }),
+        });
+        tools.push(LlmToolDecl {
             name: "file_write".into(),
             description: "Write content to a file at the specified path in the workspace. Creates parent directories if needed. Use this when you need to create or overwrite a file without executing code. For paths without a leading '/', the file is created relative to the current workspace directory.".into(),
             parameters: json!({
@@ -187,6 +226,63 @@ impl ToolDeclarationBuilder {
                     }
                 },
                 "required": ["path", "content"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "clear_agent_data".into(),
+            description: "Delete daemon-managed memory and/or session data when the user explicitly asks to wipe stored context. This clears persistent memory files plus session transcripts, token usage, and workdirs.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "include_memory": {
+                        "type": "boolean",
+                        "description": "Whether to delete persistent memory entries and memory markdown files"
+                    },
+                    "include_sessions": {
+                        "type": "boolean",
+                        "description": "Whether to delete session transcripts, token usage history, and session workdirs"
+                    }
+                },
+                "required": []
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "run_coding_agent".into(),
+            description: "Run a configured local coding-agent CLI such as codex, gemini, claude, or a config-defined custom backend. Use this when repository or implementation work should be delegated to the host coding agent through TizenClaw.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "The development task to run through the coding agent"
+                    },
+                    "backend": {
+                        "type": "string",
+                        "description": "Optional coding backend override such as codex, gemini, or claude"
+                    },
+                    "project_dir": {
+                        "type": "string",
+                        "description": "Optional project directory override for the coding agent"
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Optional coding model override"
+                    },
+                    "execution_mode": {
+                        "type": "string",
+                        "enum": ["plan", "fast"],
+                        "description": "Optional coding execution style"
+                    },
+                    "auto_approve": {
+                        "type": "boolean",
+                        "description": "Whether to enable the coding backend auto-approve mode"
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Optional timeout override in seconds"
+                    }
+                },
+                "required": ["prompt"]
             }),
         });
         tools.push(LlmToolDecl {
@@ -239,7 +335,12 @@ impl ToolDeclarationBuilder {
                 "type": "object",
                 "properties": {
                     "schedule": {"type": "string", "description": "Schedule expression"},
-                    "prompt": {"type": "string", "description": "The prompt to execute"}
+                    "prompt": {"type": "string", "description": "The prompt to execute"},
+                    "project_dir": {"type": "string", "description": "Optional project directory to preserve for scheduled development work"},
+                    "coding_backend": {"type": "string", "description": "Optional coding backend default such as codex, gemini, or claude"},
+                    "coding_model": {"type": "string", "description": "Optional coding model default"},
+                    "execution_mode": {"type": "string", "enum": ["plan", "fast"], "description": "Optional coding execution style for scheduled development work"},
+                    "auto_approve": {"type": "boolean", "description": "Optional coding auto-approve default for the scheduled task"}
                 },
                 "required": ["schedule", "prompt"]
             }),
@@ -688,6 +789,8 @@ mod tests {
         assert!(names.contains(&"create_session"));
         assert!(names.contains(&"search_knowledge"));
         assert!(names.contains(&"generate_image"));
+        assert!(names.contains(&"file_manager"));
+        assert!(names.contains(&"run_coding_agent"));
     }
 
     #[test]

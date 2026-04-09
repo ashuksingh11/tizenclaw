@@ -15,12 +15,18 @@ pub struct ScheduledTask {
     pub schedule_expr: Option<String>,
     pub one_shot: bool,
     pub enabled: bool,
+    pub project_dir: Option<String>,
+    pub coding_backend: Option<String>,
+    pub coding_model: Option<String>,
+    pub execution_mode: Option<String>,
+    pub auto_approve: bool,
 }
 
 pub struct TaskScheduler {
     running: Arc<AtomicBool>,
     tasks: Arc<std::sync::Mutex<Vec<ScheduledTask>>>,
     task_dir: Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
+    agent: Option<Arc<crate::core::agent_core::AgentCore>>,
 }
 
 impl Default for TaskScheduler {
@@ -35,7 +41,14 @@ impl TaskScheduler {
             running: Arc::new(AtomicBool::new(false)),
             tasks: Arc::new(std::sync::Mutex::new(vec![])),
             task_dir: Arc::new(std::sync::Mutex::new(None)),
+            agent: None,
         }
+    }
+
+    pub fn with_agent(agent: Arc<crate::core::agent_core::AgentCore>) -> Self {
+        let mut scheduler = Self::new();
+        scheduler.agent = Some(agent);
+        scheduler
     }
 
     pub fn add_task(&self, task: ScheduledTask) {
@@ -111,6 +124,11 @@ impl TaskScheduler {
         dir_path: &Path,
         schedule: &str,
         prompt: &str,
+        project_dir: Option<&str>,
+        coding_backend: Option<&str>,
+        coding_model: Option<&str>,
+        execution_mode: Option<&str>,
+        auto_approve: bool,
     ) -> Result<ScheduledTask, String> {
         let schedule = schedule.trim();
         let prompt = prompt.trim();
@@ -136,15 +154,36 @@ impl TaskScheduler {
         let file_path = dir_path.join(format!("{}.md", id));
         let name = first_prompt_line(prompt);
         let session_id = format!("scheduler_{}", slug);
-        let content = format!(
-            "---\nname: {}\nschedule: {}\ninterval_secs: {}\none_shot: {}\nenabled: true\nsession_id: {}\n---\n{}\n",
+        let project_dir = normalize_optional_value(project_dir);
+        let coding_backend = normalize_optional_value(coding_backend);
+        let coding_model = normalize_optional_value(coding_model);
+        let execution_mode = normalize_optional_value(execution_mode);
+        let mut content = format!(
+            "---\nname: {}\nschedule: {}\ninterval_secs: {}\none_shot: {}\nenabled: true\nsession_id: {}\n",
             name,
             schedule,
             interval_secs,
             if one_shot { "true" } else { "false" },
             session_id,
-            prompt
         );
+        if let Some(project_dir) = project_dir.as_deref() {
+            content.push_str(&format!("project_dir: {}\n", project_dir));
+        }
+        if let Some(coding_backend) = coding_backend.as_deref() {
+            content.push_str(&format!("coding_backend: {}\n", coding_backend));
+        }
+        if let Some(coding_model) = coding_model.as_deref() {
+            content.push_str(&format!("coding_model: {}\n", coding_model));
+        }
+        if let Some(execution_mode) = execution_mode.as_deref() {
+            content.push_str(&format!("execution_mode: {}\n", execution_mode));
+        }
+        if auto_approve {
+            content.push_str("auto_approve: true\n");
+        }
+        content.push_str("---\n");
+        content.push_str(prompt);
+        content.push('\n');
 
         std::fs::write(&file_path, content)
             .map_err(|e| format!("Failed to write task file '{}': {}", file_path.display(), e))?;
@@ -158,6 +197,11 @@ impl TaskScheduler {
             schedule_expr: Some(schedule.to_string()),
             one_shot,
             enabled: true,
+            project_dir,
+            coding_backend,
+            coding_model,
+            execution_mode,
+            auto_approve,
         })
     }
 
@@ -241,6 +285,7 @@ impl TaskScheduler {
         let running = self.running.clone();
         let tasks = self.tasks.clone();
         let task_dir = self.task_dir.clone();
+        let agent = self.agent.clone();
 
         let handle = tokio::spawn(async move {
             log::info!("TaskScheduler started");
@@ -289,6 +334,24 @@ impl TaskScheduler {
 
                     if should_run {
                         log::debug!("Scheduler: executing task '{}'", task.name);
+                        if let Some(agent) = agent.clone() {
+                            let session_id = task.session_id.clone();
+                            let prompt = task.execution_prompt();
+                            let task_name = task.name.clone();
+                            tokio::spawn(async move {
+                                let response = agent.process_prompt(&session_id, &prompt, None).await;
+                                log::info!(
+                                    "Scheduler: task '{}' completed with response: {}",
+                                    task_name,
+                                    truncate_chars(response.trim(), 240)
+                                );
+                            });
+                        } else {
+                            log::warn!(
+                                "Scheduler: task '{}' is due but no AgentCore is attached",
+                                task.name
+                            );
+                        }
 
                         if task.one_shot {
                             if let Some(dir_path) = task_dir.lock().ok().and_then(|dir| dir.clone())
@@ -335,6 +398,46 @@ fn local_date_string() -> String {
 }
 
 impl ScheduledTask {
+    fn execution_prompt(&self) -> String {
+        let mut lines = vec![
+            "You are handling a scheduled TizenClaw task.".to_string(),
+            "Run this work through the normal TizenClaw agent loop.".to_string(),
+        ];
+
+        if self.project_dir.is_some()
+            || self.coding_backend.is_some()
+            || self.coding_model.is_some()
+            || self.execution_mode.is_some()
+            || self.auto_approve
+        {
+            lines.push(
+                "If repository work is needed, prefer the run_coding_agent tool with these scheduled defaults."
+                    .to_string(),
+            );
+            if let Some(project_dir) = self.project_dir.as_deref() {
+                lines.push(format!("Project directory: {}", project_dir));
+            }
+            if let Some(coding_backend) = self.coding_backend.as_deref() {
+                lines.push(format!("Coding backend: {}", coding_backend));
+            }
+            if let Some(coding_model) = self.coding_model.as_deref() {
+                lines.push(format!("Coding model: {}", coding_model));
+            }
+            if let Some(execution_mode) = self.execution_mode.as_deref() {
+                lines.push(format!("Coding execution mode: {}", execution_mode));
+            }
+            lines.push(format!(
+                "Coding auto approve: {}",
+                if self.auto_approve { "on" } else { "off" }
+            ));
+        }
+
+        lines.push(String::new());
+        lines.push("Scheduled request:".to_string());
+        lines.push(self.prompt.clone());
+        lines.join("\n")
+    }
+
     fn initial_due_time(&self) -> std::time::SystemTime {
         if let Some(schedule) = self.schedule_expr.as_deref() {
             if let Some(system_time) = first_due_time_for_schedule(schedule) {
@@ -372,6 +475,11 @@ impl TaskScheduler {
         let mut enabled = true;
         let mut session_id = "scheduler".to_string();
         let mut schedule_expr = None;
+        let mut project_dir = None;
+        let mut coding_backend = None;
+        let mut coding_model = None;
+        let mut execution_mode = None;
+        let mut auto_approve = false;
         let mut prompt = String::new();
         let mut in_frontmatter = false;
 
@@ -391,6 +499,11 @@ impl TaskScheduler {
                         "enabled" => enabled = val != "false",
                         "name" => name = val.to_string(),
                         "session_id" => session_id = val.to_string(),
+                        "project_dir" => project_dir = Some(val.to_string()),
+                        "coding_backend" => coding_backend = Some(val.to_string()),
+                        "coding_model" => coding_model = Some(val.to_string()),
+                        "execution_mode" => execution_mode = Some(val.to_string()),
+                        "auto_approve" => auto_approve = val == "true",
                         _ => {}
                     }
                 }
@@ -409,6 +522,11 @@ impl TaskScheduler {
             schedule_expr,
             one_shot,
             enabled,
+            project_dir,
+            coding_backend,
+            coding_model,
+            execution_mode,
+            auto_approve,
         })
     }
 
@@ -454,6 +572,13 @@ fn first_prompt_line(prompt: &str) -> String {
         .map(|line| truncate_chars(line.trim(), 48))
         .filter(|line| !line.is_empty())
         .unwrap_or_else(|| "Scheduled task".to_string())
+}
+
+fn normalize_optional_value(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 fn slugify_task_name(prompt: &str) -> String {
@@ -699,6 +824,11 @@ mod tests {
             schedule_expr: None,
             one_shot: false,
             enabled: true,
+            project_dir: None,
+            coding_backend: None,
+            coding_model: None,
+            execution_mode: None,
+            auto_approve: false,
         }
     }
 
@@ -763,13 +893,42 @@ mod tests {
             &temp_root,
             "interval 30m",
             "Collect a short health summary.",
+            Some("/tmp/demo"),
+            Some("codex"),
+            Some("gpt-5.4"),
+            Some("plan"),
+            true,
         )
         .unwrap();
         let listed = TaskScheduler::list_tasks_from_dir(&temp_root).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, task.id);
+        assert_eq!(listed[0].project_dir.as_deref(), Some("/tmp/demo"));
+        assert_eq!(listed[0].coding_backend.as_deref(), Some("codex"));
+        assert_eq!(listed[0].coding_model.as_deref(), Some("gpt-5.4"));
+        assert_eq!(listed[0].execution_mode.as_deref(), Some("plan"));
+        assert!(listed[0].auto_approve);
         assert!(TaskScheduler::delete_task_file(&temp_root, &task.id).unwrap());
 
         let _ = std::fs::remove_dir_all(&temp_root);
+    }
+
+    #[test]
+    fn test_execution_prompt_includes_coding_defaults() {
+        let task = ScheduledTask {
+            project_dir: Some("/workspace/demo".to_string()),
+            coding_backend: Some("codex".to_string()),
+            coding_model: Some("gpt-5.4".to_string()),
+            execution_mode: Some("plan".to_string()),
+            auto_approve: true,
+            ..sample_task("t2")
+        };
+
+        let prompt = task.execution_prompt();
+        assert!(prompt.contains("Project directory: /workspace/demo"));
+        assert!(prompt.contains("Coding backend: codex"));
+        assert!(prompt.contains("Coding model: gpt-5.4"));
+        assert!(prompt.contains("Coding execution mode: plan"));
+        assert!(prompt.contains("Coding auto approve: on"));
     }
 }

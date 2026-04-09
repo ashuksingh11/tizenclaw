@@ -43,6 +43,9 @@ static MARKDOWN_LEVEL_HEADING_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"^##\s+\[(\d+)단계\]").unwrap());
 static CSV_FILE_NAME_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"([A-Za-z0-9_-]+\.csv)\b").unwrap());
+static RELATIVE_FILE_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"\b((?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+)\b").unwrap()
+});
 
 use crate::core::agent_loop_state::{AgentLoopState, AgentPhase, EvalVerdict};
 use crate::core::agent_role::{AgentRole, AgentRoleRegistry};
@@ -63,7 +66,6 @@ use crate::storage::session_store::SessionStore;
 const MAX_CONTEXT_MESSAGES: usize = 100;
 const CONTEXT_TOKEN_BUDGET: usize = 0;
 const CONTEXT_COMPACT_THRESHOLD: f32 = 0.90;
-const MAX_TOOL_RETRY: usize = 3;
 const MAX_PREFETCHED_SKILLS: usize = 3;
 const MAX_OUTBOUND_DASHBOARD_MESSAGES: usize = 200;
 const MAX_TELEGRAM_OUTBOUND_CHARS: usize = 4000;
@@ -881,6 +883,135 @@ fn extract_explicit_directory_paths(text: &str) -> Vec<String> {
         .collect()
 }
 
+fn extract_relative_file_paths(text: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut paths = Vec::new();
+
+    for captures in RELATIVE_FILE_RE.captures_iter(text) {
+        let Some(matched) = captures.get(1).map(|value| value.as_str().trim_matches(|ch| {
+            matches!(ch, '`' | '"' | '\'' | ',' | '.' | ':' | ';' | ')' | '(')
+        })) else {
+            continue;
+        };
+        if matched.is_empty()
+            || matched.starts_with('/')
+            || matched.contains("://")
+            || matched.starts_with("www.")
+        {
+            continue;
+        }
+        let normalized = matched.trim_start_matches("./").to_string();
+        if seen.insert(normalized.clone()) {
+            paths.push(normalized);
+        }
+    }
+
+    paths
+}
+
+fn prompt_mentions_readme(text: &str) -> bool {
+    text.to_ascii_lowercase().contains("readme")
+}
+
+fn expected_file_management_targets(prompt: &str) -> Vec<Vec<String>> {
+    let mut groups = extract_relative_file_paths(prompt)
+        .into_iter()
+        .map(|path| vec![path])
+        .collect::<Vec<_>>();
+
+    if prompt_mentions_readme(prompt)
+        && !groups.iter().any(|group| {
+            group.iter().any(|path| {
+                path.eq_ignore_ascii_case("README") || path.eq_ignore_ascii_case("README.md")
+            })
+        })
+    {
+        groups.push(vec!["README".to_string(), "README.md".to_string()]);
+    }
+
+    groups
+}
+
+fn prompt_mentions_history_or_memory(prompt: &str) -> bool {
+    let prompt_lower = prompt.to_ascii_lowercase();
+    [
+        "history",
+        "memory",
+        "remember",
+        "previous",
+        "earlier",
+        "context",
+        "continue",
+        "again",
+    ]
+    .iter()
+    .any(|keyword| prompt_lower.contains(keyword))
+}
+
+fn prompt_requests_executable_script(prompt: &str) -> bool {
+    let prompt_lower = prompt.to_ascii_lowercase();
+    (prompt_lower.contains("script")
+        || prompt_lower.contains("python")
+        || prompt_lower.contains("bash")
+        || prompt_lower.contains("node")
+        || prompt_lower.contains("executable"))
+        && (prompt_lower.contains("run")
+            || prompt_lower.contains("execute")
+            || prompt_lower.contains("launch")
+            || prompt_lower.contains("command"))
+}
+
+fn is_simple_file_management_request(prompt: &str) -> bool {
+    let prompt_lower = prompt.to_ascii_lowercase();
+    let has_file_action = [
+        "create",
+        "write",
+        "save",
+        "edit",
+        "update",
+        "append",
+        "read",
+        "list",
+        "show",
+        "remove",
+        "delete",
+        "copy",
+        "move",
+        "rename",
+        "mkdir",
+    ]
+    .iter()
+    .any(|keyword| prompt_lower.contains(keyword));
+    let has_file_target = [
+        "file",
+        "files",
+        "directory",
+        "folder",
+        "project structure",
+        "working directory",
+        "readme",
+        ".md",
+        ".txt",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".py",
+        ".js",
+        ".ts",
+        ".rs",
+        "src/",
+    ]
+    .iter()
+    .any(|keyword| prompt_lower.contains(keyword))
+        || !extract_explicit_paths(prompt).is_empty();
+
+    has_file_action && has_file_target && !prompt_requests_executable_script(prompt)
+}
+
+fn should_skip_memory_for_prompt(prompt: &str) -> bool {
+    is_simple_file_management_request(prompt) && !prompt_mentions_history_or_memory(prompt)
+}
+
 fn should_prefetch_prompt_file(path: &str) -> bool {
     matches!(
         Path::new(path).extension().and_then(|value| value.to_str()),
@@ -1632,6 +1763,295 @@ fn persist_generated_code_copy(code: &str, output_path: &Path) -> Result<(), Str
     })
 }
 
+fn resolve_workspace_path(session_workdir: &Path, path_str: &str) -> Result<PathBuf, String> {
+    if path_str.trim().is_empty() {
+        return Err("Missing required path".to_string());
+    }
+
+    let path = Path::new(path_str);
+    Ok(if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        session_workdir.join(path)
+    })
+}
+
+fn collect_successful_file_management_actions(messages: &[LlmMessage]) -> usize {
+    messages
+        .iter()
+        .filter(|message| message.role == "tool")
+        .filter(|message| matches!(message.tool_name.as_str(), "file_manager" | "file_write"))
+        .filter(|message| {
+            message
+                .tool_result
+                .get("success")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+        })
+        .count()
+}
+
+fn collect_successful_file_management_paths(messages: &[LlmMessage]) -> HashSet<String> {
+    messages
+        .iter()
+        .filter(|message| message.role == "tool")
+        .filter(|message| matches!(message.tool_name.as_str(), "file_manager" | "file_write"))
+        .filter(|message| {
+            message
+                .tool_result
+                .get("success")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+        })
+        .filter_map(|message| {
+            message
+                .tool_result
+                .get("path")
+                .and_then(|value| value.as_str())
+                .map(|value| value.to_string())
+        })
+        .collect()
+}
+
+fn missing_file_management_targets(
+    prompt: &str,
+    session_workdir: &Path,
+    messages: &[LlmMessage],
+) -> Vec<String> {
+    let expected_groups = expected_file_management_targets(prompt);
+    if expected_groups.is_empty() {
+        return Vec::new();
+    }
+
+    let created_paths = collect_successful_file_management_paths(messages);
+    expected_groups
+        .into_iter()
+        .filter_map(|group| {
+            let satisfied = group.iter().any(|candidate| {
+                let absolute = session_workdir.join(candidate);
+                absolute.exists()
+                    || created_paths.contains(absolute.to_string_lossy().as_ref())
+                    || created_paths.contains(candidate.as_str())
+            });
+            if satisfied {
+                None
+            } else {
+                group.first().cloned()
+            }
+        })
+        .collect()
+}
+
+async fn file_manager_tool(tc_args: &Value, session_workdir: &Path) -> Value {
+    let operation = tc_args
+        .get("operation")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+
+    match operation.as_str() {
+        "read" => {
+            let path_str = tc_args.get("path").and_then(|value| value.as_str()).unwrap_or("");
+            let path = match resolve_workspace_path(session_workdir, path_str) {
+                Ok(path) => path,
+                Err(error) => return json!({"error": error}),
+            };
+            match std::fs::read_to_string(&path) {
+                Ok(content) => json!({
+                    "success": true,
+                    "operation": operation,
+                    "path": path.to_string_lossy(),
+                    "content": content,
+                }),
+                Err(error) => json!({"error": format!("Failed to read file '{}': {}", path.display(), error)}),
+            }
+        }
+        "write" | "append" => {
+            let path_str = tc_args.get("path").and_then(|value| value.as_str()).unwrap_or("");
+            let content = tc_args
+                .get("content")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            let path = match resolve_workspace_path(session_workdir, path_str) {
+                Ok(path) => path,
+                Err(error) => return json!({"error": error}),
+            };
+            if let Some(parent) = path.parent() {
+                if let Err(error) = std::fs::create_dir_all(parent) {
+                    return json!({"error": format!("Failed to create directory '{}': {}", parent.display(), error)});
+                }
+            }
+            let write_result = if operation == "append" {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                    .and_then(|mut file| std::io::Write::write_all(&mut file, content.as_bytes()))
+            } else {
+                std::fs::write(&path, content.as_bytes())
+            };
+            match write_result {
+                Ok(()) => json!({
+                    "success": true,
+                    "operation": operation,
+                    "path": path.to_string_lossy(),
+                    "bytes_written": content.len()
+                }),
+                Err(error) => json!({"error": format!("Failed to {} file '{}': {}", operation, path.display(), error)}),
+            }
+        }
+        "remove" => {
+            let path_str = tc_args.get("path").and_then(|value| value.as_str()).unwrap_or("");
+            let path = match resolve_workspace_path(session_workdir, path_str) {
+                Ok(path) => path,
+                Err(error) => return json!({"error": error}),
+            };
+            let result = if path.is_dir() {
+                std::fs::remove_dir_all(&path)
+            } else {
+                std::fs::remove_file(&path)
+            };
+            match result {
+                Ok(()) => json!({
+                    "success": true,
+                    "operation": operation,
+                    "path": path.to_string_lossy()
+                }),
+                Err(error) => json!({"error": format!("Failed to remove '{}': {}", path.display(), error)}),
+            }
+        }
+        "mkdir" => {
+            let path_str = tc_args.get("path").and_then(|value| value.as_str()).unwrap_or("");
+            let path = match resolve_workspace_path(session_workdir, path_str) {
+                Ok(path) => path,
+                Err(error) => return json!({"error": error}),
+            };
+            match std::fs::create_dir_all(&path) {
+                Ok(()) => json!({
+                    "success": true,
+                    "operation": operation,
+                    "path": path.to_string_lossy()
+                }),
+                Err(error) => json!({"error": format!("Failed to create directory '{}': {}", path.display(), error)}),
+            }
+        }
+        "list" => {
+            let path_str = tc_args.get("path").and_then(|value| value.as_str()).unwrap_or(".");
+            let path = match resolve_workspace_path(session_workdir, path_str) {
+                Ok(path) => path,
+                Err(error) => return json!({"error": error}),
+            };
+            match std::fs::read_dir(&path) {
+                Ok(entries) => {
+                    let entries = entries
+                        .filter_map(|entry| entry.ok())
+                        .map(|entry| {
+                            let entry_path = entry.path();
+                            let metadata = entry.metadata().ok();
+                            json!({
+                                "name": entry.file_name().to_string_lossy(),
+                                "path": entry_path.to_string_lossy(),
+                                "is_dir": metadata.as_ref().map(|value| value.is_dir()).unwrap_or(false),
+                                "size": metadata.as_ref().map(|value| value.len()).unwrap_or(0)
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    json!({
+                        "success": true,
+                        "operation": operation,
+                        "path": path.to_string_lossy(),
+                        "entries": entries
+                    })
+                }
+                Err(error) => json!({"error": format!("Failed to list directory '{}': {}", path.display(), error)}),
+            }
+        }
+        "stat" => {
+            let path_str = tc_args.get("path").and_then(|value| value.as_str()).unwrap_or("");
+            let path = match resolve_workspace_path(session_workdir, path_str) {
+                Ok(path) => path,
+                Err(error) => return json!({"error": error}),
+            };
+            match std::fs::metadata(&path) {
+                Ok(metadata) => json!({
+                    "success": true,
+                    "operation": operation,
+                    "path": path.to_string_lossy(),
+                    "is_dir": metadata.is_dir(),
+                    "is_file": metadata.is_file(),
+                    "size": metadata.len(),
+                    "readonly": metadata.permissions().readonly()
+                }),
+                Err(error) => json!({"error": format!("Failed to stat '{}': {}", path.display(), error)}),
+            }
+        }
+        "copy" | "move" => {
+            let src_str = tc_args.get("src").and_then(|value| value.as_str()).unwrap_or("");
+            let dst_str = tc_args.get("dst").and_then(|value| value.as_str()).unwrap_or("");
+            let src = match resolve_workspace_path(session_workdir, src_str) {
+                Ok(path) => path,
+                Err(error) => return json!({"error": format!("src: {}", error)}),
+            };
+            let dst = match resolve_workspace_path(session_workdir, dst_str) {
+                Ok(path) => path,
+                Err(error) => return json!({"error": format!("dst: {}", error)}),
+            };
+            if let Some(parent) = dst.parent() {
+                if let Err(error) = std::fs::create_dir_all(parent) {
+                    return json!({"error": format!("Failed to create destination directory '{}': {}", parent.display(), error)});
+                }
+            }
+            let result = if operation == "move" {
+                std::fs::rename(&src, &dst).map(|_| 0u64)
+            } else {
+                std::fs::copy(&src, &dst)
+            };
+            match result {
+                Ok(bytes) => json!({
+                    "success": true,
+                    "operation": operation,
+                    "src": src.to_string_lossy(),
+                    "dst": dst.to_string_lossy(),
+                    "bytes_copied": bytes
+                }),
+                Err(error) => json!({"error": format!("Failed to {} '{}' -> '{}': {}", operation, src.display(), dst.display(), error)}),
+            }
+        }
+        "download" => {
+            let url = tc_args.get("url").and_then(|value| value.as_str()).unwrap_or("").trim();
+            let dest_str = tc_args.get("dest").and_then(|value| value.as_str()).unwrap_or("");
+            if url.is_empty() {
+                return json!({"error": "Missing required url"});
+            }
+            let dest = match resolve_workspace_path(session_workdir, dest_str) {
+                Ok(path) => path,
+                Err(error) => return json!({"error": error}),
+            };
+            if let Some(parent) = dest.parent() {
+                if let Err(error) = std::fs::create_dir_all(parent) {
+                    return json!({"error": format!("Failed to create destination directory '{}': {}", parent.display(), error)});
+                }
+            }
+            let response = crate::infra::http_client::http_get(url, &[], 1, 60).await;
+            if !response.success {
+                return json!({"error": format!("Failed to download '{}': {}", url, response.error)});
+            }
+            match std::fs::write(&dest, response.body.as_bytes()) {
+                Ok(()) => json!({
+                    "success": true,
+                    "operation": operation,
+                    "url": url,
+                    "dest": dest.to_string_lossy(),
+                    "bytes_written": response.body.len()
+                }),
+                Err(error) => json!({"error": format!("Failed to save download to '{}': {}", dest.display(), error)}),
+            }
+        }
+        _ => json!({"error": format!("Unsupported file_manager operation '{}'", operation)}),
+    }
+}
+
 fn extract_option_value(args: &[String], flag: &str) -> Option<String> {
     args.windows(2)
         .find(|window| window[0] == flag)
@@ -1646,6 +2066,78 @@ fn canonical_tool_trace(tc: &backend::LlmToolCall) -> Value {
         "arguments": tc.args,
         "actual_tool_name": tc.name
     });
+
+    if tc.name == "file_manager" {
+        let operation = tc
+            .args
+            .get("operation")
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+
+        return match operation.as_str() {
+            "read" => {
+                let path = tc.args.get("path").and_then(|value| value.as_str()).unwrap_or("");
+                json!({
+                    "type": "toolCall",
+                    "name": "read_file",
+                    "params": {
+                        "path": path,
+                        "file_path": path,
+                        "files": [path],
+                        "operation": operation,
+                        "actual_tool_name": tc.name
+                    },
+                    "arguments": {
+                        "path": path,
+                        "file_path": path,
+                        "files": [path]
+                    }
+                })
+            }
+            "write" | "append" => {
+                let path = tc.args.get("path").and_then(|value| value.as_str()).unwrap_or("");
+                let content = tc
+                    .args
+                    .get("content")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                json!({
+                    "type": "toolCall",
+                    "name": "write_file",
+                    "params": {
+                        "path": path,
+                        "file_path": path,
+                        "content": content,
+                        "operation": operation,
+                        "actual_tool_name": tc.name
+                    },
+                    "arguments": {
+                        "path": path,
+                        "file_path": path,
+                        "content": content
+                    }
+                })
+            }
+            "list" => {
+                let path = tc.args.get("path").and_then(|value| value.as_str()).unwrap_or(".");
+                json!({
+                    "type": "toolCall",
+                    "name": "list_files",
+                    "params": {
+                        "path": path,
+                        "operation": operation,
+                        "actual_tool_name": tc.name
+                    },
+                    "arguments": {
+                        "path": path
+                    }
+                })
+            }
+            _ => default.clone(),
+        };
+    }
 
     if tc.name == "run_generated_code" {
         let runtime = tc
@@ -2024,6 +2516,11 @@ fn list_tasks_tool(base_dir: &Path) -> Value {
                 "schedule": task.schedule_expr,
                 "one_shot": task.one_shot,
                 "enabled": task.enabled,
+                "project_dir": task.project_dir,
+                "coding_backend": task.coding_backend,
+                "coding_model": task.coding_model,
+                "execution_mode": task.execution_mode,
+                "auto_approve": task.auto_approve,
                 "prompt": task.prompt,
             })).collect::<Vec<_>>(),
         }),
@@ -2031,10 +2528,27 @@ fn list_tasks_tool(base_dir: &Path) -> Value {
     }
 }
 
-fn create_task_tool(base_dir: &Path, schedule: &str, prompt: &str) -> Value {
+fn create_task_tool(
+    base_dir: &Path,
+    schedule: &str,
+    prompt: &str,
+    project_dir: Option<&str>,
+    coding_backend: Option<&str>,
+    coding_model: Option<&str>,
+    execution_mode: Option<&str>,
+    auto_approve: bool,
+) -> Value {
     let task_dir = task_scheduler_dir(base_dir);
-    match crate::core::task_scheduler::TaskScheduler::create_task_file(&task_dir, schedule, prompt)
-    {
+    match crate::core::task_scheduler::TaskScheduler::create_task_file(
+        &task_dir,
+        schedule,
+        prompt,
+        project_dir,
+        coding_backend,
+        coding_model,
+        execution_mode,
+        auto_approve,
+    ) {
         Ok(task) => json!({
             "status": "success",
             "task": {
@@ -2045,6 +2559,11 @@ fn create_task_tool(base_dir: &Path, schedule: &str, prompt: &str) -> Value {
                 "schedule": task.schedule_expr,
                 "one_shot": task.one_shot,
                 "enabled": task.enabled,
+                "project_dir": task.project_dir,
+                "coding_backend": task.coding_backend,
+                "coding_model": task.coding_model,
+                "execution_mode": task.execution_mode,
+                "auto_approve": task.auto_approve,
                 "prompt": task.prompt,
             }
         }),
@@ -3670,6 +4189,8 @@ impl AgentCore {
         system_prompt: &str,
         max_tokens: Option<u32>,
     ) -> LlmResponse {
+        let mut failure_summaries: Vec<String> = Vec::new();
+
         // Try primary backend — lock is held only during chat()
         {
             let bn = match self.backend_name.read() {
@@ -3694,9 +4215,14 @@ impl AgentCore {
                         resp.http_status,
                         resp.error_message
                     );
+                    failure_summaries.push(format!(
+                        "{} (HTTP {}): {}",
+                        bn, resp.http_status, resp.error_message
+                    ));
                 }
             } else {
                 log::warn!("Primary backend '{}' skipped due to Circuit Breaker", bn);
+                failure_summaries.push(format!("{}: skipped by circuit breaker", bn));
             }
         }
         // Primary lock is released here
@@ -3717,14 +4243,28 @@ impl AgentCore {
                     }
                     self.record_failure(&bn);
                     log::warn!("Fallback '{}' also failed: {}", bn, resp.error_message);
+                    failure_summaries.push(format!(
+                        "{} (HTTP {}): {}",
+                        bn, resp.http_status, resp.error_message
+                    ));
                 } else {
                     log::warn!("Fallback backend '{}' skipped due to Circuit Breaker", bn);
+                    failure_summaries.push(format!("{}: skipped by circuit breaker", bn));
                 }
             }
         }
 
+        let error_message = if failure_summaries.is_empty() {
+            "All LLM backends failed".to_string()
+        } else {
+            format!(
+                "All LLM backends failed. Last attempts: {}",
+                failure_summaries.join(" | ")
+            )
+        };
+
         LlmResponse {
-            error_message: "All LLM backends failed".into(),
+            error_message,
             ..Default::default()
         }
     }
@@ -3837,6 +4377,7 @@ impl AgentCore {
         // from a prior session do not cascade into new requests.
         self.reset_circuit_breakers();
         let mut loop_state = AgentLoopState::new(session_id, prompt);
+        let mut skip_memory_extraction = false;
 
         // Load context token budget from config if available
         let (budget, threshold) = {
@@ -3945,6 +4486,7 @@ impl AgentCore {
             skill_roots.iter().map(|root| root.as_str()),
         );
         let is_dashboard_web_app_request = Self::is_web_dashboard_app_request(session_id, prompt);
+        let is_file_management_request = is_simple_file_management_request(prompt);
         let mut session_profile = self.resolve_session_profile(session_id);
         if session_profile.is_none() && is_dashboard_web_app_request {
             session_profile = Some(SessionPromptProfile {
@@ -3956,6 +4498,25 @@ impl AgentCore {
                         .to_string(),
                 ),
                 allowed_tools: Some(vec!["generate_web_app".to_string()]),
+                ..SessionPromptProfile::default()
+            });
+        }
+        if session_profile.is_none() && is_file_management_request {
+            session_profile = Some(SessionPromptProfile {
+                role_name: Some("file_manager_flow".to_string()),
+                role_description: Some(
+                    "Direct file management profile for normal file and directory operations."
+                        .to_string(),
+                ),
+                system_prompt: Some(
+                    "For normal file and directory tasks, manage files directly with file_manager \
+                     or file_write. Create directories explicitly, write the requested files \
+                     into the working directory, and avoid run_generated_code unless the user \
+                     explicitly asks for an executable script to be generated and run."
+                        .to_string(),
+                ),
+                allowed_tools: Some(vec!["file_manager".to_string(), "file_write".to_string()]),
+                max_iterations: Some(0),
                 ..SessionPromptProfile::default()
             });
         }
@@ -4211,7 +4772,9 @@ impl AgentCore {
 
         // Load long term memory dynamically and inject into messages (preserves system_prompt cache)
         let mut memory_context_for_log: Option<String> = None;
-        if let Ok(ms) = self.memory_store.lock() {
+        if should_skip_memory_for_prompt(prompt) {
+            loop_state.record_prefetch_memory(None);
+        } else if let Ok(ms) = self.memory_store.lock() {
             if let Some(store) = ms.as_ref() {
                 let mem_str = store.load_relevant_for_prompt(prompt, 5, 0.1);
                 if !mem_str.is_empty() {
@@ -4504,14 +5067,13 @@ impl AgentCore {
                     response.http_status, response.error_message
                 );
                 log::error!("[AgentLoop] {}", err);
-
-                if loop_state.error_count >= MAX_TOOL_RETRY {
-                    loop_state.transition(AgentPhase::ResultReporting);
-                    return err;
-                }
-                // Retry: continue loop
-                loop_state.round += 1;
-                continue;
+                // `chat_with_fallback()` already consumes the per-turn recovery
+                // budget by trying the primary backend plus configured
+                // fallbacks. Align with OpenClaw/HermesAgentLoop style and
+                // surface the failure here instead of replaying the same turn
+                // multiple times with a fixed hardcoded retry count.
+                loop_state.transition(AgentPhase::ResultReporting);
+                return err;
             }
 
             // Extract reasoning
@@ -5083,16 +5645,21 @@ impl AgentCore {
                                     }
                                 }
                             }
+                        } else if tc_name == "file_manager" {
+                            file_manager_tool(&tc_args, &session_workdir).await
                         } else if tc_name == "file_write" {
                             let path_str = tc_args.get("path").and_then(|v| v.as_str()).unwrap_or("");
                             let content = tc_args.get("content").and_then(|v| v.as_str()).unwrap_or("");
                             if path_str.is_empty() {
                                 json!({"error": "Missing required parameter: path"})
                             } else {
-                                let file_path = if std::path::Path::new(path_str).is_absolute() {
-                                    std::path::PathBuf::from(path_str)
-                                } else {
-                                    session_workdir.join(path_str)
+                                let file_path = match resolve_workspace_path(&session_workdir, path_str) {
+                                    Ok(path) => path,
+                                    Err(error) => return LlmMessage::tool_result(
+                                        &tc_id,
+                                        &tc_name,
+                                        json!({"error": error}),
+                                    ),
                                 };
                                 if let Some(parent) = file_path.parent() {
                                     if let Err(e) = std::fs::create_dir_all(parent) {
@@ -5144,6 +5711,46 @@ impl AgentCore {
                                     .await
                                 }
                             }
+                        } else if tc_name == "run_coding_agent" {
+                            let prompt = tc_args.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
+                            if prompt.trim().is_empty() {
+                                json!({"error": "Missing required parameter: prompt"})
+                            } else {
+                                let request = crate::channel::telegram_client::CodingAgentToolRequest {
+                                    prompt: prompt.to_string(),
+                                    backend: tc_args
+                                        .get("backend")
+                                        .and_then(|v| v.as_str())
+                                        .map(ToString::to_string),
+                                    project_dir: tc_args
+                                        .get("project_dir")
+                                        .and_then(|v| v.as_str())
+                                        .map(ToString::to_string),
+                                    model: tc_args
+                                        .get("model")
+                                        .and_then(|v| v.as_str())
+                                        .map(ToString::to_string),
+                                    execution_mode: tc_args
+                                        .get("execution_mode")
+                                        .and_then(|v| v.as_str())
+                                        .map(ToString::to_string),
+                                    auto_approve: tc_args
+                                        .get("auto_approve")
+                                        .and_then(|v| v.as_bool()),
+                                    timeout_secs: tc_args
+                                        .get("timeout_secs")
+                                        .and_then(|v| v.as_u64()),
+                                };
+                                match crate::channel::telegram_client::TelegramClient::run_coding_agent_tool(
+                                    &self.platform.paths.config_dir,
+                                    &request,
+                                )
+                                .await
+                                {
+                                    Ok(result) => result,
+                                    Err(error) => json!({ "error": error }),
+                                }
+                            }
                         } else if tc_name == "manage_generated_code" {
                             let operation = tc_args.get("operation").and_then(|v| v.as_str()).unwrap_or("");
                             let name = tc_args.get("name").and_then(|v| v.as_str());
@@ -5154,8 +5761,28 @@ impl AgentCore {
                         } else if tc_name == "create_task" {
                             let schedule = tc_args.get("schedule").and_then(|v| v.as_str()).unwrap_or("");
                             let prompt = tc_args.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
+                            let project_dir = tc_args.get("project_dir").and_then(|v| v.as_str());
+                            let coding_backend =
+                                tc_args.get("coding_backend").and_then(|v| v.as_str());
+                            let coding_model =
+                                tc_args.get("coding_model").and_then(|v| v.as_str());
+                            let execution_mode =
+                                tc_args.get("execution_mode").and_then(|v| v.as_str());
+                            let auto_approve = tc_args
+                                .get("auto_approve")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
                             let base_dir = self.platform.paths.data_dir.clone();
-                            create_task_tool(&base_dir, schedule, prompt)
+                            create_task_tool(
+                                &base_dir,
+                                schedule,
+                                prompt,
+                                project_dir,
+                                coding_backend,
+                                coding_model,
+                                execution_mode,
+                                auto_approve,
+                            )
                         } else if tc_name == "cancel_task" {
                             let task_id = tc_args.get("task_id").and_then(|v| v.as_str()).unwrap_or("");
                             let base_dir = self.platform.paths.data_dir.clone();
@@ -5256,6 +5883,19 @@ impl AgentCore {
                             } else {
                                 serde_json::json!({"error": "MemoryStore not initialized"})
                             }
+                        } else if tc_name == "clear_agent_data" {
+                            let include_memory = tc_args
+                                .get("include_memory")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(true);
+                            let include_sessions = tc_args
+                                .get("include_sessions")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(true);
+                            match self.clear_agent_data(include_memory, include_sessions) {
+                                Ok(result) => result,
+                                Err(error) => serde_json::json!({ "error": error }),
+                            }
                         } else {
                             td_guard_ref
                                 .execute(&tc_name, &tc_args, Some(&session_workdir))
@@ -5270,6 +5910,13 @@ impl AgentCore {
                 }
 
                 let results = futures_util::future::join_all(futures_list).await;
+                let cleared_agent_data = results.iter().any(|result| {
+                    result.tool_name == "clear_agent_data"
+                        && result.tool_result.get("error").is_none()
+                });
+                if cleared_agent_data {
+                    skip_memory_extraction = true;
+                }
                 if let Ok(ss) = self.session_store.lock() {
                     if let Some(store) = ss.as_ref() {
                         for result in &results {
@@ -5375,6 +6022,43 @@ impl AgentCore {
                     continue; // Immediately start next round to pick up next workflow step
                 }
             } else {
+                if is_file_management_request
+                    && collect_successful_file_management_actions(&messages) == 0
+                {
+                    loop_state.set_follow_up(true);
+                    messages.push(LlmMessage {
+                        role: "assistant".into(),
+                        text: response.text.clone(),
+                        ..Default::default()
+                    });
+                    messages.push(LlmMessage::user(
+                        "The task is not complete yet. Manage the requested files directly with \
+                         file_manager or file_write in the working directory. Do not answer with \
+                         prose only, and do not use run_generated_code unless an executable script \
+                         was explicitly requested.",
+                    ));
+                    loop_state.transition(AgentPhase::RePlanning);
+                    continue;
+                }
+                if is_file_management_request {
+                    let missing_targets =
+                        missing_file_management_targets(prompt, &session_workdir, &messages);
+                    if !missing_targets.is_empty() {
+                        loop_state.set_follow_up(true);
+                        messages.push(LlmMessage {
+                            role: "assistant".into(),
+                            text: response.text.clone(),
+                            ..Default::default()
+                        });
+                        messages.push(LlmMessage::user(&format!(
+                            "The task is not complete yet. The following requested files are still missing in the working directory:\n{}\nUse file_manager or file_write to create exactly those files. Do not switch to run_generated_code unless an executable script was explicitly requested.",
+                            missing_targets.join("\n")
+                        )));
+                        loop_state.transition(AgentPhase::RePlanning);
+                        continue;
+                    }
+                }
+
                 let expected_output_paths = expected_persisted_level_script_paths(prompt);
                 if !expected_output_paths.is_empty() {
                     let saved_output_paths = collect_successful_saved_output_paths(&messages);
@@ -5461,7 +6145,9 @@ impl AgentCore {
                 loop_state.transition(AgentPhase::ResultReporting);
 
                 // Trigger auto-extraction (small overhead at end of conversation)
-                self.extract_and_save_memory(&messages, &text).await;
+                if !skip_memory_extraction {
+                    self.extract_and_save_memory(&messages, &text).await;
+                }
 
                 loop_state.transition(AgentPhase::Complete);
                 loop_state.log_self_inspection();
@@ -5593,6 +6279,59 @@ impl AgentCore {
     pub async fn reload_llm_backends(&self) -> Result<Value, String> {
         self.reload_backends().await;
         self.get_llm_config(None)
+    }
+
+    pub fn clear_agent_data(
+        &self,
+        include_memory: bool,
+        include_sessions: bool,
+    ) -> Result<Value, String> {
+        if !include_memory && !include_sessions {
+            return Err("Nothing selected to clear".to_string());
+        }
+
+        let mut result = json!({
+            "status": "success",
+            "cleared": {
+                "memory": false,
+                "sessions": false
+            }
+        });
+
+        if include_memory {
+            let deleted_rows = self
+                .memory_store
+                .lock()
+                .map_err(|_| "MemoryStore lock failed".to_string())?
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| "MemoryStore not initialized".to_string())?
+                .clear_all()?;
+            result["cleared"]["memory"] = Value::Bool(true);
+            result["memory"] = json!({
+                "records_deleted": deleted_rows
+            });
+        }
+
+        if include_sessions {
+            let cleanup = self
+                .session_store
+                .lock()
+                .map_err(|_| "SessionStore lock failed".to_string())?
+                .as_ref()
+                .cloned()
+                .ok_or_else(|| "SessionStore not initialized".to_string())?
+                .clear_all()?;
+            result["cleared"]["sessions"] = Value::Bool(true);
+            result["sessions"] = cleanup;
+        }
+
+        if let Ok(policy) = self.tool_policy.lock() {
+            policy.reset_session("default");
+        }
+        self.reset_circuit_breakers();
+
+        Ok(result)
     }
 
     pub fn list_registered_paths(&self) -> RegisteredPaths {
@@ -5830,10 +6569,13 @@ mod tests {
         expected_persisted_level_script_paths, extract_explicit_directory_paths,
         extract_explicit_file_paths, extract_explicit_paths, extract_final_text,
         extract_level_number_from_output_path, generated_code_runtime_spec,
-        generated_code_script_path, manage_generated_code_tool, normalize_conversation_log_text,
-        parse_shell_like_args, persist_generated_code_copy, prompt_mode_from_doc,
+        generated_code_script_path, is_simple_file_management_request, canonical_tool_trace,
+        manage_generated_code_tool, missing_file_management_targets,
+        normalize_conversation_log_text, parse_shell_like_args, persist_generated_code_copy,
+        prompt_mode_from_doc,
         reasoning_policy_from_doc, role_relevance_score, sanitize_generated_code_name,
-        select_delegate_roles, select_relevant_skills, utf8_safe_preview,
+        select_delegate_roles, select_relevant_skills, should_skip_memory_for_prompt,
+        utf8_safe_preview, expected_file_management_targets,
         validate_generated_code_execution_output, validate_generated_code_grounding, AgentRole,
         MAX_OUTBOUND_DASHBOARD_MESSAGES,
     };
@@ -6586,6 +7328,66 @@ mod tests {
     fn extract_final_text_strips_think_block_without_final_tag() {
         let text = "<think>private plan</think>\nVisible answer";
         assert_eq!(extract_final_text(text), "Visible answer");
+    }
+
+    #[test]
+    fn simple_file_management_requests_are_detected() {
+        assert!(is_simple_file_management_request(
+            "Create a project structure with README.md and src/app.py in the current working directory."
+        ));
+        assert!(should_skip_memory_for_prompt(
+            "Create a project structure with README.md and src/app.py in the current working directory."
+        ));
+        assert!(!is_simple_file_management_request(
+            "Write and execute a Python script that prints the fibonacci sequence."
+        ));
+    }
+
+    #[test]
+    fn canonical_tool_trace_maps_file_manager_writes() {
+        let trace = canonical_tool_trace(&LlmToolCall {
+            id: "call_1".to_string(),
+            name: "file_manager".to_string(),
+            args: json!({
+                "operation": "write",
+                "path": "README.md",
+                "content": "# Demo"
+            }),
+        });
+
+        assert_eq!(trace["name"], json!("write_file"));
+        assert_eq!(trace["arguments"]["path"], json!("README.md"));
+    }
+
+    #[test]
+    fn expected_file_management_targets_tracks_relative_files_and_readme() {
+        let targets = expected_file_management_targets(
+            "Create a project structure with README and src/app.py in the current working directory.",
+        );
+
+        assert!(targets.iter().any(|group| group.iter().any(|path| path == "src/app.py")));
+        assert!(targets.iter().any(|group| group.iter().any(|path| path == "README.md")));
+    }
+
+    #[test]
+    fn missing_file_management_targets_reports_uncreated_relative_files() {
+        let dir = tempdir().unwrap();
+        let messages = vec![LlmMessage::tool_result(
+            "call_1",
+            "file_write",
+            json!({
+                "success": true,
+                "path": dir.path().join("README.md").to_string_lossy(),
+            }),
+        )];
+
+        let missing = missing_file_management_targets(
+            "Create README and src/app.py in the current working directory.",
+            dir.path(),
+            &messages,
+        );
+
+        assert_eq!(missing, vec!["src/app.py".to_string()]);
     }
 
     #[test]

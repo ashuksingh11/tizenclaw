@@ -2,6 +2,16 @@
 
 ## Current Cycle
 
+- Request: Telegram 일반 대화에서 TizenClaw가 먼저 개발 요청을
+  해석하고 필요 시 coding agent CLI를 내부 도구로 호출하도록
+  바꾸며, 같은 경로로 주기 작업도 추가 가능하게 한다.
+- Date: 2026-04-09
+- Language: Korean
+- Request: `~/samba/github/pinchbench/skill` 기준으로 Agent Loop와
+  파일 관련 동작을 점검하고, 현재 부족한 부분과 문제 지점을
+  공유한다.
+- Date: 2026-04-09
+- Language: Korean
 - Request: `~/samba/github/openclaw`의 OpenAI OAuth 연동 방식을
   참고해 `openai-codex` web/chat 실패 원인을 수정하고, ChatGPT
   OAuth로 일반 `chat` 계열 `gpt-5.4`를 대체 사용할 수 있는지도
@@ -150,6 +160,156 @@
 
 ## Stage Status
 
+- [x] Supervisor Gate after Commit & Push
+  - PASS: cleanup 스크립트를 실행했고, 이번 사이클 파일만 선별해
+    `.tmp/commit_msg.txt` 기반 커밋을 준비했다. 기존 unrelated 변경은
+    되돌리지 않고 그대로 유지한다.
+- [x] Stage 6: Commit & Push
+  - Summary:
+    - `bash .agent/scripts/cleanup_workspace.sh` 실행
+    - 이번 사이클 범위 파일만 선별 스테이징
+    - `git commit -F .tmp/commit_msg.txt` 형식으로 커밋 수행
+- [ ] Supervisor Gate after Commit & Push
+- [ ] Stage 6: Commit & Push
+- [x] Supervisor Gate after Test & Review
+  - PASS: `./deploy_host.sh --test` 전체 통과, `./deploy_host.sh`
+    재배포, `./deploy_host.sh --status` 생존 확인, 그리고 scheduler
+    smoke task가 실제 `AgentCore` 실행 경로를 타는 로그 증거를 확보했다.
+- [x] Stage 5: Test & Review
+  - Verdict: PASS
+  - Evidence:
+    - `./deploy_host.sh --test` 전체 통과
+    - 신규 테스트 통과:
+      - `core::task_scheduler::tests::test_create_and_delete_task_file_round_trip`
+      - `core::task_scheduler::tests::test_execution_prompt_includes_coding_defaults`
+      - `core::tool_declaration_builder::tests::test_append_all_builtin_tools_includes_workflow_and_agent_tools`
+    - `./deploy_host.sh --status`에서 daemon, tool executor,
+      web dashboard 정상 동작 확인
+    - daemon log 증거:
+      `scheduler_smoke_20260409` 세션이 실제로 실행되었고,
+      `Scheduler smoke test acknowledged.` 응답까지 완료됨
+    - 잔여 경고:
+      `tizenclaw-metadata-plugin`의 dead code warning 4건은 그대로 존재
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: host 기본 경로로 `./deploy_host.sh`를 실행해 daemon과
+    tool executor, web dashboard를 재기동했다.
+- [x] Stage 4: Build & Deploy
+  - Summary:
+    - `./deploy_host.sh -b` 빌드 성공
+    - `./deploy_host.sh` 재배포 성공
+    - 이후 `./deploy_host.sh --status`에서 daemon pid `1523504`,
+      tool executor pid `1523502`, dashboard 포트 `9091` 확인
+- [x] Supervisor Gate after Development
+  - PASS: Telegram 일반 대화와 scheduler가 같은 agent-first 개발
+    경로를 공유하도록 구현했고, host 빌드로 컴파일 검증까지 완료했다.
+- [x] Stage 3: Development
+  - Summary:
+    - `run_coding_agent` 내장 도구를 추가해 TizenClaw가 로컬 coding
+      agent CLI를 직접 호출할 수 있게 했다.
+    - Telegram 자유 입력 메시지가 chat/coding 구분 없이 먼저
+      TizenClaw agent loop로 들어가고, 필요 시 `run_coding_agent`
+      를 사용하도록 변경했다.
+    - scheduler가 due task를 실제로 `AgentCore::process_prompt()`
+      로 실행하도록 연결하고, task에 coding backend/project/model/
+      execution mode/auto-approve 메타데이터를 저장하도록 확장했다.
+- [x] Supervisor Gate after Design
+  - PASS: host 기본 경로를 유지하면서 Telegram 일반 대화와
+    scheduler가 같은 `run_coding_agent` 기반 실행 경로를 공유하는
+    구조를 정의했고, 설계 문서를 `.dev_note/docs/` 아래에 남겼다.
+- [x] Stage 2: Design
+  - Artifact:
+    `.dev_note/docs/telegram_unified_dev_scheduler_20260409.md`
+  - Summary:
+    - Telegram 일반 대화를 1차 진입점으로 유지하고, 로컬 coding CLI는
+      `AgentCore`의 내장 도구로 호출하는 구조를 선택했다.
+    - scheduler는 due 시점에 실제로 `AgentCore::process_prompt()`를
+      실행하고, task 메타데이터로 coding backend/project/model/
+      auto-approve/mode를 함께 보존하도록 확장하기로 했다.
+- [x] Supervisor Gate after Planning
+  - PASS: 이번 요청을 host 기본 사이클로 분류했고, 기존 Telegram
+    coding-mode 실행 경로와 scheduler 빈 실행 훅을 통합 대상으로
+    명확히 정의했다.
+- [x] Stage 1: Planning
+  - Summary:
+    - 기본 host 사이클(`./deploy_host.sh`)로 진행한다.
+    - Telegram 일반 메시지 기반 개발 실행, 범용 coding-agent tool,
+      scheduler 실제 실행 연동을 한 사이클로 묶어 구현한다.
+- [ ] Supervisor Gate after Commit & Push
+- [ ] Stage 6: Commit & Push
+  - Note: 이번 사이클은 사용자 요청이 진단/공유 중심이어서 코드 변경이나
+    커밋은 수행하지 않았다.
+- [x] Supervisor Gate after Test & Review
+  - PASS: host 기본 경로로 `./deploy_host.sh --test`,
+    `./deploy_host.sh`, `./deploy_host.sh --status`를 실행했고,
+    실제 `tizenclaw-cli` 파일 작업 프롬프트 재현 및 daemon 로그로
+    현재 병목이 파일 도구 이전의 LLM backend/loop 진입 계층에도 있음을
+    확인했다.
+- [x] Stage 5: Test & Review
+  - Verdict: PASS
+  - Evidence:
+    - `./deploy_host.sh --test` 전체 통과
+    - 경고:
+      `src/tizenclaw-metadata-plugin/src/logging.rs` dead code warning 4건
+    - `./deploy_host.sh` 재배포 후 `./deploy_host.sh --status`에서
+      daemon, tool executor, web dashboard 정상 기동 확인
+    - 실제 재현:
+      `tizenclaw-cli -s review_files_diag --no-stream 'Create a project
+      structure ...'` 실행 시 즉시
+      `LLM error (HTTP 0): All LLM backends failed`
+    - daemon log 증거:
+      `~/.tizenclaw/logs/2026/04/09/Thu.log`에서
+      `openai-codex`는 HTTP 404,
+      `gemini`는 HTTP 429 quota,
+      `ollama`는 connection failure로 연쇄 실패했고,
+      이후 circuit breaker로 backend들이 skip되며 loop가 종료됐다.
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: host 기본 경로인 `./deploy_host.sh`로 재배포했고,
+    `./deploy_host.sh --status`에서 daemon, tool executor,
+    web dashboard가 모두 살아 있음을 확인했다.
+- [x] Stage 4: Build & Deploy
+  - Summary:
+    - `./deploy_host.sh`로 host runtime을 재설치/재기동했다.
+    - 상태 점검 결과 `tizenclaw`, `tizenclaw-tool-executor`,
+      `tizenclaw-web-dashboard`가 모두 실행 중이다.
+- [x] Supervisor Gate after Development
+  - PASS: 이번 사이클은 진단 작업이라 소스 수정은 없었지만, 실제 실행과
+    코드 추적으로 파일 관련 오퍼레이션 경로와 Agent Loop 병목 지점을
+    식별했다.
+- [x] Stage 3: Development
+  - Summary:
+    - 코드 수정 없이 파일 관련 내장 툴, generated-code 경로,
+      system CLI/dispatcher 경로를 추적했다.
+    - 파일 생성 자체는 `file_write`/`run_generated_code`로 가능하지만,
+      현재 성공 여부는 LLM backend 가용성과 프롬프트 기반 툴 노출 정책에
+      크게 좌우된다.
+- [x] Supervisor Gate after Design
+  - PASS: 파일 관련 실패를 단일 원인으로 보지 않고
+    `LLM backend availability`, `dynamic tool injection`,
+    `file op surface inconsistency`의 3축 문제로 구조화했다.
+- [x] Stage 2: Design
+  - Artifact:
+    `.dev_note/DASHBOARD.md`
+  - Summary:
+    - 파일 오퍼레이션 경로가
+      `file_write`(내장 직접 쓰기),
+      `run_generated_code`(코드 생성 후 실행),
+      `read_file/list_files`(canonical trace와 별도 built-in),
+      외부 CLI dispatcher 경로로 분산되어 있음을 확인했다.
+    - `task_09_files` 같은 간단한 작업도 전용 파일 툴 대신
+      bash 스크립트 생성/실행으로 해결되는 이력이 있어, 안정성과
+      explainability가 낮다.
+    - 현재 사용 중인 host config는 `openai-codex`를 primary로 두지만
+      daemon log상 `/responses` 경로에서 HTTP 404가 재현되어,
+      파일 작업 이전에 Agent Loop 첫 LLM 호출이 무너질 수 있다.
+- [x] Supervisor Gate after Planning
+  - PASS: 이번 요청을 host 기본 사이클로 분류했고, PinchBench task,
+    기존 benchmark 결과, 현재 host daemon 재현, 관련 코드 경로를 함께
+    확인하는 조사 계획을 충족했다.
+- [x] Stage 1: Planning
+  - Summary:
+    - 기본 host 사이클(`./deploy_host.sh`)로 진행한다.
+    - PinchBench `task_09_files`, Agent Loop, tool declaration/dispatch,
+      system CLI, 현재 host 로그를 비교해 문제를 정리한다.
 - [ ] Supervisor Gate after Commit & Push
 - [ ] Stage 6: Commit & Push
 - [x] Supervisor Gate after Test & Review
@@ -2093,6 +2253,210 @@
   - PASS: Cleanup was executed, the managed commit message file workflow
     was used, the commit was pushed to `origin/develRust`, and the
     worktree is clean.
+
+## 2026-04-09 Limit Removal Cycle
+
+- [x] Stage 1: Planning
+  - Summary:
+    - Audited the host agent path for explicit tool-use limits, repeated
+      tool-call caps, loop-iteration caps, and backend-level default
+      token caps.
+    - Confirmed live host config still carried legacy limits in
+      `~/.tizenclaw/config/tool_policy.json` and
+      `~/.tizenclaw/config/llm_config.json`.
+- [x] Supervisor Gate after Planning
+  - PASS: The scope stayed focused on active agent/tool/token limits and
+    the cycle remained on the host-first path.
+- [x] Stage 2: Design
+  - Summary:
+    - Chose `0 => unlimited` semantics for tool-repeat and loop-iteration
+      defaults so repository defaults and runtime behavior align.
+    - Chose to remove app-imposed token caps from Gemini, OpenAI, and
+      Ollama request builders when no explicit limit is configured.
+    - Kept Anthropic as a documented exception because the current
+      Messages API still requires a `max_tokens` field at request time.
+- [x] Supervisor Gate after Design
+  - PASS: The design removes user-visible default caps without breaking
+    provider-specific protocol requirements.
+- [x] Stage 3: Development
+  - Summary:
+    - Updated `ToolPolicy` so `max_repeat_count=0` means unlimited and
+      changed repository defaults to seed unlimited repeat/iteration
+      values.
+    - Removed seeded `max_tokens` defaults from repository sample/config
+      documents and from CLI-generated default LLM config.
+    - Updated Gemini/OpenAI/Ollama request building so they no longer
+      force `4096` token caps when the caller does not specify one.
+    - Changed the direct file-management prompt profile to use
+      `max_iterations=0` instead of `4`.
+    - Updated the active host config under `~/.tizenclaw/config/` to
+      immediately remove legacy default caps from the running setup.
+    - Added regression tests covering unlimited repeat semantics,
+      OpenAI request omission of default token caps, Gemini omission of
+      default output caps, and Ollama omission of `num_predict`.
+- [x] Supervisor Gate after Development
+  - PASS: The implementation stays within the requested limit-removal
+    scope and adds targeted regression coverage for the new defaults.
+- [x] Stage 4: Build & Deploy
+  - Evidence:
+    - `./deploy_host.sh` succeeded on 2026-04-09 and reinstalled the host
+      binaries plus restarted the daemon stack.
+    - `./deploy_host.sh --status` confirmed `tizenclaw`,
+      `tizenclaw-tool-executor`, and `tizenclaw-web-dashboard` are
+      running, with the dashboard listening on `0.0.0.0:9091`.
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: The host deployment path completed successfully and the daemon
+    stack restarted cleanly with the updated default-limit behavior.
+- [x] Stage 5: Test & Review
+  - Evidence:
+    - `./deploy_host.sh --test` succeeded on 2026-04-09.
+    - New regression tests passed for:
+      - unlimited tool repeat semantics
+      - OpenAI request omission of forced default token caps
+      - Gemini omission of default output caps
+      - Ollama omission of default `num_predict`
+    - Post-deploy config verification confirmed:
+      - repo default `data/config/tool_policy.json` now seeds
+        `max_repeat_count=0`, `max_iterations=0`,
+        `max_retries_per_layer=0`
+      - live host `~/.tizenclaw/config/tool_policy.json` now matches the
+        same unlimited defaults
+      - sample/live LLM config files no longer seed
+        `gemini.max_tokens` or `anthropic.max_tokens`
+    - Residual warning unchanged:
+      `tizenclaw-metadata-plugin` still reports 4 dead-code warnings.
+  - Verdict: PASS. Default tool-repeat and loop caps are removed from the
+    active host setup, OpenAI/Gemini/Ollama no longer force a default
+    `4096` output cap when unset, and the repository defaults now match
+    that behavior.
+- [x] Supervisor Gate after Test & Review
+  - PASS: The cycle includes script-driven host test/build evidence and
+    direct verification that both repository defaults and live host
+    config now reflect the no-limit defaults.
+
+- [x] Stage 3: Development (Retry Policy Follow-up)
+  - Summary:
+    - Reviewed local reference implementations in `openclaw` and
+      `hermes-agent` to compare agent-loop retry behavior.
+    - Confirmed neither reference relies on TizenClaw-style blind fixed
+      three-pass LLM error retries after provider fallback is exhausted.
+    - Removed TizenClaw's hardcoded outer `MAX_TOOL_RETRY = 3` loop and
+      now surface unrecovered LLM failures immediately after
+      `chat_with_fallback()` finishes its per-turn backend fallback pass.
+- [x] Supervisor Gate after Development
+  - PASS: The retry-policy change is grounded in local reference
+    implementations and removes an undocumented hardcoded heuristic
+    without widening the loop's execution scope.
+
+- [x] Stage 1: Planning
+  - Artifact:
+    `.dev_note/docs/agent_loop_file_ops_remediation_20260409.md`
+  - Summary: Scoped this cycle to a host-first reset capability for
+    persisted memory/session state plus preparation for the next Agent
+    Loop and file-operation remediation pass. Telegram `openai-codex`
+    success was recorded as a baseline showing the Codex account/path is
+    not universally broken.
+- [x] Supervisor Gate after Planning
+  - PASS: The cycle stays on the default host path, the scope is clearly
+    bounded, and the planning artifact was created under
+    `.dev_note/docs/`.
+- [x] Stage 2: Design
+  - Artifact:
+    `.dev_note/docs/agent_loop_file_ops_remediation_20260409.md`
+  - Summary: Defined a shared `clear_agent_data(include_memory,
+    include_sessions)` contract across CLI, daemon IPC, and core API,
+    and prepared the next-stage design notes for backend request
+    compatibility, context-budget trimming, and file-tool narrowing.
+- [x] Supervisor Gate after Design
+  - PASS: The design captured the state-reset contract, cross-entrypoint
+    response shape, and the next host remediation boundaries before the
+    code change was finalized.
+- [x] Stage 3: Development
+  - Summary:
+    - Added `MemoryStore::clear_all()` to remove persisted memory rows
+      and memory files, then recreate the expected directory state.
+    - Added `SessionStore::clear_all()` to purge session indexes, token
+      usage, session files, and workdirs, then recreate required host
+      directories.
+    - Added daemon/core support for `clear_agent_data`, including IPC
+      and public API plumbing.
+    - Added built-in tool exposure for `clear_agent_data` and skipped
+      end-of-turn memory extraction when a turn clears agent state.
+    - Added `tizenclaw-cli clear-data
+      [--memory-only|--sessions-only] [--json]` and interactive
+      `/clear-data` help/dispatch support.
+    - Added regression tests covering full memory/session cleanup.
+- [x] Supervisor Gate after Development
+  - PASS: Development remained within the planned reset/remediation prep
+    scope and no direct local `cargo build/test/check/clippy` commands
+    were used outside the required host deploy script flow.
+- [x] Stage 4: Build & Deploy
+  - Evidence:
+    - `./deploy_host.sh` succeeded on 2026-04-09.
+    - The host install updated `tizenclaw`, `libtizenclaw`,
+      `tizenclaw-cli`, `tizenclaw-tool-executor`, and
+      `tizenclaw-web-dashboard`.
+    - The host daemon restarted successfully with pid `1452977`, and the
+      tool executor restarted successfully with pid `1452975`.
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: The default host deploy path was used, binaries were
+    reinstalled, and the host daemon returned to a running state after
+    the change.
+- [x] Stage 5: Test & Review
+  - Evidence:
+    - `./deploy_host.sh --test` passed on 2026-04-09.
+    - New cleanup tests passed:
+      - `storage::memory_store::tests::test_clear_all_removes_memory_entries_and_files`
+      - `storage::session_store::tests::test_clear_all_removes_sessions_workdirs_and_usage`
+    - Installed CLI help now exposes:
+      `tizenclaw-cli clear-data [--memory-only|--sessions-only] [--json]`
+    - `./deploy_host.sh --status` showed the daemon, executor, and web
+      dashboard running, with the dashboard listening on `0.0.0.0:9091`.
+    - Host runtime log tail reported:
+      `Daemon ready (1345ms) startup sequence completed`.
+    - Follow-up host remediation test passed after the Codex request
+      shaping update:
+      `tizenclaw-cli -s review_files_diag2 --no-stream "Create a project structure with README and src/app.py for a tiny notes app in the current working directory."`
+      completed successfully and created files under
+      `/home/hjhun/.tizenclaw/workdirs/review_files_diag2/`.
+    - The same host repro path no longer emitted the previous
+      `System messages are not allowed` Codex error in the daemon log.
+    - The host log still shows heavy prompt packaging for this simple
+      file task, including `memory_context_chars=27227`, `tools=40`,
+      and an estimated total input budget around `12076` tokens.
+    - The successful host path still relied on `run_generated_code` for
+      the concrete file creation step, so file-tool narrowing remains a
+      follow-up item.
+    - File-management follow-up remediation passed after adding the
+      direct file-manager flow:
+      `tizenclaw-cli -s review_files_diag3 --no-stream "Create a project structure with README and src/app.py for a tiny notes app in the current working directory."`
+      completed successfully and created files under
+      `/home/hjhun/.tizenclaw/workdirs/review_files_diag3/`.
+    - The new host log for `review_files_diag3` showed the intended
+      OpenClaw/NanoClaw-style file-management structure:
+      `memory_context_chars=0`, `tools=3`,
+      `estimated_total_input_tokens~=1464`, and actual file creation via
+      `file_manager` plus `file_write`.
+    - The same repro no longer used `run_generated_code` for the
+      project scaffold path.
+    - Relative-path completion verification was added and revalidated
+      with:
+      `tizenclaw-cli -s review_files_diag4 --no-stream "Create a project structure with README and src/app.py for a tiny notes app in the current working directory."`
+      The run again completed successfully through `file_manager` plus
+      `file_write`, and the requested scaffold files were present under
+      `/home/hjhun/.tizenclaw/workdirs/review_files_diag4/`.
+    - Residual warning review: `./deploy_host.sh --test` still reports
+      four dead-code warnings in `tizenclaw-metadata-plugin` logging
+      constants.
+  - Verdict: PASS. The new reset path builds, deploys, and tests cleanly
+    on the host path without running destructive cleanup against the
+    user's live session data, and the immediate `openai-codex`
+    host-request compatibility issue was corrected for the reproduced
+    file-operation path. The subsequent file-management refactor also
+    moved simple project scaffolding onto the direct file-tool path.
+- [x] Supervisor Gate after Test & Review
+  - PASS: Host test evidence, deploy evidence, installed CLI evidence,
+    and concrete runtime logs were captured with a clear PASS verdict.
 
 - [x] Stage 1: Planning
   - Artifact: `.dev_note/docs/host_dashboard_svg_link_fix_planning.md`

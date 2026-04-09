@@ -1059,6 +1059,17 @@ impl TelegramChatState {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CodingAgentToolRequest {
+    pub prompt: String,
+    pub backend: Option<String>,
+    pub project_dir: Option<String>,
+    pub model: Option<String>,
+    pub execution_mode: Option<String>,
+    pub auto_approve: Option<bool>,
+    pub timeout_secs: Option<u64>,
+}
+
 #[derive(Clone, Debug)]
 struct TelegramOutgoingMessage {
     text: String,
@@ -1279,6 +1290,40 @@ impl TelegramClient {
         }
 
         resolved
+    }
+
+    fn load_coding_agent_runtime(
+        config_dir: &Path,
+    ) -> (
+        PathBuf,
+        u64,
+        TelegramCliBackendRegistry,
+        HashMap<TelegramCliBackend, String>,
+    ) {
+        let default_workdir = std::env::current_dir()
+            .unwrap_or_else(|_| crate::core::runtime_paths::default_data_dir());
+        let mut cli_workdir = default_workdir;
+        let mut cli_timeout_secs = DEFAULT_CLI_TIMEOUT_SECS;
+        let mut cli_backends = TelegramCliBackendRegistry::default();
+
+        let telegram_config = config_dir.join("telegram_config.json");
+        if let Ok(content) = std::fs::read_to_string(&telegram_config) {
+            if let Ok(json) = serde_json::from_str::<Value>(&content) {
+                if let Some(path) = json.get("cli_workdir").and_then(|v| v.as_str()) {
+                    if !path.trim().is_empty() {
+                        cli_workdir = PathBuf::from(path);
+                    }
+                }
+                if let Some(timeout) = json.get("cli_timeout_secs").and_then(|v| v.as_u64()) {
+                    cli_timeout_secs = timeout;
+                }
+                cli_backends.merge_config_value(json.get("cli_backends"));
+            }
+        }
+
+        Self::read_backend_models_from_llm_config(config_dir, &mut cli_backends);
+        let cli_backend_paths = Self::resolve_cli_backend_paths(&cli_backends);
+        (cli_workdir, cli_timeout_secs, cli_backends, cli_backend_paths)
     }
 
     fn lookup_binary_on_path(candidates: &[&str]) -> Option<String> {
@@ -1829,6 +1874,7 @@ impl TelegramClient {
         let backend_choices = cli_backends.backend_choices_text();
         [
             "Commands",
+            "Development requests can be sent directly in normal chat.",
             "/select [chat|coding]",
             &format!("/coding_agent [{}]", backend_choices),
             "/model [name|list|reset]",
@@ -2804,6 +2850,66 @@ User request:\n{}",
         )
     }
 
+    fn build_tool_cli_prompt(
+        state: &TelegramChatState,
+        effective_cli_workdir: &Path,
+        backend: &TelegramCliBackend,
+        prompt: &str,
+    ) -> String {
+        let mode_prefix = match state.execution_mode {
+            TelegramExecutionMode::Plan => {
+                "You are operating as a local coding agent invoked by TizenClaw. Start with a short plan, then perform the work carefully. Keep the final response concise and actionable."
+            }
+            TelegramExecutionMode::Fast => {
+                "You are operating as a local coding agent invoked by TizenClaw. Optimize for speed, keep the response concise, and take the fastest reasonable path."
+            }
+        };
+
+        format!(
+            "{}\n\nSelected backend: {}\nProject directory: {}\nAuto approve: {}\n\nUser request:\n{}",
+            mode_prefix,
+            backend.as_str(),
+            effective_cli_workdir.display(),
+            if state.auto_approve { "on" } else { "off" },
+            prompt.trim()
+        )
+    }
+
+    fn build_unified_agent_prompt(
+        state: &TelegramChatState,
+        default_cli_workdir: &Path,
+        cli_backends: &TelegramCliBackendRegistry,
+        text: &str,
+    ) -> String {
+        let backend = state.effective_cli_backend(cli_backends);
+        let project_dir = state.effective_cli_workdir(default_cli_workdir);
+        let model = state
+            .effective_cli_model(&backend, cli_backends)
+            .unwrap_or_else(|| "backend auto".to_string());
+
+        format!(
+            "You are handling a Telegram request through TizenClaw.\n\
+\n\
+Telegram development preferences:\n\
+- Coding backend: {}\n\
+- Coding model: {}\n\
+- Project directory: {}\n\
+- Coding execution mode: {}\n\
+- Coding auto approve: {}\n\
+\n\
+Ordinary Telegram messages must be handled by TizenClaw first. If the user requests repository work, implementation, refactoring, debugging, testing, or other development work, prefer the run_coding_agent tool instead of replying with prose only.\n\
+If the user requests periodic follow-up development work, use create_task and preserve the same coding defaults with project_dir, coding_backend, coding_model, execution_mode, and auto_approve.\n\
+\n\
+Telegram user request:\n{}",
+            backend.as_str(),
+            model,
+            project_dir.display(),
+            state.execution_mode.as_str(),
+            if state.auto_approve { "on" } else { "off" },
+            text.trim()
+        )
+    }
+
     fn build_cli_invocation(
         chat_id: i64,
         state: &TelegramChatState,
@@ -2909,6 +3015,154 @@ User request:\n{}",
             rendered = rendered.replace(placeholder, approval_value);
         }
         vec![rendered]
+    }
+
+    pub(crate) async fn run_coding_agent_tool(
+        config_dir: &Path,
+        request: &CodingAgentToolRequest,
+    ) -> Result<Value, String> {
+        let (default_cli_workdir, default_timeout_secs, cli_backends, cli_backend_paths) =
+            Self::load_coding_agent_runtime(config_dir);
+        let mut state = TelegramChatState::default();
+        state.auto_approve = request.auto_approve.unwrap_or(false);
+        state.execution_mode = request
+            .execution_mode
+            .as_deref()
+            .and_then(TelegramExecutionMode::parse)
+            .unwrap_or(TelegramExecutionMode::Plan);
+        state.project_dir = request
+            .project_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+
+        if let Some(backend) = request
+            .backend
+            .as_deref()
+            .and_then(|value| cli_backends.parse(value))
+        {
+            state.cli_backend = backend;
+        }
+
+        let backend = state.effective_cli_backend(&cli_backends);
+        if let Some(model) = request
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            state
+                .model_overrides
+                .insert(backend.as_str().to_string(), model.to_string());
+        }
+
+        let effective_cli_workdir = state.effective_cli_workdir(&default_cli_workdir);
+        if !effective_cli_workdir.is_dir() {
+            return Err(format!(
+                "Coding agent project directory '{}' is not available",
+                effective_cli_workdir.display()
+            ));
+        }
+
+        let definition = cli_backends.get(&backend).ok_or_else(|| {
+            format!(
+                "Selected backend '{}' is not defined in Telegram config.",
+                backend.as_str()
+            )
+        })?;
+        let binary = cli_backend_paths.get(&backend).cloned().ok_or_else(|| {
+            format!(
+                "Selected backend '{}' is not available on PATH.",
+                backend.as_str()
+            )
+        })?;
+
+        let prompt = Self::build_tool_cli_prompt(
+            &state,
+            &effective_cli_workdir,
+            &backend,
+            &request.prompt,
+        );
+        let effective_model = state.effective_cli_model(&backend, &cli_backends);
+        let approval_value = if state.auto_approve {
+            definition
+                .invocation
+                .auto_approve_value
+                .as_deref()
+                .or(definition.invocation.default_approval_value.as_deref())
+                .unwrap_or("")
+        } else {
+            definition
+                .invocation
+                .default_approval_value
+                .as_deref()
+                .unwrap_or("")
+        };
+        let mut args = Vec::new();
+        for template in &definition.invocation.args {
+            args.extend(Self::render_cli_arg_template(
+                template,
+                &prompt,
+                &effective_cli_workdir,
+                effective_model.as_deref(),
+                definition.invocation.approval_placeholder.as_deref(),
+                approval_value,
+            ));
+        }
+
+        let timeout_secs = request.timeout_secs.unwrap_or(default_timeout_secs);
+        let mut command = tokio::process::Command::new(&binary);
+        command.args(&args);
+        command.current_dir(&effective_cli_workdir);
+        command.env("NO_COLOR", "1");
+        command.env("CLICOLOR", "0");
+        command.env("TERM", "dumb");
+        command.stdin(std::process::Stdio::null());
+        command.stdout(std::process::Stdio::piped());
+        command.stderr(std::process::Stdio::piped());
+        command.kill_on_drop(true);
+
+        let started = Instant::now();
+        let output = tokio::time::timeout(Duration::from_secs(timeout_secs), command.output())
+            .await
+            .map_err(|_| {
+                format!(
+                    "Coding agent '{}' timed out after {}s",
+                    backend.as_str(),
+                    timeout_secs
+                )
+            })?
+            .map_err(|err| format!("Failed to start '{}': {}", backend.as_str(), err))?;
+
+        let duration_ms = started.elapsed().as_millis() as u64;
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let exit_code = output.status.code().unwrap_or(-1);
+        let response_text = Self::format_cli_result(
+            &cli_backends,
+            &backend,
+            exit_code,
+            duration_ms,
+            &stdout,
+            &stderr,
+        );
+        let actual_usage = Self::extract_cli_actual_usage(&cli_backends, &backend, &stdout, &stderr);
+
+        Ok(json!({
+            "status": if output.status.success() { "success" } else { "error" },
+            "backend": backend.as_str(),
+            "project_dir": effective_cli_workdir.display().to_string(),
+            "model": effective_model,
+            "execution_mode": state.execution_mode.as_str(),
+            "auto_approve": state.auto_approve,
+            "duration_ms": duration_ms,
+            "exit_code": exit_code,
+            "response_text": response_text,
+            "stdout_tail": Self::truncate_chars(stdout.trim(), 4000),
+            "stderr_tail": Self::truncate_chars(stderr.trim(), 4000),
+            "usage": actual_usage,
+        }))
     }
 
     fn build_cli_streaming_message(
@@ -3873,7 +4127,13 @@ User request:\n{}",
                     chat_id,
                     state.session_label_for(TelegramInteractionMode::Chat)
                 );
-                let response = agent_core.process_prompt(&session_id, text, None).await;
+                let prompt = Self::build_unified_agent_prompt(
+                    &state,
+                    &cli_workdir,
+                    &cli_backends,
+                    text,
+                );
+                let response = agent_core.process_prompt(&session_id, &prompt, None).await;
                 Self::append_session_transcript(
                     chat_id,
                     TelegramInteractionMode::Chat,
@@ -3885,28 +4145,32 @@ User request:\n{}",
                 replies
             }
             TelegramInteractionMode::Coding => {
-                let execution = Self::execute_cli_request(
-                    bot_token,
+                let Some(agent_core) = agent else {
+                    replies.push(TelegramOutgoingMessage::plain(
+                        "AgentCore is not available for coding mode.",
+                    ));
+                    return replies;
+                };
+                let session_id = format!(
+                    "tg_{}_{}",
                     chat_id,
+                    state.session_label_for(TelegramInteractionMode::Coding)
+                );
+                let prompt = Self::build_unified_agent_prompt(
+                    &state,
+                    &cli_workdir,
+                    &cli_backends,
                     text,
-                    cli_workdir,
-                    cli_timeout_secs,
-                    cli_backends,
-                    cli_backend_paths,
-                    chat_states,
-                    state_path,
-                )
-                .await;
+                );
+                let response = agent_core.process_prompt(&session_id, &prompt, None).await;
                 Self::append_session_transcript(
                     chat_id,
                     TelegramInteractionMode::Coding,
                     &state,
                     text,
-                    &execution.response_text,
+                    &response,
                 );
-                if execution.send_followup {
-                    replies.push(TelegramOutgoingMessage::plain(execution.response_text));
-                }
+                replies.push(TelegramOutgoingMessage::plain(response));
                 replies
             }
         }

@@ -122,7 +122,7 @@ async fn main() {
 
     // ── Phase 6: Start TaskScheduler ──
     log::info!("[Boot] Starting TaskScheduler...");
-    let task_scheduler = core::task_scheduler::TaskScheduler::new();
+    let task_scheduler = core::task_scheduler::TaskScheduler::with_agent(agent.clone());
     let task_dir = platform.paths.data_dir.join("tasks");
     let _ = std::fs::create_dir_all(&task_dir);
     let seeded_tasks = task_scheduler.seed_default_tasks_if_empty(&task_dir.to_string_lossy());
