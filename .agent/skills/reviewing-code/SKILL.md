@@ -44,6 +44,8 @@ Ensure the correct build script was utilized for the active cycle.
 - Default host cycle: `./deploy_host.sh` / `./deploy_host.sh --test`
 - Explicit Tizen cycle: `./deploy.sh`
 Verify the daemon initialized without host/service failures.
+If the change affected daemon-visible behavior, also execute the relevant
+`tizenclaw-tests` scenario against the live host daemon and capture the result.
 
 ### Step 3: Sustained Behavior Evaluation (Daemon Log Artifacts)
 Verify the daemon responds to the asynchronous logic branches defined
@@ -74,6 +76,8 @@ Before yielding to the Supervisor for validation, confirm:
    as evidence
 5. A PASS/FAIL verdict was issued with concrete log proofs (not just
    assertions)
+6. Any relevant `tizenclaw-tests` scenario execution was recorded with the
+   scenario path and result
 
 > [!IMPORTANT]
 > Declare stage completion explicitly. The Supervisor Agent will validate your outputs before the cycle proceeds to Commit & Push.

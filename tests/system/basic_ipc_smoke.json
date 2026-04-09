@@ -1,0 +1,58 @@
+{
+  "name": "basic-ipc-smoke",
+  "steps": [
+    {
+      "name": "read-llm-transport",
+      "method": "get_llm_config",
+      "params": {
+        "path": "backends.openai-codex.transport"
+      },
+      "assertions": [
+        {
+          "path": "status",
+          "equals": "ok"
+        },
+        {
+          "path": "value",
+          "equals": "responses"
+        }
+      ]
+    },
+    {
+      "name": "list-registered-paths",
+      "method": "list_registered_paths",
+      "params": {},
+      "assertions": [
+        {
+          "path": "status",
+          "equals": "ok"
+        },
+        {
+          "path": "registrations.tool_paths",
+          "exists": true
+        },
+        {
+          "path": "registrations.skill_paths",
+          "exists": true
+        }
+      ]
+    },
+    {
+      "name": "session-usage-shape",
+      "method": "get_usage",
+      "params": {
+        "session_id": "system-smoke"
+      },
+      "assertions": [
+        {
+          "path": "scope",
+          "equals": "session"
+        },
+        {
+          "path": "usage.prompt_tokens",
+          "exists": true
+        }
+      ]
+    }
+  ]
+}

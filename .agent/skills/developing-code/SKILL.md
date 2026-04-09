@@ -36,6 +36,9 @@ Your core mission is to convert the ultimate AGI blueprints created by the Archi
   - **Code-Level Resolution Mandate**: When facing compiler warnings, you MUST resolve them fundamentally. **Do not** forcefully suppress warnings using `#![allow(...)]` unless directly translating C-bindgen FFI layouts.
 - **Strict Adherence to Concurrency TDD & Coverage**: Never write the `tokio` business logic first. You must maintain the cycle of writing failing tests that satisfy the agent's behavior transitions first (Red), passing them safely (Green), and refactoring `Arc/Mutex` lifecycles (Refactor).
   - **Test Coverage**: All async and state tests written must defend against Edge Cases: Happy Path, Missing Tizen Dependencies (Missing `.so`), and Sudden Daemon Interruptions.
+- **System-Test Contract Requirement**: When a change affects daemon-visible
+  behavior, add or update a `tizenclaw-tests` scenario under `tests/system/`
+  before implementation and keep it aligned with the final behavior.
 - **Architecture Focus**: Generating x86_64 host artifacts through
   `./deploy_host.sh` is the default. Use `./deploy.sh -a x86_64` only
   when the user requests Tizen validation.
@@ -51,10 +54,11 @@ Copy the following checklist to track your TDD-based autonomous development prog
 ```text
 Development Progress (TDD Cycle):
 - [ ] Step 1: Review System Design Async Traits and Fearless Concurrency specs
-- [ ] Step 2: Write failing tests for the active script-driven
+- [ ] Step 2: Add or update the relevant tizenclaw-tests system scenario
+- [ ] Step 3: Write failing tests for the active script-driven
   verification path (Red)
-- [ ] Step 3: Implement actual TizenClaw agent state machines and memory-safe FFI boundaries (Green)
-- [ ] Step 4: GBS Build (x86_64) and daemon behavior scenario tests (Refactor)
+- [ ] Step 4: Implement actual TizenClaw agent state machines and memory-safe FFI boundaries (Green)
+- [ ] Step 5: Validate daemon-visible behavior with tizenclaw-tests and the selected script path (Refactor)
 ```
 
 ## ✅ Supervisor Handoff
@@ -69,6 +73,8 @@ Before yielding to the Supervisor for validation, confirm:
    because the user explicitly requested the Tizen path
 6. TDD cycle was followed: failing tests written first (Red), then
    implementation (Green), then refactor
+7. When runtime-visible behavior changed, a `tests/system/` scenario was
+   added or updated for `tizenclaw-tests`
 
 > [!IMPORTANT]
 > Declare stage completion explicitly. The Supervisor Agent will validate your outputs before the cycle proceeds to Build & Deploy.

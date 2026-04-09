@@ -1483,6 +1483,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tizenclaw-tests"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "tizenclaw-tool-executor"
 version = "1.0.0"
 dependencies = [

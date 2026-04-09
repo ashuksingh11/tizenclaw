@@ -95,10 +95,13 @@ prohibited.** Development must follow a rigid, step-by-step process.
 - **Activity**: Develop state machines, continuous loops, and event-driven
   implementations. Validate code quality through `./deploy_host.sh` by
   default, and use `./deploy.sh` only when the user explicitly requests
-  Tizen/emulator/device validation.
+  Tizen/emulator/device validation. When runtime-visible behavior changes,
+  first add or update a `tizenclaw-tests` scenario and use it as the system
+  test contract for the implementation.
 - **Artifact**: Update stage status in `.dev_note/DASHBOARD.md`
 - **Skill Usage**:
-  [`.agent/skills/developing-code/SKILL.md`](.agent/skills/developing-code/SKILL.md)
+  [`.agent/skills/developing-code/SKILL.md`](.agent/skills/developing-code/SKILL.md),
+  [`.agent/skills/testing-with-tizenclaw-tests/SKILL.md`](.agent/skills/testing-with-tizenclaw-tests/SKILL.md)
 
 > [!CAUTION]
 > **Direct Cargo/CMake Prohibition**: Do not execute `cargo build`,
@@ -125,10 +128,13 @@ prohibited.** Development must follow a rigid, step-by-step process.
   footprint, execution speed, and FFI safety.
 - **Activity**: Run verification via `./deploy_host.sh --test` by default,
   and use `./deploy.sh --test` / device-specific validation only when the
-  user explicitly requests a Tizen cycle.
+  user explicitly requests a Tizen cycle. For daemon-visible behavior,
+  execute the relevant `tizenclaw-tests` scenario against the live host
+  daemon in addition to repository tests.
 - **Artifact**: Update stage status in `.dev_note/DASHBOARD.md`
 - **Skill Usage**:
-  [`.agent/skills/reviewing-code/SKILL.md`](.agent/skills/reviewing-code/SKILL.md)
+  [`.agent/skills/reviewing-code/SKILL.md`](.agent/skills/reviewing-code/SKILL.md),
+  [`.agent/skills/testing-with-tizenclaw-tests/SKILL.md`](.agent/skills/testing-with-tizenclaw-tests/SKILL.md)
 
 ### Stage 6: Commit & Push
 - **Role**: Record final deliverables to Git.
