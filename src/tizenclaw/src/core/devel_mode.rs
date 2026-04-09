@@ -725,8 +725,14 @@ Execution policy:
 - During code review, inspect .agent/rules/rust.md, the roadmap goal, runtime safety, and unit/system tests in detail.
 - Complete the cycle through commit and push when the implemented roadmap slice is verified.
 - When `telegram stage reports` is `enabled`, call `send_outbound_message`
+  with channel `telegram` once when development work starts for this cycle.
+- The start update should say that devel work began, which PHASE is being
+  targeted first, and that a completion report will follow after the cycle.
+- Call `send_outbound_message`
   with channel `telegram` immediately after each `Supervisor Gate after ...`
   PASS entry is written into `.dev_note/DASHBOARD.md`.
+- The final Telegram update should act as the completion report after the
+  last supervisor gate passes.
 - Each Telegram update should include the completed stage, current goal,
   key result, and next step. Delivery failure is a warning, not a blocker.
 
@@ -1045,6 +1051,8 @@ mod tests {
         assert!(prompt.contains("state: done"));
         assert!(prompt.contains("overwrite `.dev_note/PROMPT.md` with an empty file"));
         assert!(prompt.contains("telegram stage reports"));
+        assert!(prompt.contains("once when development work starts for this cycle"));
+        assert!(prompt.contains("completion report"));
         assert!(prompt.contains("send_outbound_message"));
     }
 }
