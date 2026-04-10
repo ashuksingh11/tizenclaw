@@ -1324,7 +1324,12 @@ impl TelegramClient {
 
         Self::read_backend_models_from_llm_config(config_dir, &mut cli_backends);
         let cli_backend_paths = Self::resolve_cli_backend_paths(&cli_backends);
-        (cli_workdir, cli_timeout_secs, cli_backends, cli_backend_paths)
+        (
+            cli_workdir,
+            cli_timeout_secs,
+            cli_backends,
+            cli_backend_paths,
+        )
     }
 
     fn lookup_binary_on_path(candidates: &[&str]) -> Option<String> {
@@ -1554,6 +1559,7 @@ impl TelegramClient {
         vec![
             ("select", "Switch mode"),
             ("coding_agent", "Choose backend"),
+            ("devel", "Queue devel prompt"),
             ("model", "Choose model"),
             ("project", "Set project path"),
             ("new_session", "Start new session"),
@@ -1904,6 +1910,7 @@ impl TelegramClient {
             "Development requests can be sent directly in normal chat.",
             "/select [chat|coding]",
             &format!("/coding_agent [{}]", backend_choices),
+            "/devel [prompt]",
             "/model [name|list|reset]",
             "/project [path]",
             "/project reset",
@@ -1984,6 +1991,18 @@ impl TelegramClient {
         }
 
         Some((command, parts.map(|part| part.to_string()).collect()))
+    }
+
+    fn command_argument_text(text: &str) -> Option<String> {
+        let trimmed = text.trim();
+        if !trimmed.starts_with('/') {
+            return None;
+        }
+
+        trimmed
+            .split_once(char::is_whitespace)
+            .map(|(_, rest)| rest.trim().to_string())
+            .filter(|rest| !rest.is_empty())
     }
 
     fn load_chat_state_snapshot(
@@ -2694,6 +2713,32 @@ Runs: {}",
                 cli_backends,
                 cli_backend_paths,
             ),
+            "devel" => match Self::command_argument_text(text) {
+                Some(prompt_text) => match crate::core::devel_mode::create_prompt_file(&prompt_text) {
+                    Ok(path) => {
+                        let watcher_state = if crate::core::devel_mode::devel_status(Path::new("."), &std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))).result_watcher_active {
+                            "active"
+                        } else {
+                            "inactive"
+                        };
+                        TelegramOutgoingMessage::plain(format!(
+                            "DevelPrompt: {}\nFile: {}\nWatcher: {}",
+                            Self::value_label("queued"),
+                            Self::value_label(path.display().to_string()),
+                            Self::value_label(watcher_state)
+                        ))
+                    }
+                    Err(err) => TelegramOutgoingMessage::plain(format!(
+                        "DevelPrompt: {}\nReason: {}",
+                        Self::value_label("error"),
+                        Self::value_label(err)
+                    )),
+                },
+                None => TelegramOutgoingMessage::plain(
+                    "Usage: /devel [prompt]\nExample: /devel Telegram devel flow를 파일 브리지로 바꿔줘."
+                        .to_string(),
+                ),
+            },
             "model" => Self::set_model(chat_states, state_path, chat_id, &args, cli_backends),
             "project" => {
                 Self::set_project_directory(chat_states, state_path, chat_id, &args, cli_workdir)
@@ -3105,12 +3150,8 @@ Telegram user request:\n{}",
             )
         })?;
 
-        let prompt = Self::build_tool_cli_prompt(
-            &state,
-            &effective_cli_workdir,
-            &backend,
-            &request.prompt,
-        );
+        let prompt =
+            Self::build_tool_cli_prompt(&state, &effective_cli_workdir, &backend, &request.prompt);
         let effective_model = state.effective_cli_model(&backend, &cli_backends);
         let approval_value = if state.auto_approve {
             definition
@@ -3174,7 +3215,8 @@ Telegram user request:\n{}",
             &stdout,
             &stderr,
         );
-        let actual_usage = Self::extract_cli_actual_usage(&cli_backends, &backend, &stdout, &stderr);
+        let actual_usage =
+            Self::extract_cli_actual_usage(&cli_backends, &backend, &stdout, &stderr);
 
         Ok(json!({
             "status": if output.status.success() { "success" } else { "error" },
@@ -4154,12 +4196,8 @@ Telegram user request:\n{}",
                     chat_id,
                     state.session_label_for(TelegramInteractionMode::Chat)
                 );
-                let prompt = Self::build_unified_agent_prompt(
-                    &state,
-                    &cli_workdir,
-                    &cli_backends,
-                    text,
-                );
+                let prompt =
+                    Self::build_unified_agent_prompt(&state, &cli_workdir, &cli_backends, text);
                 let response = Self::wait_with_typing_indicator(
                     bot_token,
                     chat_id,
@@ -4188,12 +4226,8 @@ Telegram user request:\n{}",
                     chat_id,
                     state.session_label_for(TelegramInteractionMode::Coding)
                 );
-                let prompt = Self::build_unified_agent_prompt(
-                    &state,
-                    &cli_workdir,
-                    &cli_backends,
-                    text,
-                );
+                let prompt =
+                    Self::build_unified_agent_prompt(&state, &cli_workdir, &cli_backends, text);
                 let response = Self::wait_with_typing_indicator(
                     bot_token,
                     chat_id,
@@ -4432,8 +4466,10 @@ mod tests {
         TelegramCliUsageStats, TelegramClient, TelegramExecutionMode, TelegramInteractionMode,
     };
     use std::collections::{HashMap, HashSet};
+    use std::fs;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+    use tempfile::tempdir;
 
     fn backend(value: &str) -> TelegramCliBackend {
         TelegramCliBackend::new(value)
@@ -4448,6 +4484,13 @@ mod tests {
         let parsed = TelegramClient::parse_command("/status@tizenclaw_bot").unwrap();
         assert_eq!(parsed.0, "status");
         assert!(parsed.1.is_empty());
+    }
+
+    #[test]
+    fn command_argument_text_preserves_prompt_spacing() {
+        let parsed =
+            TelegramClient::command_argument_text("/devel  build prompt bridge  ").unwrap();
+        assert_eq!(parsed, "build prompt bridge");
     }
 
     #[test]
@@ -4497,6 +4540,7 @@ mod tests {
     fn supported_commands_text_uses_coding_agent_name() {
         let help = TelegramClient::supported_commands_text(&default_registry());
         assert!(help.contains("/coding_agent [codex|gemini|claude]"));
+        assert!(help.contains("/devel [prompt]"));
         assert!(help.contains("/model [name|list|reset]"));
         assert!(help.contains("/usage"));
         assert!(help.contains("/auto_approve [on|off]"));
@@ -4523,6 +4567,7 @@ mod tests {
             vec![
                 "select",
                 "coding_agent",
+                "devel",
                 "model",
                 "project",
                 "new_session",
@@ -4827,6 +4872,47 @@ mod tests {
             older_alias_reply.reply_markup.as_ref().unwrap()["remove_keyboard"],
             true
         );
+    }
+
+    #[test]
+    fn devel_command_creates_prompt_file() {
+        let temp = tempdir().unwrap();
+        let repo_root = temp.path().join("repo");
+        let data_root = temp.path().join("runtime");
+        fs::create_dir_all(repo_root.join(".dev_note")).unwrap();
+        fs::write(repo_root.join(".dev_note/ROADMAP.md"), "- [ ] next\n").unwrap();
+        fs::create_dir_all(&data_root).unwrap();
+
+        let previous_data_dir = std::env::var("TIZENCLAW_DATA_DIR").ok();
+        let previous_dir = std::env::current_dir().unwrap();
+        std::env::set_var("TIZENCLAW_DATA_DIR", &data_root);
+        std::env::set_current_dir(&repo_root).unwrap();
+
+        let reply = TelegramClient::handle_command(
+            77,
+            "/devel implement file bridge",
+            None,
+            &Arc::new(Mutex::new(HashMap::new())),
+            &temp.path().join("telegram_devel_state.json"),
+            &default_registry(),
+            &HashMap::new(),
+            std::path::Path::new("/tmp"),
+            0,
+        )
+        .unwrap();
+
+        let prompt_dir = data_root.join("devel").join("prompt");
+        let files = fs::read_dir(&prompt_dir).unwrap().collect::<Vec<_>>();
+        assert_eq!(files.len(), 1);
+        assert!(reply.text.contains("DevelPrompt: [queued]"));
+        assert!(reply.text.contains("Watcher: [inactive]"));
+
+        std::env::set_current_dir(previous_dir).unwrap();
+        if let Some(previous_data_dir) = previous_data_dir {
+            std::env::set_var("TIZENCLAW_DATA_DIR", previous_data_dir);
+        } else {
+            std::env::remove_var("TIZENCLAW_DATA_DIR");
+        }
     }
 
     #[test]
