@@ -69,7 +69,27 @@
           "exists": true
         },
         {
+          "path": "runtime_topology.memory_dir",
+          "exists": true
+        },
+        {
           "path": "session.resume_ready",
+          "exists": true
+        },
+        {
+          "path": "memory.summary_path",
+          "exists": true
+        },
+        {
+          "path": "memory.categories.general",
+          "exists": true
+        },
+        {
+          "path": "context_flow.memory_prompt_ready",
+          "exists": true
+        },
+        {
+          "path": "context_flow.session_resume_ready",
           "exists": true
         },
         {

@@ -213,9 +213,114 @@
   - Workspace cleanup:
     `bash .agent/scripts/cleanup_workspace.sh` completed before staging
   - Staged scope:
+    memory/session runtime summary code, IPC contract updates, system
+    scenario updates, and `.dev_note` documentation updates only
+  - Commit message path:
+    `.tmp/commit_msg.txt`
+  - Commit title:
+    `Align memory session runtime summaries`
+
+- [x] Stage 6: Commit
+  - Workspace cleanup:
+    `bash .agent/scripts/cleanup_workspace.sh` completed before staging
+  - Staged scope:
     loop runtime observability code, IPC contract updates, test coverage,
     and `.dev_note` documentation updates only
   - Commit message path:
     `.tmp/commit_msg.txt`
   - Commit title:
     `Persist loop runtime status snapshots`
+
+- [x] Supervisor Gate after Commit
+  - PASS: cleanup script executed, ignored artifacts stayed unstaged,
+    and the phase-4 observability slice closed cleanly
+
+## Phase 5 Runtime Alignment Cycle
+
+- [x] Stage 1: Planning
+  - Runtime surface:
+    memory persistence metadata, session context-flow readiness, and IPC
+    visibility for prompt-ready memory state
+  - Reference repositories:
+    `openclaw` memory-host runtime patterns, `nanoclaw` disk-restored
+    session state, and `openclaude` session-memory/runtime storage
+    boundaries were re-checked before the design choice
+  - Cycle classification:
+    host-default (`./deploy_host.sh`)
+  - System-test requirement:
+    update `tests/system/basic_ipc_smoke.json` before implementation to
+    assert `get_session_runtime.memory` and `get_session_runtime.context_flow`
+- [x] Supervisor Gate after Planning
+  - PASS: host-default routing, phase-5 runtime surface, and system-test
+    planning are recorded
+
+- [x] Stage 2: Design
+  - Selected architecture:
+    keep `SessionStore` and `MemoryStore` as disk-first owners and let
+    `AgentCore` compose a daemon-facing runtime summary
+  - Persistence impact:
+    reuse the existing `memory.md`, category directories, and session
+    transcript/compaction artifacts without adding a new file format
+  - IPC contract:
+    expand `get_session_runtime` with `memory` and `context_flow`
+  - Design artifact:
+    `.dev_note/docs/memory_session_runtime_alignment_design_20260411.md`
+- [x] Supervisor Gate after Design
+  - PASS: ownership, persistence, and IPC-visible assertions are
+    documented for the phase-5 slice
+
+- [x] Stage 3: Development
+  - TDD contract:
+    updated `tests/system/basic_ipc_smoke.json` before implementation
+    and added `memory_store::test_runtime_summary_reports_memory_paths_and_counts`
+  - Product-code result:
+    added `MemoryStore::runtime_summary`, expanded
+    `AgentCore::session_runtime_status`, and exposed session context-flow
+    readiness plus memory prompt-readiness through IPC
+  - Logging and observability:
+    the live host smoke now shows memory/runtime topology directly in
+    the IPC payload without manual filesystem inspection
+  - Development verification:
+    `./deploy_host.sh -b` passed
+- [x] Supervisor Gate after Development
+  - PASS: the system scenario was updated first, unit coverage was added,
+    and script-driven build verification passed without direct ad-hoc
+    cargo commands
+
+- [x] Stage 4: Build & Deploy
+  - Command:
+    `./deploy_host.sh`
+  - Result:
+    host binaries were installed under `/home/hjhun/.tizenclaw`, the
+    daemon restarted, and the dashboard remained reachable on `9091`
+  - Survival check:
+    `./deploy_host.sh --status` reported healthy daemon, tool executor,
+    and dashboard processes
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: the host deployment path completed and the updated daemon came
+    back online cleanly
+
+- [x] Stage 5: Test & Review
+  - Static review focus:
+    memory persistence remains disk-first inside `MemoryStore`, session
+    transcript ownership remains inside `SessionStore`, and `AgentCore`
+    only composes IPC summaries
+  - Runtime evidence:
+    `./deploy_host.sh --status` showed healthy daemon, executor, and
+    dashboard processes
+  - Log evidence:
+    `~/.tizenclaw/logs/tizenclaw.log` contained
+    `Daemon ready (1348ms) startup sequence completed`
+  - System test:
+    `~/.tizenclaw/bin/tizenclaw-tests scenario --file tests/system/basic_ipc_smoke.json`
+    passed and returned `memory.summary_path`,
+    `context_flow.memory_prompt_ready`, and
+    `context_flow.session_resume_ready`
+  - Repository regression:
+    `./deploy_host.sh --test` passed with all tests green, including the
+    new `memory_store` runtime summary coverage
+  - QA verdict:
+    PASS
+- [x] Supervisor Gate after Test & Review
+  - PASS: runtime logs, IPC scenario proof, and repository-wide
+    regression evidence are captured

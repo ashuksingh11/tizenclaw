@@ -25,3 +25,5 @@ preparation for this implementation slice
   `./deploy_host.sh --test`
 - [O] Expose session runtime control-plane and resume metadata through
   IPC-backed loop snapshots
+- [O] Expose memory persistence and session context-flow metadata
+  through `get_session_runtime`

@@ -6519,6 +6519,48 @@ impl AgentCore {
                     "resume_ready": false,
                 })
             });
+        let memory = self
+            .memory_store
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|store| store.runtime_summary()))
+            .unwrap_or_else(|| {
+                let topology = self.runtime_topology();
+                let summary_path = topology.memory_dir.join("memory.md");
+                json!({
+                    "base_dir": topology.memory_dir,
+                    "summary_path": summary_path,
+                    "short_term_dir": topology.memory_dir.join("short-term"),
+                    "long_term_dir": topology.memory_dir.join("long-term"),
+                    "episodic_dir": topology.memory_dir.join("episodic"),
+                    "summary_exists": false,
+                    "prompt_ready": false,
+                    "embedding_available": false,
+                    "total_entries": 0,
+                    "categories": {
+                        "general": 0,
+                        "facts": 0,
+                        "preferences": 0,
+                        "episodic": 0,
+                    }
+                })
+            });
+        let message_file_count = session
+            .get("message_file_count")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0);
+        let resume_ready = session
+            .get("resume_ready")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let memory_prompt_ready = memory
+            .get("prompt_ready")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let memory_total_entries = memory
+            .get("total_entries")
+            .and_then(|value| value.as_i64())
+            .unwrap_or(0);
 
         json!({
             "status": "ok",
@@ -6531,6 +6573,13 @@ impl AgentCore {
             },
             "runtime_topology": self.runtime_topology_summary(),
             "session": session,
+            "memory": memory,
+            "context_flow": {
+                "session_resume_ready": resume_ready,
+                "history_message_files": message_file_count,
+                "memory_prompt_ready": memory_prompt_ready,
+                "memory_total_entries": memory_total_entries,
+            },
             "loop_snapshot": self.load_loop_snapshot(session_id),
         })
     }
