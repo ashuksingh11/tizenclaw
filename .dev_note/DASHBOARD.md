@@ -125,3 +125,97 @@
 - Remaining roadmap:
   broader loop-control, memory/session refactoring, and richer
   capability activation work remain for later cycles
+
+## Phase 4 Follow-up Cycle
+
+- [x] Stage 1: Planning
+  - Runtime surface:
+    agent-loop control-plane status, session resume readiness, and IPC
+    observability for failure and completion checkpoints
+  - Cycle classification:
+    host-default (`./deploy_host.sh`)
+  - System-test requirement:
+    update `tests/system/basic_ipc_smoke.json` before implementation to
+    assert the new `get_session_runtime` IPC contract
+- [x] Supervisor Gate after Planning
+  - PASS: host-default routing, runtime surface, and system-test plan
+    were recorded
+
+- [x] Stage 2: Design
+  - Selected architecture:
+    persist loop snapshots under `state/loop/<session_id>.json` while
+    keeping `AgentLoopState` in memory as the execution owner
+  - Resume design:
+    expose session directory, compaction files, transcript path, and
+    `resume_ready` through a single session runtime summary
+  - IPC contract:
+    add `get_session_runtime` with `control_plane`, `runtime_topology`,
+    `session`, and `loop_snapshot`
+  - Design artifact:
+    `.dev_note/docs/agent_loop_runtime_observability_design_20260411.md`
+- [x] Supervisor Gate after Design
+  - PASS: ownership, persistence, and IPC assertions are documented
+
+- [x] Stage 3: Development
+  - TDD contract:
+    updated `tests/system/basic_ipc_smoke.json` before product-code
+    changes to assert `get_session_runtime`
+  - Product-code result:
+    added `RuntimeTopology.loop_state_dir`, loop snapshot serialization,
+    session runtime summaries, and IPC exposure for session control-plane
+    and resume metadata
+  - Logging and observability:
+    loop snapshot persistence now emits debug logs with session, phase,
+    and path details
+  - Development verification:
+    `./deploy_host.sh -b` passed
+- [x] Supervisor Gate after Development
+  - PASS: the system scenario was updated first, the new IPC contract is
+    implemented, and script-driven build verification passed
+
+- [x] Stage 4: Build & Deploy
+  - Command:
+    `./deploy_host.sh`
+  - Result:
+    host binaries were installed under `/home/hjhun/.tizenclaw`, the
+    daemon restarted, and the dashboard remained reachable on `9091`
+  - Survival check:
+    `./deploy_host.sh --status` reported the daemon, tool executor, and
+    dashboard as running
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: the host deployment path completed and the updated daemon came
+    back online cleanly
+
+- [x] Stage 5: Test & Review
+  - Static review focus:
+    loop snapshots stay under the runtime topology state root, session
+    runtime summaries remain disk-first, and no FFI boundary changed
+  - Runtime evidence:
+    `./deploy_host.sh --status` showed healthy daemon, executor, and
+    dashboard processes
+  - Log evidence:
+    `~/.tizenclaw/logs/tizenclaw.log` contained
+    `Daemon ready (1409ms) startup sequence completed`
+  - System test:
+    `~/.tizenclaw/bin/tizenclaw-tests scenario --file tests/system/basic_ipc_smoke.json`
+    passed and returned `runtime_topology.loop_state_dir`,
+    `control_plane.idle_window`, and `session.resume_ready`
+  - Repository regression:
+    `./deploy_host.sh --test` passed with all tests green, including the
+    new `agent_loop_state` and `session_store` coverage
+  - QA verdict:
+    PASS
+- [x] Supervisor Gate after Test & Review
+  - PASS: runtime logs, IPC scenario proof, and repository-wide
+    regression evidence are captured
+
+- [x] Stage 6: Commit
+  - Workspace cleanup:
+    `bash .agent/scripts/cleanup_workspace.sh` completed before staging
+  - Staged scope:
+    loop runtime observability code, IPC contract updates, test coverage,
+    and `.dev_note` documentation updates only
+  - Commit message path:
+    `.tmp/commit_msg.txt`
+  - Commit title:
+    `Persist loop runtime status snapshots`

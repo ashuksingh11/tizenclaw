@@ -542,6 +542,55 @@ impl SessionStore {
         let _ = fs::remove_file(path);
     }
 
+    pub fn session_runtime_summary(&self, session_id: &str) -> Value {
+        let session_dir = self.session_dir(session_id);
+        let today_path = self.session_file_today(session_id);
+        let compacted_path = self.compacted_path(session_id);
+        let compacted_structured_path = self.compacted_structured_path(session_id);
+        let transcript_path = self.transcript_path(session_id);
+        let workdir_path = self.base_dir.join("workdirs").join(session_id);
+
+        let message_file_count = fs::read_dir(&session_dir)
+            .ok()
+            .map(|entries| {
+                entries
+                    .filter_map(|entry| entry.ok())
+                    .filter(|entry| {
+                        entry
+                            .path()
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .map(|name| name.ends_with(".md") && name != "compacted.md")
+                            .unwrap_or(false)
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+
+        let transcript_exists = transcript_path.exists();
+        let compacted_exists = compacted_path.exists();
+        let compacted_structured_exists = compacted_structured_path.exists();
+        let resume_ready = compacted_exists
+            || compacted_structured_exists
+            || transcript_exists
+            || message_file_count > 0;
+
+        json!({
+            "session_dir": session_dir,
+            "today_path": today_path,
+            "compacted_path": compacted_path,
+            "compacted_structured_path": compacted_structured_path,
+            "transcript_path": transcript_path,
+            "workdir_path": workdir_path,
+            "session_exists": session_dir.exists(),
+            "message_file_count": message_file_count,
+            "compacted_snapshot_exists": compacted_exists,
+            "structured_compaction_exists": compacted_structured_exists,
+            "transcript_exists": transcript_exists,
+            "resume_ready": resume_ready,
+        })
+    }
+
     pub fn clear_all(&self) -> Result<Value, String> {
         let sessions_root = self.base_dir.join("sessions");
         let workdirs_root = self.base_dir.join("workdirs");
@@ -1362,6 +1411,34 @@ mod tests {
             .expect("save_compacted_structured must succeed");
         let loaded = store.load_compacted_structured("tool_hist2");
         assert_eq!(loaded, messages);
+    }
+
+    #[test]
+    fn test_session_runtime_summary_reports_resume_artifacts() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+
+        store.add_message("runtime", "user", "hello");
+        store.add_structured_assistant_text_message("runtime", "world");
+
+        let summary = store.session_runtime_summary("runtime");
+
+        assert_eq!(summary["session_exists"], true);
+        assert_eq!(summary["resume_ready"], true);
+        assert_eq!(summary["message_file_count"], 1);
+        assert_eq!(summary["transcript_exists"], true);
+        assert!(
+            summary["session_dir"]
+                .as_str()
+                .unwrap()
+                .ends_with("/sessions/runtime")
+        );
+        assert!(
+            summary["workdir_path"]
+                .as_str()
+                .unwrap()
+                .ends_with("/workdirs/runtime")
+        );
     }
 
     #[test]

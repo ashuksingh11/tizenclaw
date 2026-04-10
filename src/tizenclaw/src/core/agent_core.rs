@@ -133,6 +133,13 @@ fn log_conversation(role: &str, text: &str) {
     }
 }
 
+fn unix_timestamp_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 fn inject_context_message(messages: &mut Vec<LlmMessage>, text: String) {
     if text.trim().is_empty() {
         return;
@@ -4453,6 +4460,7 @@ impl AgentCore {
         };
         loop_state.token_budget = budget;
         loop_state.compact_threshold = threshold;
+        self.persist_loop_snapshot(&loop_state);
 
         log::debug!(
             "[AgentLoop] Phase=GoalParsing session='{}' goal='{}' budget={}",
@@ -4466,6 +4474,8 @@ impl AgentCore {
             let has_primary = self.backend.read().await.is_some();
             let has_fallback = !self.fallback_backends.read().await.is_empty();
             if !has_primary && !has_fallback {
+                loop_state.last_error = Some("No LLM backend configured".into());
+                self.persist_loop_snapshot(&loop_state);
                 return "Error: No LLM backend configured".into();
             }
         }
@@ -5118,6 +5128,7 @@ impl AgentCore {
                     "LLM error (HTTP {}): {}",
                     response.http_status, response.error_message
                 );
+                loop_state.last_error = Some(err.clone());
                 log::error!("[AgentLoop] {}", err);
                 // `chat_with_fallback()` already consumes the per-turn recovery
                 // budget by trying the primary backend plus configured
@@ -5125,6 +5136,7 @@ impl AgentCore {
                 // surface the failure here instead of replaying the same turn
                 // multiple times with a fixed hardcoded retry count.
                 loop_state.transition(AgentPhase::ResultReporting);
+                self.persist_loop_snapshot(&loop_state);
                 return err;
             }
 
@@ -6035,6 +6047,9 @@ impl AgentCore {
                                 );
                             }
                         }
+                        loop_state.last_error =
+                            Some("Agent is stuck in an execution loop.".into());
+                        self.persist_loop_snapshot(&loop_state);
                         return "Error: Agent is stuck in an execution loop.".into();
                     } else {
                         log::warn!(
@@ -6203,6 +6218,7 @@ impl AgentCore {
 
                 loop_state.transition(AgentPhase::Complete);
                 loop_state.log_self_inspection();
+                self.persist_loop_snapshot(&loop_state);
 
                 log_conversation("Assistant", &text);
                 return text;
@@ -6214,6 +6230,7 @@ impl AgentCore {
             // ── Phase 13: SelfInspection ─────────────────────────────────
             loop_state.transition(AgentPhase::SelfInspection);
             loop_state.log_self_inspection();
+            self.persist_loop_snapshot(&loop_state);
 
             // In-loop size-based compaction
             loop_state.token_used = context_engine.estimate_tokens(&messages);
@@ -6392,11 +6409,130 @@ impl AgentCore {
         RegisteredPaths::load(&self.platform.paths.config_dir)
     }
 
-    pub fn runtime_topology_summary(&self) -> Value {
+    fn runtime_topology(&self) -> crate::core::runtime_paths::RuntimeTopology {
         crate::core::runtime_paths::RuntimeTopology::from_data_dir(
             self.platform.paths.data_dir.clone(),
         )
-        .summary_json()
+    }
+
+    pub fn runtime_topology_summary(&self) -> Value {
+        self.runtime_topology().summary_json()
+    }
+
+    fn persist_loop_snapshot(&self, state: &AgentLoopState) {
+        let topology = self.runtime_topology();
+        if let Err(err) = std::fs::create_dir_all(&topology.loop_state_dir) {
+            log::warn!(
+                "[AgentLoop] Failed to create loop state dir '{}': {}",
+                topology.loop_state_dir.display(),
+                err
+            );
+            return;
+        }
+
+        let snapshot = state.snapshot();
+        let payload = json!({
+            "session_id": snapshot.session_id,
+            "phase": snapshot.phase,
+            "original_goal": snapshot.original_goal,
+            "plan_step_count": snapshot.plan_step_count,
+            "current_step": snapshot.current_step,
+            "round": snapshot.round,
+            "error_count": snapshot.error_count,
+            "tool_retry_count": snapshot.tool_retry_count,
+            "max_tool_rounds": snapshot.max_tool_rounds,
+            "last_eval_verdict": snapshot.last_eval_verdict,
+            "needs_follow_up": snapshot.needs_follow_up,
+            "last_error": snapshot.last_error,
+            "total_tool_calls": snapshot.total_tool_calls,
+            "stuck_retry_count": snapshot.stuck_retry_count,
+            "tool_budget_events": snapshot.tool_budget_events,
+            "active_workflow_id": snapshot.active_workflow_id,
+            "current_workflow_step": snapshot.current_workflow_step,
+            "updated_at_unix_secs": unix_timestamp_secs(),
+            "resumable": state.phase != AgentPhase::Complete,
+        });
+
+        let path = topology.loop_state_path(&state.session_id);
+        let tmp_path = path.with_extension("json.tmp");
+        let serialized = match serde_json::to_vec_pretty(&payload) {
+            Ok(serialized) => serialized,
+            Err(err) => {
+                log::warn!(
+                    "[AgentLoop] Failed to serialize loop snapshot for session '{}': {}",
+                    state.session_id,
+                    err
+                );
+                return;
+            }
+        };
+
+        if let Err(err) = std::fs::write(&tmp_path, serialized)
+            .and_then(|_| std::fs::rename(&tmp_path, &path))
+        {
+            log::warn!(
+                "[AgentLoop] Failed to persist loop snapshot '{}': {}",
+                path.display(),
+                err
+            );
+            let _ = std::fs::remove_file(&tmp_path);
+            return;
+        }
+
+        log::debug!(
+            "[AgentLoop] Snapshot saved: session='{}' phase={} path='{}'",
+            state.session_id,
+            state.phase.as_str(),
+            path.display()
+        );
+    }
+
+    fn load_loop_snapshot(&self, session_id: &str) -> Value {
+        let path = self.runtime_topology().loop_state_path(session_id);
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+            .unwrap_or(Value::Null)
+    }
+
+    pub fn session_runtime_status(&self, session_id: &str) -> Value {
+        let session = self
+            .session_store
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|store| store.session_runtime_summary(session_id)))
+            .unwrap_or_else(|| {
+                let topology = self.runtime_topology();
+                let session_dir = topology.sessions_dir.join(session_id);
+                json!({
+                    "session_dir": session_dir,
+                    "today_path": session_dir.join("today.md"),
+                    "compacted_path": session_dir.join("compacted.md"),
+                    "compacted_structured_path": session_dir.join("compacted.jsonl"),
+                    "transcript_path": session_dir.join("transcript.jsonl"),
+                    "workdir_path": topology.data_dir.join("workdirs").join(session_id),
+                    "session_exists": false,
+                    "message_file_count": 0,
+                    "compacted_snapshot_exists": false,
+                    "structured_compaction_exists": false,
+                    "transcript_exists": false,
+                    "resume_ready": false,
+                })
+            });
+
+        json!({
+            "status": "ok",
+            "session_id": session_id,
+            "control_plane": {
+                "idle_window": AgentLoopState::IDLE_WINDOW,
+                "default_max_tool_rounds": AgentLoopState::DEFAULT_MAX_TOOL_ROUNDS,
+                "default_token_budget": AgentLoopState::DEFAULT_TOKEN_BUDGET,
+                "default_compact_threshold": AgentLoopState::DEFAULT_COMPACT_THRESHOLD,
+            },
+            "runtime_topology": self.runtime_topology_summary(),
+            "session": session,
+            "loop_snapshot": self.load_loop_snapshot(session_id),
+        })
     }
 
     pub async fn register_external_path(

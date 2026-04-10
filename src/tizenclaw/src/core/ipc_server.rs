@@ -641,6 +641,15 @@ impl IpcServer {
                 })
             }
 
+            "get_session_runtime" => {
+                let session_id = params["session_id"].as_str().unwrap_or("").trim();
+                if session_id.is_empty() {
+                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'session_id'"},"id":req_id})
+                        .to_string();
+                }
+                agent.session_runtime_status(session_id)
+            }
+
             _ => {
                 return json!({"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":req_id})
                     .to_string();

@@ -13,6 +13,8 @@ skills while remaining compatible with the existing deployment model.
   persistence
 - daemon IPC exposes enough topology and registry detail for host-first
   debugging
+- daemon IPC exposes enough loop-state and session-resume detail for
+  host-first debugging
 - logging and tests make registration and topology regressions easy to
   diagnose
 - host-first build, deploy, and review steps pass through repository
@@ -23,4 +25,3 @@ skills while remaining compatible with the existing deployment model.
 This cycle is complete only when the planned runtime-topology and
 registration slice is implemented, validated through IPC and repository
 tests, and committed with the recorded dashboard evidence.
-

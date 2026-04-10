@@ -50,6 +50,35 @@
       ]
     },
     {
+      "name": "session-runtime-shape",
+      "method": "get_session_runtime",
+      "params": {
+        "session_id": "system-smoke"
+      },
+      "assertions": [
+        {
+          "path": "status",
+          "equals": "ok"
+        },
+        {
+          "path": "control_plane.idle_window",
+          "equals": 3
+        },
+        {
+          "path": "runtime_topology.loop_state_dir",
+          "exists": true
+        },
+        {
+          "path": "session.resume_ready",
+          "exists": true
+        },
+        {
+          "path": "loop_snapshot",
+          "exists": true
+        }
+      ]
+    },
+    {
       "name": "session-usage-shape",
       "method": "get_usage",
       "params": {

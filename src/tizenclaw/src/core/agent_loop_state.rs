@@ -21,6 +21,7 @@
 //! 14. ResultReporting    — Format and finalize agent output
 //! 15. Complete           — Loop exited; session archived
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Instant;
 
@@ -142,6 +143,27 @@ pub struct AgentLoopState {
     pub tool_budget_events: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentLoopSnapshot {
+    pub session_id: String,
+    pub phase: String,
+    pub original_goal: String,
+    pub plan_step_count: usize,
+    pub current_step: usize,
+    pub round: usize,
+    pub error_count: usize,
+    pub tool_retry_count: usize,
+    pub max_tool_rounds: usize,
+    pub last_eval_verdict: String,
+    pub needs_follow_up: bool,
+    pub last_error: Option<String>,
+    pub total_tool_calls: usize,
+    pub stuck_retry_count: usize,
+    pub tool_budget_events: usize,
+    pub active_workflow_id: Option<String>,
+    pub current_workflow_step: usize,
+}
+
 impl AgentLoopState {
     pub const DEFAULT_TOKEN_BUDGET: usize = 0;
     pub const DEFAULT_COMPACT_THRESHOLD: f32 = 0.90;
@@ -213,6 +235,28 @@ impl AgentLoopState {
 
     pub fn record_budget_events(&mut self, count: usize) {
         self.tool_budget_events += count;
+    }
+
+    pub fn snapshot(&self) -> AgentLoopSnapshot {
+        AgentLoopSnapshot {
+            session_id: self.session_id.clone(),
+            phase: self.phase.as_str().to_string(),
+            original_goal: self.original_goal.clone(),
+            plan_step_count: self.plan_steps.len(),
+            current_step: self.current_step,
+            round: self.round,
+            error_count: self.error_count,
+            tool_retry_count: self.tool_retry_count,
+            max_tool_rounds: self.max_tool_rounds,
+            last_eval_verdict: self.last_eval_verdict.as_str().to_string(),
+            needs_follow_up: self.needs_follow_up,
+            last_error: self.last_error.clone(),
+            total_tool_calls: self.total_tool_calls,
+            stuck_retry_count: self.stuck_retry_count,
+            tool_budget_events: self.tool_budget_events,
+            active_workflow_id: self.active_workflow_id.clone(),
+            current_workflow_step: self.current_workflow_step,
+        }
     }
 
     /// Returns true if the token budget is at or above the compaction threshold.
@@ -407,5 +451,43 @@ mod tests {
         assert_eq!(s.last_prefetch_memory.as_deref(), Some("memory preview"));
         assert_eq!(s.last_prefetch_skills.len(), 2);
         assert_eq!(s.tool_budget_events, 2);
+    }
+
+    #[test]
+    fn test_snapshot_reflects_runtime_state() {
+        let mut s = AgentLoopState::new("sess1", "goal");
+        s.plan_steps = vec!["plan".into(), "execute".into()];
+        s.current_step = 1;
+        s.round = 2;
+        s.error_count = 1;
+        s.tool_retry_count = 3;
+        s.max_tool_rounds = 7;
+        s.last_eval_verdict = EvalVerdict::PartialProgress;
+        s.set_follow_up(true);
+        s.last_error = Some("temporary failure".into());
+        s.total_tool_calls = 4;
+        s.stuck_retry_count = 1;
+        s.tool_budget_events = 2;
+        s.active_workflow_id = Some("wf-1".into());
+        s.current_workflow_step = 5;
+
+        let snapshot = s.snapshot();
+
+        assert_eq!(snapshot.session_id, "sess1");
+        assert_eq!(snapshot.phase, "GoalParsing");
+        assert_eq!(snapshot.plan_step_count, 2);
+        assert_eq!(snapshot.current_step, 1);
+        assert_eq!(snapshot.round, 2);
+        assert_eq!(snapshot.error_count, 1);
+        assert_eq!(snapshot.tool_retry_count, 3);
+        assert_eq!(snapshot.max_tool_rounds, 7);
+        assert_eq!(snapshot.last_eval_verdict, "PartialProgress");
+        assert!(snapshot.needs_follow_up);
+        assert_eq!(snapshot.last_error.as_deref(), Some("temporary failure"));
+        assert_eq!(snapshot.total_tool_calls, 4);
+        assert_eq!(snapshot.stuck_retry_count, 1);
+        assert_eq!(snapshot.tool_budget_events, 2);
+        assert_eq!(snapshot.active_workflow_id.as_deref(), Some("wf-1"));
+        assert_eq!(snapshot.current_workflow_step, 5);
     }
 }

@@ -10,6 +10,7 @@ pub struct RuntimeTopology {
     pub config_dir: PathBuf,
     pub state_dir: PathBuf,
     pub registry_dir: PathBuf,
+    pub loop_state_dir: PathBuf,
     pub sessions_dir: PathBuf,
     pub memory_dir: PathBuf,
     pub logs_dir: PathBuf,
@@ -28,6 +29,7 @@ impl RuntimeTopology {
         Self {
             config_dir: data_dir.join("config"),
             registry_dir: state_dir.join("registry"),
+            loop_state_dir: state_dir.join("loop"),
             sessions_dir: data_dir.join("sessions"),
             memory_dir: data_dir.join("memory"),
             logs_dir: data_dir.join("logs"),
@@ -58,12 +60,17 @@ impl RuntimeTopology {
         self.registry_dir.join("registered_paths.v2.json")
     }
 
+    pub fn loop_state_path(&self, session_id: &str) -> PathBuf {
+        self.loop_state_dir.join(format!("{}.json", session_id))
+    }
+
     pub fn summary_json(&self) -> Value {
         json!({
             "data_dir": self.data_dir,
             "config_dir": self.config_dir,
             "state_dir": self.state_dir,
             "registry_dir": self.registry_dir,
+            "loop_state_dir": self.loop_state_dir,
             "sessions_dir": self.sessions_dir,
             "memory_dir": self.memory_dir,
             "logs_dir": self.logs_dir,
@@ -151,6 +158,10 @@ mod tests {
             Path::new("/tmp/tizenclaw-topology/state/registry")
         );
         assert_eq!(
+            topology.loop_state_dir,
+            Path::new("/tmp/tizenclaw-topology/state/loop")
+        );
+        assert_eq!(
             topology.telegram_sessions_dir,
             Path::new("/tmp/tizenclaw-topology/telegram_sessions")
         );
@@ -164,6 +175,10 @@ mod tests {
         assert_eq!(
             summary["registry_dir"],
             "/tmp/tizenclaw-topology/state/registry"
+        );
+        assert_eq!(
+            summary["loop_state_dir"],
+            "/tmp/tizenclaw-topology/state/loop"
         );
         assert_eq!(summary["tools_dir"], "/tmp/tizenclaw-topology/tools");
     }

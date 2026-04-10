@@ -6,7 +6,7 @@
 registration metadata, and IPC visibility
 [O] Phase 3. Define the TDD contract, logging strategy, and
 `tizenclaw-tests` scenario updates for the runtime-visible slice
-[ ] Phase 4. Extend the same ownership model into agent-loop control,
+[O] Phase 4. Extend the same ownership model into agent-loop control,
 resume state, and broader observability seams
 [ ] Phase 5. Refactor memory and session persistence to align with the
 runtime topology contract
@@ -23,3 +23,5 @@ preparation for this implementation slice
 - [O] Add unit tests and a `tizenclaw-tests` scenario for the new payload
 - [O] Validate through `./deploy_host.sh`, IPC smoke, and
   `./deploy_host.sh --test`
+- [O] Expose session runtime control-plane and resume metadata through
+  IPC-backed loop snapshots
