@@ -637,6 +637,7 @@ impl IpcServer {
                 json!({
                     "status": "ok",
                     "registrations": registrations,
+                    "runtime_topology": agent.runtime_topology_summary(),
                 })
             }
 

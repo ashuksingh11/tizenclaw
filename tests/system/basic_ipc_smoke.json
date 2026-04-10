@@ -34,6 +34,18 @@
         {
           "path": "registrations.skill_paths",
           "exists": true
+        },
+        {
+          "path": "registrations.entries",
+          "exists": true
+        },
+        {
+          "path": "runtime_topology.state_dir",
+          "exists": true
+        },
+        {
+          "path": "runtime_topology.registry_dir",
+          "exists": true
         }
       ]
     },

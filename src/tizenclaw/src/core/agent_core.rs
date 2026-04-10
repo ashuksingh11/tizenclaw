@@ -6392,6 +6392,13 @@ impl AgentCore {
         RegisteredPaths::load(&self.platform.paths.config_dir)
     }
 
+    pub fn runtime_topology_summary(&self) -> Value {
+        crate::core::runtime_paths::RuntimeTopology::from_data_dir(
+            self.platform.paths.data_dir.clone(),
+        )
+        .summary_json()
+    }
+
     pub async fn register_external_path(
         &self,
         kind: RegistrationKind,
