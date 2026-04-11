@@ -5,10 +5,42 @@
 - Goal: Prompt 11: Build System — deploy_host.sh, CMakeLists.txt, GBS
 - Cycle classification: host-default for execution, with Tizen packaging
   files updated but not deployed unless explicitly requested
-- Current workflow phase: commit
+- Current workflow phase: final_verification
 - Last completed workflow phase: commit
 - Supervisor verdict: `PASS`
-- Resume point: Workflow complete after commit validation
+- Resume point: Prompt-derived PLAN and refreshed verification are
+  synchronized; this slice is ready to stop
+
+## Prompt-Derived PLAN Completion
+
+- Root cause of the rollback:
+  the previous run finished the build-system implementation and host
+  validation, but left every prompt-derived PLAN item unchecked in both
+  root and session `PLAN.md`, so supervisor final verification failed on
+  plan completion instead of on build behavior.
+- Phase 1 completed:
+  followed the required guidance before any new edits by re-reading
+  `AGENTS.md`, `.agent/rules/shell-detection.md`, and the stage skills
+  relevant to planning, design, development, build/deploy, review, and
+  supervision.
+- Phase 2 completed:
+  treated the guidance as authoritative for this rerun by keeping the
+  cycle host-default, avoiding direct ad-hoc `cargo build/test/check`
+  outside repository scripts, and preserving the stage-gated workflow
+  notes in this dashboard.
+- Phase 3 completed:
+  verified the required guidance-file scope for this prompt remained the
+  root `AGENTS.md` instruction set and confirmed the active slice still
+  centers on `deploy_host.sh`, `deploy.sh`, `CMakeLists.txt`,
+  `packaging/tizenclaw.spec`, and `repo_config.ini`.
+- Phase 4 completed:
+  applied the AGENTS rules directly to the saved repository state by
+  resuming from the supervisor-indicated develop/final-verification path
+  instead of restarting the task from scratch.
+- Phase 5 completed:
+  synchronized root/session `.dev` operator state with the completed work
+  and reran host-side verification so the repository state and dashboard
+  evidence now match the finished PLAN items.
 
 ## Stage Log
 
@@ -157,6 +189,35 @@
 - Evidence:
   cleanup was executed, targeted staging scope was defined, and the commit
   uses the required message file workflow
+
+## Final Verification Refresh
+
+- Additional failure found during rerun:
+  `./deploy.sh --dry-run --skip-deploy` exited early in `find_rpm()`
+  because the script tried to parse the previous GBS build log before the
+  dry-run fallback path, and `set -euo pipefail` treated a missing grep
+  match as fatal.
+- Corrective change:
+  updated `deploy.sh` so dry-run mode returns assumed RPM paths before any
+  log parsing, and made the log-based RPMS directory extraction tolerant of
+  missing matches.
+- Refreshed validation commands:
+  `./deploy_host.sh --no-restart`
+  `./deploy_host.sh`
+  `./deploy_host.sh --release --no-restart`
+  `~/.tizenclaw/bin/tizenclaw-tests call --method ping`
+  `./deploy_host.sh --test`
+  `./deploy_host.sh`
+  `./deploy_host.sh --status`
+  `./deploy.sh --dry-run --skip-deploy`
+- Refreshed validation evidence:
+  host build/install still passed in debug and release;
+  ping returned `{"pong":true}`;
+  repository tests passed again through `./deploy_host.sh --test`;
+  status showed `tizenclaw` and `tizenclaw-tool-executor` running with
+  recent log lines ending at `Started IPC server`;
+  the Tizen dry-run path now completes and prints the expected
+  `gbs build -A x86_64 --include-all` plus RPM/device restart flow.
 
 ## In Progress
 

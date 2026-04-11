@@ -381,22 +381,6 @@ RPMS_DIR=""
 find_rpm() {
   header "Step 2/4: Locating RPM"
 
-  # If RPMS_DIR was not set by do_build (e.g. --skip-build or --dry-run),
-  # try to find it from the last build log or fall back to searching GBS-ROOT
-  if [ -z "${RPMS_DIR}" ]; then
-    # Try last build log first
-    if [ -f "${GBS_BUILD_LOG}" ]; then
-      RPMS_DIR=$(grep -A1 'generated RPM packages can be found from local repo:' "${GBS_BUILD_LOG}" \
-        | tail -1 | sed 's/^[[:space:]]*//')
-    fi
-
-    # Fall back to searching under ~/GBS-ROOT
-    if [ -z "${RPMS_DIR}" ]; then
-      local gbs_root="${HOME}/GBS-ROOT"
-      RPMS_DIR=$(find "${gbs_root}" -type d -path "*/${ARCH}/RPMS" 2>/dev/null | head -1 || true)
-    fi
-  fi
-
   if [ "${DRY_RUN}" = true ]; then
     if [ -z "${RPMS_DIR}" ]; then
       RPMS_DIR="${HOME}/GBS-ROOT/local/repos/tizen/${ARCH}/RPMS"
@@ -404,6 +388,24 @@ find_rpm() {
     RPM_FILES=("${RPMS_DIR}/${PKG_NAME}-1.0.0-1.${ARCH}.rpm")
     log "[DRY-RUN] Assuming RPMs: ${RPM_FILES[*]}"
     return 0
+  fi
+
+  # If RPMS_DIR was not set by do_build (e.g. --skip-build or --dry-run),
+  # try to find it from the last build log or fall back to searching GBS-ROOT
+  if [ -z "${RPMS_DIR}" ]; then
+    # Try last build log first
+    if [ -f "${GBS_BUILD_LOG}" ]; then
+      RPMS_DIR=$(
+        grep -A1 'generated RPM packages can be found from local repo:' "${GBS_BUILD_LOG}" \
+          | tail -1 | sed 's/^[[:space:]]*//' || true
+      )
+    fi
+
+    # Fall back to searching under ~/GBS-ROOT
+    if [ -z "${RPMS_DIR}" ]; then
+      local gbs_root="${HOME}/GBS-ROOT"
+      RPMS_DIR=$(find "${gbs_root}" -type d -path "*/${ARCH}/RPMS" 2>/dev/null | head -1 || true)
+    fi
   fi
 
   if [ -z "${RPMS_DIR}" ] || [ ! -d "${RPMS_DIR}" ]; then
