@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+use crate::core::agent_core::AgentCore;
+
 const DEVEL_STATUS_FILE_NAME: &str = "STATUS.md";
 const LEGACY_DEVEL_STATUS_FILE_NAME: &str = ".status";
 const RESULT_EVENT_MASK: u32 = libc::IN_CREATE
@@ -26,6 +28,29 @@ const MAX_TELEGRAM_OUTBOUND_CHARS: usize = 4000;
 
 static DEVEL_WATCHER_ACTIVE: AtomicBool = AtomicBool::new(false);
 static LAST_PROMPT_PATH: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+
+pub async fn run(agent: &AgentCore) {
+    let prompts = [
+        (
+            "devel-ping",
+            "Reply with a short single-line health confirmation for devel mode.",
+        ),
+        (
+            "devel-runtime-summary",
+            "Summarize the active runtime in two short bullet points.",
+        ),
+    ];
+
+    println!("== TizenClaw devel mode ==");
+    for (session_id, prompt) in prompts {
+        println!("-- {} --", session_id);
+        println!("Prompt: {}", prompt);
+        let response = agent.process_prompt(session_id, prompt, None).await;
+        println!("{}", response.trim());
+        println!();
+    }
+    println!("Devel mode sequence completed.");
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DevelSyncResult {
@@ -100,9 +125,7 @@ impl DevelPaths {
             progress_dir: devel_dir.join("progress"),
             result_dir: devel_dir.join("result"),
             status_path: repo_root.join(".dev").join(DEVEL_STATUS_FILE_NAME),
-            legacy_status_path: repo_root
-                .join(".dev")
-                .join(LEGACY_DEVEL_STATUS_FILE_NAME),
+            legacy_status_path: repo_root.join(".dev").join(LEGACY_DEVEL_STATUS_FILE_NAME),
             roadmap_path: repo_root.join(".dev").join("ROADMAP.md"),
             devel_dir,
         }
@@ -423,7 +446,8 @@ async fn watch_devel_dirs(repo_root: PathBuf) -> Result<(), String> {
                 }
 
                 if is_result_watch
-                    && event.mask & (libc::IN_CREATE | libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO) != 0
+                    && event.mask & (libc::IN_CREATE | libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO)
+                        != 0
                 {
                     if let Some(name) = event.name.as_deref() {
                         let file_path = paths.result_dir.join(name);
@@ -437,7 +461,10 @@ async fn watch_devel_dirs(repo_root: PathBuf) -> Result<(), String> {
 
                 if is_progress_watch
                     && event.mask
-                        & (libc::IN_CREATE | libc::IN_CLOSE_WRITE | libc::IN_MODIFY | libc::IN_MOVED_TO)
+                        & (libc::IN_CREATE
+                            | libc::IN_CLOSE_WRITE
+                            | libc::IN_MODIFY
+                            | libc::IN_MOVED_TO)
                         != 0
                 {
                     if let Some(name) = event.name.as_deref() {
@@ -502,7 +529,11 @@ async fn process_progress_file(
     let chunk = match read_progress_delta(path, state, flush_partial) {
         Ok(chunk) => chunk,
         Err(err) => {
-            log::warn!("Failed to stream devel progress '{}': {}", path.display(), err);
+            log::warn!(
+                "Failed to stream devel progress '{}': {}",
+                path.display(),
+                err
+            );
             return;
         }
     };
@@ -687,10 +718,7 @@ fn latest_result_file(result_dir: &Path) -> Option<PathBuf> {
     latest_matching_file(result_dir, |_| true)
 }
 
-fn latest_matching_file(
-    dir: &Path,
-    matcher: impl Fn(&str) -> bool,
-) -> Option<PathBuf> {
+fn latest_matching_file(dir: &Path, matcher: impl Fn(&str) -> bool) -> Option<PathBuf> {
     let mut files = fs::read_dir(dir)
         .ok()?
         .flatten()
@@ -944,7 +972,7 @@ fn current_local_timestamp_compact() -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        create_prompt_file, devel_status, detect_repo_root, latest_devel_result,
+        create_prompt_file, detect_repo_root, devel_status, latest_devel_result,
         parse_inotify_events, prompt_key_for_progress_file, prompt_key_for_result_file,
         read_progress_delta, sync_devel_tasks, DevelPaths, ProgressStreamState,
     };

@@ -13,6 +13,17 @@
       ]
     },
     {
+      "name": "ping-remains-available-after-runtime-status",
+      "method": "ping",
+      "params": {},
+      "assertions": [
+        {
+          "path": "pong",
+          "equals": true
+        }
+      ]
+    },
+    {
       "name": "tool-list-shape",
       "method": "tool.list",
       "params": {},

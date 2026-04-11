@@ -1,9 +1,12 @@
-Implement storage audit persistence contracts
+Refine daemon startup and shutdown flow
 
-Add audit log query APIs and SQLite bootstrap settings for WAL mode.
-Extend the session store with prompt-compatible load and append helpers,
-atomic compacted snapshot writes, and on-disk session listing.
+Implement the requested 7-phase daemon boot sequence and
+daemon option parsing in the Rust entry point.
 
-Add memory key listing and a vector embedding persistence/search layer.
-Cover the new storage contracts with unit tests and validate them with
-the host deploy and host test scripts.
+Add the append-only boot phase logger, devel-mode prompt
+runner, and a stoppable mDNS scanner so graceful shutdown
+can complete after readiness.
+
+Update the IPC contract scenario and record the host build,
+runtime checks, devel verification, and host test results in
+the development dashboard.
