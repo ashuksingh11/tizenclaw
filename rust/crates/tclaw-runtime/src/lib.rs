@@ -46,7 +46,13 @@ pub use branch_lock::BranchLockState;
 pub use compact::CompactionPlan;
 pub use config::{RuntimeConfig, RuntimeConfigPatch, RuntimePaths, RuntimeProfile};
 pub use config_validate::{ConfigValidationIssue, ConfigValidationReport};
-pub use conversation::{ConversationLog, ConversationTurn, MessageRole};
+pub use conversation::{
+    ApiRequest, AssistantEvent, ConversationEngine, ConversationEngineOptions, ConversationEvent,
+    ConversationLog, ConversationRuntimeError, ConversationTurn, ConversationTurnResult,
+    HookContext, HookOutcome, HookRunner, HookRuntimeError, MessageRole, ModelError,
+    ModelResponseEvent, ModelTransport, PermissionResolver, ToolCallRequest, ToolDefinition,
+    ToolExecutionOutput, ToolExecutor, ToolFailure, ToolRuntimeError, TurnSummary, TurnUsageReport,
+};
 pub use file_ops::{FileMutation, FileMutationKind};
 pub use git_context::GitContextSnapshot;
 pub use green_contract::GreenContract;
