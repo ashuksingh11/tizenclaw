@@ -1,11 +1,11 @@
 //! Context Engine — Size-based context window pressure management.
 //!
-//! Controls when and how conversation history is compacted to stay within the
-//! LLM's token budget. Uses a three-phase compaction strategy:
+//! Controls when and how conversation history is compacted when a positive
+//! token budget is configured. Uses a three-phase compaction strategy:
 //!
 //! ## Compaction Trigger
 //! Compaction is triggered when estimated token usage reaches or exceeds
-//! `compact_threshold` × `budget` (default: 90% of 256,000 = 230,400 tokens).
+//! `compact_threshold` × `budget`.
 //!
 //! ## Compaction Phases
 //! 1. **Pin**: Always keep the system prompt (role="system") and the original
@@ -22,6 +22,18 @@
 use crate::llm::backend::LlmMessage;
 
 const HEURISTIC_CHARS_PER_TOKEN: f32 = 3.5;
+pub const DEFAULT_TOOL_RESULT_BUDGET_CHARS: usize = 4_000;
+
+fn char_boundary_prefix(text: &str, max_chars: usize) -> &str {
+    if max_chars == 0 {
+        return "";
+    }
+
+    match text.char_indices().nth(max_chars) {
+        Some((idx, _)) => &text[..idx],
+        None => text,
+    }
+}
 
 // ─── Trait ──────────────────────────────────────────────────────────────────
 
@@ -42,15 +54,15 @@ pub trait ContextEngine: Send + Sync {
 
 /// Size-based context engine.
 ///
-/// Triggers compaction based on token utilization (≥90% of budget by default).
-/// Budget default: 256,000 tokens. Threshold default: 0.90.
+/// Triggers compaction based on token utilization (≥90% of budget by default)
+/// when a positive budget is supplied.
 pub struct SizedContextEngine {
     compact_threshold: f32,
 }
 
 impl SizedContextEngine {
-    /// Default token budget: 256,000 tokens (≈ Gemini 1.5 / Claude 3.5 context).
-    pub const DEFAULT_BUDGET: usize = 256_000;
+    /// Default token budget: 0 disables compaction until configured.
+    pub const DEFAULT_BUDGET: usize = 0;
     /// Compact when utilization reaches 90% of budget.
     pub const DEFAULT_THRESHOLD: f32 = 0.90;
 
@@ -64,6 +76,54 @@ impl SizedContextEngine {
         self.compact_threshold = threshold.clamp(0.5, 0.99);
         self
     }
+
+    pub fn budget_tool_result_message(
+        &self,
+        mut message: LlmMessage,
+        max_chars: usize,
+    ) -> (LlmMessage, bool) {
+        if message.role != "tool" || max_chars == 0 {
+            return (message, false);
+        }
+
+        let serialized = message.tool_result.to_string();
+        if serialized.chars().count() <= max_chars {
+            return (message, false);
+        }
+
+        let preview = char_boundary_prefix(&serialized, max_chars.min(400)).to_string();
+        message.tool_result = serde_json::json!({
+            "summary": format!(
+                "Tool output truncated to stay within the agent context budget. \
+        Preview the result and call a narrower follow-up tool if more detail is required."
+            ),
+            "preview": preview,
+            "truncated": true,
+            "original_size": serialized.len(),
+        });
+
+        (message, true)
+    }
+
+    pub fn budget_tool_result_messages(
+        &self,
+        messages: Vec<LlmMessage>,
+        max_chars: usize,
+    ) -> (Vec<LlmMessage>, usize) {
+        let mut budgeted = 0;
+        let result = messages
+            .into_iter()
+            .map(|message| {
+                let (message, changed) = self.budget_tool_result_message(message, max_chars);
+                if changed {
+                    budgeted += 1;
+                }
+                message
+            })
+            .collect();
+
+        (result, budgeted)
+    }
 }
 
 impl Default for SizedContextEngine {
@@ -75,12 +135,18 @@ impl Default for SizedContextEngine {
 impl ContextEngine for SizedContextEngine {
     fn estimate_tokens(&self, messages: &[LlmMessage]) -> usize {
         // Heuristic: total chars across all textual fields / 3.5
-        let total_chars: usize = messages.iter().map(|m| {
-            m.text.len()
-                + m.reasoning_text.len()
-                + m.tool_result.to_string().len()
-                + m.tool_calls.iter().map(|tc| tc.args.to_string().len() + tc.name.len()).sum::<usize>()
-        }).sum();
+        let total_chars: usize = messages
+            .iter()
+            .map(|m| {
+                m.text.len()
+                    + m.reasoning_text.len()
+                    + m.tool_result.to_string().len()
+                    + m.tool_calls
+                        .iter()
+                        .map(|tc| tc.args.to_string().len() + tc.name.len())
+                        .sum::<usize>()
+            })
+            .sum();
         ((total_chars as f32) / HEURISTIC_CHARS_PER_TOKEN).ceil() as usize
     }
 
@@ -99,7 +165,11 @@ impl ContextEngine for SizedContextEngine {
             "[ContextEngine] Compacting: ~{} tokens / {} budget ({:.1}%)",
             before,
             budget,
-            if budget > 0 { before as f32 / budget as f32 * 100.0 } else { 0.0 }
+            if budget > 0 {
+                before as f32 / budget as f32 * 100.0
+            } else {
+                0.0
+            }
         );
 
         // ── Phase 1: Identify pinned messages ──────────────────────────────
@@ -126,12 +196,12 @@ impl ContextEngine for SizedContextEngine {
         // A "tool" message is prunable if its tool_call_id is not referenced
         let mut prunable_indices = std::collections::HashSet::new();
         for (i, msg) in messages.iter().enumerate() {
-            if msg.role == "tool" && !pinned_indices.contains(&i) {
-                if !msg.tool_call_id.is_empty()
-                    && !referenced_tool_ids.contains(&msg.tool_call_id)
-                {
-                    prunable_indices.insert(i);
-                }
+            if msg.role == "tool"
+                && !pinned_indices.contains(&i)
+                && !msg.tool_call_id.is_empty()
+                && !referenced_tool_ids.contains(&msg.tool_call_id)
+            {
+                prunable_indices.insert(i);
             }
         }
 
@@ -147,7 +217,8 @@ impl ContextEngine for SizedContextEngine {
                     }
                     let res_str = m.tool_result.to_string();
                     if res_str.len() > 200 {
-                        m.tool_result = serde_json::json!(format!("{}... [truncated]", &res_str[..200]));
+                        m.tool_result =
+                            serde_json::json!(format!("{}... [truncated]", &res_str[..200]));
                     }
                 }
                 m
@@ -201,7 +272,11 @@ impl ContextEngine for SizedContextEngine {
             compacted.len(),
             before,
             after,
-            if budget > 0 { after as f32 / budget as f32 * 100.0 } else { 0.0 }
+            if budget > 0 {
+                after as f32 / budget as f32 * 100.0
+            } else {
+                0.0
+            }
         );
 
         compacted
@@ -220,7 +295,11 @@ mod tests {
     use serde_json::json;
 
     fn msg(role: &str, text: &str) -> LlmMessage {
-        LlmMessage { role: role.into(), text: text.into(), ..Default::default() }
+        LlmMessage {
+            role: role.into(),
+            text: text.into(),
+            ..Default::default()
+        }
     }
 
     fn tool_msg(call_id: &str, text: &str) -> LlmMessage {
@@ -293,7 +372,9 @@ mod tests {
         let compact = engine.compact(messages, budget);
         // System and first user must be present
         assert!(compact.iter().any(|m| m.role == "system"));
-        assert!(compact.iter().any(|m| m.role == "user" && m.text == "Original goal"));
+        assert!(compact
+            .iter()
+            .any(|m| m.role == "user" && m.text == "Original goal"));
     }
 
     #[test]
@@ -311,7 +392,9 @@ mod tests {
         // force compact anyway to test pruning logic
         let compact = engine.compact(messages, budget);
         // Orphaned tool result should be removed
-        assert!(!compact.iter().any(|m| m.role == "tool" && m.tool_call_id == "orphan"));
+        assert!(!compact
+            .iter()
+            .any(|m| m.role == "tool" && m.tool_call_id == "orphan"));
     }
 
     #[test]
@@ -328,7 +411,9 @@ mod tests {
         let budget = 50;
         let compact = engine.compact(messages, budget);
         // Referenced tool result should be kept
-        assert!(compact.iter().any(|m| m.role == "tool" && m.tool_call_id == "ref1" && m.text == "important result"));
+        assert!(compact
+            .iter()
+            .any(|m| m.role == "tool" && m.tool_call_id == "ref1" && m.text == "important result"));
     }
 
     #[test]
@@ -357,5 +442,36 @@ mod tests {
         let engine2 = SizedContextEngine::new().with_threshold(1.5);
         // Clamped to 0.99
         assert!(engine2.compact_threshold <= 0.99);
+    }
+
+    #[test]
+    fn test_budget_tool_result_message_truncates_large_payload() {
+        let engine = SizedContextEngine::new();
+        let large = "x".repeat(DEFAULT_TOOL_RESULT_BUDGET_CHARS + 25);
+        let message = LlmMessage::tool_result("call1", "read_file", json!({ "data": large }));
+
+        let (budgeted, changed) =
+            engine.budget_tool_result_message(message, DEFAULT_TOOL_RESULT_BUDGET_CHARS);
+
+        assert!(changed);
+        assert_eq!(budgeted.tool_call_id, "call1");
+        assert_eq!(budgeted.tool_name, "read_file");
+        assert_eq!(budgeted.tool_result["truncated"], json!(true));
+        assert!(budgeted.tool_result["preview"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("{\"data\":"));
+    }
+
+    #[test]
+    fn test_budget_tool_result_message_keeps_small_payload() {
+        let engine = SizedContextEngine::new();
+        let message = LlmMessage::tool_result("call1", "battery", json!({ "percent": 50 }));
+
+        let (budgeted, changed) =
+            engine.budget_tool_result_message(message.clone(), DEFAULT_TOOL_RESULT_BUDGET_CHARS);
+
+        assert!(!changed);
+        assert_eq!(budgeted.tool_result, message.tool_result);
     }
 }

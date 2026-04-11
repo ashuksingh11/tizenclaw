@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// A tool call requested by the LLM.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct LlmToolCall {
     pub id: String,
     pub name: String,
@@ -33,26 +33,35 @@ pub struct LlmMessage {
 impl LlmMessage {
     pub fn user(text: &str) -> Self {
         LlmMessage {
-            role: "user".into(), text: text.into(),
+            role: "user".into(),
+            text: text.into(),
             reasoning_text: String::new(),
-            tool_calls: vec![], tool_name: String::new(),
-            tool_call_id: String::new(), tool_result: Value::Null,
+            tool_calls: vec![],
+            tool_name: String::new(),
+            tool_call_id: String::new(),
+            tool_result: Value::Null,
         }
     }
     pub fn assistant(text: &str) -> Self {
         LlmMessage {
-            role: "assistant".into(), text: text.into(),
+            role: "assistant".into(),
+            text: text.into(),
             reasoning_text: String::new(),
-            tool_calls: vec![], tool_name: String::new(),
-            tool_call_id: String::new(), tool_result: Value::Null,
+            tool_calls: vec![],
+            tool_name: String::new(),
+            tool_call_id: String::new(),
+            tool_result: Value::Null,
         }
     }
     pub fn tool_result(call_id: &str, name: &str, result: Value) -> Self {
         LlmMessage {
-            role: "tool".into(), text: String::new(),
+            role: "tool".into(),
+            text: String::new(),
             reasoning_text: String::new(),
-            tool_calls: vec![], tool_name: name.into(),
-            tool_call_id: call_id.into(), tool_result: result,
+            tool_calls: vec![],
+            tool_name: name.into(),
+            tool_call_id: call_id.into(),
+            tool_result: result,
         }
     }
 }
@@ -82,11 +91,15 @@ pub struct LlmResponse {
     pub prompt_tokens: i32,
     pub completion_tokens: i32,
     pub total_tokens: i32,
+    pub cache_creation_input_tokens: i32,
+    pub cache_read_input_tokens: i32,
     pub http_status: u16,
 }
 
 impl LlmResponse {
-    pub fn has_tool_calls(&self) -> bool { !self.tool_calls.is_empty() }
+    pub fn has_tool_calls(&self) -> bool {
+        !self.tool_calls.is_empty()
+    }
 }
 
 /// Tool declaration for function calling.
@@ -102,8 +115,11 @@ pub struct LlmToolDecl {
 pub trait LlmBackend: Send + Sync {
     fn initialize(&mut self, config: &Value) -> bool;
     async fn chat(
-        &self, messages: &[LlmMessage], tools: &[LlmToolDecl],
-        on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>, system_prompt: &str,
+        &self,
+        messages: &[LlmMessage],
+        tools: &[LlmToolDecl],
+        on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
+        system_prompt: &str,
         max_tokens: Option<u32>,
     ) -> LlmResponse;
     fn get_name(&self) -> &str;
@@ -124,7 +140,9 @@ pub trait LlmBackend: Send + Sync {
 pub fn create_backend(name: &str) -> Option<Box<dyn LlmBackend>> {
     match name {
         "gemini" => Some(Box::new(super::gemini::GeminiBackend::new())),
-        "openai" | "xai" => Some(Box::new(super::openai::OpenAiBackend::new(name))),
+        "openai" | "openai-codex" | "xai" => {
+            Some(Box::new(super::openai::OpenAiBackend::new(name)))
+        }
         "anthropic" => Some(Box::new(super::anthropic::AnthropicBackend::new())),
         "ollama" => Some(Box::new(super::ollama::OllamaBackend::new())),
         _ => None,

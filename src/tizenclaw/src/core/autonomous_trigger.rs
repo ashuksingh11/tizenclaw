@@ -25,7 +25,9 @@ impl Default for AutonomousTrigger {
 
 impl AutonomousTrigger {
     pub fn new() -> Self {
-        AutonomousTrigger { rules: HashMap::new() }
+        AutonomousTrigger {
+            rules: HashMap::new(),
+        }
     }
 
     pub fn load_config(&mut self, path: &str) {
@@ -40,22 +42,28 @@ impl AutonomousTrigger {
         if let Some(rules) = config["triggers"].as_array() {
             for r in rules {
                 let id = r["id"].as_str().unwrap_or("").to_string();
-                if id.is_empty() { continue; }
-                self.rules.insert(id.clone(), TriggerRule {
-                    id,
-                    event_type: r["event_type"].as_str().unwrap_or("").to_string(),
-                    condition: r["condition"].as_str().unwrap_or("").to_string(),
-                    action_prompt: r["action_prompt"].as_str().unwrap_or("").to_string(),
-                    session_id: r["session_id"].as_str().unwrap_or("autonomous").to_string(),
-                    enabled: r["enabled"].as_bool().unwrap_or(true),
-                });
+                if id.is_empty() {
+                    continue;
+                }
+                self.rules.insert(
+                    id.clone(),
+                    TriggerRule {
+                        id,
+                        event_type: r["event_type"].as_str().unwrap_or("").to_string(),
+                        condition: r["condition"].as_str().unwrap_or("").to_string(),
+                        action_prompt: r["action_prompt"].as_str().unwrap_or("").to_string(),
+                        session_id: r["session_id"].as_str().unwrap_or("autonomous").to_string(),
+                        enabled: r["enabled"].as_bool().unwrap_or(true),
+                    },
+                );
             }
         }
         log::info!("AutonomousTrigger: loaded {} rules", self.rules.len());
     }
 
     pub fn check_event(&self, event_type: &str, data: &Value) -> Vec<&TriggerRule> {
-        self.rules.values()
+        self.rules
+            .values()
             .filter(|r| r.enabled && r.event_type == event_type)
             .collect()
     }
@@ -69,10 +77,15 @@ impl AutonomousTrigger {
     }
 
     pub fn list_rules(&self) -> Vec<Value> {
-        self.rules.values().map(|r| json!({
-            "id": r.id, "event_type": r.event_type,
-            "condition": r.condition, "enabled": r.enabled
-        })).collect()
+        self.rules
+            .values()
+            .map(|r| {
+                json!({
+                    "id": r.id, "event_type": r.event_type,
+                    "condition": r.condition, "enabled": r.enabled
+                })
+            })
+            .collect()
     }
 }
 
@@ -144,4 +157,3 @@ mod tests {
         assert_eq!(matches.len(), 2);
     }
 }
-

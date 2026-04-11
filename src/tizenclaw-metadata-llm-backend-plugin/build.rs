@@ -2,7 +2,7 @@
 // Use pkg-config to find the correct library names and paths in GBS env.
 use std::process::Command;
 
-fn pkg_config_libs(package: &str) {
+fn pkg_config_libs(package: &str) -> bool {
     let output = Command::new("pkg-config")
         .args(["--libs-only-L", "--libs-only-l", package])
         .output();
@@ -16,16 +16,13 @@ fn pkg_config_libs(package: &str) {
                     println!("cargo:rustc-link-lib=dylib={}", lib);
                 }
             }
+            true
         }
-        _ => {
-            // Fallback: use the known Tizen library names directly
-            println!("cargo:rustc-link-lib=dylib=pkgmgr_installer");
-            println!("cargo:rustc-link-lib=dylib=dlog");
-        }
+        _ => false,
     }
 }
 
 fn main() {
-    pkg_config_libs("pkgmgr-installer");
-    pkg_config_libs("dlog");
+    let _ = pkg_config_libs("pkgmgr-installer");
+    let _ = pkg_config_libs("dlog");
 }

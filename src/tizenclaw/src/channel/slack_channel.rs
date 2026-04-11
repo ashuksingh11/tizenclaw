@@ -22,12 +22,24 @@ impl SlackChannel {
     pub fn new(config: &ChannelConfig) -> Self {
         SlackChannel {
             name: config.name.clone(),
-            webhook_url: config.settings.get("webhook_url")
-                .and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            bot_token: config.settings.get("bot_token")
-                .and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            channel_id: config.settings.get("channel_id")
-                .and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            webhook_url: config
+                .settings
+                .get("webhook_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            bot_token: config
+                .settings
+                .get("bot_token")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            channel_id: config
+                .settings
+                .get("channel_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             running: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -43,7 +55,8 @@ impl SlackChannel {
             "channel": channel,
             "text": text,
             "mrkdwn": true
-        }).to_string();
+        })
+        .to_string();
 
         tokio::spawn(async move {
             let client = crate::infra::http_client::HttpClient::new();
@@ -53,10 +66,14 @@ impl SlackChannel {
 }
 
 impl Channel for SlackChannel {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
     fn start(&mut self) -> bool {
-        if self.running.load(Ordering::SeqCst) { return true; }
+        if self.running.load(Ordering::SeqCst) {
+            return true;
+        }
         if self.webhook_url.is_empty() && self.bot_token.is_empty() {
             log::warn!("SlackChannel: no webhook_url or bot_token configured");
             return false;
@@ -70,7 +87,10 @@ impl Channel for SlackChannel {
             let channel_id = self.channel_id.clone();
 
             tokio::spawn(async move {
-                log::info!("SlackChannel: async epoll started for channel {}", channel_id);
+                log::info!(
+                    "SlackChannel: async epoll started for channel {}",
+                    channel_id
+                );
                 let mut last_ts = String::new();
 
                 while running.load(Ordering::SeqCst) {
@@ -131,18 +151,20 @@ impl Channel for SlackChannel {
         if !self.webhook_url.is_empty() {
             let body = json!({"text": msg}).to_string();
             let webhook_url = self.webhook_url.clone();
-            
+
             tokio::spawn(async move {
-                let _ = crate::infra::http_client::HttpClient::new().post(&webhook_url, &body).await;
+                let _ = crate::infra::http_client::HttpClient::new()
+                    .post(&webhook_url, &body)
+                    .await;
             });
             return Ok(());
         }
-        
+
         if !self.bot_token.is_empty() && !self.channel_id.is_empty() {
             SlackChannel::post_to_channel_async(&self.bot_token, &self.channel_id, msg);
             return Ok(());
         }
-        
+
         Err("Slack: no webhook or bot_token configured".into())
     }
 

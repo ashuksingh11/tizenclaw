@@ -16,7 +16,10 @@ impl Default for EmbeddingStore {
 
 impl EmbeddingStore {
     pub fn new() -> Self {
-        EmbeddingStore { conn: None, knowledge_dbs: vec![] }
+        EmbeddingStore {
+            conn: None,
+            knowledge_dbs: vec![],
+        }
     }
 
     pub fn initialize(&mut self, db_path: &str) -> bool {
@@ -63,21 +66,29 @@ impl EmbeddingStore {
     pub fn ingest(&self, source: &str, text: &str) -> Result<usize, String> {
         let conn = self.conn.as_ref().ok_or("Not initialized")?;
         // Chunk text into ~500 char segments
-        let chunks: Vec<&str> = text.as_bytes()
+        let chunks: Vec<&str> = text
+            .as_bytes()
             .chunks(500)
             .map(|c| std::str::from_utf8(c).unwrap_or(""))
             .collect();
 
         let mut count = 0;
         for chunk in &chunks {
-            if chunk.trim().is_empty() { continue; }
+            if chunk.trim().is_empty() {
+                continue;
+            }
             conn.execute(
                 "INSERT INTO embeddings (source, chunk_text) VALUES (?1, ?2)",
                 params![source, chunk],
-            ).map_err(|e| e.to_string())?;
+            )
+            .map_err(|e| e.to_string())?;
             count += 1;
         }
-        log::debug!("EmbeddingStore: ingested {} chunks from '{}'", count, source);
+        log::debug!(
+            "EmbeddingStore: ingested {} chunks from '{}'",
+            count,
+            source
+        );
         Ok(count)
     }
 
@@ -94,17 +105,25 @@ impl EmbeddingStore {
             let safe_path = db_path.replace("'", "''");
             let attach_sql = format!("ATTACH DATABASE '{}' AS {}", safe_path, alias);
             if let Err(e) = conn.execute_batch(&attach_sql) {
-                log::warn!("EmbeddingStore: failed to attach knowledge DB {}: {}", db_path, e);
+                log::warn!(
+                    "EmbeddingStore: failed to attach knowledge DB {}: {}",
+                    db_path,
+                    e
+                );
             } else {
                 attached_aliases.push(alias);
             }
         }
 
         let pattern = format!("%{}%", query);
-        let mut sql_parts = vec!["SELECT source, chunk_text FROM embeddings WHERE chunk_text LIKE ?1".to_string()];
-        
+        let mut sql_parts =
+            vec!["SELECT source, chunk_text FROM embeddings WHERE chunk_text LIKE ?1".to_string()];
+
         for alias in &attached_aliases {
-            sql_parts.push(format!("SELECT source, chunk_text FROM {}.embeddings WHERE chunk_text LIKE ?1", alias));
+            sql_parts.push(format!(
+                "SELECT source, chunk_text FROM {}.embeddings WHERE chunk_text LIKE ?1",
+                alias
+            ));
         }
 
         let full_sql = format!("{} LIMIT ?2", sql_parts.join(" UNION ALL "));
@@ -115,7 +134,10 @@ impl EmbeddingStore {
                     "source": row.get::<_, String>(0).unwrap_or_default(),
                     "text": row.get::<_, String>(1).unwrap_or_default(),
                 }))
-            }).ok().map(|rows| rows.flatten().collect()).unwrap_or_default()
+            })
+            .ok()
+            .map(|rows| rows.flatten().collect())
+            .unwrap_or_default()
         } else {
             vec![]
         };

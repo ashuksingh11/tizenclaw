@@ -3,6 +3,29 @@ CMAKE_MINIMUM_REQUIRED(VERSION 3.12)
 PROJECT(tizenclaw NONE)
 INCLUDE(GNUInstallDirs)
 
+# Consume rpmbuild-provided install variables so CMake configure stays warning-free.
+if(DEFINED INCLUDE_INSTALL_DIR)
+  set(CMAKE_INSTALL_INCLUDEDIR "${INCLUDE_INSTALL_DIR}")
+endif()
+if(DEFINED LIB_INSTALL_DIR)
+  set(CMAKE_INSTALL_LIBDIR "${LIB_INSTALL_DIR}")
+endif()
+if(DEFINED SHARE_INSTALL_PREFIX)
+  set(CMAKE_INSTALL_DATAROOTDIR "${SHARE_INSTALL_PREFIX}")
+endif()
+if(DEFINED SYSCONF_INSTALL_DIR)
+  set(CMAKE_INSTALL_SYSCONFDIR "${SYSCONF_INSTALL_DIR}")
+endif()
+if(DEFINED LIB_SUFFIX)
+  set(TIZENCLAW_LIB_SUFFIX "${LIB_SUFFIX}")
+endif()
+option(BUILD_SHARED_LIBS "Build shared libraries when supported." ON)
+if(BUILD_SHARED_LIBS)
+  set(TIZENCLAW_BUILD_MODE "shared")
+else()
+  set(TIZENCLAW_BUILD_MODE "static")
+endif()
+
 ## Paths
 SET(PREFIX ${CMAKE_INSTALL_PREFIX})
 SET(BINDIR "${CMAKE_INSTALL_PREFIX}/bin")
@@ -39,6 +62,9 @@ INSTALL(PROGRAMS "${CMAKE_SOURCE_DIR}/target/release/tizenclaw-cli"
 INSTALL(PROGRAMS "${CMAKE_SOURCE_DIR}/target/release/tizenclaw-tool-executor"
         DESTINATION "${BINDIR}")
 
+INSTALL(PROGRAMS "${CMAKE_SOURCE_DIR}/target/release/tizenclaw-web-dashboard"
+        DESTINATION "${BINDIR}")
+
 ## ═══════════════════════════════════════════
 ##  Install data & config files
 ## ═══════════════════════════════════════════
@@ -47,6 +73,10 @@ INSTALL(PROGRAMS "${CMAKE_SOURCE_DIR}/target/release/tizenclaw-tool-executor"
 INSTALL(FILES "${CMAKE_SOURCE_DIR}/data/sample/tunnel_config.json.sample"
         DESTINATION "${APP_DATA_DIR}/config"
         RENAME "tunnel_config.json")
+INSTALL(FILES
+        "${CMAKE_SOURCE_DIR}/data/config/agent_roles.json"
+        "${CMAKE_SOURCE_DIR}/data/config/system_prompt.txt"
+        DESTINATION "${APP_DATA_DIR}/config")
 
 
 
@@ -60,15 +90,18 @@ INSTALL(FILES
 # Web dashboard static files
 INSTALL(DIRECTORY "${CMAKE_SOURCE_DIR}/data/web/"
         DESTINATION "${APP_DATA_DIR}/web")
+INSTALL(FILES "${CMAKE_SOURCE_DIR}/data/img/tizenclaw.svg"
+        DESTINATION "${APP_DATA_DIR}/web/img")
 
-# Tool routing guides
-INSTALL(FILES
-  "${CMAKE_SOURCE_DIR}/tools/tools.md"
-  DESTINATION "/opt/usr/share/tizen-tools")
+# Packaged skill reference docs
+INSTALL(DIRECTORY "${CMAKE_SOURCE_DIR}/data/docs/"
+        DESTINATION "${APP_DATA_DIR}/docs")
+
+# tools.md is generated at runtime by the daemon's startup indexer
 
 # Embedded tool descriptors
 INSTALL(DIRECTORY "${CMAKE_SOURCE_DIR}/tools/embedded/"
-        DESTINATION "/opt/usr/share/tizen-tools/embedded")
+        DESTINATION "${APP_DATA_DIR}/embedded")
 
 # CLI tool scripts (Enabled)
 enable_language(C CXX)
@@ -96,8 +129,7 @@ INSTALL(FILES "${CMAKE_SOURCE_DIR}/src/tizenclaw-metadata-skill-plugin/data/tize
 INSTALL(FILES "${CMAKE_SOURCE_DIR}/src/tizenclaw-metadata-cli-plugin/data/tizenclaw-metadata-cli-plugin.info"
         DESTINATION "/usr/share/parser-plugins")
 
-# System CLI tools — create empty dir
-INSTALL(DIRECTORY DESTINATION "/opt/usr/share/tizen-tools/system_cli")
+# system_cli removed — tools are discovered dynamically at runtime
 
 # Code executor removed (now pure shell)
 
@@ -105,9 +137,6 @@ INSTALL(DIRECTORY DESTINATION "/opt/usr/share/tizen-tools/system_cli")
 INSTALL(PROGRAMS "${CMAKE_SOURCE_DIR}/scripts/start_mcp_tunnel.sh"
         DESTINATION "${BINDIR}")
 
-# RAG web docs
-INSTALL(FILES "${CMAKE_SOURCE_DIR}/data/rag/web.zip"
-        DESTINATION "${APP_DATA_DIR}/rag")
 
 ## ═══════════════════════════════════════════
 ##  Install libtizenclaw_core.so (framework & SDK)

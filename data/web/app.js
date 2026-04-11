@@ -6,7 +6,20 @@
 
     // --- Auth State ---
     let authToken =
+        localStorage.getItem('admin_token') ||
         sessionStorage.getItem('admin_token');
+
+    function persistAdminToken(token) {
+        authToken = token;
+        localStorage.setItem('admin_token', token);
+        sessionStorage.setItem('admin_token', token);
+    }
+
+    function clearAdminToken() {
+        authToken = null;
+        localStorage.removeItem('admin_token');
+        sessionStorage.removeItem('admin_token');
+    }
 
     function getAuthHeaders() {
         return authToken
@@ -19,12 +32,23 @@
         document.querySelectorAll('.nav-item');
     const pages =
         document.querySelectorAll('.page');
+    let metricsInterval = null;
+    let outboundPollTimer = null;
+    let outboundCursor =
+        parseInt(localStorage.getItem(
+            'dashboard_outbound_cursor') || '0', 10) || 0;
 
     function navigateTo(page) {
         navItems.forEach(n =>
             n.classList.remove('active'));
         pages.forEach(p =>
             p.classList.remove('active'));
+
+        // Stop dashboard auto-refresh when leaving
+        if (page !== 'dashboard' && metricsInterval) {
+            clearInterval(metricsInterval);
+            metricsInterval = null;
+        }
 
         const navEl =
             document.getElementById('nav-' + page);
@@ -37,6 +61,7 @@
         else if (page === 'sessions') loadSessions();
         else if (page === 'tasks') loadTasks();
         else if (page === 'logs') loadLogs();
+        else if (page === 'chat') loadChatSessions();
         else if (page === 'ota') loadOta();
         else if (page === 'admin') loadAdmin();
     }
@@ -56,7 +81,13 @@
             const res = await fetch(
                 API + '/api/' + endpoint,
                 Object.assign({}, opts, { headers }));
-            return await res.json();
+            const data = await res.json();
+            data.__http_status = res.status;
+            if (res.status === 401) {
+                handleAdminUnauthorized(
+                    data.error || 'Session expired');
+            }
+            return data;
         } catch (e) {
             console.error('API error:', e);
             return null;
@@ -71,6 +102,49 @@
             },
             body: JSON.stringify(body)
         });
+    }
+
+    async function apiDelete(endpoint, body) {
+        const opts = { method: 'DELETE' };
+        if (body !== undefined) {
+            opts.headers = {
+                'Content-Type': 'application/json'
+            };
+            opts.body = JSON.stringify(body);
+        }
+        return apiFetch(endpoint, opts);
+    }
+
+    function persistOutboundCursor(cursor) {
+        outboundCursor = cursor || 0;
+        localStorage.setItem(
+            'dashboard_outbound_cursor',
+            String(outboundCursor));
+    }
+
+    async function pollOutboundMessages() {
+        const resp = await apiFetch(
+            'outbound/messages?since=' + outboundCursor);
+        if (!resp || !Array.isArray(resp.messages)) {
+            return;
+        }
+        resp.messages.forEach(msg => {
+            const text = msg.title
+                ? (msg.title + ': ' + msg.message)
+                : msg.message;
+            showToast(text, 'success', 5000);
+        });
+        if (typeof resp.cursor === 'number' &&
+            resp.cursor >= outboundCursor) {
+            persistOutboundCursor(resp.cursor);
+        }
+    }
+
+    function startOutboundPolling() {
+        if (outboundPollTimer) return;
+        pollOutboundMessages();
+        outboundPollTimer = setInterval(
+            pollOutboundMessages, 8000);
     }
 
     // --- Date Breadcrumb Navigator ---
@@ -306,71 +380,109 @@
     }
 
     // --- Dashboard ---
-    let metricsInterval = null;
-
     async function loadDashboard() {
-        // Clear previous interval
         if (metricsInterval)
             clearInterval(metricsInterval);
-
         await refreshMetrics();
+        metricsInterval = setInterval(refreshMetrics, 5000);
+    }
 
-        // Auto-refresh every 5 seconds
-        metricsInterval = setInterval(
-            refreshMetrics, 5000);
+    function fmtTokens(n) {
+        if (n == null) return '—';
+        if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+        if (n >= 1000)    return (n / 1000).toFixed(1) + 'K';
+        return String(n);
     }
 
     async function refreshMetrics() {
-        const m = await apiFetch('metrics');
+        const [m, sessions, tasks] = await Promise.all([
+            apiFetch('metrics'),
+            apiFetch('sessions'),
+            apiFetch('tasks'),
+        ]);
+
+        const s = id => document.getElementById(id);
+
         if (m) {
-            const s = id =>
-                document.getElementById(id);
-            s('stat-status').textContent =
-                m.status || '—';
-            s('stat-uptime').textContent =
-                (m.uptime && m.uptime.formatted)
-                    || '—';
-            s('stat-memory').textContent =
-                (m.memory && m.memory.vm_rss_kb)
-                    ? (m.memory.vm_rss_kb /
-                        1024).toFixed(1) + ' MB'
-                    : '—';
-            s('stat-cpu').textContent =
-                (m.cpu && m.cpu.load_1m != null)
-                    ? m.cpu.load_1m.toFixed(2)
-                    : '—';
-            s('stat-errors').textContent =
-                (m.counters &&
-                    m.counters.errors != null)
-                    ? m.counters.errors : '—';
-            s('stat-llm').textContent =
-                (m.counters &&
-                    m.counters.llm_calls != null)
-                    ? m.counters.llm_calls : '—';
-            s('stat-tools').textContent =
-                (m.counters &&
-                    m.counters.tool_calls != null)
-                    ? m.counters.tool_calls : '—';
-            s('stat-threads').textContent =
-                m.threads || '—';
-            s('stat-pid').textContent =
-                m.pid || '—';
+            const connected = m.agent_connected === true;
+
+            // Sidebar agent status indicator
+            const dot = s('status-dot');
+            const label = s('status-label');
+            if (dot)   dot.className = 'status-dot ' + (connected ? 'running' : 'disconnected');
+            if (label) label.textContent = connected ? 'Agent running' : 'Agent offline';
+
+            // LLM usage section badge
+            const badge = s('usage-source-badge');
+            if (badge) {
+                badge.textContent = connected ? 'live' : 'offline';
+                badge.style.background = connected
+                    ? 'rgba(5,150,105,0.1)' : 'rgba(220,38,38,0.08)';
+                badge.style.color = connected ? 'var(--success)' : 'var(--danger)';
+                badge.style.borderColor = connected
+                    ? 'rgba(5,150,105,0.15)' : 'rgba(220,38,38,0.15)';
+            }
+
+            // Primary stats
+            if (s('stat-status')) {
+                const txt = m.status || '—';
+                s('stat-status').textContent = txt;
+                const icon = s('stat-status').closest('.stat-card')
+                    && s('stat-status').closest('.stat-card').querySelector('.stat-icon');
+                if (icon) {
+                    icon.className = 'stat-icon ' +
+                        (txt === 'running' ? 'stat-icon--green' :
+                         txt === 'disconnected' ? 'stat-icon--red' : 'stat-icon--amber');
+                }
+            }
+            s('stat-uptime') &&
+                (s('stat-uptime').textContent =
+                    (m.uptime && m.uptime.formatted) || '—');
+
+            // System health
+            s('stat-memory') &&
+                (s('stat-memory').textContent =
+                    (m.memory && m.memory.vm_rss_kb)
+                        ? (m.memory.vm_rss_kb / 1024).toFixed(1) + ' MB' : '—');
+            s('stat-cpu') &&
+                (s('stat-cpu').textContent =
+                    (m.cpu && m.cpu.load_1m != null)
+                        ? m.cpu.load_1m.toFixed(2) : '—');
+            s('stat-threads') && (s('stat-threads').textContent = m.threads || '—');
+            s('stat-pid')     && (s('stat-pid').textContent = m.pid || '—');
+
+            // LLM counters
+            s('stat-errors') &&
+                (s('stat-errors').textContent =
+                    (m.counters && m.counters.errors != null)
+                        ? m.counters.errors : '—');
+            s('stat-llm') &&
+                (s('stat-llm').textContent =
+                    (m.counters && m.counters.llm_calls != null)
+                        ? m.counters.llm_calls : (connected ? '0' : '—'));
+            s('stat-tools') &&
+                (s('stat-tools').textContent =
+                    (m.counters && m.counters.tool_calls != null)
+                        ? m.counters.tool_calls : '—');
+
+            // Token usage (new)
+            if (m.tokens) {
+                s('stat-prompt-tokens')     && (s('stat-prompt-tokens').textContent     = fmtTokens(m.tokens.prompt));
+                s('stat-completion-tokens') && (s('stat-completion-tokens').textContent = fmtTokens(m.tokens.completion));
+                s('stat-cache-read')        && (s('stat-cache-read').textContent        = fmtTokens(m.tokens.cache_read));
+                s('stat-cache-write')       && (s('stat-cache-write').textContent       = fmtTokens(m.tokens.cache_write));
+            } else {
+                ['stat-prompt-tokens','stat-completion-tokens',
+                 'stat-cache-read','stat-cache-write'].forEach(id => {
+                    s(id) && (s(id).textContent = connected ? '0' : '—');
+                });
+            }
         }
 
-        const sessions =
-            await apiFetch('sessions');
-        if (sessions) {
-            document.getElementById(
-                'stat-sessions').textContent =
-                sessions.length;
-        }
-
-        const tasks = await apiFetch('tasks');
-        if (tasks) {
-            document.getElementById(
-                'stat-tasks').textContent =
-                tasks.length;
-        }
+        if (sessions && s('stat-sessions'))
+            s('stat-sessions').textContent = sessions.length;
+        if (tasks && s('stat-tasks'))
+            s('stat-tasks').textContent = tasks.length;
     }
 
     // --- Sessions ---
@@ -443,8 +555,9 @@
                 'clickable" data-session-id="' +
                 escHtml(s.id) + '">' +
                 '<div class="card-item-title">' +
-                escHtml(s.id) + '</div>' +
+                escHtml(s.title || s.id) + '</div>' +
                 '<div class="card-item-meta">' +
+                escHtml(s.id) + ' · ' +
                 sizeKB + ' KB · ' +
                 modified + '</div></div>';
         }).join('');
@@ -496,6 +609,17 @@
     // --- Tasks ---
     let taskDateNav = null;
     let allTasks = null;
+    let currentTaskFile = null;
+    let selectedTaskIds = new Set();
+
+    const taskSelectAllBtn =
+        document.getElementById('task-select-all');
+    const taskDeleteSelectedBtn =
+        document.getElementById('task-delete-selected');
+    const taskSelectionMeta =
+        document.getElementById('task-selection-meta');
+    const taskDeleteCurrentBtn =
+        document.getElementById('task-delete-current');
 
     async function loadTasks(filterDate) {
         const data = await apiFetch('tasks');
@@ -505,8 +629,16 @@
             document.getElementById('task-viewer');
         viewer.style.display = 'none';
         list.style.display = '';
+        currentTaskFile = null;
 
         allTasks = data || [];
+        const availableTaskIds = new Set(
+            allTasks.map(t => t.id).filter(Boolean));
+        selectedTaskIds.forEach(id => {
+            if (!availableTaskIds.has(id)) {
+                selectedTaskIds.delete(id);
+            }
+        });
 
         // Init date nav once
         if (!taskDateNav) {
@@ -522,6 +654,7 @@
             [...new Set(dates)]);
 
         renderTasks(filterDate || null);
+        formatTaskSelectionMeta();
     }
 
     function renderTasks(filterDate) {
@@ -554,14 +687,22 @@
             const modified = t.modified ?
                 new Date(t.modified * 1000)
                     .toLocaleString() : '';
-            return '<div class="card-item ' +
+            const checked = selectedTaskIds
+                .has(t.id) ? ' checked' : '';
+            return '<div class="card-item task-card-item ' +
                 'clickable" data-task-file="' +
-                escHtml(t.file) + '">' +
+                escHtml(t.file) + '" data-task-id="' +
+                escHtml(t.id) + '">' +
+                '<label class="chat-session-check">' +
+                '<input type="checkbox" data-task-select="' +
+                escHtml(t.id) + '"' + checked + ' />' +
+                '<span></span></label>' +
                 '<div class="card-item-title">' +
-                escHtml(t.file) + '</div>' +
+                escHtml(t.title || t.file) + '</div>' +
                 '<div class="card-item-meta">' +
                 (modified ? modified + ' · '
                     : '') +
+                escHtml(t.file) + ' · ' +
                 escHtml(
                     t.content_preview || '') +
                 '</div></div>';
@@ -570,11 +711,28 @@
         list.querySelectorAll('.card-item')
             .forEach(card => {
                 card.addEventListener(
-                    'click', () => {
+                    'click', (event) => {
+                        if (event.target.closest(
+                            '[data-task-select]')) {
+                            return;
+                        }
                         showTaskDetail(
                             card.dataset
                                 .taskFile);
                     });
+            });
+        list.querySelectorAll('[data-task-select]')
+            .forEach(input => {
+                input.addEventListener('change', () => {
+                    const id = input.dataset.taskSelect;
+                    if (!id) return;
+                    if (input.checked) {
+                        selectedTaskIds.add(id);
+                    } else {
+                        selectedTaskIds.delete(id);
+                    }
+                    formatTaskSelectionMeta();
+                });
             });
     }
 
@@ -592,6 +750,7 @@
         viewer.style.display = '';
         title.textContent = file;
         content.textContent = 'Loading...';
+        currentTaskFile = file;
 
         const resp =
             await apiFetch('tasks/' + file);
@@ -603,6 +762,56 @@
         }
     }
 
+    function formatTaskSelectionMeta() {
+        if (!taskSelectionMeta) return;
+        const count = selectedTaskIds.size;
+        taskSelectionMeta.textContent = count
+            ? ('선택된 작업 ' + count + '개')
+            : '선택된 작업 없음';
+    }
+
+    async function deleteTasks(ids) {
+        const filteredIds = (ids || [])
+            .filter(Boolean);
+        if (!filteredIds.length) return;
+        if (!window.confirm(
+            '선택한 작업을 삭제할까요?')) {
+            return;
+        }
+
+        let resp = null;
+        if (filteredIds.length === 1) {
+            resp = await apiDelete(
+                'tasks/' +
+                encodeURIComponent(filteredIds[0]));
+        } else {
+            resp = await apiDelete(
+                'tasks', {
+                    ids: filteredIds
+                });
+        }
+
+        if (!resp || !resp.deleted_ids) {
+            window.alert('작업 삭제에 실패했습니다.');
+            return;
+        }
+
+        resp.deleted_ids.forEach(id => {
+            selectedTaskIds.delete(id);
+            if (currentTaskFile === id ||
+                currentTaskFile === id + '.md') {
+                currentTaskFile = null;
+                document.getElementById('task-viewer')
+                    .style.display = 'none';
+                document.getElementById('task-list')
+                    .style.display = '';
+            }
+        });
+        await loadTasks(taskDateNav
+            ? taskDateNav.getFilter()
+            : null);
+    }
+
     document.getElementById('task-back')
         .addEventListener('click', () => {
             document.getElementById('task-viewer')
@@ -610,6 +819,43 @@
             document.getElementById('task-list')
                 .style.display = '';
         });
+    if (taskSelectAllBtn) {
+        taskSelectAllBtn.addEventListener(
+            'click', () => {
+                const taskIds = (allTasks || [])
+                    .map(task => task.id)
+                    .filter(Boolean);
+                if (selectedTaskIds.size ===
+                    taskIds.length) {
+                    selectedTaskIds.clear();
+                } else {
+                    selectedTaskIds =
+                        new Set(taskIds);
+                }
+                renderTasks(taskDateNav
+                    ? taskDateNav.getFilter()
+                    : null);
+                formatTaskSelectionMeta();
+            });
+    }
+    if (taskDeleteSelectedBtn) {
+        taskDeleteSelectedBtn.addEventListener(
+            'click', async () => {
+                await deleteTasks(Array.from(
+                    selectedTaskIds));
+            });
+    }
+    if (taskDeleteCurrentBtn) {
+        taskDeleteCurrentBtn.addEventListener(
+            'click', async () => {
+                if (!currentTaskFile) return;
+                const taskId = currentTaskFile
+                    .endsWith('.md')
+                    ? currentTaskFile.slice(0, -3)
+                    : currentTaskFile;
+                await deleteTasks([taskId]);
+            });
+    }
 
     // --- Logs ---
     let logDateNav = null;
@@ -654,7 +900,9 @@
         }
 
         logEl.textContent =
-            data.map(l => l.content)
+            data.map(l =>
+                '### ' + (l.label || l.file || 'Log') +
+                '\n' + l.content)
                 .join('\n\n');
     }
 
@@ -665,10 +913,247 @@
         document.getElementById('chat-send');
     const chatMessages =
         document.getElementById('chat-messages');
-    const chatSession =
-        document.getElementById('chat-session');
+    const chatSessionList =
+        document.getElementById('chat-session-list');
+    const chatSessionMeta =
+        document.getElementById('chat-session-meta');
+    const chatNewSessionBtn =
+        document.getElementById('chat-new-session');
+    const chatSelectAllBtn =
+        document.getElementById('chat-select-all');
+    const chatDeleteSelectedBtn =
+        document.getElementById(
+            'chat-delete-selected');
+    const chatSelectionMeta =
+        document.getElementById(
+            'chat-selection-meta');
+    let currentChatSessionId = null;
+    let chatSessionsCache = [];
+    let selectedChatSessionIds = new Set();
+
+    function formatChatSessionMeta() {
+        if (!chatSessionMeta) return;
+        if (!currentChatSessionId) {
+            chatSessionMeta.textContent =
+                '새 대화 중입니다. 첫 메시지를 보내면 세션이 생성됩니다.';
+            return;
+        }
+        chatSessionMeta.textContent =
+            '세션 ' + currentChatSessionId +
+            ' 대화를 이어가는 중입니다.';
+    }
+
+    function resetChatMessages() {
+        if (!chatMessages) return;
+        chatMessages.innerHTML =
+            '<div class="chat-welcome">' +
+            'Type a message to start chatting ' +
+            'with TizenClaw.</div>';
+    }
+
+    function updateChatSelectionMeta() {
+        if (!chatSelectionMeta) return;
+        const count = selectedChatSessionIds.size;
+        if (count === 0) {
+            chatSelectionMeta.textContent =
+                '선택된 세션 없음';
+            return;
+        }
+        chatSelectionMeta.textContent =
+            count + '개 세션 선택됨';
+    }
+
+    function selectChatSession(sessionId) {
+        currentChatSessionId = sessionId || null;
+        formatChatSessionMeta();
+        if (!chatSessionList) return;
+        chatSessionList.querySelectorAll(
+            '.chat-session-item').forEach(item => {
+                item.classList.toggle('active',
+                    item.dataset.sessionId ===
+                    currentChatSessionId);
+            });
+    }
+
+    function renderChatSessionList() {
+        if (!chatSessionList) return;
+        if (!chatSessionsCache.length) {
+            chatSessionList.innerHTML =
+                '<p class="empty-state">' +
+                'No previous chats yet.</p>';
+            selectedChatSessionIds.clear();
+            updateChatSelectionMeta();
+            return;
+        }
+
+        chatSessionList.innerHTML = chatSessionsCache
+            .map(session => {
+                const isActive =
+                    session.id === currentChatSessionId
+                        ? ' active' : '';
+                const isChecked =
+                    selectedChatSessionIds.has(
+                        session.id)
+                        ? ' checked' : '';
+                const preview = escHtml(
+                    session.content_preview ||
+                    'No preview available.');
+                const modified = session.modified
+                    ? new Date(session.modified * 1000)
+                        .toLocaleString()
+                    : '—';
+                return '<div class="chat-session-item' +
+                    isActive + '" data-session-id="' +
+                    escHtml(session.id) + '">' +
+                    '<label class="chat-session-check">' +
+                    '<input type="checkbox" ' +
+                    'data-chat-select="' +
+                    escHtml(session.id) + '"' +
+                    isChecked + '>' +
+                    '</label>' +
+                    '<div class="chat-session-body">' +
+                    '<div class="chat-session-title">' +
+                    escHtml(session.title ||
+                        session.id) + '</div>' +
+                    '<div class="chat-session-preview">' +
+                    preview + '</div>' +
+                    '<div class="chat-session-meta">' +
+                    escHtml(session.id) + ' · ' +
+                    modified + ' · ' +
+                    (session.message_count || 0) +
+                    ' msgs</div></div>' +
+                    '<button class="chat-session-delete" ' +
+                    'data-chat-delete="' +
+                    escHtml(session.id) + '">' +
+                    '삭제</button></div>';
+            }).join('');
+
+        chatSessionList.querySelectorAll(
+            '.chat-session-item').forEach(item => {
+                item.addEventListener('click',
+                    async (event) => {
+                        if (event.target.closest(
+                            '[data-chat-delete]') ||
+                            event.target.closest(
+                                '[data-chat-select]')) {
+                            return;
+                        }
+                        await loadChatSessionDetail(
+                            item.dataset.sessionId);
+                    });
+            });
+        chatSessionList.querySelectorAll(
+            '[data-chat-select]').forEach(box => {
+                box.addEventListener('change',
+                    (event) => {
+                        const id =
+                            event.target.dataset
+                                .chatSelect;
+                        if (event.target.checked) {
+                            selectedChatSessionIds
+                                .add(id);
+                        } else {
+                            selectedChatSessionIds
+                                .delete(id);
+                        }
+                        updateChatSelectionMeta();
+                    });
+            });
+        chatSessionList.querySelectorAll(
+            '[data-chat-delete]').forEach(btn => {
+                btn.addEventListener('click',
+                    async (event) => {
+                        event.stopPropagation();
+                        await deleteChatSessions([
+                            btn.dataset
+                                .chatDelete
+                        ]);
+                    });
+            });
+        updateChatSelectionMeta();
+    }
+
+    async function loadChatSessions() {
+        if (!chatSessionList) return;
+        chatSessionList.innerHTML =
+            '<p class="empty-state">Loading...</p>';
+        const sessions = await apiFetch('sessions');
+        if (!Array.isArray(sessions)) {
+            chatSessionsCache = [];
+            chatSessionList.innerHTML =
+                '<p class="empty-state">' +
+                'Failed to load previous chats.</p>';
+            formatChatSessionMeta();
+            return;
+        }
+        chatSessionsCache = sessions;
+        selectedChatSessionIds.forEach(id => {
+            if (!chatSessionsCache.some(
+                session => session.id === id)) {
+                selectedChatSessionIds
+                    .delete(id);
+            }
+        });
+        renderChatSessionList();
+        formatChatSessionMeta();
+    }
+
+    async function deleteChatSessions(ids) {
+        const filteredIds = (ids || [])
+            .filter(Boolean);
+        if (!filteredIds.length) return;
+        if (!window.confirm(
+            '선택한 세션 기록을 삭제할까요?')) {
+            return;
+        }
+
+        let resp = null;
+        if (filteredIds.length === 1) {
+            resp = await apiDelete(
+                'sessions/' +
+                encodeURIComponent(filteredIds[0]));
+        } else {
+            resp = await apiDelete(
+                'sessions', {
+                    ids: filteredIds
+                });
+        }
+
+        if (!resp || !resp.deleted_ids) {
+            window.alert('세션 삭제에 실패했습니다.');
+            return;
+        }
+
+        resp.deleted_ids.forEach(id => {
+            selectedChatSessionIds.delete(id);
+            if (currentChatSessionId === id) {
+                currentChatSessionId = null;
+                resetChatMessages();
+            }
+        });
+        await loadChatSessions();
+        selectChatSession(currentChatSessionId);
+    }
+
+    async function loadChatSessionDetail(sessionId) {
+        if (!chatMessages) return;
+        const resp = await apiFetch('sessions/' +
+            encodeURIComponent(sessionId));
+        if (!resp || !Array.isArray(resp.messages)) {
+            addChatMsg('assistant',
+                'Failed to load session history.');
+            return;
+        }
+
+        chatMessages.innerHTML = '';
+        resp.messages.forEach(message => {
+            addChatMsg(message.role, message.text);
+        });
+        selectChatSession(sessionId);
+    }
 
     function addChatMsg(role, text) {
+        if (!chatMessages) return;
         const welcome =
             chatMessages.querySelector('.chat-welcome');
         if (welcome) welcome.remove();
@@ -682,11 +1167,10 @@
     }
 
     async function sendChat() {
+        if (!chatInput || !chatMessages) return;
         const prompt = chatInput.value.trim();
         if (!prompt) return;
-
-        const sessionId = chatSession.value.trim() ||
-            'web_dashboard';
+        const sessionId = currentChatSessionId;
 
         addChatMsg('user', prompt);
         chatInput.value = '';
@@ -716,10 +1200,16 @@
             const indicator = document.getElementById(thinkingId);
             if (indicator) indicator.remove();
 
+            if (resp && resp.session_id) {
+                selectChatSession(resp.session_id);
+            }
+
             if (resp && resp.response) {
                 addChatMsg('assistant', resp.response);
+                await loadChatSessions();
             } else {
                 addChatMsg('assistant',
+                    (resp && resp.error) ||
                     'Error: no response from agent.');
             }
         } catch (err) {
@@ -729,13 +1219,47 @@
         }
     }
 
-    chatSend.addEventListener('click', sendChat);
-    chatInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendChat();
-        }
-    });
+    if (chatSend) {
+        chatSend.addEventListener('click', sendChat);
+    }
+    if (chatNewSessionBtn) {
+        chatNewSessionBtn.addEventListener('click', () => {
+            currentChatSessionId = null;
+            resetChatMessages();
+            selectChatSession(null);
+        });
+    }
+    if (chatSelectAllBtn) {
+        chatSelectAllBtn.addEventListener(
+            'click', () => {
+                if (selectedChatSessionIds.size ===
+                    chatSessionsCache.length) {
+                    selectedChatSessionIds.clear();
+                } else {
+                    selectedChatSessionIds =
+                        new Set(chatSessionsCache
+                            .map(session =>
+                                session.id));
+                }
+                renderChatSessionList();
+            });
+    }
+    if (chatDeleteSelectedBtn) {
+        chatDeleteSelectedBtn.addEventListener(
+            'click', async () => {
+                await deleteChatSessions(
+                    Array.from(
+                        selectedChatSessionIds));
+            });
+    }
+    if (chatInput) {
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendChat();
+            }
+        });
+    }
 
     // ==========================
     // Admin Page
@@ -752,20 +1276,43 @@
         'tunnel_config.json': 'Tunnel Configuration',
         'web_search_config.json': 'Web Search'
     };
+    const CONFIG_DESCRIPTIONS = {
+        'llm_config.json': 'Manage model backends, token limits, and sampling options.',
+        'telegram_config.json': 'Configure the Telegram bot token and channel bindings.',
+        'slack_config.json': 'Configure Slack app tokens, bot tokens, and channel bindings.',
+        'discord_config.json': 'Adjust Discord bot credentials and connection settings.',
+        'webhook_config.json': 'Control webhook endpoints and routing policies.',
+        'tool_policy.json': 'Manage allowed tools and execution policies.',
+        'agent_roles.json': 'Define agent roles and prompt routing behavior.',
+        'tunnel_config.json': 'Manage tunnel endpoints and authentication tokens.',
+        'web_search_config.json': 'Configure search providers and search options.'
+    };
+    let adminConfigsCache = [];
+    let activeConfigName = null;
+    let activeConfigParsed = null;
+    let activeConfigStructuredRendered =
+        false;
+    let codexAuthStatusCache = null;
 
-    function loadAdmin() {
-        if (authToken) {
-            showAdminPanel();
-        } else {
+    async function loadAdmin() {
+        if (!authToken) {
             showLoginForm();
+            return;
+        }
+        if (await ensureAdminSession()) {
+            showAdminPanel();
         }
     }
 
-    function showLoginForm() {
+    function showLoginForm(message) {
         document.getElementById('admin-login')
             .style.display = '';
         document.getElementById('admin-panel')
             .style.display = 'none';
+        closeConfigModal();
+        document.getElementById(
+            'login-error').textContent =
+            message || '';
     }
 
     function showAdminPanel() {
@@ -774,6 +1321,18 @@
         document.getElementById('admin-panel')
             .style.display = '';
         loadConfigs();
+        loadCodexAuthStatus();
+    }
+
+    function handleAdminUnauthorized(message) {
+        clearAdminToken();
+        showLoginForm(message || 'Session expired');
+    }
+
+    async function ensureAdminSession() {
+        if (!authToken) return false;
+        const resp = await apiFetch('auth/session');
+        return !!(resp && resp.status === 'ok');
     }
 
     // --- Login ---
@@ -800,12 +1359,12 @@
             'auth/login', { password: pw });
 
         if (resp && resp.status === 'ok') {
-            authToken = resp.token;
-            sessionStorage.setItem(
-                'admin_token', authToken);
+            persistAdminToken(resp.token);
             document.getElementById(
                 'admin-password').value = '';
             showAdminPanel();
+            showToast('Admin session ready',
+                'success');
         } else {
             errEl.textContent =
                 (resp && resp.error) ||
@@ -815,9 +1374,9 @@
 
     // --- Logout ---
     document.getElementById('admin-logout-btn')
-        .addEventListener('click', () => {
-            authToken = null;
-            sessionStorage.removeItem('admin_token');
+        .addEventListener('click', async () => {
+            await apiPost('auth/logout', {});
+            clearAdminToken();
             showLoginForm();
         });
 
@@ -877,6 +1436,133 @@
             }
         });
 
+    document.getElementById('codex-auth-refresh-btn')
+        .addEventListener('click', () => {
+            loadCodexAuthStatus(true);
+        });
+
+    document.getElementById('codex-auth-connect-btn')
+        .addEventListener('click', async () => {
+            const button = document.getElementById(
+                'codex-auth-connect-btn');
+            button.disabled = true;
+            try {
+                const resp = await apiPost(
+                    'codex/auth/connect', {});
+                if (resp && resp.status === 'ok') {
+                    showToast(resp.message ||
+                        'ChatGPT session linked',
+                        'success');
+                } else {
+                    showToast((resp && resp.error) ||
+                        'Failed to link session',
+                        'error');
+                }
+            } finally {
+                button.disabled = false;
+                loadCodexAuthStatus();
+                loadConfigs();
+            }
+        });
+
+    function renderCodexAuthStatus(data) {
+        codexAuthStatusCache = data || null;
+        const badge = document.getElementById(
+            'codex-auth-badge');
+        const summary = document.getElementById(
+            'codex-auth-summary');
+        const meta = document.getElementById(
+            'codex-auth-meta');
+        const hint = document.getElementById(
+            'codex-auth-hint');
+        const connectBtn = document.getElementById(
+            'codex-auth-connect-btn');
+
+        if (!data) {
+            badge.textContent = 'Unavailable';
+            badge.className = 'config-chip danger';
+            summary.textContent =
+                'Could not query the local Codex CLI link state.';
+            meta.innerHTML = '';
+            hint.innerHTML =
+                'Check that <code>tizenclaw-cli</code> is installed and accessible from the dashboard process.';
+            connectBtn.disabled = true;
+            return;
+        }
+
+        const linked = !!data.linked;
+        const loggedIn =
+            data.codex_login_state === 'logged_in';
+        const cliAvailable =
+            data.codex_cli_available !== false;
+
+        badge.textContent = linked
+            ? 'Linked'
+            : loggedIn ? 'Ready to Link' : 'Not Logged In';
+        badge.className = 'config-chip ' +
+            (linked ? 'success' :
+                loggedIn ? 'warning' : 'neutral');
+
+        summary.textContent = data.message ||
+            'Manage the ChatGPT session link for openai-codex.';
+
+        const chips = [];
+        if (data.config_active_backend) {
+            chips.push(
+                '<span class="config-chip neutral">Active backend: ' +
+                escHtml(data.config_active_backend) +
+                '</span>');
+        }
+        if (data.account_id) {
+            chips.push(
+                '<span class="config-chip neutral">Account: ' +
+                escHtml(data.account_id) +
+                '</span>');
+        }
+        if (data.oauth_source) {
+            chips.push(
+                '<span class="config-chip neutral">Source: ' +
+                escHtml(data.oauth_source) +
+                '</span>');
+        }
+        meta.innerHTML = chips.join('');
+
+        if (linked) {
+            hint.innerHTML =
+                'TizenClaw is already pointed at <code>openai-codex</code>. Refresh to verify the external session is still present.';
+        } else if (loggedIn) {
+            hint.innerHTML =
+                'A Codex CLI ChatGPT session is available locally. Click <code>Link Session</code> to switch TizenClaw to <code>openai-codex</code>.';
+        } else {
+            hint.innerHTML =
+                'Run <code>tizenclaw-cli auth openai-codex login</code> in a terminal first, then return here and click <code>Link Session</code>.';
+        }
+
+        connectBtn.disabled = !cliAvailable || !loggedIn;
+    }
+
+    async function loadCodexAuthStatus(showLoading) {
+        const badge = document.getElementById(
+            'codex-auth-badge');
+        if (showLoading) {
+            badge.textContent = 'Checking...';
+            badge.className = 'config-chip neutral';
+        }
+
+        const data = await apiFetch(
+            'codex/auth/status');
+        if (data && data.status === 'ok') {
+            renderCodexAuthStatus(data);
+        } else if (data && data.error) {
+            renderCodexAuthStatus(null);
+            document.getElementById(
+                'codex-auth-summary').textContent =
+                data.error;
+        } else {
+            renderCodexAuthStatus(null);
+        }
+    }
+
     // --- Config Management ---
     async function loadConfigs() {
         const list = document.getElementById(
@@ -890,141 +1576,424 @@
             return;
         }
 
+        adminConfigsCache = data.configs.slice();
         list.innerHTML = data.configs.map(c => {
             const label =
                 CONFIG_LABELS[c.name] || c.name;
             const statusClass =
-                c.exists ? 'exists' : '';
+                c.exists ? 'exists' : 'missing';
             const statusText =
-                c.exists ? '● Active' : '○ Not configured';
+                c.exists ? '● Active' : '○ Sample';
 
-            return '<div class="config-card"' +
+            return '<button type="button" class="config-card"' +
                 ' data-config="' + escHtml(c.name) + '">' +
                 '<div class="config-card-header">' +
+                '<div class="config-card-copy">' +
                 '<span class="config-card-title">' +
                 escHtml(label) + '</span>' +
+                '<p class="config-card-desc">' +
+                escHtml(CONFIG_DESCRIPTIONS[c.name] ||
+                    'Configuration editor') + '</p>' +
+                '</div>' +
+                '<div class="config-card-side">' +
                 '<span class="config-card-status ' +
                 statusClass + '">' +
                 statusText + '</span>' +
-                '</div>' +
-                '<div class="config-card-body"' +
-                ' id="config-body-' +
-                escHtml(c.name) + '">' +
-                '<textarea class="config-editor"' +
-                ' id="config-editor-' +
-                escHtml(c.name) + '">' +
-                'Loading...</textarea>' +
-                '<div class="config-actions">' +
-                '<button class="btn-outline config-reload"' +
-                ' data-config="' + escHtml(c.name) +
-                '">Reload</button>' +
-                '<button class="btn-send config-save"' +
-                ' data-config="' + escHtml(c.name) +
-                '">Save</button></div>' +
-                '<p class="config-msg"' +
-                ' id="config-msg-' +
-                escHtml(c.name) + '"></p>' +
-                '</div></div>';
+                '<span class="config-card-open">Open</span>' +
+                '</div></div></button>';
         }).join('');
 
-        // Toggle body on header click
-        list.querySelectorAll(
-            '.config-card-header').forEach(hdr => {
-                hdr.addEventListener('click', () => {
-                    const name = hdr.parentElement
-                        .dataset.config;
-                    const body = document.getElementById(
-                        'config-body-' + name);
-                    const isOpen =
-                        body.classList.contains('open');
-                    if (!isOpen) {
-                        body.classList.add('open');
-                        loadConfigContent(name);
-                    } else {
-                        body.classList.remove('open');
-                    }
-                });
-            });
-
-        // Save buttons
-        list.querySelectorAll('.config-save')
-            .forEach(btn => {
-                btn.addEventListener('click', () => {
-                    saveConfig(btn.dataset.config);
-                });
-            });
-
-        // Reload buttons
-        list.querySelectorAll('.config-reload')
-            .forEach(btn => {
-                btn.addEventListener('click', () => {
-                    loadConfigContent(btn.dataset.config);
+        list.querySelectorAll('.config-card')
+            .forEach(card => {
+                card.addEventListener('click', () => {
+                    openConfigModal(
+                        card.dataset.config);
                 });
             });
     }
 
-    async function loadConfigContent(name) {
-        const editor = document.getElementById(
-            'config-editor-' + name);
-        const msg = document.getElementById(
-            'config-msg-' + name);
-        msg.textContent = '';
-        msg.className = 'config-msg';
-
+    async function fetchConfigContent(name) {
         const resp = await apiFetch(
             'config/' + name);
 
         if (resp && resp.status === 'ok') {
-            editor.value = resp.content;
-        } else if (resp && resp.sample) {
-            editor.value = resp.sample;
-            msg.textContent =
-                'No config found — showing sample';
-            msg.className = 'config-msg error';
-        } else {
-            editor.value = '';
-            msg.textContent =
-                (resp && resp.error) || 'Load failed';
-            msg.className = 'config-msg error';
+            return {
+                ok: true,
+                exists: true,
+                content: resp.content
+            };
+        }
+        if (resp && resp.sample) {
+            return {
+                ok: true,
+                exists: false,
+                content: resp.sample,
+                message: 'No config found — sample loaded'
+            };
+        }
+        return {
+            ok: false,
+            error: (resp && resp.error) ||
+                'Load failed'
+        };
+    }
+
+    function tryParseJson(content) {
+        try {
+            return JSON.parse(content);
+        } catch (e) {
+            return null;
         }
     }
 
-    async function saveConfig(name) {
-        const editor = document.getElementById(
-            'config-editor-' + name);
-        const msg = document.getElementById(
-            'config-msg-' + name);
-        const content = editor.value;
+    function renderConfigField(key, value) {
+        const type = Array.isArray(value)
+            ? 'array'
+            : value === null
+                ? 'null'
+                : typeof value;
 
-        // Validate JSON (except system_prompt)
-        if (name !== 'system_prompt') {
+        if (type === 'boolean') {
+            return '<label class="config-field">' +
+                '<span class="config-field-label">' +
+                escHtml(key) + '</span>' +
+                '<select class="config-field-input"' +
+                ' data-config-key="' + escHtml(key) + '"' +
+                ' data-config-type="boolean">' +
+                '<option value="true"' +
+                (value ? ' selected' : '') +
+                '>true</option>' +
+                '<option value="false"' +
+                (!value ? ' selected' : '') +
+                '>false</option></select></label>';
+        }
+
+        if (type === 'number') {
+            return '<label class="config-field">' +
+                '<span class="config-field-label">' +
+                escHtml(key) + '</span>' +
+                '<input type="number" class="config-field-input"' +
+                ' data-config-key="' + escHtml(key) + '"' +
+                ' data-config-type="number" value="' +
+                escHtml(String(value)) + '"></label>';
+        }
+
+        if (type === 'object' || type === 'array') {
+            return '<label class="config-field">' +
+                '<span class="config-field-label">' +
+                escHtml(key) + '</span>' +
+                '<textarea class="config-field-input config-field-code"' +
+                ' spellcheck="false" autocapitalize="off"' +
+                ' autocorrect="off"' +
+                ' data-config-key="' + escHtml(key) + '"' +
+                ' data-config-type="json">' +
+                escHtml(JSON.stringify(value, null, 2)) +
+                '</textarea></label>';
+        }
+
+        return '<label class="config-field">' +
+            '<span class="config-field-label">' +
+            escHtml(key) + '</span>' +
+            '<textarea class="config-field-input"' +
+            ' spellcheck="false" autocapitalize="off"' +
+            ' autocorrect="off"' +
+            ' data-config-key="' + escHtml(key) + '"' +
+            ' data-config-type="string">' +
+            escHtml(value === null ? '' : String(value)) +
+            '</textarea></label>';
+    }
+
+    function renderConfigStructuredEditor() {
+        const fields = document.getElementById(
+            'config-modal-fields');
+        const helper = document.getElementById(
+            'config-modal-helper');
+
+        if (!activeConfigParsed ||
+            typeof activeConfigParsed !== 'object' ||
+            Array.isArray(activeConfigParsed)) {
+            fields.innerHTML =
+                '<p class="empty-state">Structured editing is available only for JSON objects.</p>';
+            helper.textContent =
+                'Use the raw editor to update the full document.';
+            return;
+        }
+
+        const entries =
+            Object.entries(activeConfigParsed);
+        helper.textContent =
+            'Update top-level fields here, then save the configuration.';
+        fields.innerHTML = entries.length
+            ? entries.map(([key, value]) =>
+                renderConfigField(key, value)).join('')
+            : '<p class="empty-state">No editable fields were found.</p>';
+    }
+
+    function setConfigModalMode(mode) {
+        const structured = document.getElementById(
+            'config-modal-structured');
+        const raw = document.getElementById(
+            'config-modal-raw-wrap');
+        const structuredTab = document.getElementById(
+            'config-tab-structured');
+        const rawTab = document.getElementById(
+            'config-tab-raw');
+        const canUseStructured = !!(
+            activeConfigParsed &&
+            typeof activeConfigParsed === 'object' &&
+            !Array.isArray(activeConfigParsed));
+
+        if (mode === 'structured' &&
+            !canUseStructured) {
+            mode = 'raw';
+        }
+
+        if (mode === 'raw' &&
+            structuredTab.classList.contains(
+                'active')) {
             try {
-                JSON.parse(content);
+                document.getElementById(
+                    'config-modal-raw').value =
+                    collectStructuredConfig();
             } catch (e) {
-                msg.textContent =
-                    'Invalid JSON: ' + e.message;
-                msg.className = 'config-msg error';
+                document.getElementById(
+                    'config-modal-msg').textContent =
+                    'Unable to switch to raw view: ' +
+                    e.message;
+                document.getElementById(
+                    'config-modal-msg').className =
+                    'config-modal-msg error';
                 return;
             }
         }
 
+        if (mode === 'structured' &&
+            rawTab.classList.contains('active')) {
+            const parsed = tryParseJson(
+                document.getElementById(
+                    'config-modal-raw').value);
+            if (!parsed ||
+                typeof parsed !== 'object' ||
+                Array.isArray(parsed)) {
+                document.getElementById(
+                    'config-modal-msg').textContent =
+                    'Structured view requires a JSON object.';
+                document.getElementById(
+                    'config-modal-msg').className =
+                    'config-modal-msg error';
+                return;
+            }
+            activeConfigParsed = parsed;
+            activeConfigStructuredRendered =
+                false;
+        }
+
+        if (mode === 'structured' &&
+            !activeConfigStructuredRendered) {
+            renderConfigStructuredEditor();
+            activeConfigStructuredRendered =
+                true;
+        }
+
+        structured.style.display =
+            mode === 'structured' ? '' : 'none';
+        raw.style.display =
+            mode === 'raw' ? '' : 'none';
+        structuredTab.classList.toggle(
+            'active', mode === 'structured');
+        rawTab.classList.toggle(
+            'active', mode === 'raw');
+        structuredTab.disabled =
+            !canUseStructured;
+    }
+
+    async function openConfigModal(name) {
+        const modal = document.getElementById(
+            'config-modal');
+        const msg = document.getElementById(
+            'config-modal-msg');
+        const title = document.getElementById(
+            'config-modal-title');
+        const file = document.getElementById(
+            'config-modal-name');
+        const status = document.getElementById(
+            'config-modal-status');
+        const format = document.getElementById(
+            'config-modal-format');
+        const raw = document.getElementById(
+            'config-modal-raw');
+
+        activeConfigName = name;
+        title.textContent =
+            CONFIG_LABELS[name] || name;
+        file.textContent = name;
+        msg.textContent = 'Loading...';
+        msg.className = 'config-modal-msg';
+        modal.classList.add('open');
+        document.body.classList.add('modal-open');
+
+        const loaded = await fetchConfigContent(name);
+        if (!loaded.ok) {
+            msg.textContent = loaded.error;
+            msg.className =
+                'config-modal-msg error';
+            return;
+        }
+
+        raw.value = loaded.content || '';
+        activeConfigParsed = tryParseJson(raw.value);
+        activeConfigStructuredRendered =
+            false;
+        status.textContent = loaded.exists
+            ? 'Active'
+            : 'Sample';
+        status.className = 'config-chip ' +
+            (loaded.exists ? 'success' :
+                'warning');
+        format.textContent = activeConfigParsed
+            ? 'JSON'
+            : 'TEXT';
+        setConfigModalMode('raw');
+
+        if (loaded.message) {
+            msg.textContent = loaded.message;
+            msg.className =
+                'config-modal-msg warning';
+        } else {
+            msg.textContent = '';
+            msg.className =
+                'config-modal-msg';
+        }
+    }
+
+    function closeConfigModal() {
+        const modal = document.getElementById(
+            'config-modal');
+        if (modal) {
+            modal.classList.remove('open');
+        }
+        document.body.classList.remove('modal-open');
+        activeConfigName = null;
+        activeConfigParsed = null;
+        activeConfigStructuredRendered =
+            false;
+    }
+
+    function collectStructuredConfig() {
+        const next = {};
+        const inputs = document.querySelectorAll(
+            '#config-modal-fields [data-config-key]');
+
+        for (const input of inputs) {
+            const key = input.dataset.configKey;
+            const type = input.dataset.configType;
+            let value = input.value;
+
+            if (type === 'boolean') {
+                value = value === 'true';
+            } else if (type === 'number') {
+                if (value.trim() === '' ||
+                    Number.isNaN(Number(value))) {
+                    throw new Error(
+                        key + ' must be numeric');
+                }
+                value = Number(value);
+            } else if (type === 'json') {
+                value = JSON.parse(value);
+            }
+
+            next[key] = value;
+        }
+
+        return JSON.stringify(next, null, 2);
+    }
+
+    async function saveConfig(name) {
+        const msg = document.getElementById(
+            'config-modal-msg');
+        const structuredTab = document.getElementById(
+            'config-tab-structured');
+        const rawEditor = document.getElementById(
+            'config-modal-raw');
+        let content = rawEditor.value;
+
+        try {
+            if (structuredTab.classList.contains(
+                'active')) {
+                content = collectStructuredConfig();
+            } else if (tryParseJson(content)) {
+                content = JSON.stringify(
+                    JSON.parse(content), null, 2);
+            }
+        } catch (e) {
+            msg.textContent =
+                'Invalid config: ' + e.message;
+            msg.className =
+                'config-modal-msg error';
+            return;
+        }
+
         msg.textContent = 'Saving...';
-        msg.className = 'config-msg';
+        msg.className = 'config-modal-msg';
 
         const resp = await apiPost(
             'config/' + name, { content: content });
 
         if (resp && resp.status === 'ok') {
-            msg.textContent = 'Saved successfully!';
-            msg.className = 'config-msg success';
-            // Refresh header status
-            loadConfigs();
+            rawEditor.value = content;
+            activeConfigParsed =
+                tryParseJson(content);
+            msg.textContent =
+                'Saved successfully!';
+            msg.className =
+                'config-modal-msg success';
+            await loadConfigs();
+            showToast(
+                (CONFIG_LABELS[name] || name) +
+                ' saved',
+                'success'
+            );
         } else {
             msg.textContent =
                 (resp && resp.error) || 'Save failed';
-            msg.className = 'config-msg error';
+            msg.className =
+                'config-modal-msg error';
         }
     }
+
+    document.getElementById('config-modal-close')
+        .addEventListener('click',
+            closeConfigModal);
+    document.getElementById(
+        'config-modal-backdrop')
+        .addEventListener('click',
+            closeConfigModal);
+    document.getElementById(
+        'config-tab-structured')
+        .addEventListener('click', () => {
+            setConfigModalMode('structured');
+        });
+    document.getElementById('config-tab-raw')
+        .addEventListener('click', () => {
+            setConfigModalMode('raw');
+        });
+    document.getElementById('config-modal-reload')
+        .addEventListener('click', () => {
+            if (activeConfigName) {
+                openConfigModal(activeConfigName);
+            }
+        });
+    document.getElementById('config-modal-save')
+        .addEventListener('click', () => {
+            if (activeConfigName) {
+                saveConfig(activeConfigName);
+            }
+        });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            closeConfigModal();
+        }
+    });
 
     // ==========================
     // OTA Updates
@@ -1213,6 +2182,28 @@
         return div.innerHTML;
     }
 
+    // --- Toast Notifications ---
+    function showToast(msg, type, durationMs) {
+        durationMs = durationMs || 3000;
+        const container =
+            document.getElementById('toast-container');
+        if (!container) return;
+        const el = document.createElement('div');
+        el.className = 'toast' + (type ? ' ' + type : '');
+        el.textContent = msg;
+        container.appendChild(el);
+        setTimeout(function () {
+            el.style.animation =
+                'toastOut 0.22s ease forwards';
+            setTimeout(function () {
+                el.remove();
+            }, 230);
+        }, durationMs);
+    }
+    window._showToast = showToast;
+
     // --- Initial Load ---
+    formatChatSessionMeta();
+    startOutboundPolling();
     loadDashboard();
 })();

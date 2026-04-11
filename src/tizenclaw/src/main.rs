@@ -11,28 +11,61 @@
 // TODO: Remove once all modules are wired into the daemon.
 #![allow(unused)]
 
-pub mod common;
-pub mod infra;
-pub mod storage;
-pub mod llm;
-pub mod core;
 pub mod channel;
+pub mod common;
+pub mod core;
+pub mod generic;
+pub mod infra;
+pub mod llm;
 pub mod network;
+pub mod storage;
+pub mod tizen;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 static RUNNING: AtomicBool = AtomicBool::new(true);
+
+#[derive(Debug, Default)]
+struct DaemonOptions {
+    devel_mode: bool,
+}
 
 extern "C" fn signal_handler(_sig: libc::c_int) {
     RUNNING.store(false, Ordering::SeqCst);
 }
 
+fn parse_daemon_options() -> DaemonOptions {
+    let mut options = DaemonOptions::default();
+    let mut args = std::env::args().skip(1);
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--devel" => options.devel_mode = true,
+            "-h" | "--help" => {
+                eprintln!("Usage: tizenclaw [--devel]");
+                std::process::exit(0);
+            }
+            other => {
+                eprintln!("Unknown option: {}", other);
+                eprintln!("Usage: tizenclaw [--devel]");
+                std::process::exit(2);
+            }
+        }
+    }
+
+    options
+}
+
 #[tokio::main]
 async fn main() {
+    let options = parse_daemon_options();
+
     // ── Phase 1: Detect platform & initialize paths ──
     let platform = libtizenclaw_core::framework::PlatformContext::detect();
     platform.paths.ensure_dirs();
+    let boot_log_path = platform.paths.logs_dir.join("tizenclaw.log");
+    let mut boot_logger = common::boot_status_logger::BootStatusLogger::new(boot_log_path);
 
     // Fix OpenSSL vendored TLS handshake on Tizen by explicitly exporting the System CA bundle
     if std::path::Path::new("/etc/ssl/ca-bundle.pem").exists() {
@@ -40,23 +73,23 @@ async fn main() {
     }
 
     // ── Phase 2: Initialize logging (platform-aware) ──
-    // Initialize file log backend manually targeting specific directory
-    if let Err(e) = std::fs::create_dir_all("/opt/usr/share/tizenclaw/logs") {
+    if let Err(e) = std::fs::create_dir_all(&platform.paths.logs_dir) {
         log::error!("Failed to create logs dir: {}", e);
     }
-    common::logging::FileLogBackend::init("/opt/usr/share/tizenclaw/logs/tizenclaw.log", 10 * 1024 * 1024);
-    
-    // The global logger handles DLOG routing internally and natively.
+    common::logging::FileLogBackend::init(&platform.paths.logs_dir, 10 * 1024 * 1024);
     common::logging::init_with_logger();
+    boot_logger.record_status(
+        "Logging",
+        true,
+        &format!(
+            "runtime logs under {}",
+            platform.paths.logs_dir.to_string_lossy()
+        ),
+    );
 
     // ── Phase 2.5: Pre-initialize HTTP Client ──
-    // Force initialization of reqwest::Client on the global multi-threaded
-    // Tokio runtime. If initialized lazily inside a spawned IpcServer thread
-    // (which uses a temporary single-threaded runtime), the client's reactor 
-    // dies when that thread finishes, causing subsequent LLM requests to hang.
-    // Pre-initialization also allows the client to multiplex multiple sessions
-    // over a shared Hyper connection pool using the same TLS configuration.
     infra::http_client::default_client();
+    boot_logger.record_status("HTTP client", true, "default client warmed up");
 
     log::info!("═══════════════════════════════════════");
     log::debug!("  TizenClaw Daemon v1.0.0");
@@ -66,24 +99,41 @@ async fn main() {
 
     // ── Phase 3: Set up signal handlers ──
     unsafe {
-        libc::signal(libc::SIGINT, signal_handler as *const () as libc::sighandler_t);
-        libc::signal(libc::SIGTERM, signal_handler as *const () as libc::sighandler_t);
+        libc::signal(
+            libc::SIGINT,
+            signal_handler as *const () as libc::sighandler_t,
+        );
+        libc::signal(
+            libc::SIGTERM,
+            signal_handler as *const () as libc::sighandler_t,
+        );
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
 
-    // Share platform context
     let platform = Arc::new(platform);
 
     // ── Phase 4: Initialize AgentCore ──
     log::info!("[Boot] Initializing AgentCore...");
     let agent = core::agent_core::AgentCore::new(platform.clone());
-    if !agent.initialize().await {
+    let agent_initialized = agent.initialize().await;
+    if !agent_initialized {
         log::error!("AgentCore initialization failed");
     }
+    boot_logger.record_status(
+        "AgentCore",
+        agent_initialized,
+        if agent_initialized {
+            "agent core initialized"
+        } else {
+            "agent core initialization failed"
+        },
+    );
     let agent = Arc::new(agent);
 
     // Register pkgmgr listener for runtime plugin injection
-    use libtizenclaw_core::plugin_core::pkgmgr_client::{PkgmgrClient, PkgmgrListener, PkgmgrEventArgs};
+    use libtizenclaw_core::plugin_core::pkgmgr_client::{
+        PkgmgrClient, PkgmgrEventArgs, PkgmgrListener,
+    };
     struct AgentPkgmgrListener(Arc<core::agent_core::AgentCore>);
     impl PkgmgrListener for AgentPkgmgrListener {
         fn on_pkgmgr_event(&self, args: Arc<PkgmgrEventArgs>) {
@@ -99,81 +149,136 @@ async fn main() {
     }
     PkgmgrClient::global().add_listener(Arc::new(AgentPkgmgrListener(agent.clone())));
 
-    // ── Phase 5: Start ToolWatcher (Removed) ──
-    // ToolWatcher polling has been removed to prevent infinite loops and token waste.
-    // Indexing is now driven purely by pkgmgr events and startup existence checks.
-
     // ── Phase 6: Start TaskScheduler ──
     log::info!("[Boot] Starting TaskScheduler...");
-    let task_scheduler = core::task_scheduler::TaskScheduler::new();
-    let task_dir = "/opt/usr/share/tizenclaw/tasks";
-    let _ = std::fs::create_dir_all(task_dir);
-    task_scheduler.load_config(task_dir);
-    let _scheduler_handle = task_scheduler.start();
+    let task_scheduler = core::task_scheduler::TaskScheduler::with_agent(agent.clone());
+    let task_dir = platform.paths.data_dir.join("tasks");
+    let _ = std::fs::create_dir_all(&task_dir);
+    let mut devel_sync_handle = None;
+    let mut seeded_tasks = 0usize;
+    let mut devel_detail = None;
+    let mut devel_ok = true;
 
-    // ── Phase 7: Start IPC server ──
-    log::info!("[Boot] Starting IPC server...");
-    let ipc = core::ipc_server::IpcServer::new();
-    let ipc_handle = ipc.start(agent.clone());
-
-    // ── Phase 8: Initialize channels ──
-    log::info!("[Boot] Initializing channels...");
-    let mut channel_registry = channel::ChannelRegistry::new();
-
-    // Load from config if available
-    let channel_config_path = platform.paths.config_dir.join("channel_config.json");
-    channel_registry.load_config(&channel_config_path.to_string_lossy(), Some(agent.clone()));
-
-    // Always ensure web_dashboard is started on port 9090
-    let has_dashboard = channel_registry.has_channel("web_dashboard");
-    if !has_dashboard {
-        let web_root = platform.paths.web_root.to_string_lossy().to_string();
-        let dashboard_config = channel::ChannelConfig {
-            name: "web_dashboard".into(),
-            channel_type: "web_dashboard".into(),
-            enabled: true,
-            settings: serde_json::json!({
-                "port": 9090,
-                "localhost_only": false,
-                "web_root": web_root
-            }),
-        };
-        if let Some(ch) = channel::channel_factory::create_channel(&dashboard_config, Some(agent.clone())) {
-            channel_registry.register(ch);
-            log::info!("[Boot] WebDashboard registered (port 9090)");
+    if options.devel_mode {
+        let repo_root = std::env::current_dir()
+            .ok()
+            .and_then(|cwd| core::devel_mode::detect_repo_root(&cwd));
+        match repo_root {
+            Some(repo_root) => match core::devel_mode::sync_devel_tasks(&task_dir, &repo_root) {
+                Ok(sync) => {
+                    devel_detail = Some(sync.detail.clone());
+                    if sync.task_enabled {
+                        devel_sync_handle = Some(core::devel_mode::spawn_devel_task_sync(
+                            task_dir.clone(),
+                            repo_root,
+                            sync.last_prompt_fingerprint.clone(),
+                        ));
+                    }
+                }
+                Err(err) => {
+                    devel_ok = false;
+                    devel_detail = Some(err);
+                }
+            },
+            None => {
+                devel_ok = false;
+                devel_detail = Some(
+                    "devel mode requested but no repository root with .dev_note was found"
+                        .to_string(),
+                );
+            }
         }
+    } else {
+        seeded_tasks = task_scheduler.seed_default_tasks_if_empty(&task_dir.to_string_lossy());
     }
 
-    channel_registry.start_all();
+    task_scheduler.load_config(&task_dir.to_string_lossy());
+    let scheduler_handle = task_scheduler.start();
+    boot_logger.record_status(
+        "TaskScheduler",
+        scheduler_handle.is_some(),
+        &format!("seeded {} default task(s)", seeded_tasks),
+    );
+    if let Some(detail) = devel_detail.as_deref() {
+        boot_logger.record_status("Devel mode", devel_ok, detail);
+    }
+
+    // ── Phase 7: Initialize ChannelRegistry (shared with IPC) ──
+    log::info!("[Boot] Initializing channels...");
+    let channel_registry = Arc::new(Mutex::new(channel::ChannelRegistry::new()));
+
+    // Load from channel_config.json
+    let channel_config_path = platform.paths.config_dir.join("channel_config.json");
+    {
+        let mut reg = channel_registry.lock().unwrap();
+        reg.load_config(&channel_config_path.to_string_lossy(), Some(agent.clone()));
+
+        // Ensure web_dashboard is always registered (auto_start follows config).
+        // If not present in config, register with auto_start = true as default.
+        if !reg.has_channel("web_dashboard") {
+            let web_root = platform.paths.web_root.to_string_lossy().to_string();
+            let dashboard_config = channel::ChannelConfig {
+                name: "web_dashboard".into(),
+                channel_type: "web_dashboard".into(),
+                enabled: true,
+                settings: serde_json::json!({
+                    "port": core::runtime_paths::default_dashboard_port(),
+                    "localhost_only": false,
+                    "web_root": web_root
+                }),
+            };
+            if let Some(ch) =
+                channel::channel_factory::create_channel(&dashboard_config, Some(agent.clone()))
+            {
+                reg.register(ch, true);
+                log::info!(
+                    "[Boot] WebDashboard registered (port {}, auto_start=true)",
+                    core::runtime_paths::default_dashboard_port()
+                );
+            }
+        }
+
+        reg.start_all();
+    }
+    boot_logger.record_status("Channels", true, "channel registry initialized");
+
+    // ── Phase 7.5: Start IPC server (with registry reference) ──
+    log::info!("[Boot] Starting IPC server...");
+    let ipc = core::ipc_server::IpcServer::new();
+    let ipc_handle = ipc.start(agent.clone(), channel_registry.clone());
+    boot_logger.record_status("IPC server", true, "ipc server thread started");
 
     // ── Phase 8.5: Start mDNS Scanner ──
     log::info!("[Boot] Starting mDNS network scanner...");
     let mdns_scanner = network::mdns_discovery::MdnsScanner::new();
     mdns_scanner.start();
+    boot_logger.record_status("mDNS scanner", true, "network discovery started");
 
     log::info!("[Boot] TizenClaw daemon ready.");
+    boot_logger.record_status("Daemon ready", true, "startup sequence completed");
+    log::info!("{}", boot_logger.summary());
 
-    // ── Phase 9: Startup LLM Context Indexing ──
+    // ── Phase 9: Startup Tool Indexing ──
     let startup_agent = agent.clone();
     tokio::spawn(async move {
-        // Wait 5 seconds to ensure IPC/channels are completely established
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         startup_agent.run_startup_indexing().await;
     });
 
-    // ── Main loop — sleep until signal received ──
+    // ── Main loop ──
     while RUNNING.load(Ordering::SeqCst) {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     }
 
     // ── Shutdown ──
     log::info!("TizenClaw daemon shutting down...");
-    channel_registry.stop_all();
+    channel_registry.lock().unwrap().stop_all();
     task_scheduler.stop();
+    if let Some(handle) = devel_sync_handle {
+        handle.abort();
+    }
     ipc.stop();
     let _ = ipc_handle.join();
-
-    agent.shutdown();
-
+    agent.shutdown().await;
     log::info!("TizenClaw daemon stopped.");
 }

@@ -32,26 +32,50 @@ impl PluginManager {
     }
 
     /// Scan plugin directories and register discovered plugins via local dirs and pkgmgr.
-    pub fn scan_plugins(&mut self, pm: Option<&dyn libtizenclaw_core::framework::PackageManagerProvider>) {
-
+    pub fn scan_plugins(
+        &mut self,
+        pm: Option<&dyn libtizenclaw_core::framework::PackageManagerProvider>,
+    ) {
         if let Some(pkgmgr) = pm {
-            let pkgs = pkgmgr.get_packages_by_metadata_key("http://tizen.org/metadata/tizenclaw/llm-backend");
-            log::debug!("PluginManager: scanning pkgmgr for metadata key. Found {} package(s)", pkgs.len());
+            let pkgs = pkgmgr
+                .get_packages_by_metadata_key("http://tizen.org/metadata/tizenclaw/llm-backend");
+            log::debug!(
+                "PluginManager: scanning pkgmgr for metadata key. Found {} package(s)",
+                pkgs.len()
+            );
             for pkg in pkgs {
-                log::debug!("PluginManager: pkgmgr metadata match found for pkg_id '{}'", pkg.pkg_id);
-                if let Some(so_name) = pkgmgr.get_package_metadata_value(&pkg.pkg_id, "http://tizen.org/metadata/tizenclaw/llm-backend") {
-                    log::debug!("PluginManager: resolved so_name '{}' for pkg_id '{}'", so_name, pkg.pkg_id);
+                log::debug!(
+                    "PluginManager: pkgmgr metadata match found for pkg_id '{}'",
+                    pkg.pkg_id
+                );
+                if let Some(so_name) = pkgmgr.get_package_metadata_value(
+                    &pkg.pkg_id,
+                    "http://tizen.org/metadata/tizenclaw/llm-backend",
+                ) {
+                    log::debug!(
+                        "PluginManager: resolved so_name '{}' for pkg_id '{}'",
+                        so_name,
+                        pkg.pkg_id
+                    );
                     if let Some(root_path) = pkgmgr.get_package_root_path(&pkg.pkg_id) {
-                        log::debug!("PluginManager: resolved root path '{}' for pkg_id '{}'", root_path, pkg.pkg_id);
+                        log::debug!(
+                            "PluginManager: resolved root path '{}' for pkg_id '{}'",
+                            root_path,
+                            pkg.pkg_id
+                        );
                         // Match tizenclaw-cpp string concatenation to prevent PathBuf absolute path wiping
                         let so_path_str = format!("{}/lib/{}", root_path, so_name);
                         let so_path = PathBuf::from(&so_path_str);
-                        
-                        let cfg_path = PathBuf::from(format!("{}/res/plugin_llm_config.json", root_path));
-                        let fallback_cfg_path = PathBuf::from(format!("{}/plugin_llm_config.json", root_path));
-                        
+
+                        let cfg_path =
+                            PathBuf::from(format!("{}/res/plugin_llm_config.json", root_path));
+                        let fallback_cfg_path =
+                            PathBuf::from(format!("{}/plugin_llm_config.json", root_path));
+
                         let mut config = serde_json::json!({});
-                        if let Ok(content) = std::fs::read_to_string(&cfg_path).or_else(|_| std::fs::read_to_string(&fallback_cfg_path)) {
+                        if let Ok(content) = std::fs::read_to_string(&cfg_path)
+                            .or_else(|_| std::fs::read_to_string(&fallback_cfg_path))
+                        {
                             if let Ok(parsed) = serde_json::from_str(&content) {
                                 config = parsed;
                             }
@@ -59,18 +83,31 @@ impl PluginManager {
 
                         if so_path.exists() {
                             let name = pkg.pkg_id.clone();
-                            
-                            log::debug!("PluginManager: successfully discovered valid plugin '{}' at {:?}", name, so_path);
+
+                            log::debug!(
+                                "PluginManager: successfully discovered valid plugin '{}' at {:?}",
+                                name,
+                                so_path
+                            );
                             self.plugin_registry.insert(name.clone(), so_path);
                             self.plugin_configs.insert(name, config);
                         } else {
-                            log::warn!("PluginManager: plugin so_path does not exist on disk: {:?}", so_path);
+                            log::warn!(
+                                "PluginManager: plugin so_path does not exist on disk: {:?}",
+                                so_path
+                            );
                         }
                     } else {
-                        log::warn!("PluginManager: failed to get root path for pkg_id '{}'", pkg.pkg_id);
+                        log::warn!(
+                            "PluginManager: failed to get root path for pkg_id '{}'",
+                            pkg.pkg_id
+                        );
                     }
                 } else {
-                    log::warn!("PluginManager: failed to get metadata value for pkg_id '{}'", pkg.pkg_id);
+                    log::warn!(
+                        "PluginManager: failed to get metadata value for pkg_id '{}'",
+                        pkg.pkg_id
+                    );
                 }
             }
         } else {
@@ -87,7 +124,11 @@ impl PluginManager {
     }
 
     /// Load a single plugin by its package ID (used dynamically during installation)
-    pub fn load_plugin_from_pkg(&mut self, pm: Option<&dyn libtizenclaw_core::framework::PackageManagerProvider>, pkgid: &str) -> bool {
+    pub fn load_plugin_from_pkg(
+        &mut self,
+        pm: Option<&dyn libtizenclaw_core::framework::PackageManagerProvider>,
+        pkgid: &str,
+    ) -> bool {
         let Some(pkgmgr) = pm else {
             return false;
         };
@@ -97,7 +138,9 @@ impl PluginManager {
             None => return false,
         };
 
-        let so_value = match pkgmgr.get_package_metadata_value(pkgid, "http://tizen.org/metadata/tizenclaw/llm-backend") {
+        let so_value = match pkgmgr
+            .get_package_metadata_value(pkgid, "http://tizen.org/metadata/tizenclaw/llm-backend")
+        {
             Some(v) => v,
             None => return false, // Not an LLM backend plugin
         };
@@ -107,7 +150,9 @@ impl PluginManager {
         let mut config = serde_json::json!({});
         let cfg_path = format!("{}/res/plugin_llm_config.json", root_path);
         let fallback_cfg_path = format!("{}/plugin_llm_config.json", root_path);
-        if let Ok(content) = std::fs::read_to_string(&cfg_path).or_else(|_| std::fs::read_to_string(&fallback_cfg_path)) {
+        if let Ok(content) = std::fs::read_to_string(&cfg_path)
+            .or_else(|_| std::fs::read_to_string(&fallback_cfg_path))
+        {
             if let Ok(parsed) = serde_json::from_str(&content) {
                 config = parsed;
             }
@@ -115,7 +160,11 @@ impl PluginManager {
 
         let so_path = PathBuf::from(&full_so_path);
         if so_path.exists() {
-            log::debug!("PluginManager: dynamically registered plugin '{}' at '{}'", pkgid, full_so_path);
+            log::debug!(
+                "PluginManager: dynamically registered plugin '{}' at '{}'",
+                pkgid,
+                full_so_path
+            );
             self.plugin_registry.insert(pkgid.to_string(), so_path);
             self.plugin_configs.insert(pkgid.to_string(), config);
             true

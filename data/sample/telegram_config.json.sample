@@ -1,4 +1,54 @@
 {
     "bot_token": "YOUR_TELEGRAM_BOT_TOKEN_HERE",
-    "allowed_chat_ids": []
+    "allowed_chat_ids": [],
+    "cli_workdir": "$HOME/projects/your-project",
+    "cli_backends": {
+        "default_backend": "codex",
+        "backends": {
+            "codex": {
+                "binary_path": "$HOME/.npm-global/bin/codex"
+            },
+            "gemini": {
+                "binary_path": "/snap/bin/gemini",
+                "model": "gemini-2.5-flash"
+            },
+            "claude": {
+                "binary_path": "$HOME/.local/bin/claude"
+            },
+            "custom_agent": {
+                "display_name": "Custom Agent",
+                "aliases": ["custom", "agentx"],
+                "binary_path": "$HOME/.local/bin/custom-agent",
+                "auth_hint": "Custom Agent CLI must already be authenticated on the host.",
+                "usage_hint": "`custom-agent run --json --cwd <project> --prompt <prompt>`",
+                "invocation": {
+                    "args": [
+                        "run",
+                        "--json",
+                        "--cwd",
+                        "{project_dir}",
+                        "--prompt",
+                        "{prompt}"
+                    ]
+                },
+                "response_extractors": [
+                    {
+                        "source": "stdout",
+                        "format": "json",
+                        "text_path": "result"
+                    }
+                ],
+                "usage_extractors": [
+                    {
+                        "source": "stdout",
+                        "format": "json",
+                        "input_tokens_path": "usage.input_tokens",
+                        "output_tokens_path": "usage.output_tokens",
+                        "total_tokens_path": "usage.total_tokens",
+                        "session_id_path": "session_id"
+                    }
+                ]
+            }
+        }
+    }
 }

@@ -87,13 +87,21 @@ impl SafetyGuard {
     }
 
     /// Check if a tool call is allowed.
-    pub fn check_tool(&self, tool_name: &str, args: &str, side_effect: &SideEffect) -> Result<(), String> {
+    pub fn check_tool(
+        &self,
+        tool_name: &str,
+        args: &str,
+        side_effect: &SideEffect,
+    ) -> Result<(), String> {
         if self.blocked_tools.contains(tool_name) {
             return Err(format!("Tool '{}' is blocked by safety policy", tool_name));
         }
 
         if *side_effect == SideEffect::Irreversible && !self.allow_irreversible {
-            return Err(format!("Tool '{}' has irreversible side effects and is blocked", tool_name));
+            return Err(format!(
+                "Tool '{}' has irreversible side effects and is blocked",
+                tool_name
+            ));
         }
 
         for blocked in &self.blocked_args {
@@ -133,35 +141,49 @@ mod tests {
     #[test]
     fn test_default_blocked_args() {
         let guard = SafetyGuard::new();
-        assert!(guard.check_tool("exec", "rm -rf /home", &SideEffect::Reversible).is_err());
-        assert!(guard.check_tool("exec", "mkfs.ext4 /dev/sda", &SideEffect::Reversible).is_err());
-        assert!(guard.check_tool("exec", "shutdown -h now", &SideEffect::Reversible).is_err());
+        assert!(guard
+            .check_tool("exec", "rm -rf /home", &SideEffect::Reversible)
+            .is_err());
+        assert!(guard
+            .check_tool("exec", "mkfs.ext4 /dev/sda", &SideEffect::Reversible)
+            .is_err());
+        assert!(guard
+            .check_tool("exec", "shutdown -h now", &SideEffect::Reversible)
+            .is_err());
     }
 
     #[test]
     fn test_clean_args_pass() {
         let guard = SafetyGuard::new();
-        assert!(guard.check_tool("exec", "ls -la /tmp", &SideEffect::None).is_ok());
+        assert!(guard
+            .check_tool("exec", "ls -la /tmp", &SideEffect::None)
+            .is_ok());
     }
 
     #[test]
     fn test_blocked_tool() {
         let mut guard = SafetyGuard::new();
         guard.blocked_tools.insert("danger_tool".to_string());
-        assert!(guard.check_tool("danger_tool", "{}", &SideEffect::None).is_err());
+        assert!(guard
+            .check_tool("danger_tool", "{}", &SideEffect::None)
+            .is_err());
     }
 
     #[test]
     fn test_irreversible_blocked_by_default() {
         let guard = SafetyGuard::new();
-        assert!(guard.check_tool("delete_all", "{}", &SideEffect::Irreversible).is_err());
+        assert!(guard
+            .check_tool("delete_all", "{}", &SideEffect::Irreversible)
+            .is_err());
     }
 
     #[test]
     fn test_irreversible_allowed_when_configured() {
         let mut guard = SafetyGuard::new();
         guard.allow_irreversible = true;
-        assert!(guard.check_tool("delete_all", "{}", &SideEffect::Irreversible).is_ok());
+        assert!(guard
+            .check_tool("delete_all", "{}", &SideEffect::Irreversible)
+            .is_ok());
     }
 
     #[test]
@@ -182,7 +204,10 @@ mod tests {
     #[test]
     fn test_side_effect_from_str() {
         assert_eq!(SideEffect::from_str("none"), SideEffect::None);
-        assert_eq!(SideEffect::from_str("irreversible"), SideEffect::Irreversible);
+        assert_eq!(
+            SideEffect::from_str("irreversible"),
+            SideEffect::Irreversible
+        );
         assert_eq!(SideEffect::from_str("reversible"), SideEffect::Reversible);
         assert_eq!(SideEffect::from_str("other"), SideEffect::Reversible);
     }

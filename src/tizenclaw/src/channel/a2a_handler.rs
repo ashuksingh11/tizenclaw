@@ -59,18 +59,29 @@ pub struct A2aHandler {
 }
 
 impl A2aHandler {
-    pub fn new(config: &ChannelConfig, agent: std::sync::Arc<crate::core::agent_core::AgentCore>) -> Self {
-        let agent_name = config.settings.get("agent_name")
+    pub fn new(
+        config: &ChannelConfig,
+        agent: std::sync::Arc<crate::core::agent_core::AgentCore>,
+    ) -> Self {
+        let agent_name = config
+            .settings
+            .get("agent_name")
             .and_then(|v| v.as_str())
             .unwrap_or("TizenClaw Agent")
             .to_string();
-        let agent_url = config.settings.get("agent_url")
+        let agent_url = config
+            .settings
+            .get("agent_url")
             .and_then(|v| v.as_str())
-            .unwrap_or("http://localhost:9090")
-            .to_string();
+            .map(str::to_owned)
+            .unwrap_or_else(crate::core::runtime_paths::default_dashboard_base_url);
 
         let mut bearer_tokens = Vec::new();
-        if let Some(arr) = config.settings.get("bearer_tokens").and_then(|v| v.as_array()) {
+        if let Some(arr) = config
+            .settings
+            .get("bearer_tokens")
+            .and_then(|v| v.as_array())
+        {
             for t in arr {
                 if let Some(s) = t.as_str() {
                     bearer_tokens.push(s.to_string());
@@ -174,7 +185,8 @@ impl A2aHandler {
 
         // Extract text from message parts
         let text = if let Some(parts) = message.get("parts").and_then(|v| v.as_array()) {
-            parts.iter()
+            parts
+                .iter()
                 .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
                 .collect::<Vec<_>>()
                 .join("")
@@ -210,8 +222,10 @@ impl A2aHandler {
         let task_id_clone = task_id.clone();
 
         tokio::spawn(async move {
-            let result = agent_clone.process_prompt(&session_id, &text_clone, None).await;
-            
+            let result = agent_clone
+                .process_prompt(&session_id, &text_clone, None)
+                .await;
+
             let secs = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -274,7 +288,10 @@ impl A2aHandler {
 
         match tasks.get_mut(task_id) {
             Some(task) => {
-                if task.status == TaskStatus::Completed || task.status == TaskStatus::Failed || task.status == TaskStatus::Cancelled {
+                if task.status == TaskStatus::Completed
+                    || task.status == TaskStatus::Failed
+                    || task.status == TaskStatus::Cancelled
+                {
                     return json!({"error": format!("Cannot cancel task in terminal state: {}", task.status.as_str())});
                 }
                 task.status = TaskStatus::Cancelled;
@@ -299,9 +316,21 @@ impl A2aHandler {
 }
 
 impl Channel for A2aHandler {
-    fn name(&self) -> &str { &self.name }
-    fn start(&mut self) -> bool { self.running = true; log::info!("A2A handler started"); true }
-    fn stop(&mut self) { self.running = false; }
-    fn is_running(&self) -> bool { self.running }
-    fn send_message(&self, _msg: &str) -> Result<(), String> { Ok(()) }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn start(&mut self) -> bool {
+        self.running = true;
+        log::info!("A2A handler started");
+        true
+    }
+    fn stop(&mut self) {
+        self.running = false;
+    }
+    fn is_running(&self) -> bool {
+        self.running
+    }
+    fn send_message(&self, _msg: &str) -> Result<(), String> {
+        Ok(())
+    }
 }

@@ -1,7 +1,8 @@
 //! Tool declaration builder — generates LLM function declarations for all tools.
 
-use serde_json::{json, Value};
 use crate::llm::backend::LlmToolDecl;
+use serde_json::{json, Value};
+use std::collections::HashSet;
 
 pub struct ToolDeclarationBuilder;
 
@@ -10,34 +11,107 @@ impl ToolDeclarationBuilder {
     /// This drastically reduces token bloat (Token Optimization via Dynamic Tool Loading).
     pub fn append_builtin_tools(tools: &mut Vec<LlmToolDecl>, prompt: &str) {
         let p = prompt.to_lowercase();
-        
+
+        if p.trim() == "all" {
+            Self::append_all_builtin_tools(tools);
+            return;
+        }
+
         // 1. Meta / System Tools - always injected
         Self::push_meta_tools(tools);
 
         // 2. Task Intent
-        if p.contains("task") || p.contains("schedule") || p.contains("기억") || p.contains("태스크") || p.contains("작업") || p.contains("예약") || p.contains("내일") {
+        if p.contains("task") || p.contains("schedule") {
             Self::push_task_tools(tools);
         }
 
         // 3. Memory & Knowledge Intent
-        if p.contains("remember") || p.contains("memory") || p.contains("기억") || p.contains("search") || p.contains("knowledge") || p.contains("지식") || p.contains("문서") {
+        if p.contains("remember")
+            || p.contains("memory")
+            || p.contains("search")
+            || p.contains("knowledge")
+        {
             Self::push_memory_tools(tools);
         }
 
         // 4. Session Intent
-        if p.contains("session") || p.contains("세션") || p.contains("switch") || p.contains("user") || p.contains("유저") {
+        if p.contains("session") || p.contains("switch") || p.contains("user") {
             Self::push_session_tools(tools);
         }
 
         // 5. Workflow & Pipeline Intent
-        if p.contains("workflow") || p.contains("pipeline") || p.contains("skill") || p.contains("스킬") || p.contains("파이프라인") || p.contains("워크플로우") || p.contains("배우") || p.contains("learn") || p.contains("run") || p.contains("실행") {
+        if p.contains("workflow")
+            || p.contains("pipeline")
+            || p.contains("skill")
+            || p.contains("learn")
+            || p.contains("run")
+        {
             Self::push_workflow_tools(tools);
         }
 
         // 6. Agent Role Intent
-        if p.contains("agent") || p.contains("role") || p.contains("에이전트") || p.contains("역할") || p.contains("supervisor") || p.contains("감독") {
+        if p.contains("agent") || p.contains("role") || p.contains("supervisor") {
             Self::push_agent_tools(tools);
         }
+
+        // 7. Research / Search Intent
+        if p.contains("search")
+            || p.contains("research")
+            || p.contains("weather")
+            || p.contains("stock")
+            || p.contains("news")
+            || p.contains("conference")
+            || p.contains("market")
+        {
+            Self::push_research_tools(tools);
+        }
+
+        // 8. Document / Data Intent
+        if p.contains(".pdf")
+            || p.contains(".csv")
+            || p.contains(".xlsx")
+            || p.contains("spreadsheet")
+            || p.contains("excel")
+            || p.contains("table")
+            || p.contains("document")
+            || p.contains("summary")
+            || p.contains("pdf")
+        {
+            Self::push_document_tools(tools);
+        }
+
+        // 9. Image Intent
+        if p.contains("image")
+            || p.contains("png")
+            || p.contains("jpg")
+            || p.contains("jpeg")
+            || p.contains("draw")
+            || p.contains("illustration")
+            || p.contains("photo")
+        {
+            Self::push_image_tools(tools);
+        }
+
+        Self::dedup(tools);
+    }
+
+    /// Append every built-in tool declaration regardless of prompt heuristics.
+    pub fn append_all_builtin_tools(tools: &mut Vec<LlmToolDecl>) {
+        Self::push_meta_tools(tools);
+        Self::push_task_tools(tools);
+        Self::push_memory_tools(tools);
+        Self::push_session_tools(tools);
+        Self::push_workflow_tools(tools);
+        Self::push_agent_tools(tools);
+        Self::push_research_tools(tools);
+        Self::push_document_tools(tools);
+        Self::push_image_tools(tools);
+        Self::dedup(tools);
+    }
+
+    fn dedup(tools: &mut Vec<LlmToolDecl>) {
+        let mut seen = HashSet::new();
+        tools.retain(|tool| seen.insert(tool.name.clone()));
     }
 
     fn push_meta_tools(tools: &mut Vec<LlmToolDecl>) {
@@ -53,13 +127,200 @@ impl ToolDeclarationBuilder {
         });
         tools.push(LlmToolDecl {
             name: "lookup_web_api".into(),
-            description: "Look up Tizen Web API reference documentation. Use 'list', 'read', or 'search'.".into(),
+            description:
+                "Look up Tizen Web API reference documentation. Use 'list', 'read', or 'search'."
+                    .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "operation": {"type": "string", "enum": ["list", "read", "search"]},
                     "path": {"type": "string", "description": "Doc path for 'read'"},
                     "query": {"type": "string", "description": "Keyword for 'search'"}
+                },
+                "required": ["operation"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "send_outbound_message".into(),
+            description: "Send a user-facing outbound update to one or more channels such as web_dashboard or telegram.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "channels": {
+                        "type": "array",
+                        "description": "Target channel names",
+                        "items": {
+                            "type": "string",
+                            "enum": ["web_dashboard", "telegram"]
+                        },
+                        "minItems": 1
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Main message body to deliver"
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Optional short title for dashboards or rich notifications"
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Optional session id associated with the outbound update"
+                    }
+                },
+                "required": ["channels", "message"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "file_manager".into(),
+            description: "Manage files and directories directly in the workspace using explicit operations such as read, write, append, list, mkdir, stat, copy, move, remove, and download. Prefer this over generated-code execution for normal file management tasks.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["read", "write", "append", "remove", "mkdir", "list", "stat", "copy", "move", "download"],
+                        "description": "File operation to execute"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Target file or directory path for operations that use a single path"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write or append"
+                    },
+                    "src": {
+                        "type": "string",
+                        "description": "Source path for copy or move"
+                    },
+                    "dst": {
+                        "type": "string",
+                        "description": "Destination path for copy or move"
+                    },
+                    "url": {
+                        "type": "string",
+                        "description": "Download URL for the download operation"
+                    },
+                    "dest": {
+                        "type": "string",
+                        "description": "Destination path for the download operation"
+                    }
+                },
+                "required": ["operation"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "file_write".into(),
+            description: "Write content to a file at the specified path in the workspace. Creates parent directories if needed. Use this when you need to create or overwrite a file without executing code. For paths without a leading '/', the file is created relative to the current workspace directory.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path to write to (relative to workspace or absolute)"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write to the file"
+                    }
+                },
+                "required": ["path", "content"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "clear_agent_data".into(),
+            description: "Delete daemon-managed memory and/or session data when the user explicitly asks to wipe stored context. This clears persistent memory files plus session transcripts, token usage, and workdirs.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "include_memory": {
+                        "type": "boolean",
+                        "description": "Whether to delete persistent memory entries and memory markdown files"
+                    },
+                    "include_sessions": {
+                        "type": "boolean",
+                        "description": "Whether to delete session transcripts, token usage history, and session workdirs"
+                    }
+                },
+                "required": []
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "run_coding_agent".into(),
+            description: "Run a configured local coding-agent CLI such as codex, gemini, claude, or a config-defined custom backend. Use this when repository or implementation work should be delegated to the host coding agent through TizenClaw.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "The development task to run through the coding agent"
+                    },
+                    "backend": {
+                        "type": "string",
+                        "description": "Optional coding backend override such as codex, gemini, or claude"
+                    },
+                    "project_dir": {
+                        "type": "string",
+                        "description": "Optional project directory override for the coding agent"
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Optional coding model override"
+                    },
+                    "execution_mode": {
+                        "type": "string",
+                        "enum": ["plan", "fast"],
+                        "description": "Optional coding execution style"
+                    },
+                    "auto_approve": {
+                        "type": "boolean",
+                        "description": "Whether to enable the coding backend auto-approve mode"
+                    },
+                    "timeout_secs": {
+                        "type": "integer",
+                        "description": "Optional timeout override in seconds"
+                    }
+                },
+                "required": ["prompt"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "run_generated_code".into(),
+            description: "Write generated Python, Node.js, or Bash code under the device-owned codes directory and execute it immediately. If the first non-empty line is a comment containing the exact allowed absolute output file path, the same script may also be persisted there. When the user asks you to create script files under specific directories, do not answer with fenced code or prose; use this tool. Use this for executable scripts only. Do not use it for HTML/CSS/JS browser apps or webview content; use generate_web_app for those.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "runtime": {
+                        "type": "string",
+                        "enum": ["python", "python3", "node", "bash"],
+                        "description": "Interpreter used to execute the generated code"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Optional human-readable script name used in the saved filename"
+                    },
+                    "code": {"type": "string", "description": "Full source code to write into a reusable script file before execution"},
+                    "args": {"type": "string", "description": "Optional command-line arguments passed to the generated script as a single shell-style string"}
+                },
+                "required": ["runtime", "code"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "manage_generated_code".into(),
+            description: "List or delete generated code files stored under the device-owned codes directory. Use this when the user asks to inspect, clean up, or remove generated scripts.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": ["list", "delete", "delete_all"],
+                        "description": "Management action to perform on stored generated code"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Exact filename to delete when operation is 'delete'"
+                    }
                 },
                 "required": ["operation"]
             }),
@@ -74,7 +335,12 @@ impl ToolDeclarationBuilder {
                 "type": "object",
                 "properties": {
                     "schedule": {"type": "string", "description": "Schedule expression"},
-                    "prompt": {"type": "string", "description": "The prompt to execute"}
+                    "prompt": {"type": "string", "description": "The prompt to execute"},
+                    "project_dir": {"type": "string", "description": "Optional project directory to preserve for scheduled development work"},
+                    "coding_backend": {"type": "string", "description": "Optional coding backend default such as codex, gemini, or claude"},
+                    "coding_model": {"type": "string", "description": "Optional coding model default"},
+                    "execution_mode": {"type": "string", "enum": ["plan", "fast"], "description": "Optional coding execution style for scheduled development work"},
+                    "auto_approve": {"type": "boolean", "description": "Optional coding auto-approve default for the scheduled task"}
                 },
                 "required": ["schedule", "prompt"]
             }),
@@ -162,14 +428,17 @@ impl ToolDeclarationBuilder {
     fn push_session_tools(tools: &mut Vec<LlmToolDecl>) {
         tools.push(LlmToolDecl {
             name: "create_session".into(),
-            description: "Create a new agent session with a custom system prompt.".into(),
+            description: "Create a new agent session with a custom system prompt or an existing role profile.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Short name for the session"},
-                    "system_prompt": {"type": "string", "description": "Custom system prompt"}
+                    "system_prompt": {"type": "string", "description": "Custom system prompt"},
+                    "role": {"type": "string", "description": "Optional built-in or dynamic role name"},
+                    "prompt_mode": {"type": "string", "enum": ["full", "minimal"]},
+                    "reasoning_policy": {"type": "string", "enum": ["native", "tagged"]}
                 },
-                "required": ["name", "system_prompt"]
+                "required": ["name"]
             }),
         });
         tools.push(LlmToolDecl {
@@ -205,7 +474,8 @@ impl ToolDeclarationBuilder {
     fn push_workflow_tools(tools: &mut Vec<LlmToolDecl>) {
         tools.push(LlmToolDecl {
             name: "create_pipeline".into(),
-            description: "Create a multi-step pipeline for deterministic workflow execution.".into(),
+            description: "Create a multi-step pipeline for deterministic workflow execution."
+                .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -264,20 +534,21 @@ impl ToolDeclarationBuilder {
         });
         tools.push(LlmToolDecl {
             name: "create_skill".into(),
-            description: "Create a reusable textual skill (workflow instructions) that the agent will intrinsically learn and recall in future sessions.".into(),
+            description: "Create a reusable Anthropic-style textual skill. The daemon normalizes the skill name and writes a canonical SKILL.md workflow document.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string", "description": "Skill identifier (e.g. 'fetch_time', 'analyze_logs')"},
-                    "description": {"type": "string", "description": "Short description of what the skill accomplishes"},
-                    "content": {"type": "string", "description": "Full Markdown content for the skill, including instructions and steps."}
+                    "name": {"type": "string", "description": "Requested skill identifier; it will be normalized to lowercase letters, numbers, and hyphens."},
+                    "description": {"type": "string", "description": "Third-person discovery description for Anthropic skill selection."},
+                    "content": {"type": "string", "description": "Markdown body for the skill. The daemon will rebuild the YAML frontmatter."}
                 },
                 "required": ["name", "description", "content"]
             }),
         });
         tools.push(LlmToolDecl {
             name: "read_skill".into(),
-            description: "Read the exact markdown content of a previously created textual skill.".into(),
+            description: "Read the exact markdown content of a previously created textual skill."
+                .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -286,12 +557,78 @@ impl ToolDeclarationBuilder {
                 "required": ["name"]
             }),
         });
+        tools.push(LlmToolDecl {
+            name: "list_skill_references".into(),
+            description:
+                "List the packaged Anthropic skill-reference documents installed on the device."
+                    .into(),
+            parameters: json!({"type": "object", "properties": {}, "required": []}),
+        });
+        tools.push(LlmToolDecl {
+            name: "read_skill_reference".into(),
+            description: "Read a packaged Anthropic skill-reference document such as SKILL_BEST_PRACTICE.md before creating or revising a skill.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Reference document file name or stem. Empty uses the default best-practice guide."}
+                },
+                "required": []
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "generate_web_app".into(),
+            description: "Generate or update a web application served by the web dashboard at /apps/<app_id>/. Supports HTML/CSS/JS files, optional asset downloads, bridge tool allowlists, and best-effort bridge or webview launch on Tizen.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "app_id": {
+                        "type": "string",
+                        "description": "Unique identifier for the app (lowercase alphanumeric + underscore, max 64 chars)"
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Display title for the web app"
+                    },
+                    "html": {
+                        "type": "string",
+                        "description": "Complete HTML content. Can be a single-file app or reference style.css and app.js"
+                    },
+                    "css": {
+                        "type": "string",
+                        "description": "Optional separate CSS stylesheet saved as style.css"
+                    },
+                    "js": {
+                        "type": "string",
+                        "description": "Optional separate JavaScript code saved as app.js"
+                    },
+                    "assets": {
+                        "type": "array",
+                        "description": "Optional external assets to download. Each item is {url, filename}. Max 10MB per file.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "url": {"type": "string", "description": "Asset download URL"},
+                                "filename": {"type": "string", "description": "Local filename such as logo.png"}
+                            }
+                        }
+                    },
+                    "allowed_tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional tool names this app may call via the bridge API"
+                    }
+                },
+                "required": ["app_id", "title", "html"]
+            }),
+        });
     }
 
     fn push_agent_tools(tools: &mut Vec<LlmToolDecl>) {
         tools.push(LlmToolDecl {
             name: "run_supervisor".into(),
-            description: "Decompose a complex goal into sub-tasks and delegate to specialized role agents.".into(),
+            description:
+                "Decompose a complex goal into sub-tasks and delegate to specialized role agents."
+                    .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -308,29 +645,114 @@ impl ToolDeclarationBuilder {
         });
         tools.push(LlmToolDecl {
             name: "spawn_agent".into(),
-            description: "Create a new specialized agent with a custom role definition.".into(),
+            description:
+                "Create a new specialized agent role definition that can be used by new sessions."
+                    .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Unique name"},
                     "system_prompt": {"type": "string", "description": "System prompt"},
                     "allowed_tools": {"type": "array", "items": {"type": "string"}},
-                    "max_iterations": {"type": "integer"}
+                    "max_iterations": {
+                        "type": "integer",
+                        "description": "Maximum tool-call rounds for the role. Use 0 to disable the cap."
+                    },
+                    "description": {"type": "string"},
+                    "type": {"type": "string", "enum": ["worker", "supervisor"]},
+                    "auto_start": {"type": "boolean"},
+                    "can_delegate_to": {"type": "array", "items": {"type": "string"}},
+                    "prompt_mode": {"type": "string", "enum": ["full", "minimal"]},
+                    "reasoning_policy": {"type": "string", "enum": ["native", "tagged"]}
                 },
                 "required": ["name", "system_prompt"]
             }),
         });
     }
 
+    fn push_research_tools(tools: &mut Vec<LlmToolDecl>) {
+        tools.push(LlmToolDecl {
+            name: "web_search".into(),
+            description: "Search the web using the configured search provider stack and return normalized result snippets.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "engine": {"type": "string", "description": "Optional engine override"},
+                    "limit": {"type": "integer", "description": "Maximum number of results to keep", "minimum": 1, "maximum": 10}
+                },
+                "required": ["query"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "validate_web_search".into(),
+            description: "Inspect search configuration and report which engines are ready to use."
+                .into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "engine": {"type": "string", "description": "Optional engine name to validate"}
+                },
+                "required": []
+            }),
+        });
+    }
+
+    fn push_document_tools(tools: &mut Vec<LlmToolDecl>) {
+        tools.push(LlmToolDecl {
+            name: "extract_document_text".into(),
+            description: "Extract readable text from a local document such as TXT, Markdown, JSON, CSV, or PDF.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Document path to read"},
+                    "output_path": {"type": "string", "description": "Optional text output file path"},
+                    "max_chars": {"type": "integer", "description": "Optional maximum number of characters to return inline", "minimum": 1}
+                },
+                "required": ["path"]
+            }),
+        });
+        tools.push(LlmToolDecl {
+            name: "inspect_tabular_data".into(),
+            description: "Inspect CSV or XLSX files and return sheet, header, row count, and preview information.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Tabular file path"},
+                    "preview_rows": {"type": "integer", "description": "Preview row count per sheet", "minimum": 1, "maximum": 20}
+                },
+                "required": ["path"]
+            }),
+        });
+    }
+
+    fn push_image_tools(tools: &mut Vec<LlmToolDecl>) {
+        tools.push(LlmToolDecl {
+            name: "generate_image".into(),
+            description: "Generate an image from a text prompt and save it into the active workdir.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string", "description": "Image prompt"},
+                    "path": {"type": "string", "description": "Relative or absolute output path for the image file"},
+                    "size": {"type": "string", "description": "Optional image size such as 1024x1024"},
+                    "background": {"type": "string", "description": "Optional background preference"}
+                },
+                "required": ["prompt", "path"]
+            }),
+        });
+    }
+
     /// Build declarations from system CLI tools.
     pub fn build_from_system_cli(cli_tools: &[(String, String, Value)]) -> Vec<LlmToolDecl> {
-        cli_tools.iter().map(|(name, desc, params)| {
-            LlmToolDecl {
+        cli_tools
+            .iter()
+            .map(|(name, desc, params)| LlmToolDecl {
                 name: format!("execute_cli_{}", name),
                 description: desc.clone(),
                 parameters: params.clone(),
-            }
-        }).collect()
+            })
+            .collect()
     }
 }
 
@@ -344,9 +766,12 @@ mod tests {
         ToolDeclarationBuilder::append_builtin_tools(&mut tools, "what is my agent status?");
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"get_agent_status"));
+        assert!(names.contains(&"send_outbound_message"));
+        assert!(names.contains(&"run_generated_code"));
+        assert!(names.contains(&"manage_generated_code"));
         // Task tools shouldn't be here since task intent is missing
         assert!(!names.contains(&"create_task"));
-        
+
         let mut tools2 = vec![];
         ToolDeclarationBuilder::append_builtin_tools(&mut tools2, "create a new task");
         let names2: Vec<&str> = tools2.iter().map(|t| t.name.as_str()).collect();
@@ -354,12 +779,39 @@ mod tests {
     }
 
     #[test]
+    fn test_append_all_builtin_tools_includes_workflow_and_agent_tools() {
+        let mut tools = vec![];
+        ToolDeclarationBuilder::append_all_builtin_tools(&mut tools);
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+
+        assert!(names.contains(&"create_task"));
+        assert!(names.contains(&"run_supervisor"));
+        assert!(names.contains(&"create_session"));
+        assert!(names.contains(&"search_knowledge"));
+        assert!(names.contains(&"generate_image"));
+        assert!(names.contains(&"file_manager"));
+        assert!(names.contains(&"run_coding_agent"));
+    }
+
+    #[test]
+    fn test_append_builtin_tools_all_shortcut_expands_everything() {
+        let mut tools = vec![];
+        ToolDeclarationBuilder::append_builtin_tools(&mut tools, "ALL");
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+
+        assert!(names.contains(&"create_task"));
+        assert!(names.contains(&"run_supervisor"));
+        assert!(names.contains(&"create_session"));
+    }
+
+    #[test]
     fn test_build_from_system_cli() {
-        let cli_tools = vec![
-            ("wifi".into(), "Manage WiFi".into(), json!({"type": "object", "properties": {}})),
-        ];
+        let cli_tools = vec![(
+            "wifi".into(),
+            "Manage WiFi".into(),
+            json!({"type": "object", "properties": {}}),
+        )];
         let tools = ToolDeclarationBuilder::build_from_system_cli(&cli_tools);
         assert_eq!(tools[0].name, "execute_cli_wifi");
     }
 }
-

@@ -36,7 +36,9 @@ impl Default for PipelineExecutor {
 
 impl PipelineExecutor {
     pub fn new() -> Self {
-        PipelineExecutor { pipelines: HashMap::new() }
+        PipelineExecutor {
+            pipelines: HashMap::new(),
+        }
     }
 
     pub fn load_pipelines(&mut self) {
@@ -44,7 +46,16 @@ impl PipelineExecutor {
     }
 
     pub fn load_pipelines_from(&mut self, dir: &str) {
-        let dir = if dir.is_empty() { "/opt/usr/share/tizenclaw/pipelines" } else { dir };
+        let owned_default;
+        let dir = if dir.is_empty() {
+            owned_default = crate::core::runtime_paths::default_data_dir()
+                .join("pipelines")
+                .to_string_lossy()
+                .to_string();
+            owned_default.as_str()
+        } else {
+            dir
+        };
         if let Ok(content) = std::fs::read_to_string(format!("{}/pipelines.json", dir)) {
             if let Ok(config) = serde_json::from_str::<Value>(&content) {
                 if let Some(arr) = config["pipelines"].as_array() {
@@ -56,7 +67,10 @@ impl PipelineExecutor {
                 }
             }
         }
-        log::info!("PipelineExecutor: loaded {} pipelines", self.pipelines.len());
+        log::info!(
+            "PipelineExecutor: loaded {} pipelines",
+            self.pipelines.len()
+        );
     }
 
     pub fn create_pipeline(&mut self, pipeline: Pipeline) -> String {
@@ -71,7 +85,11 @@ impl PipelineExecutor {
             None => return json!({"error": format!("Pipeline not found: {}", pipeline_id)}),
         };
 
-        log::debug!("Executing pipeline '{}' ({} steps)", pipeline.name, pipeline.steps.len());
+        log::debug!(
+            "Executing pipeline '{}' ({} steps)",
+            pipeline.name,
+            pipeline.steps.len()
+        );
         let mut vars: HashMap<String, String> = HashMap::new();
         if let Some(obj) = input_vars.as_object() {
             for (k, v) in obj {
@@ -96,10 +114,15 @@ impl PipelineExecutor {
     }
 
     pub fn list_pipelines(&self) -> Vec<Value> {
-        self.pipelines.values().map(|p| json!({
-            "id": p.id, "name": p.name, "description": p.description,
-            "trigger": p.trigger, "step_count": p.steps.len()
-        })).collect()
+        self.pipelines
+            .values()
+            .map(|p| {
+                json!({
+                    "id": p.id, "name": p.name, "description": p.description,
+                    "trigger": p.trigger, "step_count": p.steps.len()
+                })
+            })
+            .collect()
     }
 
     pub fn delete_pipeline(&mut self, id: &str) -> bool {
@@ -108,25 +131,35 @@ impl PipelineExecutor {
 
     fn parse_pipeline(v: &Value) -> Option<Pipeline> {
         let name = v["name"].as_str()?.to_string();
-        let id = v.get("id").and_then(|v| v.as_str())
-            .unwrap_or(&name).to_lowercase().replace(' ', "_");
-        let steps = v["steps"].as_array().map(|arr| {
-            arr.iter().filter_map(|s| {
-                Some(PipelineStep {
-                    id: s["id"].as_str()?.to_string(),
-                    step_type: s["type"].as_str().unwrap_or("tool").to_string(),
-                    tool_name: s["tool_name"].as_str().unwrap_or("").to_string(),
-                    args: s.get("args").cloned().unwrap_or(Value::Null),
-                    prompt: s["prompt"].as_str().unwrap_or("").to_string(),
-                    output_var: s["output_var"].as_str().unwrap_or("").to_string(),
-                    skip_on_failure: s["skip_on_failure"].as_bool().unwrap_or(false),
-                    max_retries: s["max_retries"].as_u64().unwrap_or(0) as usize,
-                })
-            }).collect()
-        }).unwrap_or_default();
+        let id = v
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&name)
+            .to_lowercase()
+            .replace(' ', "_");
+        let steps = v["steps"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|s| {
+                        Some(PipelineStep {
+                            id: s["id"].as_str()?.to_string(),
+                            step_type: s["type"].as_str().unwrap_or("tool").to_string(),
+                            tool_name: s["tool_name"].as_str().unwrap_or("").to_string(),
+                            args: s.get("args").cloned().unwrap_or(Value::Null),
+                            prompt: s["prompt"].as_str().unwrap_or("").to_string(),
+                            output_var: s["output_var"].as_str().unwrap_or("").to_string(),
+                            skip_on_failure: s["skip_on_failure"].as_bool().unwrap_or(false),
+                            max_retries: s["max_retries"].as_u64().unwrap_or(0) as usize,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         Some(Pipeline {
-            id, name,
+            id,
+            name,
             description: v["description"].as_str().unwrap_or("").to_string(),
             trigger: v["trigger"].as_str().unwrap_or("manual").to_string(),
             steps,
@@ -144,14 +177,16 @@ mod tests {
             name: "Test Pipeline".into(),
             description: "A test".into(),
             trigger: "manual".into(),
-            steps: vec![
-                PipelineStep {
-                    id: "s1".into(), step_type: "tool".into(),
-                    tool_name: "test_tool".into(), args: json!({}),
-                    prompt: String::new(), output_var: "out".into(),
-                    skip_on_failure: false, max_retries: 1,
-                },
-            ],
+            steps: vec![PipelineStep {
+                id: "s1".into(),
+                step_type: "tool".into(),
+                tool_name: "test_tool".into(),
+                args: json!({}),
+                prompt: String::new(),
+                output_var: "out".into(),
+                skip_on_failure: false,
+                max_retries: 1,
+            }],
         }
     }
 
@@ -212,4 +247,3 @@ mod tests {
         assert_eq!(p.steps[0].tool_name, "exec");
     }
 }
-

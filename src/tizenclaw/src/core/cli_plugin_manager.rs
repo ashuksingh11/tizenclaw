@@ -48,12 +48,17 @@ impl CliPluginManager {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_dir() { continue; }
-            let pkg_id = path.file_name()
+            if !path.is_dir() {
+                continue;
+            }
+            let pkg_id = path
+                .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
-            if pkg_id.is_empty() { continue; }
+            if pkg_id.is_empty() {
+                continue;
+            }
 
             // Look for metadata JSON
             let meta_path = path.join("cli_metadata.json");
@@ -70,25 +75,32 @@ impl CliPluginManager {
                 (pkg_id.clone(), String::new())
             };
 
-            self.plugins.insert(pkg_id.clone(), CliPluginInfo {
-                package_id: pkg_id,
-                tool_name,
-                binary_path: binary,
-                enabled: true,
-            });
+            self.plugins.insert(
+                pkg_id.clone(),
+                CliPluginInfo {
+                    package_id: pkg_id,
+                    tool_name,
+                    binary_path: binary,
+                    enabled: true,
+                },
+            );
         }
     }
 
     pub fn on_package_installed(&mut self, package_id: &str) {
         log::debug!("CliPluginManager: package installed: {}", package_id);
         self.scan_installed_plugins();
-        if let Some(cb) = &self.on_change { cb(); }
+        if let Some(cb) = &self.on_change {
+            cb();
+        }
     }
 
     pub fn on_package_uninstalled(&mut self, package_id: &str) {
         log::debug!("CliPluginManager: package uninstalled: {}", package_id);
         self.plugins.remove(package_id);
-        if let Some(cb) = &self.on_change { cb(); }
+        if let Some(cb) = &self.on_change {
+            cb();
+        }
     }
 
     pub fn get_all_plugins(&self) -> Vec<&CliPluginInfo> {

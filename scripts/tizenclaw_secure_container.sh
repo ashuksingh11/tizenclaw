@@ -157,9 +157,9 @@ write_config() {
       "options": ["rbind", "rw"]
     },
     {
-      "destination": "/opt/usr/share/tizen-tools/cli",
+      "destination": "/opt/usr/share/tizenclaw/tools/cli",
       "type": "bind",
-      "source": "/opt/usr/share/tizen-tools/cli",
+      "source": "/opt/usr/share/tizenclaw/tools/cli",
       "options": ["rbind", "ro"]
     }${OPTIONAL_MOUNTS}
   ],
@@ -280,7 +280,7 @@ run_without_container() {
   local CMD="mount --make-rprivate / || true"
   CMD="$CMD; mount -t proc proc \"$R/proc\" || true"
   CMD="$CMD; mount --rbind /dev \"$R/dev\" || true"
-  CMD="$CMD; mount --rbind \"/opt/usr/share/tizen-tools/skills\" \"$R/skills\" || true"
+  CMD="$CMD; mount --rbind \"/opt/usr/share/tizenclaw/workspace/skills\" \"$R/skills\" || true"
   CMD="$CMD; mount --rbind \"${APP_DATA_DIR}/data\" \"$R/data\" || true"
   CMD="$CMD; mount --rbind /tmp \"$R/tmp\" || true"
 
@@ -323,9 +323,9 @@ run_without_container() {
 
 
   # CLI tools (ro)
-  mkdir -p "$R/opt/usr/share/tizen-tools/cli"
-  CMD="$CMD; mount --rbind \"/opt/usr/share/tizen-tools/cli\" \"$R/opt/usr/share/tizen-tools/cli\" || true"
-  CMD="$CMD; mount -o remount,bind,ro \"$R/opt/usr/share/tizen-tools/cli\" || true"
+  mkdir -p "$R/opt/usr/share/tizenclaw/tools/cli"
+  CMD="$CMD; mount --rbind \"/opt/usr/share/tizenclaw/tools/cli\" \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
+  CMD="$CMD; mount -o remount,bind,ro \"$R/opt/usr/share/tizenclaw/tools/cli\" || true"
 
   CMD="$CMD; exec chroot \"$R\" /usr/bin/sh -c 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin; export PYTHONPATH=/packages/pip; export PIP_TARGET=/packages/pip; export NPM_CONFIG_PREFIX=/packages/npm; export NODE_PATH=/packages/npm/lib/node_modules; LD_LIBRARY_PATH=/lib64:/host_lib:/usr/lib64:/usr/lib:/host_usr_lib:/host_usr_lib64 exec /usr/bin/python3 /sandbox/tizenclaw_code_executor.py'"
 

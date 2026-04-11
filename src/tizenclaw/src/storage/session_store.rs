@@ -21,8 +21,9 @@
 //! persists the result via `save_compacted()`. The file is written atomically
 //! (`.compacted.tmp` → rename) to protect against partial writes on flash.
 
+use crate::llm::backend::{LlmMessage, LlmToolCall};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -34,15 +35,102 @@ use std::sync::{Arc, RwLock};
 pub struct SessionMessage {
     pub role: String,
     pub text: String,
+    #[serde(default)]
+    pub reasoning_text: String,
+    #[serde(default)]
+    pub tool_calls: Vec<LlmToolCall>,
+    #[serde(default)]
+    pub tool_name: String,
+    #[serde(default)]
+    pub tool_call_id: String,
+    #[serde(default)]
+    pub tool_result: Value,
     pub timestamp: String,
+}
+
+impl SessionMessage {
+    pub fn from_llm_message(message: &LlmMessage) -> Self {
+        Self {
+            role: message.role.clone(),
+            text: message.text.clone(),
+            reasoning_text: message.reasoning_text.clone(),
+            tool_calls: message.tool_calls.clone(),
+            tool_name: message.tool_name.clone(),
+            tool_call_id: message.tool_call_id.clone(),
+            tool_result: message.tool_result.clone(),
+            timestamp: String::new(),
+        }
+    }
+
+    pub fn into_llm_message(self) -> LlmMessage {
+        LlmMessage {
+            role: self.role,
+            text: self.text,
+            reasoning_text: self.reasoning_text,
+            tool_calls: self.tool_calls,
+            tool_name: self.tool_name,
+            tool_call_id: self.tool_call_id,
+            tool_result: self.tool_result,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct TokenUsage {
     pub total_prompt_tokens: i64,
     pub total_completion_tokens: i64,
+    pub total_cache_creation_input_tokens: i64,
+    pub total_cache_read_input_tokens: i64,
     pub total_requests: i64,
     pub entries: Vec<Value>,
+}
+
+impl TokenUsage {
+    pub fn to_json(&self) -> Value {
+        json!({
+            "prompt_tokens": self.total_prompt_tokens,
+            "completion_tokens": self.total_completion_tokens,
+            "cache_creation_input_tokens": self.total_cache_creation_input_tokens,
+            "cache_read_input_tokens": self.total_cache_read_input_tokens,
+            "total_requests": self.total_requests
+        })
+    }
+
+    pub fn from_json(value: Option<&Value>) -> Self {
+        let Some(value) = value else {
+            return Self::default();
+        };
+
+        let read_i64 = |name: &str| value.get(name).and_then(|v| v.as_i64()).unwrap_or(0);
+
+        Self {
+            total_prompt_tokens: read_i64("prompt_tokens"),
+            total_completion_tokens: read_i64("completion_tokens"),
+            total_cache_creation_input_tokens: read_i64("cache_creation_input_tokens"),
+            total_cache_read_input_tokens: read_i64("cache_read_input_tokens"),
+            total_requests: read_i64("total_requests"),
+            entries: Vec::new(),
+        }
+    }
+
+    pub fn diff_from(&self, baseline: &TokenUsage) -> Self {
+        Self {
+            total_prompt_tokens: self
+                .total_prompt_tokens
+                .saturating_sub(baseline.total_prompt_tokens),
+            total_completion_tokens: self
+                .total_completion_tokens
+                .saturating_sub(baseline.total_completion_tokens),
+            total_cache_creation_input_tokens: self
+                .total_cache_creation_input_tokens
+                .saturating_sub(baseline.total_cache_creation_input_tokens),
+            total_cache_read_input_tokens: self
+                .total_cache_read_input_tokens
+                .saturating_sub(baseline.total_cache_read_input_tokens),
+            total_requests: self.total_requests.saturating_sub(baseline.total_requests),
+            entries: Vec::new(),
+        }
+    }
 }
 
 // ─── SessionStore ─────────────────────────────────────────────────────────────
@@ -58,9 +146,38 @@ pub struct SessionStore {
     lock: Arc<RwLock<()>>,
 }
 
+fn normalize_markdown_block(content: &str) -> Option<String> {
+    let mut lines = Vec::new();
+    let mut blank_run = 0usize;
+
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            blank_run += 1;
+            if !lines.is_empty() && blank_run == 1 {
+                lines.push(String::new());
+            }
+            continue;
+        }
+
+        blank_run = 0;
+        lines.push(line.to_string());
+    }
+
+    while matches!(lines.last(), Some(line) if line.is_empty()) {
+        lines.pop();
+    }
+
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
 impl SessionStore {
-    pub fn new(db_path: &str) -> Result<Self, String> {
-        let base_dir = PathBuf::from("/opt/usr/share/tizenclaw");
+    pub fn new(base_dir: &Path, db_path: &str) -> Result<Self, String> {
+        let base_dir = base_dir.to_path_buf();
         let sessions_root = base_dir.join("sessions");
         let audit_dir = base_dir.join("audit");
 
@@ -80,9 +197,13 @@ impl SessionStore {
                 date TEXT NOT NULL,
                 model TEXT NOT NULL,
                 prompt_tokens INTEGER DEFAULT 0,
-                completion_tokens INTEGER DEFAULT 0
-            );"
-        ).map_err(|e| e.to_string())?;
+                completion_tokens INTEGER DEFAULT 0,
+                cache_creation_input_tokens INTEGER DEFAULT 0,
+                cache_read_input_tokens INTEGER DEFAULT 0
+            );",
+        )
+        .map_err(|e| e.to_string())?;
+        Self::ensure_token_usage_columns(&conn).map_err(|e| e.to_string())?;
 
         Ok(SessionStore {
             base_dir,
@@ -104,9 +225,26 @@ impl SessionStore {
             .join(format!("{}.md", today_date_str()))
     }
 
+    /// Structured transcript file used by benchmark-style evaluators.
+    fn transcript_path(&self, session_id: &str) -> PathBuf {
+        self.session_dir(session_id).join("transcript.jsonl")
+    }
+
     /// Compaction snapshot: `sessions/{session_id}/compacted.md`
     fn compacted_path(&self, session_id: &str) -> PathBuf {
         self.session_dir(session_id).join("compacted.md")
+    }
+
+    /// Structured compaction snapshot preserving tool-call history.
+    fn compacted_structured_path(&self, session_id: &str) -> PathBuf {
+        self.session_dir(session_id).join("compacted.jsonl")
+    }
+
+    /// Session-scoped working directory for file-oriented tasks.
+    pub fn session_workdir(&self, session_id: &str) -> PathBuf {
+        let dir = self.base_dir.join("workdirs").join(session_id);
+        let _ = fs::create_dir_all(&dir);
+        dir
     }
 
     // ── Session lifecycle ─────────────────────────────────────────────────────
@@ -115,11 +253,17 @@ impl SessionStore {
     pub fn ensure_session(&self, session_id: &str) {
         let dir = self.session_dir(session_id);
         let _ = fs::create_dir_all(&dir);
+        let _ = fs::create_dir_all(self.base_dir.join("workdirs").join(session_id));
 
         let path = self.session_file_today(session_id);
         if !path.exists() {
             let _g = self.lock.write().unwrap();
-            if let Ok(mut f) = OpenOptions::new().create(true).write(true).open(&path) {
+            if let Ok(mut f) = OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&path)
+            {
                 let front = format!(
                     "---\nid: {}\ndate: {}\n---\n\n",
                     session_id,
@@ -145,13 +289,94 @@ impl SessionStore {
 
     /// Append a message to today's session file.
     pub fn add_message(&self, session_id: &str, role: &str, content: &str) {
+        let Some(normalized) = normalize_markdown_block(content) else {
+            return;
+        };
         self.ensure_session(session_id);
         let path = self.session_file_today(session_id);
         let _g = self.lock.write().unwrap();
         if let Ok(mut file) = OpenOptions::new().append(true).open(&path) {
-            let block = format!("## {}\n{}\n\n", role, content);
+            let block = format!("## {}\n{}\n\n", role, normalized);
             let _ = file.write_all(block.as_bytes());
         }
+    }
+
+    pub fn add_structured_user_message(&self, session_id: &str, content: &str) {
+        let Some(normalized) = normalize_markdown_block(content) else {
+            return;
+        };
+        self.append_structured_event(
+            session_id,
+            &json!({
+                "type": "message",
+                "message": {
+                    "role": "user",
+                    "content": [normalized]
+                }
+            }),
+        );
+    }
+
+    pub fn add_structured_assistant_text_message(&self, session_id: &str, content: &str) {
+        let Some(normalized) = normalize_markdown_block(content) else {
+            return;
+        };
+        self.append_structured_event(
+            session_id,
+            &json!({
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "text",
+                        "text": normalized
+                    }]
+                }
+            }),
+        );
+    }
+
+    pub fn add_structured_tool_call_message(&self, session_id: &str, content: Vec<Value>) {
+        if content.is_empty() {
+            return;
+        }
+        self.append_structured_event(
+            session_id,
+            &json!({
+                "type": "message",
+                "message": {
+                    "role": "assistant",
+                    "content": content
+                }
+            }),
+        );
+    }
+
+    pub fn add_structured_tool_result_message(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        tool_call_id: &str,
+        result: &Value,
+    ) {
+        let rendered = if let Some(text) = result.as_str() {
+            text.to_string()
+        } else {
+            result.to_string()
+        };
+
+        self.append_structured_event(
+            session_id,
+            &json!({
+                "type": "message",
+                "message": {
+                    "role": "toolResult",
+                    "tool_name": tool_name,
+                    "tool_call_id": tool_call_id,
+                    "content": [rendered]
+                }
+            }),
+        );
     }
 
     // ── Context loading (primary API) ────────────────────────────────────────
@@ -166,20 +391,40 @@ impl SessionStore {
         session_id: &str,
         limit: usize,
     ) -> (Vec<SessionMessage>, bool) {
-        let compacted = self.load_compacted(session_id);
+        let compacted = {
+            let structured = self.load_compacted_structured(session_id);
+            if structured.is_empty() {
+                self.load_compacted(session_id)
+            } else {
+                structured
+            }
+        };
         let from_compacted = !compacted.is_empty();
 
         let merged = if from_compacted {
-            // Load today's file; append only messages that came AFTER the
-            // compaction (avoid re-adding messages already in the snapshot).
-            let today = self.load_file(&self.session_file_today(session_id));
-            let new_msgs = deduplicate_after_compacted(&compacted, &today);
+            // Load the structured transcript and append only messages that came
+            // after the compaction snapshot. Fall back to today's markdown file
+            // for legacy sessions created before transcript logging existed.
+            let transcript = self.load_transcript_messages(session_id);
+            let new_msgs = if transcript.is_empty() {
+                let today = self.load_file(&self.session_file_today(session_id));
+                deduplicate_after_compacted(&compacted, &today)
+            } else {
+                deduplicate_after_compacted(&compacted, &transcript)
+            };
             let mut out = compacted;
             out.extend(new_msgs);
             out
         } else {
-            // No compaction snapshot — collect all day-files for this session
-            self.load_all_historical(session_id, limit * 3) // generous pre-limit
+            // Prefer the structured transcript when available because it keeps
+            // tool calls/results as first-class conversation history.
+            let transcript = self.load_transcript_messages(session_id);
+            if transcript.is_empty() {
+                self.load_all_historical(session_id, limit * 3) // generous pre-limit
+            } else {
+                let skip = transcript.len().saturating_sub(limit * 3);
+                transcript.into_iter().skip(skip).collect()
+            }
         };
 
         // Apply tail-limit
@@ -226,7 +471,10 @@ impl SessionStore {
             messages.len()
         );
         for msg in messages {
-            content.push_str(&format!("## {}\n{}\n\n", msg.role, msg.text));
+            let Some(normalized) = normalize_markdown_block(&msg.text) else {
+                continue;
+            };
+            content.push_str(&format!("## {}\n{}\n\n", msg.role, normalized));
         }
 
         // Write temp → rename (atomic on POSIX/Tizen)
@@ -234,8 +482,7 @@ impl SessionStore {
             let _g = self.lock.write().unwrap();
             fs::write(&tmp_path, content.as_bytes())
                 .map_err(|e| format!("tmp write failed: {}", e))?;
-            fs::rename(&tmp_path, &final_path)
-                .map_err(|e| format!("rename failed: {}", e))?;
+            fs::rename(&tmp_path, &final_path).map_err(|e| format!("rename failed: {}", e))?;
         }
 
         log::debug!(
@@ -243,6 +490,39 @@ impl SessionStore {
             session_id,
             messages.len()
         );
+        Ok(())
+    }
+
+    pub fn load_compacted_structured(&self, session_id: &str) -> Vec<SessionMessage> {
+        let path = self.compacted_structured_path(session_id);
+        self.read_structured_messages(&path)
+    }
+
+    pub fn save_compacted_structured(
+        &self,
+        session_id: &str,
+        messages: &[SessionMessage],
+    ) -> Result<(), String> {
+        let dir = self.session_dir(session_id);
+        fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+        let final_path = self.compacted_structured_path(session_id);
+        let tmp_path = dir.join(".compacted_structured.tmp");
+        let serialized = messages
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+            .join("\n");
+
+        {
+            let _g = self.lock.write().unwrap();
+            fs::write(&tmp_path, serialized.as_bytes())
+                .map_err(|e| format!("structured tmp write failed: {}", e))?;
+            fs::rename(&tmp_path, &final_path)
+                .map_err(|e| format!("structured rename failed: {}", e))?;
+        }
+
         Ok(())
     }
 
@@ -262,6 +542,77 @@ impl SessionStore {
         let _ = fs::remove_file(path);
     }
 
+    pub fn clear_all(&self) -> Result<Value, String> {
+        let sessions_root = self.base_dir.join("sessions");
+        let workdirs_root = self.base_dir.join("workdirs");
+        let audit_root = self.base_dir.join("audit");
+
+        let session_entries = fs::read_dir(&sessions_root)
+            .ok()
+            .map(|entries| entries.filter_map(|entry| entry.ok()).count())
+            .unwrap_or(0);
+        let workdir_entries = fs::read_dir(&workdirs_root)
+            .ok()
+            .map(|entries| entries.filter_map(|entry| entry.ok()).count())
+            .unwrap_or(0);
+
+        if let Ok(conn) = self.db.lock() {
+            conn.execute("DELETE FROM session_index", [])
+                .map_err(|err| format!("Failed to clear session_index: {}", err))?;
+            conn.execute("DELETE FROM token_usage", [])
+                .map_err(|err| format!("Failed to clear token_usage: {}", err))?;
+        }
+
+        {
+            let _g = self.lock.write().unwrap();
+            if sessions_root.exists() {
+                fs::remove_dir_all(&sessions_root).map_err(|err| {
+                    format!(
+                        "Failed to remove sessions directory '{}': {}",
+                        sessions_root.display(),
+                        err
+                    )
+                })?;
+            }
+            if workdirs_root.exists() {
+                fs::remove_dir_all(&workdirs_root).map_err(|err| {
+                    format!(
+                        "Failed to remove workdirs directory '{}': {}",
+                        workdirs_root.display(),
+                        err
+                    )
+                })?;
+            }
+        }
+
+        fs::create_dir_all(&sessions_root).map_err(|err| {
+            format!(
+                "Failed to recreate sessions directory '{}': {}",
+                sessions_root.display(),
+                err
+            )
+        })?;
+        fs::create_dir_all(&workdirs_root).map_err(|err| {
+            format!(
+                "Failed to recreate workdirs directory '{}': {}",
+                workdirs_root.display(),
+                err
+            )
+        })?;
+        fs::create_dir_all(&audit_root).map_err(|err| {
+            format!(
+                "Failed to ensure audit directory '{}': {}",
+                audit_root.display(),
+                err
+            )
+        })?;
+
+        Ok(json!({
+            "sessions_deleted": session_entries,
+            "workdirs_deleted": workdir_entries,
+        }))
+    }
+
     // ── Token usage ──────────────────────────────────────────────────────────
 
     pub fn record_usage(
@@ -269,14 +620,31 @@ impl SessionStore {
         session_id: &str,
         prompt_tokens: i32,
         completion_tokens: i32,
+        cache_creation_input_tokens: i32,
+        cache_read_input_tokens: i32,
         model: &str,
     ) {
         if let Ok(conn) = self.db.lock() {
             let today = today_date_str();
             let _ = conn.execute(
-                "INSERT INTO token_usage (session_id, date, model, prompt_tokens, completion_tokens)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![session_id, today, model, prompt_tokens, completion_tokens],
+                "INSERT INTO token_usage (
+                    session_id,
+                    date,
+                    model,
+                    prompt_tokens,
+                    completion_tokens,
+                    cache_creation_input_tokens,
+                    cache_read_input_tokens
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    session_id,
+                    today,
+                    model,
+                    prompt_tokens,
+                    completion_tokens,
+                    cache_creation_input_tokens,
+                    cache_read_input_tokens
+                ],
             );
         }
     }
@@ -284,15 +652,31 @@ impl SessionStore {
     pub fn load_token_usage(&self, session_id: &str) -> TokenUsage {
         let mut usage = TokenUsage::default();
         if let Ok(conn) = self.db.lock() {
-            let mut stmt = conn.prepare("SELECT prompt_tokens, completion_tokens FROM token_usage WHERE session_id = ?1").unwrap();
-            let iter = stmt.query_map(rusqlite::params![session_id], |row| {
-                let p: i64 = row.get(0)?;
-                let c: i64 = row.get(1)?;
-                Ok((p, c))
-            }).unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT
+                        prompt_tokens,
+                        completion_tokens,
+                        cache_creation_input_tokens,
+                        cache_read_input_tokens
+                     FROM token_usage
+                     WHERE session_id = ?1",
+                )
+                .unwrap();
+            let iter = stmt
+                .query_map(rusqlite::params![session_id], |row| {
+                    let p: i64 = row.get(0)?;
+                    let c: i64 = row.get(1)?;
+                    let cache_create: i64 = row.get(2)?;
+                    let cache_read: i64 = row.get(3)?;
+                    Ok((p, c, cache_create, cache_read))
+                })
+                .unwrap();
             for item in iter.flatten() {
                 usage.total_prompt_tokens += item.0;
                 usage.total_completion_tokens += item.1;
+                usage.total_cache_creation_input_tokens += item.2;
+                usage.total_cache_read_input_tokens += item.3;
                 usage.total_requests += 1;
             }
         }
@@ -301,21 +685,82 @@ impl SessionStore {
 
     pub fn load_daily_usage(&self, date: &str) -> TokenUsage {
         let mut usage = TokenUsage::default();
-        let target_date = if date.is_empty() { today_date_str() } else { date.to_string() };
+        let target_date = if date.is_empty() {
+            today_date_str()
+        } else {
+            date.to_string()
+        };
         if let Ok(conn) = self.db.lock() {
-            let mut stmt = conn.prepare("SELECT prompt_tokens, completion_tokens FROM token_usage WHERE date = ?1").unwrap();
-            let iter = stmt.query_map(rusqlite::params![target_date], |row| {
-                let p: i64 = row.get(0)?;
-                let c: i64 = row.get(1)?;
-                Ok((p, c))
-            }).unwrap();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT
+                        prompt_tokens,
+                        completion_tokens,
+                        cache_creation_input_tokens,
+                        cache_read_input_tokens
+                     FROM token_usage
+                     WHERE date = ?1",
+                )
+                .unwrap();
+            let iter = stmt
+                .query_map(rusqlite::params![target_date], |row| {
+                    let p: i64 = row.get(0)?;
+                    let c: i64 = row.get(1)?;
+                    let cache_create: i64 = row.get(2)?;
+                    let cache_read: i64 = row.get(3)?;
+                    Ok((p, c, cache_create, cache_read))
+                })
+                .unwrap();
             for item in iter.flatten() {
                 usage.total_prompt_tokens += item.0;
                 usage.total_completion_tokens += item.1;
+                usage.total_cache_creation_input_tokens += item.2;
+                usage.total_cache_read_input_tokens += item.3;
                 usage.total_requests += 1;
             }
         }
         usage
+    }
+
+    fn ensure_token_usage_columns(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(token_usage)")?;
+        let column_names: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(1))?
+            .flatten()
+            .collect();
+
+        if !column_names
+            .iter()
+            .any(|name| name == "cache_creation_input_tokens")
+        {
+            conn.execute(
+                "ALTER TABLE token_usage
+                 ADD COLUMN cache_creation_input_tokens INTEGER DEFAULT 0",
+                [],
+            )?;
+        }
+        if !column_names
+            .iter()
+            .any(|name| name == "cache_read_input_tokens")
+        {
+            conn.execute(
+                "ALTER TABLE token_usage
+                 ADD COLUMN cache_read_input_tokens INTEGER DEFAULT 0",
+                [],
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn append_structured_event(&self, session_id: &str, event: &Value) {
+        self.ensure_session(session_id);
+        let path = self.transcript_path(session_id);
+        let _g = self.lock.write().unwrap();
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = file.write_all(event.to_string().as_bytes());
+            let _ = file.write_all(b"\n");
+        }
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -327,6 +772,47 @@ impl SessionStore {
             Err(_) => return vec![],
         };
         parse_session_markdown(&content)
+    }
+
+    fn read_structured_messages(&self, path: &PathBuf) -> Vec<SessionMessage> {
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return vec![],
+        };
+
+        content
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    serde_json::from_str::<SessionMessage>(trimmed).ok()
+                }
+            })
+            .collect()
+    }
+
+    fn load_transcript_messages(&self, session_id: &str) -> Vec<SessionMessage> {
+        let path = self.transcript_path(session_id);
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return vec![],
+        };
+
+        let mut messages = Vec::new();
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let Ok(event) = serde_json::from_str::<Value>(trimmed) else {
+                continue;
+            };
+            messages.extend(parse_transcript_event(&event));
+        }
+
+        messages
     }
 
     /// Load all day-files for a session, sorted oldest-first, up to `limit`.
@@ -356,7 +842,11 @@ impl SessionStore {
         }
 
         // Return last `limit` messages
-        let skip = if all.len() > limit { all.len() - limit } else { 0 };
+        let skip = if all.len() > limit {
+            all.len() - limit
+        } else {
+            0
+        };
         all.into_iter().skip(skip).collect()
     }
 }
@@ -370,17 +860,22 @@ fn parse_session_markdown(content: &str) -> Vec<SessionMessage> {
     let mut current_text: Vec<&str> = Vec::new();
 
     for line in content.lines() {
-        if line.starts_with("## ") {
+        if let Some(role_str) = line.strip_prefix("## ") {
             // Flush previous block
             if !current_role.is_empty() {
                 messages.push(SessionMessage {
                     role: current_role.clone(),
                     text: current_text.join("\n").trim().to_string(),
+                    reasoning_text: String::new(),
+                    tool_calls: Vec::new(),
+                    tool_name: String::new(),
+                    tool_call_id: String::new(),
+                    tool_result: Value::Null,
                     timestamp: String::new(),
                 });
                 current_text.clear();
             }
-            current_role = line[3..].trim().to_string();
+            current_role = role_str.trim().to_string();
         } else if !current_role.is_empty() && !line.starts_with("---") {
             current_text.push(line);
         }
@@ -390,10 +885,139 @@ fn parse_session_markdown(content: &str) -> Vec<SessionMessage> {
         messages.push(SessionMessage {
             role: current_role,
             text: current_text.join("\n").trim().to_string(),
+            reasoning_text: String::new(),
+            tool_calls: Vec::new(),
+            tool_name: String::new(),
+            tool_call_id: String::new(),
+            tool_result: Value::Null,
             timestamp: String::new(),
         });
     }
     messages
+}
+
+fn flatten_transcript_content_text(content: &Value) -> String {
+    let mut parts = Vec::new();
+    if let Some(items) = content.as_array() {
+        for item in items {
+            if let Some(text) = item.as_str() {
+                if !text.trim().is_empty() {
+                    parts.push(text.trim().to_string());
+                }
+            } else if let Some(text) = item.get("text").and_then(|value| value.as_str()) {
+                if !text.trim().is_empty() {
+                    parts.push(text.trim().to_string());
+                }
+            }
+        }
+    }
+    parts.join("\n")
+}
+
+fn parse_transcript_tool_calls(content: &Value) -> Vec<LlmToolCall> {
+    let Some(items) = content.as_array() else {
+        return Vec::new();
+    };
+
+    items
+        .iter()
+        .filter(|item| item.get("type").and_then(|value| value.as_str()) == Some("toolCall"))
+        .filter_map(|item| {
+            let name = item
+                .get("actual_tool_name")
+                .or_else(|| item.get("name"))
+                .and_then(|value| value.as_str())?;
+            let args = item
+                .get("arguments")
+                .or_else(|| item.get("params"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let id = item
+                .get("tool_call_id")
+                .or_else(|| item.get("id"))
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .to_string();
+            Some(LlmToolCall {
+                id,
+                name: name.to_string(),
+                args,
+            })
+        })
+        .collect()
+}
+
+fn parse_tool_result_content(content: &Value) -> Value {
+    let rendered = content
+        .as_array()
+        .and_then(|items| items.first())
+        .cloned()
+        .unwrap_or_else(|| content.clone());
+
+    match rendered {
+        Value::String(text) => serde_json::from_str(&text).unwrap_or(Value::String(text)),
+        other => other,
+    }
+}
+
+fn parse_transcript_event(event: &Value) -> Vec<SessionMessage> {
+    let Some(message) = event.get("message") else {
+        return Vec::new();
+    };
+    let Some(role) = message.get("role").and_then(|value| value.as_str()) else {
+        return Vec::new();
+    };
+
+    match role {
+        "user" => {
+            let text = flatten_transcript_content_text(&message["content"]);
+            if text.is_empty() {
+                Vec::new()
+            } else {
+                vec![SessionMessage {
+                    role: "user".to_string(),
+                    text,
+                    ..SessionMessage::default()
+                }]
+            }
+        }
+        "assistant" => {
+            let text = flatten_transcript_content_text(&message["content"]);
+            let tool_calls = parse_transcript_tool_calls(&message["content"]);
+            let mut out = Vec::new();
+            if !text.is_empty() {
+                out.push(SessionMessage {
+                    role: "assistant".to_string(),
+                    text,
+                    ..SessionMessage::default()
+                });
+            }
+            if !tool_calls.is_empty() {
+                out.push(SessionMessage {
+                    role: "assistant".to_string(),
+                    tool_calls,
+                    ..SessionMessage::default()
+                });
+            }
+            out
+        }
+        "toolResult" => vec![SessionMessage {
+            role: "tool".to_string(),
+            tool_name: message
+                .get("tool_name")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .to_string(),
+            tool_call_id: message
+                .get("tool_call_id")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .to_string(),
+            tool_result: parse_tool_result_content(&message["content"]),
+            ..SessionMessage::default()
+        }],
+        _ => Vec::new(),
+    }
 }
 
 /// Return only messages from `today` that are NOT already represented in
@@ -412,20 +1036,38 @@ fn deduplicate_after_compacted(
     // Build a set of (role, first-100-chars) from compacted for fast lookup
     let compacted_set: std::collections::HashSet<(String, String)> = compacted
         .iter()
-        .map(|m| {
-            let preview = m.text.chars().take(100).collect::<String>();
-            (m.role.clone(), preview)
-        })
+        .map(session_message_dedup_key)
         .collect();
 
     today
         .iter()
         .filter(|msg| {
-            let preview = msg.text.chars().take(100).collect::<String>();
-            !compacted_set.contains(&(msg.role.clone(), preview))
+            !compacted_set.contains(&session_message_dedup_key(msg))
         })
         .cloned()
         .collect()
+}
+
+fn session_message_dedup_key(message: &SessionMessage) -> (String, String) {
+    let preview_source = if !message.text.is_empty() {
+        message.text.clone()
+    } else if !message.tool_calls.is_empty() {
+        serde_json::to_string(&message.tool_calls).unwrap_or_default()
+    } else if !message.tool_name.is_empty() || !message.tool_call_id.is_empty() {
+        format!(
+            "{}:{}:{}",
+            message.tool_name,
+            message.tool_call_id,
+            message.tool_result
+        )
+    } else {
+        message.reasoning_text.clone()
+    };
+
+    (
+        message.role.clone(),
+        preview_source.chars().take(100).collect::<String>(),
+    )
 }
 
 fn get_timestamp() -> String {
@@ -444,7 +1086,7 @@ fn today_date_str() -> String {
     let days = secs / 86400;
     let y = (days * 4 + 2) / 1461 + 1970;
     let mut doy = days - ((y - 1970) * 365 + (y - 1969) / 4);
-    let leap = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+    let leap = if y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400)) {
         1
     } else {
         0
@@ -484,14 +1126,25 @@ mod tests {
         // Create tables
         {
             let conn = store.db.lock().unwrap();
-            conn.execute(
+            conn.execute_batch(
                 "CREATE TABLE IF NOT EXISTS session_index (
                     id TEXT PRIMARY KEY,
                     created_at TEXT NOT NULL,
                     last_active TEXT NOT NULL
-                )",
-                [],
-            ).unwrap();
+                );
+                CREATE TABLE IF NOT EXISTS token_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    prompt_tokens INTEGER DEFAULT 0,
+                    completion_tokens INTEGER DEFAULT 0,
+                    cache_creation_input_tokens INTEGER DEFAULT 0,
+                    cache_read_input_tokens INTEGER DEFAULT 0
+                );",
+            )
+            .unwrap();
+            SessionStore::ensure_token_usage_columns(&conn).unwrap();
         }
         store
     }
@@ -502,9 +1155,15 @@ mod tests {
         let store = make_store(tmp.path());
         store.ensure_session("sess_abc");
         assert!(tmp.path().join("sessions").join("sess_abc").is_dir());
-        let today = tmp.path().join("sessions").join("sess_abc")
+        let today = tmp
+            .path()
+            .join("sessions")
+            .join("sess_abc")
             .join(format!("{}.md", today_date_str()));
-        assert!(today.exists(), "today's file must exist after ensure_session");
+        assert!(
+            today.exists(),
+            "today's file must exist after ensure_session"
+        );
     }
 
     #[test]
@@ -527,12 +1186,26 @@ mod tests {
         let store = make_store(tmp.path());
 
         let messages = vec![
-            SessionMessage { role: "system".into(), text: "You are TizenClaw.".into(), timestamp: String::new() },
-            SessionMessage { role: "user".into(), text: "Original goal".into(), timestamp: String::new() },
-            SessionMessage { role: "assistant".into(), text: "Got it.".into(), timestamp: String::new() },
+            SessionMessage {
+                role: "system".into(),
+                text: "You are TizenClaw.".into(),
+                ..SessionMessage::default()
+            },
+            SessionMessage {
+                role: "user".into(),
+                text: "Original goal".into(),
+                ..SessionMessage::default()
+            },
+            SessionMessage {
+                role: "assistant".into(),
+                text: "Got it.".into(),
+                ..SessionMessage::default()
+            },
         ];
 
-        store.save_compacted("s2", &messages).expect("save_compacted must succeed");
+        store
+            .save_compacted("s2", &messages)
+            .expect("save_compacted must succeed");
         let path = tmp.path().join("sessions").join("s2").join("compacted.md");
         assert!(path.exists(), "compacted.md must exist after save");
 
@@ -549,8 +1222,16 @@ mod tests {
 
         // Save a compacted snapshot
         let compacted = vec![
-            SessionMessage { role: "user".into(), text: "old question".into(), timestamp: String::new() },
-            SessionMessage { role: "assistant".into(), text: "old answer".into(), timestamp: String::new() },
+            SessionMessage {
+                role: "user".into(),
+                text: "old question".into(),
+                ..SessionMessage::default()
+            },
+            SessionMessage {
+                role: "assistant".into(),
+                text: "old answer".into(),
+                ..SessionMessage::default()
+            },
         ];
         store.save_compacted("s3", &compacted).unwrap();
 
@@ -566,12 +1247,22 @@ mod tests {
 
     #[test]
     fn test_deduplicate_after_compacted_removes_overlap() {
-        let compacted = vec![
-            SessionMessage { role: "user".into(), text: "same message".into(), timestamp: String::new() },
-        ];
+        let compacted = vec![SessionMessage {
+            role: "user".into(),
+            text: "same message".into(),
+            ..SessionMessage::default()
+        }];
         let today = vec![
-            SessionMessage { role: "user".into(), text: "same message".into(), timestamp: String::new() },
-            SessionMessage { role: "assistant".into(), text: "new reply".into(), timestamp: String::new() },
+            SessionMessage {
+                role: "user".into(),
+                text: "same message".into(),
+                ..SessionMessage::default()
+            },
+            SessionMessage {
+                role: "assistant".into(),
+                text: "new reply".into(),
+                ..SessionMessage::default()
+            },
         ];
         let result = deduplicate_after_compacted(&compacted, &today);
         assert_eq!(result.len(), 1, "duplicate removed, only new reply kept");
@@ -582,13 +1273,22 @@ mod tests {
     fn test_atomic_write_no_partial_file() {
         let tmp = tempdir().unwrap();
         let store = make_store(tmp.path());
-        let msgs = vec![
-            SessionMessage { role: "user".into(), text: "test".into(), timestamp: String::new() },
-        ];
+        let msgs = vec![SessionMessage {
+            role: "user".into(),
+            text: "test".into(),
+            ..SessionMessage::default()
+        }];
         // Tmp file should not persist after successful save
         store.save_compacted("s4", &msgs).unwrap();
-        let tmp_file = tmp.path().join("sessions").join("s4").join(".compacted.tmp");
-        assert!(!tmp_file.exists(), ".compacted.tmp must be cleaned up after rename");
+        let tmp_file = tmp
+            .path()
+            .join("sessions")
+            .join("s4")
+            .join(".compacted.tmp");
+        assert!(
+            !tmp_file.exists(),
+            ".compacted.tmp must be cleaned up after rename"
+        );
     }
 
     #[test]
@@ -597,6 +1297,71 @@ mod tests {
         let store = make_store(tmp.path());
         let loaded = store.load_compacted("nonexistent_session");
         assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn test_load_session_context_reads_tool_history_from_transcript() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+
+        store.add_structured_user_message("tool_hist", "방금 만든 파일을 보여줘");
+        store.add_structured_tool_call_message(
+            "tool_hist",
+            vec![json!({
+                "type": "toolCall",
+                "tool_call_id": "call_1",
+                "name": "read_file",
+                "actual_tool_name": "file_manager",
+                "arguments": {"path": ".tmp/demo.txt"}
+            })],
+        );
+        store.add_structured_tool_result_message(
+            "tool_hist",
+            "read_file",
+            "call_1",
+            &json!({"path": ".tmp/demo.txt", "content": "demo"}),
+        );
+
+        let (msgs, from_compacted) = store.load_session_context("tool_hist", 10);
+        assert!(!from_compacted);
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[1].role, "assistant");
+        assert_eq!(msgs[1].tool_calls.len(), 1);
+        assert_eq!(msgs[1].tool_calls[0].id, "call_1");
+        assert_eq!(msgs[2].role, "tool");
+        assert_eq!(msgs[2].tool_call_id, "call_1");
+        assert_eq!(msgs[2].tool_result["content"], json!("demo"));
+    }
+
+    #[test]
+    fn test_save_and_load_compacted_structured_preserves_tool_fields() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+
+        let messages = vec![
+            SessionMessage {
+                role: "assistant".into(),
+                tool_calls: vec![LlmToolCall {
+                    id: "call_1".into(),
+                    name: "read_file".into(),
+                    args: json!({"path": ".tmp/demo.txt"}),
+                }],
+                ..SessionMessage::default()
+            },
+            SessionMessage {
+                role: "tool".into(),
+                tool_name: "read_file".into(),
+                tool_call_id: "call_1".into(),
+                tool_result: json!({"path": ".tmp/demo.txt", "content": "demo"}),
+                ..SessionMessage::default()
+            },
+        ];
+
+        store
+            .save_compacted_structured("tool_hist2", &messages)
+            .expect("save_compacted_structured must succeed");
+        let loaded = store.load_compacted_structured("tool_hist2");
+        assert_eq!(loaded, messages);
     }
 
     #[test]
@@ -613,10 +1378,130 @@ mod tests {
 
     #[test]
     fn test_parse_session_markdown_skips_frontmatter() {
-        let content = "---\nid: test\ndate: 2026-04-03\n---\n\n## user\nHello\n\n## assistant\nHi!\n\n";
+        let content =
+            "---\nid: test\ndate: 2026-04-03\n---\n\n## user\nHello\n\n## assistant\nHi!\n\n";
         let msgs = parse_session_markdown(content);
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, "user");
         assert_eq!(msgs[0].text, "Hello");
+    }
+
+    #[test]
+    fn test_normalize_markdown_block_collapses_extra_blank_lines() {
+        let normalized = normalize_markdown_block("  hello  \n\n\n world  ");
+        assert_eq!(normalized.as_deref(), Some("hello\n\nworld"));
+    }
+
+    #[test]
+    fn test_token_usage_tracks_cache_counters() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+
+        store.record_usage("cache_s1", 100, 20, 300, 240, "anthropic");
+        store.record_usage("cache_s1", 50, 10, 0, 128, "gemini");
+
+        let usage = store.load_token_usage("cache_s1");
+        assert_eq!(usage.total_prompt_tokens, 150);
+        assert_eq!(usage.total_completion_tokens, 30);
+        assert_eq!(usage.total_cache_creation_input_tokens, 300);
+        assert_eq!(usage.total_cache_read_input_tokens, 368);
+        assert_eq!(usage.total_requests, 2);
+    }
+
+    #[test]
+    fn test_session_workdir_is_created_per_session() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+
+        let workdir = store.session_workdir("bench_s1");
+
+        assert!(workdir.exists());
+        assert!(workdir.ends_with("workdirs/bench_s1"));
+    }
+
+    #[test]
+    fn test_structured_transcript_writes_jsonl_events() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+
+        store.add_structured_user_message("bench_s2", "hello");
+        store.add_structured_assistant_text_message("bench_s2", "world");
+        store.add_structured_tool_call_message(
+            "bench_s2",
+            vec![json!({
+                "type": "toolCall",
+                "name": "read_file",
+                "params": {"path": "notes.md"}
+            })],
+        );
+        store.add_structured_tool_result_message(
+            "bench_s2",
+            "read_file",
+            "call_1",
+            &json!({"content": "demo"}),
+        );
+
+        let transcript = tmp
+            .path()
+            .join("sessions")
+            .join("bench_s2")
+            .join("transcript.jsonl");
+        let transcript_text = std::fs::read_to_string(transcript).unwrap();
+        let lines: Vec<&str> = transcript_text.lines().collect();
+
+        assert_eq!(lines.len(), 4);
+        assert!(lines[0].contains("\"role\":\"user\""));
+        assert!(lines[1].contains("\"role\":\"assistant\""));
+        assert!(lines[2].contains("\"toolCall\""));
+        assert!(lines[3].contains("\"role\":\"toolResult\""));
+    }
+
+    #[test]
+    fn test_clear_all_removes_sessions_workdirs_and_usage() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+
+        store.add_message("wipe_s1", "user", "hello");
+        store.add_structured_user_message("wipe_s1", "hello");
+        store.record_usage("wipe_s1", 10, 5, 0, 0, "demo");
+        let workdir = store.session_workdir("wipe_s1");
+        std::fs::write(workdir.join("sample.txt"), "demo").unwrap();
+
+        let result = store.clear_all().unwrap();
+
+        assert_eq!(result["sessions_deleted"].as_u64().unwrap_or(0), 1);
+        assert_eq!(result["workdirs_deleted"].as_u64().unwrap_or(0), 1);
+        assert!(tmp.path().join("sessions").exists());
+        assert!(tmp.path().join("workdirs").exists());
+        assert!(store.load_session_context("wipe_s1", 10).0.is_empty());
+        assert_eq!(store.load_token_usage("wipe_s1").total_requests, 0);
+    }
+
+    #[test]
+    fn test_token_usage_diff_subtracts_baseline() {
+        let current = TokenUsage {
+            total_prompt_tokens: 120,
+            total_completion_tokens: 40,
+            total_cache_creation_input_tokens: 80,
+            total_cache_read_input_tokens: 20,
+            total_requests: 3,
+            entries: Vec::new(),
+        };
+        let baseline = TokenUsage {
+            total_prompt_tokens: 100,
+            total_completion_tokens: 10,
+            total_cache_creation_input_tokens: 50,
+            total_cache_read_input_tokens: 5,
+            total_requests: 1,
+            entries: Vec::new(),
+        };
+
+        let diff = current.diff_from(&baseline);
+
+        assert_eq!(diff.total_prompt_tokens, 20);
+        assert_eq!(diff.total_completion_tokens, 30);
+        assert_eq!(diff.total_cache_creation_input_tokens, 30);
+        assert_eq!(diff.total_cache_read_input_tokens, 15);
+        assert_eq!(diff.total_requests, 2);
     }
 }

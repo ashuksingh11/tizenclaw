@@ -24,7 +24,9 @@ tizen-web-search-cli --query <QUERY> [--engine <ENGINE>]
 | `perplexity` | AI search | api_key |
 
 ## Configuration
-API keys are stored in `/opt/usr/share/tizenclaw/config/web_search_config.json`.
+API keys are stored in the active runtime config root, typically
+`/opt/usr/share/tizenclaw/config/web_search_config.json` on Tizen or
+`~/.tizenclaw/config/web_search_config.json` on host Linux.
 
 ## Example Output
 ```json

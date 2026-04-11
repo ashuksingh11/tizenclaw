@@ -77,20 +77,43 @@ src_bak/
 /rag/
 test/unit_tests/tizenclaw-unittests
 tools/cli/aurum-cli/aurum-cli
+tools/cli/tizen-app-manager-cli/tizen-app-manager-cli
+tools/cli/tizen-device-info-cli/tizen-device-info-cli
+tools/cli/tizen-file-manager-cli/tizen-file-manager-cli
+tools/cli/tizen-hardware-control-cli/tizen-hardware-control-cli
+tools/cli/tizen-network-info-cli/tizen-network-info-cli
+tools/cli/tizen-notification-cli/tizen-notification-cli
+tools/cli/tizen-sensor-cli/tizen-sensor-cli
+tools/cli/tizen-sound-cli/tizen-sound-cli
+tools/cli/tizen-vconf-cli/tizen-vconf-cli
+tools/cli/tizen-web-search-cli/tizen-web-search-cli
 tools/skills_backup/
 cli_res.txt
 journal.txt
 .plan/
 
-# Agents
-.agent/
+# Local workflow metadata
+/.agent/
+
+# Claude Code (local dev only)
+.claude/
 
 # Dev notes
-.dev_note/
+/.dev_note/
 docs/
+!docs/
+docs/*
+!docs/llm_config_benchmark_design.md
+!docs/llm_cache_telemetry_design.md
+!docs/tizenclaw_cli_pinchbench_guide_ko.md
+!docs/STRUCTURE.md
+!docs/USAGE.md
+!data/docs/
+!data/docs/**
 
 # Temporary files
-.tmp/
+/.tmp/
+src/tizenclaw/error.log
 
 # Prompts
 .prompt

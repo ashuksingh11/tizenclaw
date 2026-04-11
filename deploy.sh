@@ -64,8 +64,8 @@ WITH_NGROK=false
 WITH_CRUN=false
 WITH_ASSETS=false
 WITH_BRIDGE=false
-RAG_PROJECT_DIR=""
 DEVICE_SERIAL=""
+REMOVE_PACKAGE=false
 
 # ─────────────────────────────────────────────
 # Logging helpers
@@ -187,6 +187,7 @@ ${CYAN}Options:${NC}
       --with-crun       Build crun and enable container execution mode
   -w, --with-ngrok      Auto-download and push ngrok binary to the device
   -d, --device <serial> Target a specific sdb device
+      --remove          Stop services and uninstall TizenClaw from device
       --dry-run         Print commands without executing
   -h, --help            Show this help
 
@@ -223,6 +224,7 @@ parse_args() {
       --with-crun)     WITH_CRUN=true; shift ;;
       -w|--with-ngrok) WITH_NGROK=true; shift ;;
       -d|--device)     DEVICE_SERIAL="$2"; shift 2 ;;
+      --remove)        REMOVE_PACKAGE=true; shift ;;
       --dry-run)       DRY_RUN=true; shift ;;
       -h|--help)       usage ;;
       *)               fail "Unknown option: $1 (use --help)" ;;
@@ -330,67 +332,6 @@ do_build() {
 # ─────────────────────────────────────────────
 # Step 1.5: Build tizenclaw-assets (if present)
 # ─────────────────────────────────────────────
-RAG_RPM_FILES=()
-
-do_build_rag() {
-  if [ "${SKIP_BUILD}" = true ] || [ "${WITH_ASSETS}" = false ]; then
-    return 0
-  fi
-
-  # Auto-detect tizenclaw-assets project
-  if [ -z "${RAG_PROJECT_DIR}" ]; then
-    RAG_PROJECT_DIR="${PROJECT_DIR}/../tizenclaw-assets"
-  fi
-
-  if [ ! -f "${RAG_PROJECT_DIR}/CMakeLists.txt" ]; then
-    log "tizenclaw-assets project not found at ${RAG_PROJECT_DIR} (skipping)"
-    return 0
-  fi
-
-  header "Step 1.5: Build tizenclaw-assets"
-
-  local rag_abs_dir
-  rag_abs_dir=$(cd "${RAG_PROJECT_DIR}" && pwd)
-  log "RAG project: ${rag_abs_dir}"
-
-  local gbs_args=("-A" "${ARCH}" "--include-all")
-  if [ "${NOINIT}" = true ]; then
-    gbs_args+=("--noinit")
-  fi
-
-  log "Running: gbs build ${gbs_args[*]} (tizenclaw-assets)"
-
-  if [ "${DRY_RUN}" = true ]; then
-    echo -e "  ${YELLOW}[DRY-RUN]${NC} cd ${rag_abs_dir} && gbs build ${gbs_args[*]}"
-    ok "tizenclaw-assets build (dry-run)"
-    return 0
-  fi
-
-  local rag_log="/tmp/gbs_assets_build_output.log"
-  if (cd "${rag_abs_dir}" && gbs build "${gbs_args[@]}" 2>&1 | tee "${rag_log}"); then
-    ok "tizenclaw-assets build succeeded"
-  else
-    warn "tizenclaw-assets build failed (non-fatal, continuing without RAG)"
-    return 0
-  fi
-
-  # Find RAG RPMs
-  local rag_rpms_dir
-  rag_rpms_dir=$(grep -A1 'generated RPM packages can be found from local repo:' "${rag_log}" \
-    | tail -1 | sed 's/^[[:space:]]*//')
-
-  if [ -n "${rag_rpms_dir}" ] && [ -d "${rag_rpms_dir}" ]; then
-    mapfile -t RAG_RPM_FILES < <(find "${rag_rpms_dir}" -maxdepth 1 \
-      -name "tizenclaw-assets*.rpm" \
-      ! -name "*-debuginfo-*" \
-      ! -name "*-debugsource-*" \
-      2>/dev/null | sort)
-
-    for rpm in "${RAG_RPM_FILES[@]}"; do
-      ok "RAG RPM: $(basename "${rpm}")"
-    done
-  fi
-}
 
 # ─────────────────────────────────────────────
 # Step 2: Find the built RPM
@@ -421,7 +362,7 @@ find_rpm() {
     if [ -z "${RPMS_DIR}" ]; then
       RPMS_DIR="${HOME}/GBS-ROOT/local/repos/tizen/${ARCH}/RPMS"
     fi
-    RPM_FILES=("${RPMS_DIR}/${PKG_NAME}-1.0.0-1.${ARCH}.rpm" "${RPMS_DIR}/${PKG_NAME}-rag-1.0.0-1.${ARCH}.rpm")
+    RPM_FILES=("${RPMS_DIR}/${PKG_NAME}-1.0.0-1.${ARCH}.rpm")
     log "[DRY-RUN] Assuming RPMs: ${RPM_FILES[*]}"
     return 0
   fi
@@ -528,42 +469,13 @@ do_deploy() {
     fi
   done
 
-  # Deploy RAG RPMs (if built)
-  for rpm in "${RAG_RPM_FILES[@]}"; do
-    local rpm_basename=$(basename "${rpm}")
-    log "Pushing ${rpm_basename} to device:/tmp/"
-    run sdb_cmd push "${rpm}" /tmp/
-    ok "RAG RPM transferred: ${rpm_basename}"
-
-    log "Installing ${rpm_basename}..."
-    run sdb_shell rpm -Uvh --force "/tmp/${rpm_basename}"
-    ok "RAG RPM installed: ${rpm_basename}"
-
-    log "Cleaning up /tmp/${rpm_basename}..."
-    run sdb_shell rm -f "/tmp/${rpm_basename}"
-  done
-
   ok "All RPMs processed"
-
-  # 3-5. Extract RAG web docs (ensure fresh unzip)
-  log "Extracting RAG web docs..."
-  if [ "${DRY_RUN}" = false ]; then
-    sdb_shell "if [ -f /opt/usr/share/tizenclaw/rag/web.zip ]; then \
-      rm -rf /opt/usr/share/tizenclaw/rag/web && \
-      mkdir -p /opt/usr/share/tizenclaw/rag/web && \
-      unzip -o -q /opt/usr/share/tizenclaw/rag/web.zip \
-        -d /opt/usr/share/tizenclaw/rag/web && \
-      echo RAG_OK; \
-    else echo RAG_SKIP; fi" 2>/dev/null
-    ok "RAG web docs extracted"
-  else
-    log "[DRY-RUN] Unzip web.zip -> /opt/usr/share/tizenclaw/rag/web/"
-  fi
 
   # 3-5.5. Install Web Dashboard frontend files
   log "Installing Web Dashboard frontend..."
   local web_src="${PROJECT_DIR}/data/web"
-  local web_dst="/opt/usr/data/tizenclaw/web"
+  local shared_img_src="${PROJECT_DIR}/data/img"
+  local web_dst="/opt/usr/share/tizenclaw/web"
   if [ -d "${web_src}" ]; then
     if [ "${DRY_RUN}" = false ]; then
       sdb_shell "mkdir -p ${web_dst}/img ${web_dst}/sdk ${web_dst}/apps"
@@ -578,6 +490,10 @@ do_deploy() {
         for f in "${web_src}/img"/*; do
           [ -f "$f" ] && run sdb_cmd push "$f" "${web_dst}/img/$(basename "$f")"
         done
+      fi
+      if [ -f "${shared_img_src}/tizenclaw.svg" ]; then
+        run sdb_cmd push "${shared_img_src}/tizenclaw.svg" \
+          "${web_dst}/img/tizenclaw.svg"
       fi
       if [ -d "${web_src}/sdk" ]; then
         for f in "${web_src}/sdk"/*; do
@@ -696,6 +612,43 @@ do_restart_and_run() {
   fi
 }
 
+remove_from_device() {
+  header "Remove TizenClaw From Device"
+
+  log "Checking device connectivity..."
+  if [ "${DRY_RUN}" = false ]; then
+    sdb_cmd devices >/dev/null 2>&1 || fail "sdb devices failed"
+  fi
+
+  log "Acquiring root access..."
+  run sdb_cmd root on
+  run sdb_shell mount -o remount,rw /
+
+  log "Stopping TizenClaw services..."
+  run sdb_shell systemctl stop tizenclaw 2>/dev/null || true
+  run sdb_shell systemctl stop tizenclaw-tool-executor.service 2>/dev/null || true
+  run sdb_shell systemctl stop tizenclaw-tool-executor.socket 2>/dev/null || true
+  run sdb_shell systemctl disable tizenclaw-tool-executor.socket 2>/dev/null || true
+
+  log "Removing RPM package..."
+  run sdb_shell rpm -e "${PKG_NAME}" 2>/dev/null || true
+
+  log "Cleaning package-owned runtime paths..."
+  run sdb_shell rm -rf /opt/usr/share/tizenclaw/tools 2>/dev/null || true
+  run sdb_shell rm -rf /opt/usr/share/tizen-tools 2>/dev/null || true
+
+  ok "TizenClaw removal command completed"
+}
+
+cleanup_legacy_paths_on_device() {
+  header "Legacy Path Cleanup"
+
+  log "Removing legacy tool path..."
+  run sdb_shell rm -rf /opt/usr/share/tizen-tools 2>/dev/null || true
+
+  ok "Legacy device paths cleaned"
+}
+
 
 
 # ─────────────────────────────────────────────
@@ -721,13 +674,19 @@ show_summary() {
 # ─────────────────────────────────────────────
 main() {
   parse_args "$@"
+  if [ "${REMOVE_PACKAGE}" = true ]; then
+    detect_arch
+    check_prerequisites
+    remove_from_device
+    exit 0
+  fi
   detect_arch
   load_repo_config
   check_prerequisites
   do_build
-  do_build_rag
   find_rpm
   do_deploy
+  cleanup_legacy_paths_on_device
   do_restart_and_run
   show_summary
 }

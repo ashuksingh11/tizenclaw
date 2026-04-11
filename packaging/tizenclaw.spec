@@ -4,6 +4,7 @@ Version:    1.0.0
 Release:    3
 Group:      System/Service
 License:    Apache-2.0
+%undefine _debugsource_packages
 Source0:    %{name}-%{version}.tar.gz
 Source1001: %{name}.manifest
 
@@ -86,31 +87,29 @@ mkdir -p %{buildroot}%{_unitdir}
 mkdir -p %{buildroot}%{_unitdir}/multi-user.target.wants
 mkdir -p %{buildroot}%{_unitdir}/sockets.target.wants
 mkdir -p %{buildroot}/opt/usr/share/tizenclaw/config
-mkdir -p %{buildroot}/opt/usr/share/tizenclaw/rag
-mkdir -p %{buildroot}/opt/usr/share/tizen-tools/embedded
-mkdir -p %{buildroot}/opt/usr/share/tizen-tools/actions
-mkdir -p %{buildroot}/opt/usr/share/tizen-tools/cli
-mkdir -p %{buildroot}/opt/usr/share/tizen-tools/skills
-mkdir -p %{buildroot}/opt/usr/share/tizenclaw/sandbox/packages/pip
-mkdir -p %{buildroot}/opt/usr/share/tizenclaw/sandbox/packages/npm
+mkdir -p %{buildroot}/opt/usr/share/tizenclaw/docs
+mkdir -p %{buildroot}/opt/usr/share/tizenclaw/embedded
+mkdir -p %{buildroot}/opt/usr/share/tizenclaw/memory
+# actions/ dir removed — tools are discovered dynamically
+mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/cli
+mkdir -p %{buildroot}/opt/usr/share/tizenclaw/workspace/skills
 mkdir -p %{buildroot}/opt/usr/share/crash/dump
 
 ln -sf ../tizenclaw.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw.service
 ln -sf ../tizenclaw-tool-executor.socket %{buildroot}%{_unitdir}/sockets.target.wants/tizenclaw-tool-executor.socket
 
 %post
-# Unzip RAG web docs for LLM reference
-if [ -f /opt/usr/share/tizenclaw/rag/web.zip ]; then
-  mkdir -p /opt/usr/share/tizenclaw/rag/web
-  unzip -o -q /opt/usr/share/tizenclaw/rag/web.zip -d /opt/usr/share/tizenclaw/rag/web
+if [ -d /opt/usr/share/tizen-tools ]; then
+rm -rf /opt/usr/share/tizen-tools
 fi
 
 %files
 %defattr(-,root,root,-)
-# %manifest %{name}.manifest
+# package manifest intentionally omitted
 %{_bindir}/tizenclaw
 %{_bindir}/tizenclaw-cli
 %{_bindir}/tizenclaw-tool-executor
+%{_bindir}/tizenclaw-web-dashboard
 %{_bindir}/start_mcp_tunnel.sh
 %{_unitdir}/tizenclaw.service
 %{_unitdir}/tizenclaw-tool-executor.service
@@ -120,22 +119,19 @@ fi
 
 %config(noreplace) /opt/usr/share/tizenclaw/config/*
 
-/opt/usr/share/tizen-tools/tools.md
+# tools.md is generated at runtime by the daemon startup indexer
 /opt/usr/share/tizenclaw/web/
-/opt/usr/share/tizen-tools/embedded/
-%dir /opt/usr/share/tizen-tools/actions/
-%dir /opt/usr/share/tizen-tools/cli/
-%dir /opt/usr/share/tizen-tools/skills/
-/opt/usr/share/tizen-tools/cli/*
-%dir /opt/usr/share/tizen-tools/
+/opt/usr/share/tizenclaw/docs/
+/opt/usr/share/tizenclaw/embedded/
+# actions/ dir removed
+%dir /opt/usr/share/tizenclaw/tools/
+%dir /opt/usr/share/tizenclaw/tools/cli/
+%dir /opt/usr/share/tizenclaw/workspace/
+%dir /opt/usr/share/tizenclaw/workspace/skills/
+/opt/usr/share/tizenclaw/tools/cli/*
 %dir /opt/usr/share/tizenclaw/config/
-%dir /opt/usr/share/tizenclaw/sandbox/
-%dir /opt/usr/share/tizenclaw/sandbox/packages/
-%dir /opt/usr/share/tizenclaw/sandbox/packages/pip/
-%dir /opt/usr/share/tizenclaw/sandbox/packages/npm/
+%dir /opt/usr/share/tizenclaw/memory/
 %dir /opt/usr/share/tizenclaw/
-%dir /opt/usr/share/tizenclaw/rag/
-/opt/usr/share/tizenclaw/rag/web.zip
 %{_libdir}/libtizenclaw-core.so
 %{_libdir}/libtizenclaw.so
 %dir /opt/usr/share/crash/
@@ -168,4 +164,3 @@ Header files and pkgconfig for building applications and plugins against TizenCl
 %{_includedir}/tizenclaw/core/tizenclaw_curl.h
 %{_libdir}/pkgconfig/tizenclaw.pc
 %{_libdir}/pkgconfig/tizenclaw-core.pc
-

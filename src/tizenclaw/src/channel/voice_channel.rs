@@ -8,8 +8,19 @@
 //! text to the agent, and renders the response via TTS.
 
 use super::{Channel, ChannelConfig};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+fn utf8_safe_preview(text: &str, max_chars: usize) -> &str {
+    if max_chars == 0 {
+        return "";
+    }
+
+    match text.char_indices().nth(max_chars) {
+        Some((idx, _)) => &text[..idx],
+        None => text,
+    }
+}
 
 /// STT engine type.
 #[derive(Clone, Debug, PartialEq)]
@@ -39,27 +50,37 @@ pub struct VoiceChannel {
 
 impl VoiceChannel {
     pub fn new(config: &ChannelConfig) -> Self {
-        let stt = match config.settings.get("stt_engine")
-            .and_then(|v| v.as_str()).unwrap_or("none")
+        let stt = match config
+            .settings
+            .get("stt_engine")
+            .and_then(|v| v.as_str())
+            .unwrap_or("none")
         {
             "tizen" => SttEngine::TizenNative,
             "whisper" => SttEngine::WhisperApi,
             _ => SttEngine::None,
         };
 
-        let tts = match config.settings.get("tts_engine")
-            .and_then(|v| v.as_str()).unwrap_or("none")
+        let tts = match config
+            .settings
+            .get("tts_engine")
+            .and_then(|v| v.as_str())
+            .unwrap_or("none")
         {
             "tizen" => TtsEngine::TizenNative,
             "elevenlabs" => TtsEngine::ElevenLabsApi,
             _ => TtsEngine::None,
         };
 
-        let sample_rate = config.settings.get("sample_rate")
+        let sample_rate = config
+            .settings
+            .get("sample_rate")
             .and_then(|v| v.as_u64())
             .unwrap_or(16000) as u32;
 
-        let language = config.settings.get("language")
+        let language = config
+            .settings
+            .get("language")
             .and_then(|v| v.as_str())
             .unwrap_or("en_US")
             .to_string();
@@ -79,25 +100,38 @@ impl VoiceChannel {
     fn speak(&self, text: &str) {
         match self.tts_engine {
             TtsEngine::TizenNative => {
-                log::debug!("VoiceChannel: TTS(tizen) speak: {}", &text[..text.len().min(50)]);
+                log::debug!(
+                    "VoiceChannel: TTS(tizen) speak: {}",
+                    utf8_safe_preview(text, 50)
+                );
                 // Tizen TTS FFI call would go here
             }
             TtsEngine::ElevenLabsApi => {
-                log::debug!("VoiceChannel: TTS(elevenlabs) speak: {}", &text[..text.len().min(50)]);
+                log::debug!(
+                    "VoiceChannel: TTS(elevenlabs) speak: {}",
+                    utf8_safe_preview(text, 50)
+                );
                 // ElevenLabs API call would go here
             }
             TtsEngine::None => {
-                log::debug!("VoiceChannel: TTS disabled, text: {}", &text[..text.len().min(50)]);
+                log::debug!(
+                    "VoiceChannel: TTS disabled, text: {}",
+                    utf8_safe_preview(text, 50)
+                );
             }
         }
     }
 }
 
 impl Channel for VoiceChannel {
-    fn name(&self) -> &str { &self.name }
+    fn name(&self) -> &str {
+        &self.name
+    }
 
     fn start(&mut self) -> bool {
-        if self.running.load(Ordering::SeqCst) { return true; }
+        if self.running.load(Ordering::SeqCst) {
+            return true;
+        }
 
         if self.stt_engine == SttEngine::None && self.tts_engine == TtsEngine::None {
             log::warn!("VoiceChannel: no STT/TTS engine configured");
@@ -113,7 +147,9 @@ impl Channel for VoiceChannel {
         self.thread = Some(std::thread::spawn(move || {
             log::debug!(
                 "VoiceChannel: audio pipeline started (stt={:?}, rate={}, lang={})",
-                stt_engine, sample_rate, language
+                stt_engine,
+                sample_rate,
+                language
             );
 
             while running.load(Ordering::SeqCst) {
@@ -137,7 +173,11 @@ impl Channel for VoiceChannel {
             log::info!("VoiceChannel: audio pipeline stopped");
         }));
 
-        log::info!("VoiceChannel started (stt={:?}, tts={:?})", self.stt_engine, self.tts_engine);
+        log::info!(
+            "VoiceChannel started (stt={:?}, tts={:?})",
+            self.stt_engine,
+            self.tts_engine
+        );
         true
     }
 
@@ -158,5 +198,30 @@ impl Channel for VoiceChannel {
 
     fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::utf8_safe_preview;
+
+    #[test]
+    fn utf8_safe_preview_returns_empty_for_zero_length() {
+        assert_eq!(utf8_safe_preview("hello", 0), "");
+    }
+
+    #[test]
+    fn utf8_safe_preview_preserves_short_text() {
+        let text = "voice ready";
+        assert_eq!(utf8_safe_preview(text, 50), text);
+    }
+
+    #[test]
+    fn utf8_safe_preview_truncates_on_char_boundary() {
+        let text = "TizenClaw™ ready";
+        let preview = utf8_safe_preview(text, 10);
+
+        assert_eq!(preview, "TizenClaw™");
+        assert!(text.is_char_boundary(preview.len()));
     }
 }

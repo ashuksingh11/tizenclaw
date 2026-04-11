@@ -230,10 +230,8 @@ mod tests {
         let mut t = WordPieceTokenizer::new();
         // Minimal BERT vocab
         let vocab_entries = vec![
-            "[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]",
-            "hello", "world", "the", "a", "is",
-            "##ing", "##ed", "##ly", "test", "rust",
-            ".", ",", "!", "good", "morning",
+            "[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]", "hello", "world", "the", "a", "is",
+            "##ing", "##ed", "##ly", "test", "rust", ".", ",", "!", "good", "morning",
         ];
         for (i, tok) in vocab_entries.iter().enumerate() {
             t.vocab.insert(tok.to_string(), i as i64);
@@ -255,9 +253,9 @@ mod tests {
 
     #[test]
     fn test_normalize_text_preserves_nonascii() {
-        let input = "안녕하세요 ABC";
+        let input = "TizenClaw™ ABC";
         let result = WordPieceTokenizer::normalize_text(input);
-        assert!(result.contains("안녕하세요"));
+        assert!(result.contains("tizenclaw™"));
         assert!(result.contains("abc"));
     }
 
@@ -311,8 +309,8 @@ mod tests {
 
         // [CLS] hello [SEP] + 5 pads = 8
         assert_eq!(result.input_ids.len(), 8);
-        assert_eq!(result.input_ids[0], 2);  // [CLS]
-        assert_eq!(result.input_ids[2], 3);  // [SEP]
+        assert_eq!(result.input_ids[0], 2); // [CLS]
+        assert_eq!(result.input_ids[2], 3); // [SEP]
         // Remaining should be [PAD]=0
         for i in 3..8 {
             assert_eq!(result.input_ids[i], 0);

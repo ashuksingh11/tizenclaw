@@ -32,13 +32,9 @@ pub fn validate(stream: &UnixStream, allowed: &[&str]) -> bool {
     match std::fs::read_to_string(&comm_path) {
         Ok(name) => {
             let name = name.trim();
-            let ok = allowed.iter().any(|a| *a == name);
+            let ok = allowed.contains(&name);
             if !ok {
-                log::warn!(
-                    "Peer pid={} comm='{}' not in allowed list",
-                    cred.pid,
-                    name
-                );
+                log::warn!("Peer pid={} comm='{}' not in allowed list", cred.pid, name);
             }
             ok
         }

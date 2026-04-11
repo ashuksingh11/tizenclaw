@@ -10,6 +10,7 @@
 // Suppress unused warnings during C++ → Rust migration.
 // TODO: Remove once all API functions are fully wired.
 #![allow(unused)]
+#![allow(clippy::missing_safety_doc)]
 
 pub mod api;
 
@@ -44,7 +45,9 @@ fn set_last_error(msg: &str) {
 // ── Helper: C string conversion ────────────────
 
 unsafe fn cstr_to_str<'a>(ptr: *const c_char) -> Option<&'a str> {
-    if ptr.is_null() { return None; }
+    if ptr.is_null() {
+        return None;
+    }
     CStr::from_ptr(ptr).to_str().ok()
 }
 
@@ -69,7 +72,7 @@ type HandlePtr = *mut Arc<Mutex<HandleInner>>;
 // ═══════════════════════════════════════════
 
 #[no_mangle]
-pub extern "C" fn tizenclaw_create(handle: *mut *mut libc::c_void) -> i32 {
+pub unsafe extern "C" fn tizenclaw_create(handle: *mut *mut libc::c_void) -> i32 {
     if handle.is_null() {
         set_last_error("handle pointer is null");
         return TIZENCLAW_ERROR_INVALID_PARAMETER;
@@ -83,7 +86,7 @@ pub extern "C" fn tizenclaw_create(handle: *mut *mut libc::c_void) -> i32 {
     let boxed = Box::new(arc);
     let raw = Box::into_raw(boxed);
 
-    unsafe { *handle = raw as *mut libc::c_void; }
+    *handle = raw as *mut libc::c_void;
     TIZENCLAW_ERROR_NONE
 }
 
@@ -97,15 +100,13 @@ pub extern "C" fn tizenclaw_initialize(handle: *mut libc::c_void) -> i32 {
 
     let arc = unsafe { &*ptr };
     match arc.lock() {
-        Ok(mut inner) => {
-            match inner.agent.initialize() {
-                Ok(()) => TIZENCLAW_ERROR_NONE,
-                Err(e) => {
-                    set_last_error(&e);
-                    TIZENCLAW_ERROR_NOT_INITIALIZED
-                }
+        Ok(mut inner) => match inner.agent.initialize() {
+            Ok(()) => TIZENCLAW_ERROR_NONE,
+            Err(e) => {
+                set_last_error(&e);
+                TIZENCLAW_ERROR_NOT_INITIALIZED
             }
-        }
+        },
         Err(e) => {
             set_last_error(&format!("Lock poisoned: {}", e));
             TIZENCLAW_ERROR_NOT_INITIALIZED
@@ -115,7 +116,9 @@ pub extern "C" fn tizenclaw_initialize(handle: *mut libc::c_void) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn tizenclaw_destroy(handle: *mut libc::c_void) {
-    if handle.is_null() { return; }
+    if handle.is_null() {
+        return;
+    }
 
     let ptr = handle as HandlePtr;
     // Reconstruct the Box to reclaim ownership.
@@ -157,15 +160,13 @@ pub unsafe extern "C" fn tizenclaw_process_prompt(
 
     let arc = &*ptr;
     match arc.lock() {
-        Ok(inner) => {
-            match inner.agent.process_prompt(sid, p) {
-                Ok(resp) => string_to_c(resp),
-                Err(e) => {
-                    set_last_error(&e);
-                    std::ptr::null_mut()
-                }
+        Ok(inner) => match inner.agent.process_prompt(sid, p) {
+            Ok(resp) => string_to_c(resp),
+            Err(e) => {
+                set_last_error(&e);
+                std::ptr::null_mut()
             }
-        }
+        },
         Err(e) => {
             set_last_error(&format!("Lock poisoned: {}", e));
             std::ptr::null_mut()
@@ -259,15 +260,13 @@ pub unsafe extern "C" fn tizenclaw_clear_session(
 
     let arc = &*ptr;
     match arc.lock() {
-        Ok(inner) => {
-            match inner.agent.clear_session(sid) {
-                Ok(()) => TIZENCLAW_ERROR_NONE,
-                Err(e) => {
-                    set_last_error(&e);
-                    TIZENCLAW_ERROR_NOT_INITIALIZED
-                }
+        Ok(inner) => match inner.agent.clear_session(sid) {
+            Ok(()) => TIZENCLAW_ERROR_NONE,
+            Err(e) => {
+                set_last_error(&e);
+                TIZENCLAW_ERROR_NOT_INITIALIZED
             }
-        }
+        },
         Err(e) => {
             set_last_error(&format!("Lock poisoned: {}", e));
             TIZENCLAW_ERROR_NOT_INITIALIZED
@@ -289,15 +288,13 @@ pub extern "C" fn tizenclaw_get_status(handle: *mut libc::c_void) -> *mut c_char
 
     let arc = unsafe { &*ptr };
     match arc.lock() {
-        Ok(inner) => {
-            match inner.agent.get_status() {
-                Ok(s) => string_to_c(s),
-                Err(e) => {
-                    set_last_error(&e);
-                    std::ptr::null_mut()
-                }
+        Ok(inner) => match inner.agent.get_status() {
+            Ok(s) => string_to_c(s),
+            Err(e) => {
+                set_last_error(&e);
+                std::ptr::null_mut()
             }
-        }
+        },
         Err(e) => {
             set_last_error(&format!("Lock poisoned: {}", e));
             std::ptr::null_mut()
@@ -315,15 +312,13 @@ pub extern "C" fn tizenclaw_get_metrics(handle: *mut libc::c_void) -> *mut c_cha
 
     let arc = unsafe { &*ptr };
     match arc.lock() {
-        Ok(inner) => {
-            match inner.agent.get_metrics() {
-                Ok(s) => string_to_c(s),
-                Err(e) => {
-                    set_last_error(&e);
-                    std::ptr::null_mut()
-                }
+        Ok(inner) => match inner.agent.get_metrics() {
+            Ok(s) => string_to_c(s),
+            Err(e) => {
+                set_last_error(&e);
+                std::ptr::null_mut()
             }
-        }
+        },
         Err(e) => {
             set_last_error(&format!("Lock poisoned: {}", e));
             std::ptr::null_mut()
@@ -345,15 +340,13 @@ pub extern "C" fn tizenclaw_get_tools(handle: *mut libc::c_void) -> *mut c_char 
 
     let arc = unsafe { &*ptr };
     match arc.lock() {
-        Ok(inner) => {
-            match inner.agent.get_tools() {
-                Ok(s) => string_to_c(s),
-                Err(e) => {
-                    set_last_error(&e);
-                    std::ptr::null_mut()
-                }
+        Ok(inner) => match inner.agent.get_tools() {
+            Ok(s) => string_to_c(s),
+            Err(e) => {
+                set_last_error(&e);
+                std::ptr::null_mut()
             }
-        }
+        },
         Err(e) => {
             set_last_error(&format!("Lock poisoned: {}", e));
             std::ptr::null_mut()
@@ -390,15 +383,13 @@ pub unsafe extern "C" fn tizenclaw_execute_tool(
 
     let arc = &*ptr;
     match arc.lock() {
-        Ok(inner) => {
-            match inner.agent.execute_tool(name, args) {
-                Ok(s) => string_to_c(s),
-                Err(e) => {
-                    set_last_error(&e);
-                    std::ptr::null_mut()
-                }
+        Ok(inner) => match inner.agent.execute_tool(name, args) {
+            Ok(s) => string_to_c(s),
+            Err(e) => {
+                set_last_error(&e);
+                std::ptr::null_mut()
             }
-        }
+        },
         Err(e) => {
             set_last_error(&format!("Lock poisoned: {}", e));
             std::ptr::null_mut()
@@ -416,15 +407,13 @@ pub extern "C" fn tizenclaw_reload_skills(handle: *mut libc::c_void) -> i32 {
 
     let arc = unsafe { &*ptr };
     match arc.lock() {
-        Ok(mut inner) => {
-            match inner.agent.reload_skills() {
-                Ok(()) => TIZENCLAW_ERROR_NONE,
-                Err(e) => {
-                    set_last_error(&e);
-                    TIZENCLAW_ERROR_TOOL_FAILED
-                }
+        Ok(mut inner) => match inner.agent.reload_skills() {
+            Ok(()) => TIZENCLAW_ERROR_NONE,
+            Err(e) => {
+                set_last_error(&e);
+                TIZENCLAW_ERROR_TOOL_FAILED
             }
-        }
+        },
         Err(e) => {
             set_last_error(&format!("Lock poisoned: {}", e));
             TIZENCLAW_ERROR_TOOL_FAILED
@@ -437,21 +426,51 @@ pub extern "C" fn tizenclaw_reload_skills(handle: *mut libc::c_void) -> i32 {
 // ═══════════════════════════════════════════
 
 #[no_mangle]
-pub extern "C" fn tizenclaw_start_dashboard(
-    _handle: *mut libc::c_void,
-    _port: u16,
-) -> i32 {
-    // Dashboard is currently managed by the daemon's main binary.
-    // This API is a placeholder for standalone library usage.
-    set_last_error("Dashboard control via library not yet implemented — use daemon");
-    TIZENCLAW_ERROR_NONE
+pub extern "C" fn tizenclaw_start_dashboard(handle: *mut libc::c_void, port: u16) -> i32 {
+    let ptr = handle as HandlePtr;
+    if ptr.is_null() {
+        set_last_error("handle is null");
+        return TIZENCLAW_ERROR_INVALID_PARAMETER;
+    }
+
+    let arc = unsafe { &*ptr };
+    match arc.lock() {
+        Ok(inner) => match inner.agent.start_dashboard((port > 0).then_some(port)) {
+            Ok(_) => TIZENCLAW_ERROR_NONE,
+            Err(e) => {
+                set_last_error(&e);
+                TIZENCLAW_ERROR_TOOL_FAILED
+            }
+        },
+        Err(e) => {
+            set_last_error(&format!("Lock poisoned: {}", e));
+            TIZENCLAW_ERROR_TOOL_FAILED
+        }
+    }
 }
 
 #[no_mangle]
-pub extern "C" fn tizenclaw_stop_dashboard(
-    _handle: *mut libc::c_void,
-) -> i32 {
-    TIZENCLAW_ERROR_NONE
+pub extern "C" fn tizenclaw_stop_dashboard(handle: *mut libc::c_void) -> i32 {
+    let ptr = handle as HandlePtr;
+    if ptr.is_null() {
+        set_last_error("handle is null");
+        return TIZENCLAW_ERROR_INVALID_PARAMETER;
+    }
+
+    let arc = unsafe { &*ptr };
+    match arc.lock() {
+        Ok(inner) => match inner.agent.stop_dashboard() {
+            Ok(_) => TIZENCLAW_ERROR_NONE,
+            Err(e) => {
+                set_last_error(&e);
+                TIZENCLAW_ERROR_TOOL_FAILED
+            }
+        },
+        Err(e) => {
+            set_last_error(&format!("Lock poisoned: {}", e));
+            TIZENCLAW_ERROR_TOOL_FAILED
+        }
+    }
 }
 
 // ═══════════════════════════════════════════
@@ -468,10 +487,8 @@ pub unsafe extern "C" fn tizenclaw_free_string(ptr: *mut c_char) {
 
 #[no_mangle]
 pub extern "C" fn tizenclaw_last_error() -> *const c_char {
-    LAST_ERROR.with(|e| {
-        match &*e.borrow() {
-            Some(cs) => cs.as_ptr(),
-            None => std::ptr::null(),
-        }
+    LAST_ERROR.with(|e| match &*e.borrow() {
+        Some(cs) => cs.as_ptr(),
+        None => std::ptr::null(),
     })
 }

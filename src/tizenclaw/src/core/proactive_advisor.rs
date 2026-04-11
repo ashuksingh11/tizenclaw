@@ -11,7 +11,9 @@ impl Default for ProactiveAdvisor {
 }
 
 impl ProactiveAdvisor {
-    pub fn new() -> Self { ProactiveAdvisor }
+    pub fn new() -> Self {
+        ProactiveAdvisor
+    }
 
     pub fn generate_suggestions(&self, context: &Value) -> Vec<String> {
         let mut suggestions = vec![];

@@ -43,7 +43,8 @@ impl McpServer {
             name: "ask_tizenclaw".into(),
             description: "Send a natural language prompt to the TizenClaw AI Agent. \
                          The agent will plan and execute actions using available tools \
-                         to fulfill the request.".into(),
+                         to fulfill the request."
+                .into(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -66,7 +67,7 @@ impl McpServer {
     /// `--mcp-stdio` flag.
     pub fn run_stdio<F>(&self, process_prompt: F)
     where
-        F: Fn(&str, &str) -> String,  // (session_id, prompt) -> result
+        F: Fn(&str, &str) -> String, // (session_id, prompt) -> result
     {
         log::info!("MCP Server started (stdio mode)");
         use std::io::BufRead;
@@ -152,13 +153,17 @@ impl McpServer {
     }
 
     fn handle_tools_list(&self) -> Value {
-        let tools: Vec<Value> = self.tools.iter().map(|t| {
-            json!({
-                "name": t.name,
-                "description": t.description,
-                "inputSchema": t.input_schema
+        let tools: Vec<Value> = self
+            .tools
+            .iter()
+            .map(|t| {
+                json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "inputSchema": t.input_schema
+                })
             })
-        }).collect();
+            .collect();
 
         json!({"tools": tools})
     }
@@ -168,7 +173,10 @@ impl McpServer {
         F: Fn(&str, &str) -> String,
     {
         let tool_name = params["name"].as_str().unwrap_or("");
-        let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+        let arguments = params
+            .get("arguments")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
 
         let found = self.tools.iter().find(|t| t.name == tool_name);
         let tool = match found {
@@ -193,8 +201,8 @@ impl McpServer {
         }
 
         let result = process_prompt("mcp_session", prompt);
-        return json!({
+        json!({
             "content": [{"type": "text", "text": result}]
-        });
+        })
     }
 }

@@ -116,7 +116,11 @@ impl EventBus {
         cvar.notify_one();
     }
 
-    pub fn subscribe(&self, event_type: EventType, callback: impl Fn(&SystemEvent) + Send + Sync + 'static) -> i32 {
+    pub fn subscribe(
+        &self,
+        event_type: EventType,
+        callback: impl Fn(&SystemEvent) + Send + Sync + 'static,
+    ) -> i32 {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         if let Ok(mut subs) = self.subscribers.lock() {
             subs.push(Subscription {
@@ -278,4 +282,3 @@ mod tests {
         assert_eq!(q.len(), MAX_QUEUE_SIZE);
     }
 }
-

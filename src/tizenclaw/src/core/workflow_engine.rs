@@ -3,17 +3,12 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub enum WorkflowStepType {
     Tool,
+    #[default]
     Prompt,
     Condition,
-}
-
-impl Default for WorkflowStepType {
-    fn default() -> Self {
-        WorkflowStepType::Prompt
-    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -24,12 +19,12 @@ pub struct WorkflowStep {
     pub instruction: String, // multiline prompt instruction
     pub args: Value,
     pub output_var: String,
-    
+
     // Condition handling
     pub condition: String,
     pub then_step: String,
     pub else_step: String,
-    
+
     // Error handling
     pub skip_on_failure: bool,
     pub max_retries: usize,
@@ -57,7 +52,9 @@ impl Default for WorkflowEngine {
 
 impl WorkflowEngine {
     pub fn new() -> Self {
-        WorkflowEngine { workflows: HashMap::new() }
+        WorkflowEngine {
+            workflows: HashMap::new(),
+        }
     }
 
     pub fn load_workflows(&mut self) {
@@ -65,14 +62,25 @@ impl WorkflowEngine {
     }
 
     pub fn load_workflows_from(&mut self, dir: &str) {
-        let dir = if dir.is_empty() { "/opt/usr/share/tizenclaw/workflows" } else { dir };
+        let owned_default;
+        let dir = if dir.is_empty() {
+            owned_default = crate::core::runtime_paths::default_data_dir()
+                .join("workflows")
+                .to_string_lossy()
+                .to_string();
+            owned_default.as_str()
+        } else {
+            dir
+        };
         let entries = match std::fs::read_dir(dir) {
             Ok(e) => e,
             Err(_) => return,
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().map(|e| e == "md").unwrap_or(false) && path.file_name() != Some(std::ffi::OsStr::new("index.md")) {
+            if path.extension().map(|e| e == "md").unwrap_or(false)
+                && path.file_name() != Some(std::ffi::OsStr::new("index.md"))
+            {
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     if let Some(wf) = Self::parse_markdown(&content) {
                         self.workflows.insert(wf.id.clone(), wf);
@@ -88,15 +96,18 @@ impl WorkflowEngine {
     }
 
     pub fn list_workflows(&self) -> Vec<Value> {
-        self.workflows.values().map(|wf| {
-            json!({
-                "id": wf.id,
-                "name": wf.name,
-                "description": wf.description,
-                "trigger": wf.trigger,
-                "steps_count": wf.steps.len()
+        self.workflows
+            .values()
+            .map(|wf| {
+                json!({
+                    "id": wf.id,
+                    "name": wf.name,
+                    "description": wf.description,
+                    "trigger": wf.trigger,
+                    "steps_count": wf.steps.len()
+                })
             })
-        }).collect()
+            .collect()
     }
 
     pub fn delete_workflow(&mut self, id: &str) -> bool {
@@ -146,7 +157,10 @@ impl WorkflowEngine {
                 Value::Object(new_map)
             }
             Value::Array(arr) => {
-                let new_arr = arr.iter().map(|v| Self::interpolate_json(v, vars)).collect();
+                let new_arr = arr
+                    .iter()
+                    .map(|v| Self::interpolate_json(v, vars))
+                    .collect();
                 Value::Array(new_arr)
             }
             _ => j.clone(),
@@ -165,7 +179,7 @@ impl WorkflowEngine {
             match op {
                 "==" => left == right,
                 "!=" => left != right,
-                ">"|" <" | ">=" | "<=" => {
+                ">" | " <" | ">=" | "<=" => {
                     let l: f64 = left.parse().unwrap_or(0.0);
                     let r: f64 = right.parse().unwrap_or(0.0);
                     match op {
@@ -173,7 +187,7 @@ impl WorkflowEngine {
                         "<" => l < r,
                         ">=" => l >= r,
                         "<=" => l <= r,
-                        _ => false
+                        _ => false,
                     }
                 }
                 _ => false,
@@ -232,9 +246,7 @@ impl WorkflowEngine {
         // 2. Extract Steps
         let mut current_step: Option<(String, String, Vec<String>)> = None; // (id, title, buffer)
 
-        for i in body_start..lines.len() {
-            let line = lines[i];
-            
+        for line in lines.iter().skip(body_start) {
             // "## Step 1: Check System"
             if line.starts_with("## Step ") {
                 if let Some((id, _, buf)) = current_step.take() {
@@ -284,11 +296,13 @@ impl WorkflowEngine {
                 }
             }
 
-            if trimmed.is_empty() { continue; }
+            if trimmed.is_empty() {
+                continue;
+            }
 
             let prefix = "- ";
-            let text = if trimmed.starts_with(prefix) { &trimmed[prefix.len()..] } else { trimmed };
-            
+            let text = trimmed.strip_prefix(prefix).unwrap_or(trimmed);
+
             if let Some((k, v)) = text.split_once(':') {
                 let key = k.trim();
                 let val = v.trim();
@@ -324,10 +338,8 @@ impl WorkflowEngine {
             }
         }
 
-        if in_multiline {
-            if multiline_key == "instruction" {
-                step.instruction = multiline_val.join("\n").trim().to_string();
-            }
+        if in_multiline && multiline_key == "instruction" {
+            step.instruction = multiline_val.join("\n").trim().to_string();
         }
 
         if step.output_var.is_empty() {

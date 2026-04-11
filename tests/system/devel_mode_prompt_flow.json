@@ -1,0 +1,28 @@
+{
+  "name": "devel-mode-prompt-flow",
+  "steps": [
+    {
+      "name": "inspect-devel-status",
+      "method": "get_devel_status",
+      "params": {},
+      "assertions": [
+        {
+          "path": "status",
+          "equals": "success"
+        },
+        {
+          "path": "prompt_dir",
+          "contains": "/devel/prompt"
+        },
+        {
+          "path": "result_dir",
+          "contains": "/devel/result"
+        },
+        {
+          "path": "result_watcher_active",
+          "equals": true
+        }
+      ]
+    }
+  ]
+}
