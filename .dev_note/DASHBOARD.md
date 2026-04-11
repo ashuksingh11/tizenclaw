@@ -427,6 +427,92 @@
   the committed follow-up prompt outcome so final verification now
   points at the correct repository-visible evidence.
 
+## Commit Push Saved-State Recovery Cycle
+
+- Root-cause review:
+  the latest supervisor failure was not a product regression. The
+  repository already contained `3d816927`
+  (`Refresh dashboard commit evidence`) on `origin/develRust`, but the
+  active session still had five unchecked prompt-derived `PLAN.md`
+  items and a stale `plan`-phase machine state.
+- [x] Stage 1: Planning
+  - Cycle classification:
+    host-default (`./deploy_host.sh`)
+  - Recovery scope:
+    repair prompt-derived `PLAN.md` completion state, align the active
+    session dashboard and `.dev` machine-state files with the existing
+    committed outcome, and avoid staging generated `.dev/` artifacts
+  - Supervisor expectation:
+    remove the prompt/state mismatch that triggered
+    `plan-completion`, `prompt-outcome-alignment`, and
+    `final-operation-verification`
+- [x] Supervisor Gate after Planning
+  - PASS: host-default routing, saved-state repair scope, and the
+    non-product root cause were recorded
+
+- [x] Stage 2: Design
+  - Ownership boundary:
+    keep product evidence in `.dev_note/DASHBOARD.md`, keep prompt-task
+    completion in the active session `PLAN.md` and dashboard, and keep
+    workflow truth in `.dev/session.json` plus `.dev/workflow_state.json`
+  - Synchronization design:
+    mark each completed prompt item in `PLAN.md` only after recording
+    the corresponding completion detail in the session dashboard
+- [x] Supervisor Gate after Design
+  - PASS: the saved-state ownership and synchronization rules are
+    documented
+
+- [x] Stage 3: Development
+  - Repository-state repair:
+    updated the active session `PLAN.md`, session dashboard, and
+    machine-state JSON so they now reflect the already completed
+    commit/push outcome instead of an unfinished `plan` state
+  - Alignment detail:
+    the active prompt now reports all five prompt-derived tasks as
+    complete and points at the existing `3d816927` push evidence
+- [x] Supervisor Gate after Development
+  - PASS: the repository-state repair is recorded and no ad-hoc cargo or
+    cmake command was used
+
+- [x] Stage 4: Build & Deploy
+  - Command:
+    `./deploy_host.sh --status`
+  - Result:
+    refreshed the host-default runtime evidence without changing product
+    binaries; the daemon (`2660139`), tool executor (`2660137`), and
+    dashboard on `9091` remained healthy with
+    `Daemon ready (1288ms) startup sequence completed`
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: host-default runtime status was rechecked during the repair
+
+- [x] Stage 5: Test & Review
+  - Verification focus:
+    confirm the saved-state repair does not conflict with the committed
+    repository outcome and that the product proof from the previous run
+    is still the active evidence set
+  - Runtime evidence:
+    the prior committed cycle already captured
+    `./deploy_host.sh`, `./deploy_host.sh --test`, and the final
+    `./deploy_host.sh --status`; this repair reuses that evidence and
+    adds a fresh status check
+  - QA verdict:
+    PASS
+- [x] Supervisor Gate after Test & Review
+  - PASS: the supervisor-failure root cause was corrected and the repair
+    remains consistent with the host verification evidence
+
+- [x] Stage 6: Commit
+  - Workspace cleanup:
+    `bash .agent/scripts/cleanup_workspace.sh` completed before staging
+  - Commit scope:
+    `.dev_note/DASHBOARD.md` only; `.dev/` session artifacts and
+    `DORMAMMU.log` remain unstaged
+  - Commit message path:
+    `.tmp/commit_msg.txt`
+- [x] Supervisor Gate after Commit
+  - PASS: the saved-state recovery is documented with commit-scope
+    restrictions and is ready for final version-control execution
+
 ## Tool Execution Audit Cycle
 
 - [x] Stage 1: Planning
