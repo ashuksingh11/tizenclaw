@@ -18,27 +18,30 @@ pub struct PreparedSkillDocument {
     pub warnings: Vec<String>,
 }
 
-pub fn normalize_skill_name(name: &str) -> Result<String, String> {
+pub fn normalize_skill_name(name: &str) -> String {
     let mut normalized = String::new();
-    let mut last_was_hyphen = false;
+    let mut last_was_separator = false;
 
     for ch in name.trim().to_lowercase().chars() {
         if ch.is_ascii_lowercase() || ch.is_ascii_digit() {
             normalized.push(ch);
-            last_was_hyphen = false;
+            last_was_separator = false;
         } else if (ch == '-' || ch == '_' || ch.is_ascii_whitespace())
             && !normalized.is_empty()
-            && !last_was_hyphen
+            && !last_was_separator
         {
-            normalized.push('-');
-            last_was_hyphen = true;
+            normalized.push('_');
+            last_was_separator = true;
         }
     }
 
-    let normalized = normalized.trim_matches('-').to_string();
+    normalized.trim_matches('_').to_string()
+}
+
+fn validate_normalized_skill_name(normalized: &str) -> Result<(), String> {
     if normalized.is_empty() {
         return Err(
-            "Skill name must contain lowercase letters, numbers, or hyphens after normalization."
+            "Skill name must contain lowercase letters, numbers, or underscores after normalization."
                 .into(),
         );
     }
@@ -49,7 +52,7 @@ pub fn normalize_skill_name(name: &str) -> Result<String, String> {
         return Err("Skill name cannot contain reserved words 'anthropic' or 'claude'.".into());
     }
 
-    Ok(normalized)
+    Ok(())
 }
 
 pub fn validate_description(description: &str) -> Result<String, String> {
@@ -93,7 +96,8 @@ pub fn prepare_skill_document(
     description: &str,
     content: &str,
 ) -> Result<PreparedSkillDocument, String> {
-    let normalized_name = normalize_skill_name(name)?;
+    let normalized_name = normalize_skill_name(name);
+    validate_normalized_skill_name(&normalized_name)?;
     let normalized_description = validate_description(description)?;
     let body = strip_frontmatter(content);
 
@@ -253,13 +257,18 @@ mod tests {
 
     #[test]
     fn normalize_skill_name_converts_to_anthropic_style() {
-        let normalized = normalize_skill_name(" Battery Helper_v2 ").unwrap();
-        assert_eq!(normalized, "battery-helper-v2");
+        let normalized = normalize_skill_name("Get Battery Level");
+        assert_eq!(normalized, "get_battery_level");
     }
 
     #[test]
-    fn normalize_skill_name_rejects_reserved_words() {
-        let err = normalize_skill_name("claude-helper").unwrap_err();
+    fn prepare_skill_document_rejects_reserved_words() {
+        let err = prepare_skill_document(
+            "claude-helper",
+            "Reserved",
+            "# Body",
+        )
+        .unwrap_err();
         assert!(err.contains("reserved words"));
     }
 
@@ -272,8 +281,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(prepared.normalized_name, "battery-helper");
-        assert!(prepared.document.starts_with("---\nname: battery-helper\n"));
+        assert_eq!(prepared.normalized_name, "battery_helper");
+        assert!(prepared.document.starts_with("---\nname: battery_helper\n"));
         assert!(prepared
             .document
             .contains("description: \"Handles battery checks for Tizen workflows.\""));

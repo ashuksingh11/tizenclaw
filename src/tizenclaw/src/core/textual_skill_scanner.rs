@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -44,18 +44,26 @@ pub fn scan_textual_skills(skills_dir: &str) -> Vec<TextualSkill> {
                         .to_string();
 
                     let absolute_path = skill_md_path.to_string_lossy().to_string();
-                    let content = fs::read_to_string(&skill_md_path).unwrap_or_default();
+                    let content = match fs::read_to_string(&skill_md_path) {
+                        Ok(content) => content,
+                        Err(error) => {
+                            log::warn!(
+                                "TextualSkillScanner: failed to read '{}': {}",
+                                skill_md_path.display(),
+                                error
+                            );
+                            continue;
+                        }
+                    };
                     let metadata = extract_skill_metadata(&content, &skill_name);
                     let body = extract_skill_body(&content);
                     let (prelude_excerpt, code_fence_languages, shell_prelude) =
                         extract_skill_audit_metadata(&body);
                     let searchable_text = build_searchable_text(
-                        &skill_name,
                         &metadata.description,
                         &metadata.tags,
                         &metadata.triggers,
                         &metadata.examples,
-                        &body,
                     );
 
                     skills.push(TextualSkill {
@@ -79,10 +87,7 @@ pub fn scan_textual_skills(skills_dir: &str) -> Vec<TextualSkill> {
     skills
 }
 
-pub fn scan_textual_skills_from_roots<'a, I>(roots: I) -> Vec<TextualSkill>
-where
-    I: IntoIterator<Item = &'a str>,
-{
+pub fn scan_textual_skills_from_roots(roots: &[&str]) -> Vec<TextualSkill> {
     let mut deduped = BTreeMap::new();
     for root in roots {
         for skill in scan_textual_skills(root) {
@@ -120,7 +125,7 @@ fn extract_skill_metadata(content: &str, skill_name: &str) -> SkillMetadata {
         }
 
         if let Some(rest) = trimmed.strip_prefix("- ") {
-            let item = rest.trim().trim_matches('"').trim_matches('\'').to_string();
+            let item = normalize_scalar(rest);
             match active_list.as_deref() {
                 Some("tags") if !item.is_empty() => metadata.tags.push(item),
                 Some("triggers") if !item.is_empty() => metadata.triggers.push(item),
@@ -148,11 +153,7 @@ fn extract_skill_metadata(content: &str, skill_name: &str) -> SkillMetadata {
 
         if let Some((key, raw_value)) = trimmed.split_once(':') {
             let key = key.trim().to_string();
-            let value = raw_value
-                .trim()
-                .trim_matches('"')
-                .trim_matches('\'')
-                .to_string();
+            let value = normalize_scalar(raw_value);
             let mut path = section_stack
                 .iter()
                 .map(|(_, name)| name.as_str())
@@ -175,11 +176,44 @@ fn extract_skill_metadata(content: &str, skill_name: &str) -> SkillMetadata {
 
             if full_key == "description" {
                 metadata.description = value;
+            } else if full_key == "tags" {
+                metadata.tags.extend(parse_inline_list(&value));
+            } else if full_key == "triggers" {
+                metadata.triggers.extend(parse_inline_list(&value));
+            } else if full_key == "examples" {
+                metadata.examples.extend(parse_inline_list(&value));
+            } else if full_key == "metadata.openclaw.requires" {
+                metadata.openclaw_requires.extend(parse_inline_list(&value));
+            } else if full_key == "metadata.openclaw.install" {
+                metadata.openclaw_install.extend(parse_inline_list(&value));
             }
         }
     }
 
+    dedupe_preserve_order(&mut metadata.tags);
+    dedupe_preserve_order(&mut metadata.triggers);
+    dedupe_preserve_order(&mut metadata.examples);
+    dedupe_preserve_order(&mut metadata.openclaw_requires);
+    dedupe_preserve_order(&mut metadata.openclaw_install);
+
     metadata
+}
+
+fn normalize_scalar(raw: &str) -> String {
+    raw.trim().trim_matches('"').trim_matches('\'').to_string()
+}
+
+fn parse_inline_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(normalize_scalar)
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn dedupe_preserve_order(values: &mut Vec<String>) {
+    let mut seen = HashSet::new();
+    values.retain(|value| seen.insert(value.clone()));
 }
 
 fn extract_frontmatter(content: &str) -> String {
@@ -268,21 +302,17 @@ fn extract_skill_audit_metadata(body: &str) -> (String, Vec<String>, bool) {
 }
 
 fn build_searchable_text(
-    skill_name: &str,
     description: &str,
     tags: &[String],
     triggers: &[String],
     examples: &[String],
-    body: &str,
 ) -> String {
     format!(
-        "{} {} {} {} {} {}",
-        skill_name,
+        "{} {} {} {}",
         description,
         tags.join(" "),
         triggers.join(" "),
-        examples.join(" "),
-        body
+        examples.join(" ")
     )
     .to_lowercase()
 }
@@ -370,10 +400,39 @@ mod tests {
         assert_eq!(skills[0].tags, vec!["battery", "power"]);
         assert_eq!(skills[0].triggers, vec!["check battery"]);
         assert_eq!(skills[0].examples, vec!["check battery status"]);
-        assert!(
-            skills[0]
-                .searchable_text
-                .contains("inspect device power state")
+        assert!(skills[0].searchable_text.contains("battery helper"));
+        assert!(skills[0].searchable_text.contains("check battery"));
+    }
+
+    #[test]
+    fn scan_textual_skills_returns_empty_for_missing_dir() {
+        let missing = tempfile::tempdir().unwrap();
+        let path = missing.path().join("does-not-exist");
+        let skills = scan_textual_skills(path.to_string_lossy().as_ref());
+        assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn test_extracts_inline_comma_separated_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = dir.path().join("battery_inline");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: Battery helper\ntags: battery, power\ntriggers: what is the battery level?, battery level\nmetadata:\n  openclaw:\n    requires: battery_tool, power_tool\n    install: sudo apt install battery-tool, npm i power-tool\n---\n# Skill\n",
+        )
+        .unwrap();
+
+        let skills = scan_textual_skills(dir.path().to_string_lossy().as_ref());
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].tags, vec!["battery", "power"]);
+        assert_eq!(
+            skills[0].triggers,
+            vec!["what is the battery level?", "battery level"]
+        );
+        assert_eq!(
+            skills[0].openclaw_requires,
+            vec!["battery_tool", "power_tool"]
         );
     }
 
@@ -394,7 +453,7 @@ mod tests {
         )
         .unwrap();
 
-        let skills = scan_textual_skills_from_roots([
+        let skills = scan_textual_skills_from_roots(&[
             dir1.path().to_string_lossy().as_ref(),
             dir2.path().to_string_lossy().as_ref(),
         ]);
@@ -415,7 +474,9 @@ mod tests {
 
         let skills = scan_textual_skills(&dir.path().to_string_lossy());
         assert_eq!(skills.len(), 1);
-        assert!(skills[0].prelude_excerpt.contains("Inspect runtime wrappers"));
+        assert!(skills[0]
+            .prelude_excerpt
+            .contains("Inspect runtime wrappers"));
         assert_eq!(skills[0].code_fence_languages, vec!["bash"]);
         assert!(skills[0].shell_prelude);
     }

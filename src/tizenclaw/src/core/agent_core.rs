@@ -506,9 +506,14 @@ fn collect_skill_roots(paths: &libtizenclaw_core::framework::paths::PlatformPath
 
 fn resolve_skill_file(skill_roots: &[String], normalized_name: &str) -> Option<PathBuf> {
     for root in skill_roots {
-        let candidate = Path::new(root).join(normalized_name).join("SKILL.md");
-        if candidate.is_file() {
-            return Some(candidate);
+        for candidate_name in [
+            normalized_name.to_string(),
+            normalized_name.replace('_', "-"),
+        ] {
+            let candidate = Path::new(root).join(candidate_name).join("SKILL.md");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
         }
     }
     None
@@ -5835,44 +5840,35 @@ impl AgentCore {
                             }
                         } else if tc_name == "read_skill" {
                             let name = tc_args.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                            match crate::core::skill_support::normalize_skill_name(name) {
-                                Ok(normalized_name) => {
-                                    match resolve_skill_file(&skill_roots, &normalized_name) {
-                                        Some(skill_md_path) => {
-                                            match std::fs::read_to_string(&skill_md_path) {
-                                                Ok(content) => {
-                                                    let snapshot = skill_capability_manager::load_snapshot(
-                                                        &self.platform.paths,
-                                                        &RegisteredPaths::load(&self.platform.paths.config_dir),
-                                                    );
-                                                    if let Some(metadata) = snapshot.find_skill(&normalized_name) {
-                                                        if !metadata.enabled {
-                                                            serde_json::json!({
-                                                                "error": format!(
-                                                                    "Skill '{}' is disabled or missing dependencies. Check '{}'.",
-                                                                    normalized_name,
-                                                                    snapshot.config_path
-                                                                ),
-                                                                "skill": {
-                                                                    "name": metadata.skill.file_name,
-                                                                    "dependency_ready": metadata.dependency_ready,
-                                                                    "missing_requires": metadata.missing_requires,
-                                                                    "install_hints": metadata.skill.openclaw_install,
-                                                                    "enabled": metadata.enabled,
-                                                                }
-                                                            })
-                                                        } else {
-                                                            serde_json::json!({
-                                                                "status": "success",
-                                                                "name": normalized_name,
-                                                                "path": skill_md_path.to_string_lossy().to_string(),
-                                                                "content": content,
-                                                                "openclaw": {
-                                                                    "requires": metadata.skill.openclaw_requires.clone(),
-                                                                    "install": metadata.skill.openclaw_install.clone(),
-                                                                }
-                                                            })
-                                                        }
+                            let normalized_name =
+                                crate::core::skill_support::normalize_skill_name(name);
+                            if normalized_name.is_empty() {
+                                serde_json::json!({"error": "Skill name is required"})
+                            } else {
+                                match resolve_skill_file(&skill_roots, &normalized_name) {
+                                    Some(skill_md_path) => {
+                                        match std::fs::read_to_string(&skill_md_path) {
+                                            Ok(content) => {
+                                                let snapshot = skill_capability_manager::load_snapshot(
+                                                    &self.platform.paths,
+                                                    &RegisteredPaths::load(&self.platform.paths.config_dir),
+                                                );
+                                                if let Some(metadata) = snapshot.find_skill(&normalized_name) {
+                                                    if !metadata.enabled {
+                                                        serde_json::json!({
+                                                            "error": format!(
+                                                                "Skill '{}' is disabled or missing dependencies. Check '{}'.",
+                                                                normalized_name,
+                                                                snapshot.config_path
+                                                            ),
+                                                            "skill": {
+                                                                "name": metadata.skill.file_name,
+                                                                "dependency_ready": metadata.dependency_ready,
+                                                                "missing_requires": metadata.missing_requires,
+                                                                "install_hints": metadata.skill.openclaw_install,
+                                                                "enabled": metadata.enabled,
+                                                            }
+                                                        })
                                                     } else {
                                                         serde_json::json!({
                                                             "status": "success",
@@ -5880,24 +5876,34 @@ impl AgentCore {
                                                             "path": skill_md_path.to_string_lossy().to_string(),
                                                             "content": content,
                                                             "openclaw": {
-                                                                "requires": Vec::<String>::new(),
-                                                                "install": Vec::<String>::new(),
+                                                                "requires": metadata.skill.openclaw_requires.clone(),
+                                                                "install": metadata.skill.openclaw_install.clone(),
                                                             }
                                                         })
                                                     }
+                                                } else {
+                                                    serde_json::json!({
+                                                        "status": "success",
+                                                        "name": normalized_name,
+                                                        "path": skill_md_path.to_string_lossy().to_string(),
+                                                        "content": content,
+                                                        "openclaw": {
+                                                            "requires": Vec::<String>::new(),
+                                                            "install": Vec::<String>::new(),
+                                                        }
+                                                    })
                                                 }
-                                                Err(e) => serde_json::json!({"error": format!("Failed to read skill '{}': {}", normalized_name, e)})
                                             }
+                                            Err(e) => serde_json::json!({"error": format!("Failed to read skill '{}': {}", normalized_name, e)})
                                         }
-                                        None => serde_json::json!({
-                                            "error": format!(
-                                                "Failed to read skill '{}': not found in managed or registered roots",
-                                                normalized_name
-                                            )
-                                        }),
                                     }
+                                    None => serde_json::json!({
+                                        "error": format!(
+                                            "Failed to read skill '{}': not found in managed or registered roots",
+                                            normalized_name
+                                        )
+                                    }),
                                 }
-                                Err(err) => serde_json::json!({"error": err}),
                             }
                         } else if tc_name == "list_skill_references" {
                             let docs = crate::core::skill_support::list_skill_reference_docs(&docs_dir);
@@ -7435,7 +7441,7 @@ impl AgentCore {
         let scan_roots = [root_dir.as_str(), embedded_dir.as_str()];
         let skill_roots = collect_skill_roots(&self.platform.paths);
         let skill_count = crate::core::textual_skill_scanner::scan_textual_skills_from_roots(
-            skill_roots.iter().map(|root| root.as_str()),
+            &skill_roots.iter().map(|root| root.as_str()).collect::<Vec<_>>(),
         )
         .len();
         let tool_count = self
