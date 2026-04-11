@@ -2756,12 +2756,31 @@ Runs: {}",
                         .as_ref()
                         .map(|path| path.display().to_string())
                         .unwrap_or_else(|| result.result_dir.display().to_string());
-                    TelegramOutgoingMessage::plain(format!(
-                        "DevelResult: {}\nFile: {}\n\n{}",
+                    let mut reply = format!(
+                        "DevelResult: {}\nFile: {}",
                         Self::value_label("loaded"),
                         Self::value_label(latest_path),
-                        result.content.trim()
-                    ))
+                    );
+                    if !result.latest_result_matches_latest_prompt {
+                        let prompt_path = result
+                            .latest_prompt_path
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|| result.result_dir.display().to_string());
+                        let prompt_result_path = result
+                            .latest_prompt_result_path
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|| result.result_dir.display().to_string());
+                        reply.push_str(&format!(
+                            "\nPrompt: {}\nExpectedResult: {}\nState: {}",
+                            Self::value_label(prompt_path),
+                            Self::value_label(prompt_result_path),
+                            Self::value_label("latest prompt pending; showing latest completed result"),
+                        ));
+                    }
+                    reply.push_str(&format!("\n\n{}", result.content.trim()));
+                    TelegramOutgoingMessage::plain(reply)
                 } else {
                     TelegramOutgoingMessage::plain(format!(
                         "DevelResult: {}\nDir: {}",
@@ -4988,6 +5007,59 @@ mod tests {
         assert!(reply
             .text
             .contains(&latest_path.display().to_string()));
+
+        std::env::set_current_dir(previous_dir).unwrap();
+        if let Some(previous_data_dir) = previous_data_dir {
+            std::env::set_var("TIZENCLAW_DATA_DIR", previous_data_dir);
+        } else {
+            std::env::remove_var("TIZENCLAW_DATA_DIR");
+        }
+    }
+
+    #[test]
+    fn devel_result_command_reports_pending_newer_prompt() {
+        let temp = tempdir().unwrap();
+        let repo_root = temp.path().join("repo");
+        let data_root = temp.path().join("runtime");
+        fs::create_dir_all(repo_root.join(".dev_note")).unwrap();
+        fs::write(repo_root.join(".dev_note/ROADMAP.md"), "- [ ] next\n").unwrap();
+        fs::create_dir_all(data_root.join("devel/prompt")).unwrap();
+        fs::create_dir_all(data_root.join("devel/result")).unwrap();
+        fs::write(
+            data_root.join("devel/result/02_prompt_RESULT.md"),
+            "older result\n",
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+        let pending_prompt = data_root.join("devel/prompt/20260411104959_prompt.md");
+        fs::write(&pending_prompt, "pending prompt\n").unwrap();
+
+        let previous_data_dir = std::env::var("TIZENCLAW_DATA_DIR").ok();
+        let previous_dir = std::env::current_dir().unwrap();
+        std::env::set_var("TIZENCLAW_DATA_DIR", &data_root);
+        std::env::set_current_dir(&repo_root).unwrap();
+
+        let reply = TelegramClient::handle_command(
+            77,
+            "/devel_result",
+            None,
+            &Arc::new(Mutex::new(HashMap::new())),
+            &temp.path().join("telegram_devel_result_pending_state.json"),
+            &default_registry(),
+            &HashMap::new(),
+            std::path::Path::new("/tmp"),
+            0,
+        )
+        .unwrap();
+
+        assert!(reply.text.contains("DevelResult: [loaded]"));
+        assert!(reply.text.contains("Prompt: ["));
+        assert!(reply
+            .text
+            .contains("latest prompt pending; showing latest completed result"));
+        assert!(reply
+            .text
+            .contains(&pending_prompt.display().to_string()));
 
         std::env::set_current_dir(previous_dir).unwrap();
         if let Some(previous_data_dir) = previous_data_dir {

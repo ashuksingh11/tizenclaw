@@ -55,6 +55,10 @@ pub struct LatestDevelResult {
     pub result_dir: PathBuf,
     pub available: bool,
     pub latest_result_path: Option<PathBuf>,
+    pub latest_prompt_path: Option<PathBuf>,
+    pub latest_prompt_result_path: Option<PathBuf>,
+    pub latest_prompt_result_available: bool,
+    pub latest_result_matches_latest_prompt: bool,
     pub content: String,
 }
 
@@ -255,7 +259,23 @@ pub fn devel_status_json(task_dir: &Path, repo_root: &Path) -> Value {
 pub fn latest_devel_result(repo_root: &Path) -> LatestDevelResult {
     let paths = DevelPaths::new(repo_root);
     let _ = ensure_devel_runtime_dirs(&paths);
+    let latest_prompt_path = latest_prompt_file(&paths.prompt_dir);
     let latest_result_path = latest_result_file(&paths.result_dir);
+    let latest_prompt_result_path = latest_prompt_path
+        .as_ref()
+        .map(|path| result_path_for_prompt(&paths.result_dir, path));
+    let latest_prompt_result_available = latest_prompt_result_path
+        .as_ref()
+        .map(|path| path.is_file())
+        .unwrap_or(false);
+    let latest_result_matches_latest_prompt = match (
+        latest_result_path.as_ref(),
+        latest_prompt_result_path.as_ref(),
+    ) {
+        (_, None) => true,
+        (Some(result_path), Some(prompt_result_path)) => result_path == prompt_result_path,
+        (None, Some(_)) => false,
+    };
     let content = latest_result_path
         .as_ref()
         .and_then(|path| fs::read_to_string(path).ok())
@@ -265,6 +285,10 @@ pub fn latest_devel_result(repo_root: &Path) -> LatestDevelResult {
         result_dir: paths.result_dir,
         available: latest_result_path.is_some(),
         latest_result_path,
+        latest_prompt_path,
+        latest_prompt_result_path,
+        latest_prompt_result_available,
+        latest_result_matches_latest_prompt,
         content,
     }
 }
@@ -280,6 +304,18 @@ pub fn devel_result_json(_task_dir: &Path, repo_root: &Path) -> Value {
             .as_ref()
             .map(|path| path.display().to_string())
             .unwrap_or_default(),
+        "latest_prompt_path": result
+            .latest_prompt_path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default(),
+        "latest_prompt_result_path": result
+            .latest_prompt_result_path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default(),
+        "latest_prompt_result_available": result.latest_prompt_result_available,
+        "latest_result_matches_latest_prompt": result.latest_result_matches_latest_prompt,
         "content": result.content,
     })
 }
@@ -563,6 +599,15 @@ fn unique_prompt_path(prompt_dir: &Path, base_name: &str) -> PathBuf {
     prompt_dir.join(format!("{}_overflow.md", stem))
 }
 
+fn result_path_for_prompt(result_dir: &Path, prompt_path: &Path) -> PathBuf {
+    let prompt_name = prompt_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("prompt.md");
+    let stem = prompt_name.strip_suffix(".md").unwrap_or(prompt_name);
+    result_dir.join(format!("{}_RESULT.md", stem))
+}
+
 fn refresh_last_prompt_path(prompt_dir: &Path) {
     if let Some(path) = latest_prompt_file(prompt_dir) {
         set_last_prompt_path(Some(path));
@@ -812,9 +857,13 @@ mod tests {
     fn latest_devel_result_returns_newest_file_content() {
         let (_env_lock, repo, _data_guard, _cwd_guard) = setup_repo();
         let result_dir = repo.path().join("runtime/devel/result");
+        let prompt_dir = repo.path().join("runtime/devel/prompt");
         fs::create_dir_all(&result_dir).unwrap();
+        fs::create_dir_all(&prompt_dir).unwrap();
+        let prompt = prompt_dir.join("02_prompt.md");
         let older = result_dir.join("01_prompt_RESULT.md");
         let newer = result_dir.join("02_prompt_RESULT.md");
+        fs::write(&prompt, "queued\n").unwrap();
         fs::write(&older, "older\n").unwrap();
         std::thread::sleep(std::time::Duration::from_millis(5));
         fs::write(&newer, "latest\n").unwrap();
@@ -823,8 +872,45 @@ mod tests {
 
         assert!(result.available);
         assert_eq!(result.latest_result_path, Some(newer));
+        assert_eq!(result.latest_prompt_path, Some(prompt));
+        assert_eq!(
+            result.latest_prompt_result_path,
+            Some(result_dir.join("02_prompt_RESULT.md"))
+        );
+        assert!(result.latest_prompt_result_available);
+        assert!(result.latest_result_matches_latest_prompt);
         assert_eq!(result.content, "latest\n");
         assert!(result.result_dir.ends_with("devel/result"));
+    }
+
+    #[test]
+    fn latest_devel_result_reports_pending_prompt_when_result_is_stale() {
+        let (_env_lock, repo, _data_guard, _cwd_guard) = setup_repo();
+        let prompt_dir = repo.path().join("runtime/devel/prompt");
+        let result_dir = repo.path().join("runtime/devel/result");
+        fs::create_dir_all(&prompt_dir).unwrap();
+        fs::create_dir_all(&result_dir).unwrap();
+
+        let completed_prompt = prompt_dir.join("02_prompt.md");
+        let pending_prompt = prompt_dir.join("20260411104959_prompt.md");
+        let completed_result = result_dir.join("02_prompt_RESULT.md");
+        fs::write(&completed_prompt, "older\n").unwrap();
+        fs::write(&completed_result, "completed\n").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        fs::write(&pending_prompt, "pending\n").unwrap();
+
+        let result = latest_devel_result(repo.path());
+
+        assert!(result.available);
+        assert_eq!(result.latest_result_path, Some(completed_result));
+        assert_eq!(result.latest_prompt_path, Some(pending_prompt.clone()));
+        assert_eq!(
+            result.latest_prompt_result_path,
+            Some(result_dir.join("20260411104959_prompt_RESULT.md"))
+        );
+        assert!(!result.latest_prompt_result_available);
+        assert!(!result.latest_result_matches_latest_prompt);
+        assert_eq!(result.content, "completed\n");
     }
 
     #[test]

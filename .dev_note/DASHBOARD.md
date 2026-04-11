@@ -468,6 +468,10 @@
     `.tmp/commit_msg.txt`
   - Commit title:
     `Add skill capability manager`
+- [x] Supervisor Gate after Commit
+  - PASS: cleanup completed, `.tmp/commit_msg.txt` was used, and commit
+    `5f68cd98` recorded only the skill-capability slice while leaving
+    unrelated telegram/devel worktree changes unstaged
 
 - [x] Stage 3: Development
   - Root-cause finding:
@@ -1137,6 +1141,66 @@
 - [x] Supervisor Gate after Development
   - PASS: the system scenario changed first, the devel-result
     correlation fix is implemented, and no ad-hoc cargo command was used
+
+- [x] Stage 4: Build & Deploy
+  - Command:
+    `./deploy_host.sh`
+  - Result:
+    host binaries were reinstalled under `/home/hjhun/.tizenclaw`,
+    `tizenclaw-tool-executor` restarted as pid `2640769`,
+    `tizenclaw` restarted as pid `2640771`, and the dashboard returned
+    on port `9091`
+  - Survival check:
+    `./deploy_host.sh --status` reported healthy daemon, executor, and
+    dashboard processes with `Daemon ready (1309ms)`
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: the host-default deployment path was rerun successfully and
+    live runtime evidence was captured
+
+- [x] Stage 5: Test & Review
+  - Runtime log evidence:
+    `~/.tizenclaw/logs/tizenclaw.log` contained
+    `Daemon ready (1309ms) startup sequence completed`
+  - System test:
+    `~/.tizenclaw/bin/tizenclaw-tests scenario --file tests/system/devel_mode_prompt_flow.json`
+    passed and returned `latest_prompt_path`,
+    `latest_prompt_result_available=false`, and
+    `latest_result_matches_latest_prompt=false`, proving the daemon now
+    exposes a pending newer prompt without pretending the older result
+    is current
+  - Repository regression:
+    `./deploy_host.sh --test` passed, including
+    `core::devel_mode::tests::latest_devel_result_reports_pending_prompt_when_result_is_stale`
+    and
+    `channel::telegram_client::tests::devel_result_command_reports_pending_newer_prompt`
+  - Runtime refresh:
+    because `./deploy_host.sh --test` stops host processes,
+    `./deploy_host.sh` was rerun and `./deploy_host.sh --status`
+    confirmed daemon pid `2641491`, executor pid `2641489`, dashboard
+    listener `2641515`, and `Daemon ready (1300ms)`
+  - QA verdict:
+    PASS
+- [x] Supervisor Gate after Test & Review
+  - PASS: runtime logs, daemon-visible scenario output, repository
+    regression evidence, and final host recovery were captured
+
+- [x] Stage 6: Commit
+  - Workspace cleanup:
+    `bash .agent/scripts/cleanup_workspace.sh` must run before staging
+  - Intended staged scope:
+    devel-result prompt/result correlation in `core/devel_mode.rs`,
+    Telegram `/devel_result` messaging in `channel/telegram_client.rs`,
+    the focused system scenario update, and this dashboard evidence
+  - Excluded existing generated scope:
+    `.dev/` session state and `DORMAMMU.log`
+  - Commit message path:
+    `.tmp/commit_msg.txt`
+  - Commit title:
+    `Align devel result prompt state`
+- [x] Supervisor Gate after Commit
+  - PASS: cleanup used the required script, `.tmp/commit_msg.txt` was
+    used for the commit, and only the validated devel-result slice was
+    staged
 
 ## Skill Capability Manager Cycle
 

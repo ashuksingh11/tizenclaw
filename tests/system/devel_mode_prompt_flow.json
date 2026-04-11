@@ -46,6 +46,22 @@
           "exists": true
         },
         {
+          "path": "latest_prompt_path",
+          "exists": true
+        },
+        {
+          "path": "latest_prompt_result_path",
+          "exists": true
+        },
+        {
+          "path": "latest_prompt_result_available",
+          "exists": true
+        },
+        {
+          "path": "latest_result_matches_latest_prompt",
+          "exists": true
+        },
+        {
           "path": "content",
           "exists": true
         }
