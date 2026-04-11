@@ -8,16 +8,16 @@
 - Active roadmap focus:
 - Runtime authorization outcomes, deterministic policy evaluation, runtime
   config overrides, and shell/sandbox-sensitive permission enforcement
-- Current workflow phase: commit
-- Last completed workflow phase: test_review
-- Supervisor verdict: `pending`
+- Current workflow phase: completed
+- Last completed workflow phase: commit
+- Supervisor verdict: `approved`
 - Escalation status: `approved`
 - Resume point: Return to Plan and resume from the first unchecked PLAN item if setup is interrupted
 
 ## In Progress
 
 - Stage 6 Commit
-- Clean workspace and prepare a file-scoped commit for Prompt 36
+- Record the finalized file-scoped commit for Prompt 36
 
 ## Progress Notes
 
@@ -126,6 +126,17 @@
     tests were added but not executed through the repository-approved script
     path available in this checkout.
 - Supervisor Gate: Stage 5 Test & Review PASS
+- Commit checklist:
+  - [x] Step 0: Run `bash .agent/scripts/cleanup_workspace.sh`
+  - [x] Step 1: Stage only Prompt 36 deliverables
+  - [x] Step 1.5: Keep unrelated workspace changes out of the commit
+  - [x] Step 2: Write `.tmp/commit_msg.txt`
+  - [x] Step 3: Commit with `git commit -F .tmp/commit_msg.txt`
+- Commit result:
+  - Commit: `386eaf77`
+  - Title: `Implement runtime permission policy model`
+  - Scope: runtime permission/policy files plus `.dev/DASHBOARD.md`
+- Supervisor Gate: Stage 6 Commit PASS
 
 ## Risks And Watchpoints
 
