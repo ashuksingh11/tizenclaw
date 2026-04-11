@@ -1,28 +1,46 @@
-use serde::{Deserialize, Serialize};
+mod client;
+mod error;
+mod http_client;
+mod prompt_cache;
+mod providers;
+mod sse;
+mod types;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SurfaceDescriptor {
-    pub name: &'static str,
-    pub role: &'static str,
-}
+pub use client::{ApiClient, EventStream, ProviderClient};
+pub use error::ApiError;
+pub use http_client::{
+    HttpClient, HttpClientError, HttpMethod, HttpRequest, HttpResponse, StaticHttpClient,
+};
+pub use prompt_cache::{PromptCacheConfig, PromptCacheMode, PromptCacheUsage};
+pub use providers::{AnthropicClient, OpenAiCompatClient, ProviderConfig};
+pub use sse::{SseEvent, SseParser};
+pub use types::{
+    ChatMessage, ChatRequest, ChatResponse, ContentBlock, ContentDelta, FinishReason,
+    MessageRole, ProviderKind, ResponseFormat, ResponseMetadata, StreamEvent, SurfaceDescriptor,
+    ToolCallDelta, ToolDefinition, Usage,
+};
 
 pub fn canonical_surfaces() -> Vec<SurfaceDescriptor> {
     vec![
         SurfaceDescriptor {
-            name: "cli",
-            role: "operator entrypoint",
+            name: "cli".into(),
+            role: "operator entrypoint".into(),
         },
         SurfaceDescriptor {
-            name: "runtime",
-            role: "canonical daemon implementation",
+            name: "runtime".into(),
+            role: "canonical daemon implementation".into(),
         },
         SurfaceDescriptor {
-            name: "tools",
-            role: "tool integration boundary",
+            name: "tools".into(),
+            role: "tool integration boundary".into(),
         },
         SurfaceDescriptor {
-            name: "plugins",
-            role: "plugin integration boundary",
+            name: "plugins".into(),
+            role: "plugin integration boundary".into(),
+        },
+        SurfaceDescriptor {
+            name: "api".into(),
+            role: "provider abstraction and streaming boundary".into(),
         },
     ]
 }

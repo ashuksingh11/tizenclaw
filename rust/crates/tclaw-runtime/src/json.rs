@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use thiserror::Error;
+use std::error::Error;
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct JsonEnvelope {
@@ -14,10 +15,31 @@ impl JsonEnvelope {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum JsonEnvelopeError {
-    #[error("invalid json payload: {0}")]
-    InvalidPayload(#[from] serde_json::Error),
+    InvalidPayload(serde_json::Error),
+}
+
+impl Display for JsonEnvelopeError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidPayload(err) => write!(f, "invalid json payload: {err}"),
+        }
+    }
+}
+
+impl Error for JsonEnvelopeError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::InvalidPayload(err) => Some(err),
+        }
+    }
+}
+
+impl From<serde_json::Error> for JsonEnvelopeError {
+    fn from(value: serde_json::Error) -> Self {
+        Self::InvalidPayload(value)
+    }
 }
 
 #[cfg(test)]
