@@ -1338,6 +1338,7 @@ mod tests {
                 phase: HookPhase::PostSession,
                 command: "compact".to_string(),
                 enabled: true,
+                env: BTreeMap::new(),
             }],
             model,
             tools,

@@ -7,7 +7,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use serde_json::Value;
 use tclaw_api::SurfaceDescriptor;
-use tclaw_plugins::PluginToolManifest;
+use tclaw_plugins::{
+    PluginPermission, PluginPermissionLevel, PluginPermissionScope, PluginToolManifest,
+};
 use tclaw_runtime::{
     McpToolBridge, PermissionLevel, PermissionScope, ToolCallRequest, ToolExecutionOutput,
     ToolRuntimeError,
@@ -58,19 +60,48 @@ pub fn plugin_tool_registration(
     handler: impl ToolHandler<GlobalToolContext> + 'static,
 ) -> ToolRegistration<GlobalToolContext> {
     let plugin_name = plugin_name.into();
+    let mut entry = ToolManifestEntry::new(
+        manifest.name,
+        ToolSource::Plugin {
+            plugin_name: plugin_name.clone(),
+        },
+        manifest.description,
+        manifest.input_schema,
+    )
+    .with_aliases(manifest.aliases)
+    .with_permissions(permissions)
+    .with_tags(manifest.tags.into_iter().chain(std::iter::once(plugin_name.clone())));
+
+    for (key, value) in manifest.metadata {
+        entry = entry.with_metadata(key, value);
+    }
+
     ToolRegistration::new(
-        ToolManifestEntry::new(
-            manifest.name,
-            ToolSource::Plugin {
-                plugin_name: plugin_name.clone(),
-            },
-            manifest.description,
-            manifest.input_schema,
-        )
-        .with_permissions(permissions)
-        .with_tags([plugin_name]),
+        entry,
         handler,
     )
+}
+
+fn tool_permission_spec_from_plugin_permission(
+    permission: &PluginPermission,
+    fallback_target: &str,
+    fallback_reason: &str,
+) -> ToolPermissionSpec {
+    ToolPermissionSpec::new(
+        match permission.scope {
+            PluginPermissionScope::Read => PermissionScope::Read,
+            PluginPermissionScope::Write => PermissionScope::Write,
+            PluginPermissionScope::Execute => PermissionScope::Execute,
+            PluginPermissionScope::Network => PermissionScope::Network,
+        },
+        match permission.level {
+            PluginPermissionLevel::Low => PermissionLevel::Low,
+            PluginPermissionLevel::Standard => PermissionLevel::Standard,
+            PluginPermissionLevel::Sensitive => PermissionLevel::Sensitive,
+        },
+    )
+    .with_target(permission.target.clone().unwrap_or_else(|| fallback_target.to_string()))
+    .with_reason(permission.reason.clone().unwrap_or_else(|| fallback_reason.to_string()))
 }
 
 pub fn plugin_manifest_entries(plugin_name: impl Into<String>) -> Vec<ToolManifestEntry> {
@@ -78,7 +109,9 @@ pub fn plugin_manifest_entries(plugin_name: impl Into<String>) -> Vec<ToolManife
     tclaw_plugins::plugin_tool_manifests()
         .into_iter()
         .map(|manifest| {
-            ToolManifestEntry::new(
+            let fallback_target = manifest.name.clone();
+            let fallback_reason = format!("execute plugin tool {}", manifest.name);
+            let mut entry = ToolManifestEntry::new(
                 manifest.name,
                 ToolSource::Plugin {
                     plugin_name: plugin_name.clone(),
@@ -86,10 +119,19 @@ pub fn plugin_manifest_entries(plugin_name: impl Into<String>) -> Vec<ToolManife
                 manifest.description,
                 manifest.input_schema,
             )
-            .with_permissions(ToolPermissionSpec::new(
-                PermissionScope::Execute,
-                PermissionLevel::Standard,
+            .with_aliases(manifest.aliases)
+            .with_permissions(tool_permission_spec_from_plugin_permission(
+                &manifest.permissions,
+                &fallback_target,
+                &fallback_reason,
             ))
+            .with_tags(manifest.tags.into_iter().chain(std::iter::once(plugin_name.clone())));
+
+            for (key, value) in manifest.metadata {
+                entry = entry.with_metadata(key, value);
+            }
+
+            entry
         })
         .collect()
 }
