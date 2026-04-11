@@ -15,8 +15,16 @@
           "contains": "/devel/prompt"
         },
         {
+          "path": "progress_dir",
+          "contains": "/devel/progress"
+        },
+        {
           "path": "result_dir",
           "contains": "/devel/result"
+        },
+        {
+          "path": "progress_watcher_active",
+          "exists": true
         },
         {
           "path": "result_watcher_active",

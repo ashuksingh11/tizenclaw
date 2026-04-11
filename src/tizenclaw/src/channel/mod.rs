@@ -178,7 +178,12 @@ impl ChannelRegistry {
                     telegram_loaded = true;
                 }
                 if let Some(channel) = channel_factory::create_channel(&cfg, agent.clone()) {
-                    self.register(channel, enabled);
+                    let auto_start = if cfg.channel_type == "web_dashboard" {
+                        false
+                    } else {
+                        enabled
+                    };
+                    self.register(channel, auto_start);
                 }
             }
         }

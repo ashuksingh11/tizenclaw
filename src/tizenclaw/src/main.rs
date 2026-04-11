@@ -183,7 +183,7 @@ async fn main() {
             None => {
                 devel_ok = false;
                 devel_detail = Some(
-                    "devel mode requested but no repository root with .dev_note was found"
+                    "devel mode requested but no repository root with .dev was found"
                         .to_string(),
                 );
             }
@@ -213,14 +213,14 @@ async fn main() {
         let mut reg = channel_registry.lock().unwrap();
         reg.load_config(&channel_config_path.to_string_lossy(), Some(agent.clone()));
 
-        // Ensure web_dashboard is always registered (auto_start follows config).
-        // If not present in config, register with auto_start = true as default.
+        // Ensure web_dashboard is always registered for manual CLI startup.
+        // If not present in config, keep it disabled by default.
         if !reg.has_channel("web_dashboard") {
             let web_root = platform.paths.web_root.to_string_lossy().to_string();
             let dashboard_config = channel::ChannelConfig {
                 name: "web_dashboard".into(),
                 channel_type: "web_dashboard".into(),
-                enabled: true,
+                enabled: false,
                 settings: serde_json::json!({
                     "port": core::runtime_paths::default_dashboard_port(),
                     "localhost_only": false,
@@ -230,9 +230,9 @@ async fn main() {
             if let Some(ch) =
                 channel::channel_factory::create_channel(&dashboard_config, Some(agent.clone()))
             {
-                reg.register(ch, true);
+                reg.register(ch, false);
                 log::info!(
-                    "[Boot] WebDashboard registered (port {}, auto_start=true)",
+                    "[Boot] WebDashboard registered (port {}, auto_start=false)",
                     core::runtime_paths::default_dashboard_port()
                 );
             }

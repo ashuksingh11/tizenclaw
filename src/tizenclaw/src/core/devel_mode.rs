@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -8,13 +9,22 @@ use std::time::Duration;
 
 const DEVEL_STATUS_FILE_NAME: &str = "STATUS.md";
 const LEGACY_DEVEL_STATUS_FILE_NAME: &str = ".status";
-const RESULT_EVENT_MASK: u32 = libc::IN_CLOSE_WRITE
+const RESULT_EVENT_MASK: u32 = libc::IN_CREATE
+    | libc::IN_CLOSE_WRITE
     | libc::IN_MOVED_TO
     | libc::IN_DELETE_SELF
     | libc::IN_MOVE_SELF
     | libc::IN_IGNORED;
+const PROGRESS_EVENT_MASK: u32 = libc::IN_CREATE
+    | libc::IN_CLOSE_WRITE
+    | libc::IN_MODIFY
+    | libc::IN_MOVED_TO
+    | libc::IN_DELETE_SELF
+    | libc::IN_MOVE_SELF
+    | libc::IN_IGNORED;
+const MAX_TELEGRAM_OUTBOUND_CHARS: usize = 4000;
 
-static RESULT_WATCHER_ACTIVE: AtomicBool = AtomicBool::new(false);
+static DEVEL_WATCHER_ACTIVE: AtomicBool = AtomicBool::new(false);
 static LAST_PROMPT_PATH: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,8 +55,10 @@ pub struct DevelStatus {
     pub development_required: bool,
     pub telegram_notifications_enabled: bool,
     pub prompt_dir: PathBuf,
+    pub progress_dir: PathBuf,
     pub result_dir: PathBuf,
     pub last_prompt_path: Option<PathBuf>,
+    pub progress_watcher_active: bool,
     pub result_watcher_active: bool,
 }
 
@@ -72,6 +84,7 @@ struct RoadmapProgress {
 struct DevelPaths {
     devel_dir: PathBuf,
     prompt_dir: PathBuf,
+    progress_dir: PathBuf,
     result_dir: PathBuf,
     status_path: PathBuf,
     legacy_status_path: PathBuf,
@@ -84,12 +97,13 @@ impl DevelPaths {
         let devel_dir = data_dir.join("devel");
         Self {
             prompt_dir: devel_dir.join("prompt"),
+            progress_dir: devel_dir.join("progress"),
             result_dir: devel_dir.join("result"),
-            status_path: repo_root.join(".dev_note").join(DEVEL_STATUS_FILE_NAME),
+            status_path: repo_root.join(".dev").join(DEVEL_STATUS_FILE_NAME),
             legacy_status_path: repo_root
-                .join(".dev_note")
+                .join(".dev")
                 .join(LEGACY_DEVEL_STATUS_FILE_NAME),
-            roadmap_path: repo_root.join(".dev_note").join("ROADMAP.md"),
+            roadmap_path: repo_root.join(".dev").join("ROADMAP.md"),
             devel_dir,
         }
     }
@@ -101,16 +115,22 @@ struct InotifyGuard {
 
 impl Drop for InotifyGuard {
     fn drop(&mut self) {
-        RESULT_WATCHER_ACTIVE.store(false, Ordering::SeqCst);
+        DEVEL_WATCHER_ACTIVE.store(false, Ordering::SeqCst);
         unsafe {
             libc::close(self.fd);
         }
     }
 }
 
+#[derive(Debug, Default)]
+struct ProgressStreamState {
+    offset: u64,
+    carry: String,
+}
+
 pub fn detect_repo_root(start: &Path) -> Option<PathBuf> {
     for candidate in start.ancestors() {
-        if candidate.join(".dev_note").is_dir() {
+        if candidate.join(".dev").is_dir() {
             return Some(candidate.to_path_buf());
         }
     }
@@ -134,8 +154,9 @@ pub fn sync_devel_tasks_with_prompt_state(
         task_enabled: true,
         bootstrap_queued: false,
         detail: format!(
-            "devel prompt bridge ready: prompt {} result {}",
+            "devel prompt bridge ready: prompt {} progress {} result {}",
             paths.prompt_dir.display(),
+            paths.progress_dir.display(),
             paths.result_dir.display()
         ),
         task_path: paths.prompt_dir.clone(),
@@ -177,8 +198,8 @@ pub fn spawn_devel_task_sync(
     _last_prompt_fingerprint: Option<String>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        if let Err(err) = watch_result_dir(repo_root).await {
-            RESULT_WATCHER_ACTIVE.store(false, Ordering::SeqCst);
+        if let Err(err) = watch_devel_dirs(repo_root).await {
+            DEVEL_WATCHER_ACTIVE.store(false, Ordering::SeqCst);
             log::warn!("Devel result watcher stopped: {}", err);
         }
     })
@@ -222,9 +243,11 @@ pub fn devel_status(_task_dir: &Path, repo_root: &Path) -> DevelStatus {
         development_required: prompt_exists,
         telegram_notifications_enabled: telegram_notifications_enabled(),
         prompt_dir: paths.prompt_dir,
+        progress_dir: paths.progress_dir,
         result_dir: paths.result_dir,
         last_prompt_path,
-        result_watcher_active: RESULT_WATCHER_ACTIVE.load(Ordering::SeqCst),
+        progress_watcher_active: DEVEL_WATCHER_ACTIVE.load(Ordering::SeqCst),
+        result_watcher_active: DEVEL_WATCHER_ACTIVE.load(Ordering::SeqCst),
     }
 }
 
@@ -247,11 +270,13 @@ pub fn devel_status_json(task_dir: &Path, repo_root: &Path) -> Value {
         "development_required": status.development_required,
         "telegram_notifications_enabled": status.telegram_notifications_enabled,
         "prompt_dir": status.prompt_dir.display().to_string(),
+        "progress_dir": status.progress_dir.display().to_string(),
         "result_dir": status.result_dir.display().to_string(),
         "last_prompt_path": status
             .last_prompt_path
             .as_ref()
             .map(|path| path.display().to_string()),
+        "progress_watcher_active": status.progress_watcher_active,
         "result_watcher_active": status.result_watcher_active,
     })
 }
@@ -335,6 +360,13 @@ fn ensure_devel_runtime_dirs(paths: &DevelPaths) -> Result<(), String> {
             err
         )
     })?;
+    fs::create_dir_all(&paths.progress_dir).map_err(|err| {
+        format!(
+            "Failed to create progress directory '{}': {}",
+            paths.progress_dir.display(),
+            err
+        )
+    })?;
     fs::create_dir_all(&paths.result_dir).map_err(|err| {
         format!(
             "Failed to create result directory '{}': {}",
@@ -345,7 +377,7 @@ fn ensure_devel_runtime_dirs(paths: &DevelPaths) -> Result<(), String> {
     Ok(())
 }
 
-async fn watch_result_dir(repo_root: PathBuf) -> Result<(), String> {
+async fn watch_devel_dirs(repo_root: PathBuf) -> Result<(), String> {
     let paths = DevelPaths::new(&repo_root);
     ensure_devel_runtime_dirs(&paths)?;
 
@@ -359,9 +391,13 @@ async fn watch_result_dir(repo_root: PathBuf) -> Result<(), String> {
     }
 
     let _guard = InotifyGuard { fd };
-    RESULT_WATCHER_ACTIVE.store(true, Ordering::SeqCst);
-    let mut watch_descriptor = add_inotify_watch(fd, &paths.result_dir)?;
-    let mut processed = HashSet::new();
+    DEVEL_WATCHER_ACTIVE.store(true, Ordering::SeqCst);
+    let mut result_watch_descriptor = add_inotify_watch(fd, &paths.result_dir, RESULT_EVENT_MASK)?;
+    let mut progress_watch_descriptor =
+        add_inotify_watch(fd, &paths.progress_dir, PROGRESS_EVENT_MASK)?;
+    let mut processed_results = HashSet::new();
+    let mut completed_prompts = HashSet::new();
+    let mut progress_streams = HashMap::new();
     let mut buffer = vec![0u8; 8192];
 
     loop {
@@ -370,22 +406,62 @@ async fn watch_result_dir(repo_root: PathBuf) -> Result<(), String> {
             unsafe { libc::read(fd, buffer.as_mut_ptr() as *mut libc::c_void, buffer.len()) };
 
         if read_len > 0 {
-            let mut reset_watch = false;
+            let mut reset_result_watch = false;
+            let mut reset_progress_watch = false;
             for event in parse_inotify_events(&buffer[..read_len as usize]) {
+                let is_result_watch = event.watch_descriptor == result_watch_descriptor;
+                let is_progress_watch = event.watch_descriptor == progress_watch_descriptor;
+
                 if event.mask & (libc::IN_DELETE_SELF | libc::IN_MOVE_SELF | libc::IN_IGNORED) != 0
                 {
-                    reset_watch = true;
+                    if is_result_watch {
+                        reset_result_watch = true;
+                    }
+                    if is_progress_watch {
+                        reset_progress_watch = true;
+                    }
                 }
-                if event.mask & (libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO) != 0 {
+
+                if is_result_watch
+                    && event.mask & (libc::IN_CREATE | libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO) != 0
+                {
                     if let Some(name) = event.name.as_deref() {
                         let file_path = paths.result_dir.join(name);
-                        process_result_file(&file_path, &mut processed).await;
+                        if let Some(prompt_key) = prompt_key_for_result_file(&file_path) {
+                            completed_prompts.insert(prompt_key.clone());
+                            progress_streams.remove(&prompt_key);
+                        }
+                        process_result_file(&file_path, &mut processed_results).await;
+                    }
+                }
+
+                if is_progress_watch
+                    && event.mask
+                        & (libc::IN_CREATE | libc::IN_CLOSE_WRITE | libc::IN_MODIFY | libc::IN_MOVED_TO)
+                        != 0
+                {
+                    if let Some(name) = event.name.as_deref() {
+                        let file_path = paths.progress_dir.join(name);
+                        process_progress_file(
+                            &paths,
+                            &file_path,
+                            event.mask & libc::IN_CLOSE_WRITE != 0,
+                            &completed_prompts,
+                            &mut progress_streams,
+                        )
+                        .await;
                     }
                 }
             }
-            if reset_watch {
-                remove_inotify_watch(fd, watch_descriptor);
-                watch_descriptor = add_inotify_watch(fd, &paths.result_dir)?;
+            if reset_result_watch {
+                remove_inotify_watch(fd, result_watch_descriptor);
+                result_watch_descriptor =
+                    add_inotify_watch(fd, &paths.result_dir, RESULT_EVENT_MASK)?;
+            }
+            if reset_progress_watch {
+                remove_inotify_watch(fd, progress_watch_descriptor);
+                progress_watch_descriptor =
+                    add_inotify_watch(fd, &paths.progress_dir, PROGRESS_EVENT_MASK)?;
             }
             continue;
         }
@@ -402,6 +478,50 @@ async fn watch_result_dir(repo_root: PathBuf) -> Result<(), String> {
         }
 
         tokio::time::sleep(Duration::from_millis(400)).await;
+    }
+}
+
+async fn process_progress_file(
+    paths: &DevelPaths,
+    path: &Path,
+    flush_partial: bool,
+    completed_prompts: &HashSet<String>,
+    progress_streams: &mut HashMap<String, ProgressStreamState>,
+) {
+    let Some(prompt_key) = prompt_key_for_progress_file(path) else {
+        return;
+    };
+    if completed_prompts.contains(&prompt_key)
+        || result_path_for_prompt_key(&paths.result_dir, &prompt_key).is_file()
+    {
+        progress_streams.remove(&prompt_key);
+        return;
+    }
+
+    let state = progress_streams.entry(prompt_key.clone()).or_default();
+    let chunk = match read_progress_delta(path, state, flush_partial) {
+        Ok(chunk) => chunk,
+        Err(err) => {
+            log::warn!("Failed to stream devel progress '{}': {}", path.display(), err);
+            return;
+        }
+    };
+    if chunk.trim().is_empty() {
+        return;
+    }
+
+    let title = format!(
+        "Devel progress [{}]",
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("progress")
+    );
+    if let Err(err) = send_telegram_outbound_message(&title, &chunk).await {
+        log::warn!(
+            "Failed to forward devel progress '{}': {}",
+            path.display(),
+            err
+        );
     }
 }
 
@@ -476,7 +596,15 @@ async fn send_telegram_outbound_message(title: &str, message: &str) -> Result<()
 
     let client = crate::infra::http_client::HttpClient::new();
     let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
-    let body = format!("{}\n\n{}", title, message);
+    let composed = format!("{}\n\n{}", title, message);
+    let body = if composed.chars().count() > MAX_TELEGRAM_OUTBOUND_CHARS {
+        format!(
+            "{}\n...(truncated)",
+            utf8_safe_preview(&composed, MAX_TELEGRAM_OUTBOUND_CHARS)
+        )
+    } else {
+        composed
+    };
     for chat_id in chat_ids {
         let payload = json!({
             "chat_id": chat_id,
@@ -491,12 +619,11 @@ async fn send_telegram_outbound_message(title: &str, message: &str) -> Result<()
     Ok(())
 }
 
-fn add_inotify_watch(fd: i32, dir: &Path) -> Result<i32, String> {
+fn add_inotify_watch(fd: i32, dir: &Path, mask: u32) -> Result<i32, String> {
     let dir_string = dir.to_string_lossy().to_string();
     let c_path = std::ffi::CString::new(dir_string.as_bytes())
         .map_err(|_| format!("Invalid watch path '{}'", dir.display()))?;
-    let watch_descriptor =
-        unsafe { libc::inotify_add_watch(fd, c_path.as_ptr(), RESULT_EVENT_MASK) };
+    let watch_descriptor = unsafe { libc::inotify_add_watch(fd, c_path.as_ptr(), mask) };
     if watch_descriptor < 0 {
         Err(format!(
             "Failed to watch result directory '{}': {}",
@@ -518,6 +645,7 @@ fn remove_inotify_watch(fd: i32, watch_descriptor: i32) {
 
 #[derive(Debug)]
 struct ParsedInotifyEvent {
+    watch_descriptor: i32,
     mask: u32,
     name: Option<String>,
 }
@@ -541,6 +669,7 @@ fn parse_inotify_events(buffer: &[u8]) -> Vec<ParsedInotifyEvent> {
             (!trimmed.is_empty()).then_some(trimmed)
         };
         events.push(ParsedInotifyEvent {
+            watch_descriptor: event.wd,
             mask: event.mask,
             name,
         });
@@ -606,6 +735,89 @@ fn result_path_for_prompt(result_dir: &Path, prompt_path: &Path) -> PathBuf {
         .unwrap_or("prompt.md");
     let stem = prompt_name.strip_suffix(".md").unwrap_or(prompt_name);
     result_dir.join(format!("{}_RESULT.md", stem))
+}
+
+fn result_path_for_prompt_key(result_dir: &Path, prompt_key: &str) -> PathBuf {
+    result_dir.join(format!("{}_RESULT.md", prompt_key))
+}
+
+fn prompt_key_for_result_file(path: &Path) -> Option<String> {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_suffix("_RESULT.md").map(str::to_string))
+}
+
+fn prompt_key_for_progress_file(path: &Path) -> Option<String> {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_suffix("_progress.log").map(str::to_string))
+}
+
+fn utf8_safe_preview(text: &str, max_chars: usize) -> &str {
+    if max_chars == 0 {
+        return "";
+    }
+    match text.char_indices().nth(max_chars) {
+        Some((index, _)) => &text[..index],
+        None => text,
+    }
+}
+
+fn read_progress_delta(
+    path: &Path,
+    state: &mut ProgressStreamState,
+    flush_partial: bool,
+) -> Result<String, String> {
+    let mut file = fs::File::open(path)
+        .map_err(|err| format!("Failed to open progress file '{}': {}", path.display(), err))?;
+    let metadata = file
+        .metadata()
+        .map_err(|err| format!("Failed to stat progress file '{}': {}", path.display(), err))?;
+
+    if metadata.len() < state.offset {
+        state.offset = 0;
+        state.carry.clear();
+    }
+
+    file.seek(SeekFrom::Start(state.offset)).map_err(|err| {
+        format!(
+            "Failed to seek progress file '{}' at {}: {}",
+            path.display(),
+            state.offset,
+            err
+        )
+    })?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|err| {
+        format!(
+            "Failed to read progress file '{}' from {}: {}",
+            path.display(),
+            state.offset,
+            err
+        )
+    })?;
+    state.offset = metadata.len();
+    if bytes.is_empty() {
+        return Ok(String::new());
+    }
+
+    let chunk = String::from_utf8_lossy(&bytes);
+    let mut combined = std::mem::take(&mut state.carry);
+    combined.push_str(&chunk);
+
+    let (ready, carry) = if flush_partial {
+        (combined.trim_end_matches('\n').to_string(), String::new())
+    } else if let Some(last_newline) = combined.rfind('\n') {
+        (
+            combined[..last_newline].trim_end_matches('\n').to_string(),
+            combined[last_newline + 1..].to_string(),
+        )
+    } else {
+        (String::new(), combined)
+    };
+
+    state.carry = carry;
+    Ok(ready)
 }
 
 fn refresh_last_prompt_path(prompt_dir: &Path) {
@@ -733,7 +945,8 @@ fn current_local_timestamp_compact() -> String {
 mod tests {
     use super::{
         create_prompt_file, devel_status, detect_repo_root, latest_devel_result,
-        parse_inotify_events, sync_devel_tasks, DevelPaths,
+        parse_inotify_events, prompt_key_for_progress_file, prompt_key_for_result_file,
+        read_progress_delta, sync_devel_tasks, DevelPaths, ProgressStreamState,
     };
     use std::fs;
     use std::path::Path;
@@ -794,8 +1007,8 @@ mod tests {
     ) {
         let env_lock = test_env_lock().lock().unwrap();
         let repo = tempdir().unwrap();
-        fs::create_dir_all(repo.path().join(".dev_note")).unwrap();
-        fs::write(repo.path().join(".dev_note/ROADMAP.md"), "- [ ] next\n").unwrap();
+        fs::create_dir_all(repo.path().join(".dev")).unwrap();
+        fs::write(repo.path().join(".dev/ROADMAP.md"), "- [ ] next\n").unwrap();
         let data_root = repo.path().join("runtime");
         fs::create_dir_all(&data_root).unwrap();
         let data_guard = EnvGuard::set("TIZENCLAW_DATA_DIR", &data_root);
@@ -804,7 +1017,7 @@ mod tests {
     }
 
     #[test]
-    fn detect_repo_root_finds_dev_note_boundary() {
+    fn detect_repo_root_finds_dev_boundary() {
         let (_env_lock, repo, _data_guard, _cwd_guard) = setup_repo();
         let nested = repo.path().join("src/nested");
         fs::create_dir_all(&nested).unwrap();
@@ -819,6 +1032,7 @@ mod tests {
 
         assert!(result.task_enabled);
         assert!(paths.prompt_dir.is_dir());
+        assert!(paths.progress_dir.is_dir());
         assert!(paths.result_dir.is_dir());
         assert_eq!(result.task_path, paths.prompt_dir);
         assert_eq!(result.bootstrap_task_path, paths.result_dir);
@@ -849,7 +1063,9 @@ mod tests {
         assert!(status.prompt_exists);
         assert_eq!(status.last_prompt_path, Some(created));
         assert!(status.prompt_dir.ends_with("devel/prompt"));
+        assert!(status.progress_dir.ends_with("devel/progress"));
         assert!(status.result_dir.ends_with("devel/result"));
+        assert!(!status.progress_watcher_active);
         assert!(!status.result_watcher_active);
     }
 
@@ -919,6 +1135,7 @@ mod tests {
         let mut bytes = vec![0u8; header_len + 10];
         let event_ptr = bytes.as_mut_ptr() as *mut libc::inotify_event;
         unsafe {
+            (*event_ptr).wd = 17;
             (*event_ptr).mask = libc::IN_CLOSE_WRITE;
             (*event_ptr).len = 10;
         }
@@ -927,6 +1144,46 @@ mod tests {
         let events = parse_inotify_events(&bytes);
 
         assert_eq!(events.len(), 1);
+        assert_eq!(events[0].watch_descriptor, 17);
         assert_eq!(events[0].name.as_deref(), Some("done.md"));
+    }
+
+    #[test]
+    fn prompt_key_helpers_match_progress_and_result_files() {
+        assert_eq!(
+            prompt_key_for_progress_file(Path::new("20260411_prompt_progress.log")),
+            Some("20260411_prompt".to_string())
+        );
+        assert_eq!(
+            prompt_key_for_result_file(Path::new("20260411_prompt_RESULT.md")),
+            Some("20260411_prompt".to_string())
+        );
+        assert_eq!(prompt_key_for_progress_file(Path::new("notes.log")), None);
+    }
+
+    #[test]
+    fn read_progress_delta_buffers_partial_lines_until_flush() {
+        let (_env_lock, repo, _data_guard, _cwd_guard) = setup_repo();
+        let progress_path = repo
+            .path()
+            .join("runtime/devel/progress")
+            .join("20260411_prompt_progress.log");
+        fs::create_dir_all(progress_path.parent().unwrap()).unwrap();
+
+        let mut state = ProgressStreamState::default();
+        fs::write(&progress_path, "line one\nline two").unwrap();
+        let first = read_progress_delta(&progress_path, &mut state, false).unwrap();
+        assert_eq!(first, "line one");
+        assert_eq!(state.carry, "line two");
+
+        fs::write(&progress_path, "line one\nline two\nline three\n").unwrap();
+        let second = read_progress_delta(&progress_path, &mut state, false).unwrap();
+        assert_eq!(second, "line two\nline three");
+        assert!(state.carry.is_empty());
+
+        fs::write(&progress_path, "line one\nline two\nline three\nline four").unwrap();
+        let third = read_progress_delta(&progress_path, &mut state, true).unwrap();
+        assert_eq!(third, "line four");
+        assert!(state.carry.is_empty());
     }
 }

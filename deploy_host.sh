@@ -181,7 +181,7 @@ if dashboard is None:
     dashboard = {
         "name": "web_dashboard",
         "type": "web_dashboard",
-        "enabled": True,
+        "enabled": False,
         "settings": {},
     }
     channels.append(dashboard)
@@ -192,7 +192,7 @@ if not isinstance(settings, dict):
     dashboard["settings"] = settings
 
 dashboard.setdefault("type", "web_dashboard")
-dashboard.setdefault("enabled", True)
+dashboard["enabled"] = False
 settings["port"] = port
 settings.setdefault("localhost_only", False)
 
