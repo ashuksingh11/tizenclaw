@@ -1,14 +1,15 @@
 //! Tool indexer — indexes available tools and generates documentation.
 //!
 //! Provides two complementary capabilities:
-//! 1. In-memory search/filtering over `LlmToolDecl` (used by AgentCore)
+//! 1. Descriptor registration over runtime tool directories
 //! 2. Filesystem-based metadata scanning + LLM-assisted markdown generation
 //!    for `tools.md` and per-directory `index.md` files.
 
-use crate::llm::backend::LlmToolDecl;
+use crate::core::tool_dispatcher::ToolDispatcher;
+use libtizenclaw_core::framework::paths::PlatformPaths;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 // ─────────────────────────────────────────────────────────────
 // Data types for filesystem-based tool metadata
@@ -47,92 +48,47 @@ impl ToolsMetadata {
     }
 }
 
-// ─────────────────────────────────────────────────────────────
-// In-memory search (existing functionality, preserved)
-// ─────────────────────────────────────────────────────────────
-
 pub struct ToolIndexer {
-    tools: Vec<LlmToolDecl>,
+    tools_dir: PathBuf,
+    embedded_tools_dir: PathBuf,
 }
 
 impl Default for ToolIndexer {
     fn default() -> Self {
-        Self::new()
+        Self {
+            tools_dir: PathBuf::new(),
+            embedded_tools_dir: PathBuf::new(),
+        }
     }
 }
 
 impl ToolIndexer {
-    pub fn new() -> Self {
-        ToolIndexer { tools: vec![] }
-    }
-
-    /// Update the index with new tool declarations.
-    pub fn update(&mut self, tools: Vec<LlmToolDecl>) {
-        self.tools = tools;
-        log::debug!("ToolIndexer: indexed {} tools", self.tools.len());
-    }
-
-    /// Get all indexed tools.
-    pub fn get_all(&self) -> &[LlmToolDecl] {
-        &self.tools
-    }
-
-    /// Search for tools matching a query by name or description.
-    pub fn search(&self, query: &str, max_results: usize) -> Vec<&LlmToolDecl> {
-        let query_lower = query.to_lowercase();
-        let words: Vec<&str> = query_lower.split_whitespace().collect();
-
-        let mut scored: Vec<(usize, &LlmToolDecl)> = self
-            .tools
-            .iter()
-            .map(|t| {
-                let name_lower = t.name.to_lowercase();
-                let desc_lower = t.description.to_lowercase();
-                let mut score = 0usize;
-
-                // Exact name match = highest score
-                if name_lower == query_lower {
-                    score += 100;
-                }
-                // Name contains query
-                if name_lower.contains(&query_lower) {
-                    score += 50;
-                }
-
-                // Word matches in name and description
-                for word in &words {
-                    if name_lower.contains(word) {
-                        score += 20;
-                    }
-                    if desc_lower.contains(word) {
-                        score += 5;
-                    }
-                }
-                (score, t)
-            })
-            .filter(|(score, _)| *score > 0)
-            .collect();
-
-        scored.sort_by(|a, b| b.0.cmp(&a.0));
-        scored
-            .into_iter()
-            .take(max_results)
-            .map(|(_, t)| t)
-            .collect()
-    }
-
-    /// Filter tools relevant to a given prompt.
-    pub fn filter_relevant(&self, prompt: &str, max_tools: usize) -> Vec<LlmToolDecl> {
-        if self.tools.len() <= max_tools {
-            return self.tools.clone();
+    pub fn new(paths: &PlatformPaths) -> Self {
+        Self {
+            tools_dir: paths.tools_dir.clone(),
+            embedded_tools_dir: paths.embedded_tools_dir.clone(),
         }
+    }
 
-        let results = self.search(prompt, max_tools);
-        if results.is_empty() {
-            // Fallback: return first N tools
-            self.tools.iter().take(max_tools).cloned().collect()
-        } else {
-            results.into_iter().cloned().collect()
+    pub async fn index_all(&self, dispatcher: &mut ToolDispatcher) {
+        for dir in [&self.tools_dir, &self.embedded_tools_dir] {
+            if !dir.exists() {
+                log::debug!(
+                    "ToolIndexer: skipping missing descriptor directory '{}'",
+                    dir.display()
+                );
+                continue;
+            }
+
+            let decls = ToolDispatcher::load_from_dir(dir);
+            log::debug!(
+                "ToolIndexer: registering {} descriptor tools from '{}'",
+                decls.len(),
+                dir.display()
+            );
+            for decl in decls {
+                dispatcher.register(decl);
+            }
         }
     }
 }
@@ -849,7 +805,51 @@ pub fn get_tool_catalog(root_dir: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::tool_dispatcher::ToolDispatcher;
+    use serde_json::json;
     use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn index_all_registers_descriptors_from_both_roots() {
+        let runtime_root = TempDir::new().unwrap();
+        let paths = PlatformPaths::from_base(runtime_root.path().join("runtime"));
+        std::fs::create_dir_all(&paths.tools_dir).unwrap();
+        std::fs::create_dir_all(&paths.embedded_tools_dir).unwrap();
+
+        std::fs::write(
+            paths.tools_dir.join("battery.json"),
+            json!({
+                "name": "battery",
+                "description": "Battery",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+                "binary_path": "/bin/echo",
+                "side_effect": "none"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            paths.embedded_tools_dir.join("wifi.json"),
+            json!({
+                "name": "wifi",
+                "description": "Wifi",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+                "binary_path": "/bin/echo",
+                "side_effect": "none"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let mut dispatcher = ToolDispatcher::new();
+        let indexer = ToolIndexer::new(&paths);
+        indexer.index_all(&mut dispatcher).await;
+
+        let decls = dispatcher.declarations_for_llm();
+        assert_eq!(decls.len(), 2);
+        assert!(decls.iter().any(|decl| decl.name == "battery"));
+        assert!(decls.iter().any(|decl| decl.name == "wifi"));
+    }
 
     #[test]
     fn scan_tools_metadata_with_embedded_adds_flat_category() {

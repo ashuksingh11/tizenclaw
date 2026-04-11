@@ -4054,12 +4054,16 @@ impl AgentCore {
                 ];
 
                 for candidate in candidates {
-                    let result = self
+                    let result = match self
                         .tool_dispatcher
                         .read()
                         .await
                         .execute(&candidate, &cli_args, None)
-                        .await;
+                        .await
+                    {
+                        Ok(value) => value,
+                        Err(error) => json!({ "error": error }),
+                    };
                     let is_unknown = result
                         .get("error")
                         .and_then(|value| value.as_str())
@@ -4207,11 +4211,16 @@ impl AgentCore {
                 Err(_) => json!({"error": "Failed to lock action bridge"}),
             },
             _ => {
-                self.tool_dispatcher
+                match self
+                    .tool_dispatcher
                     .read()
                     .await
-                    .execute(tool_name, args, Some(&self.platform.paths.data_dir))
+                    .execute_in_dir(tool_name, args, None, Some(&self.platform.paths.data_dir))
                     .await
+                {
+                    Ok(value) => value,
+                    Err(error) => json!({ "error": error }),
+                }
             }
         }
     }
@@ -6417,9 +6426,13 @@ impl AgentCore {
                                 Err(error) => serde_json::json!({ "error": error }),
                             }
                         } else {
-                            td_guard_ref
-                                .execute(&tc_name, &tc_args, Some(&session_workdir))
+                            match td_guard_ref
+                                .execute_in_dir(&tc_name, &tc_args, None, Some(&session_workdir))
                                 .await
+                            {
+                                Ok(value) => value,
+                                Err(error) => serde_json::json!({ "error": error }),
+                            }
                         };
 
                         log::debug!("[ObservationCollect] Tool '{}' result: {} chars",
