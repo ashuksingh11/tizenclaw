@@ -5,15 +5,16 @@
 - Goal: Prompt 40: Plugin Lifecycle and Hooks
 - Prompt-driven scope: Rebuild the Rust plugin framework in `rust/crates/tclaw-plugins`
 - Active roadmap focus: plugin manifests, permissions, lifecycle hooks, discovery, tools
-- Current workflow phase: planning
-- Last completed workflow phase: none
-- Supervisor verdict: `pending`
+- Current workflow phase: follow-up verification
+- Last completed workflow phase: commit & push
+- Supervisor verdict: `rework_required`
 - Escalation status: `none`
 - Resume point: Continue from the first incomplete workflow stage in this file
 
 ## In Progress
 
-- Stage 4 Build & Deploy: run the host install/restart path for the rebuilt plugin stack
+- Final verification rerun after synchronizing the prompt-derived PLAN and
+  dashboard state
 
 ## Progress Notes
 
@@ -239,3 +240,51 @@ Summary:
   and workflow artifacts for this task.
 - Prompt reference paths use `plugins`; the actual crate path in this tree is
   `rust/crates/tclaw-plugins`.
+
+## Prompt-Derived PLAN Completion
+
+- Completed PLAN Phase 1: followed `AGENTS.md`, the shell-detection rule, and
+  the required stage skills before making further changes in this resumed run.
+- Completed PLAN Phase 2: treated those guidance files as binding run
+  instructions and kept the cycle on the host-default `./deploy_host.sh` path.
+- Completed PLAN Phase 3: confirmed the prompt's active guidance set is the
+  root `AGENTS.md` workflow plus the required `.dev` tracking artifacts.
+- Completed PLAN Phase 4: re-applied `AGENTS.md` specifically to Prompt 40's
+  plugin lifecycle scope and kept the implementation limited to the plugin,
+  runtime, tools, and `.dev` artifacts already recorded above.
+- Completed PLAN Phase 5: reran live verification, captured the remaining
+  scenario failures structurally, and synchronized both `PLAN.md` files with
+  the actual completed work.
+
+## Follow-Up Verification
+
+- Host status rerun: `./deploy_host.sh --status`
+  - Result: PASS
+  - Evidence: `tizenclaw` running with pid `3227939`,
+    `tizenclaw-tool-executor` running with pid `3227937`, and recent logs show
+    `Completed startup indexing` and `Daemon ready`
+- Repository regression rerun: `./deploy_host.sh --test`
+  - Result: PASS
+  - Evidence: workspace test suite completed successfully on the current
+    repository state after the `.dev` synchronization updates
+- Runtime scenario rerun:
+  `~/.tizenclaw/bin/tizenclaw-tests scenario --file tests/system/command_registry_runtime_contract.json`
+  - Result: FAIL
+  - Root cause: the scenario expects a daemon JSON-RPC method named
+    `command_registry`, but `src/tizenclaw/src/core/ipc_server.rs` does not
+    route that method. The only current implementation is the internal helper
+    `runtime_command_registry()` in `rust/crates/tclaw-runtime/src/commands.rs`,
+    so the daemon returns `-32601 Method not found`.
+- Runtime scenario rerun:
+  `~/.tizenclaw/bin/tizenclaw-tests scenario --file tests/system/basic_ipc_smoke.json`
+  - Result: FAIL
+  - Root cause: the scenario still asserts `skills.roots.managed`, while the
+    live runtime shape returned by
+    `src/tizenclaw/src/core/skill_capability_manager.rs` now emits
+    `skills.roots.user`, `skills.roots.system`, and `skills.roots.external`.
+    The test is stale relative to the current schema.
+- Follow-up verdict: Prompt 40's plugin implementation remains valid; the
+  reproduced scenario failures are existing IPC-contract mismatches outside the
+  `tclaw-plugins` patch surface, and the open supervisor defect for this run
+  was the unsynchronized PLAN/DASHBOARD state. The required host regression
+  path now passes again on the resumed repository state.
