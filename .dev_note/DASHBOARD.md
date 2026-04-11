@@ -2289,3 +2289,101 @@
 - [x] Supervisor Gate after Commit
   - PASS: cleanup script, force-staged dashboard artifacts, and the
     formatted commit flow completed without staging generated files
+
+## Telegram Responses Recovery Cycle
+
+- [x] Stage 1: Planning
+  - Request:
+    Telegram channel still fails even after OAuth preference recovery.
+    Investigate the actual cause and harden the path.
+  - Cycle classification:
+    host-default (`./deploy_host.sh`)
+  - Runtime target:
+    recover Telegram sessions that contain unfinished historical tool
+    calls without breaking OpenAI Codex OAuth routing
+- [x] Supervisor Gate after Planning
+  - PASS: host-default path and Telegram/runtime recovery scope recorded
+
+- [x] Stage 2: Design
+  - Root cause hypothesis:
+    Responses API may reject replayed historical `function_call` items
+    when a session transcript contains an assistant tool call without a
+    matching stored tool result.
+  - Design choice:
+    keep the historical context, but downgrade unfinished tool calls into
+    plain assistant history instead of reviving them as live function
+    calls.
+  - Test strategy:
+    add a focused OpenAI responses unit regression and validate against
+    the real failing Telegram session id through
+    `tizenclaw-cli -s ...`
+- [x] Supervisor Gate after Design
+  - PASS: serialization boundary, downgrade behavior, and verification
+    plan recorded
+
+- [x] Stage 3: Development
+  - Runtime evidence:
+    `~/.tizenclaw/sessions/tg_8728390535_chat-0004/transcript.jsonl`
+    contains `run_coding_agent` tool call
+    `call_uD6LEav0CFIitJrxApLhUjmK` without a matching `toolResult`,
+    which previously caused the Responses API error
+    `No tool output found for function call ...`
+  - Code changes:
+    `src/tizenclaw/src/llm/openai.rs` now detects completed historical
+    tool call ids and downgrades unfinished ones into assistant text
+    instead of emitting orphan `function_call` items.
+  - TDD evidence:
+    added `responses_input_downgrades_unfinished_historical_tool_calls`
+    to lock the regression.
+  - System-test note:
+    there is no direct `tizenclaw-tests` IPC method for replaying a
+    stored Telegram transcript, so validation used the closest live
+    runtime path: `tizenclaw-cli -s <telegram-session>`.
+- [x] Supervisor Gate after Development
+  - PASS: root cause was confirmed from repository/runtime evidence and
+    the transport fix plus regression test were added without forbidden
+    commands
+
+- [x] Stage 4: Build & Deploy
+  - Commands:
+    `./deploy_host.sh`
+    `./deploy_host.sh --status`
+  - Result:
+    host daemon restarted with `tizenclaw` pid `2753702` and
+    `tizenclaw-tool-executor` pid `2753698`
+  - Survival check:
+    startup completed with
+    `Daemon ready (1232ms) startup sequence completed`
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: host deployment path completed and daemon survival was
+    confirmed
+
+- [x] Stage 5: Test & Review
+  - Repository regression:
+    `./deploy_host.sh --test` passed, including the new OpenAI responses
+    regression
+  - Live reproduction check:
+    `~/.tizenclaw/bin/tizenclaw-cli -s tg_8728390535_chat-0004 --no-stream '용'`
+    now returns `네, 듣고 있어요.`
+  - Runtime log evidence:
+    latest `~/.tizenclaw/logs/tizenclaw.stdout.log` shows the same
+    session completing with `success=true text_len=22` and no HTTP 400
+    error
+  - QA verdict:
+    PASS
+- [x] Supervisor Gate after Test & Review
+  - PASS: unit regression and live Telegram-session replay both prove
+    the fix
+
+- [x] Stage 6: Commit
+  - Workspace cleanup:
+    `bash .agent/scripts/cleanup_workspace.sh`
+  - Staged scope:
+    `src/tizenclaw/src/llm/openai.rs`,
+    `.dev_note/DASHBOARD.md`
+  - Commit message path:
+    `.tmp/commit_msg.txt`
+  - Commit title:
+    `Recover Telegram Codex history replay`
+  - Excluded generated scope:
+    `.dev/`, `DORMAMMU.log`

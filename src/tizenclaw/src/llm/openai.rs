@@ -629,11 +629,31 @@ impl OpenAiBackend {
         })
     }
 
+    fn summarize_historical_tool_calls(tool_calls: &[LlmToolCall]) -> String {
+        tool_calls
+            .iter()
+            .map(|tool_call| {
+                format!(
+                    "Historical tool call '{}' with args '{}'",
+                    tool_call.name, tool_call.args
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn build_responses_input(&self, messages: &[LlmMessage], tools: &[LlmToolDecl]) -> Vec<Value> {
         let mut valid_tools = std::collections::HashSet::new();
         for tool in tools {
             valid_tools.insert(tool.name.clone());
         }
+        let completed_tool_call_ids = messages
+            .iter()
+            .filter(|msg| msg.role == "tool")
+            .map(|msg| msg.tool_call_id.trim())
+            .filter(|tool_call_id| !tool_call_id.is_empty())
+            .map(ToString::to_string)
+            .collect::<std::collections::HashSet<_>>();
 
         let mut input = Vec::new();
 
@@ -704,21 +724,53 @@ impl OpenAiBackend {
                     }));
                 }
                 "assistant" if !msg.tool_calls.is_empty() => {
+                    let mut assistant_fragments = Vec::new();
                     if !text.is_empty() {
-                        input.push(Self::responses_message("assistant", &text));
+                        assistant_fragments.push(text.clone());
                     }
+                    let mut emitted_historical_call = false;
                     for tool_call in &msg.tool_calls {
+                        if !completed_tool_call_ids.contains(tool_call.id.trim()) {
+                            // Historical transcripts can contain assistant tool
+                            // calls whose result never made it into the session
+                            // (for example when Telegram handoff or agent-loop
+                            // orchestration stopped mid-turn). Replaying those
+                            // as live function_call items makes the Responses
+                            // API reject the entire request because it expects
+                            // a matching function_call_output. Keep the context
+                            // as plain assistant history instead of reviving an
+                            // abandoned call.
+                            assistant_fragments
+                                .push(Self::summarize_historical_tool_calls(std::slice::from_ref(
+                                    tool_call,
+                                )));
+                            continue;
+                        }
                         let resolved_name = Self::resolve_responses_tool_name(
                             tool_call.name.as_str(),
                             &valid_tools,
                         )
                         .unwrap_or(tool_call.name.as_str());
+                        if !assistant_fragments.is_empty() && !emitted_historical_call {
+                            input.push(Self::responses_message(
+                                "assistant",
+                                &assistant_fragments.join("\n\n"),
+                            ));
+                            assistant_fragments.clear();
+                        }
                         input.push(json!({
                             "type": "function_call",
                             "call_id": tool_call.id,
                             "name": resolved_name,
                             "arguments": tool_call.args.to_string()
                         }));
+                        emitted_historical_call = true;
+                    }
+                    if !assistant_fragments.is_empty() {
+                        input.push(Self::responses_message(
+                            "assistant",
+                            &assistant_fragments.join("\n\n"),
+                        ));
                     }
                 }
                 _ => {
@@ -1708,6 +1760,36 @@ mod tests {
         assert_eq!(input[0]["name"], json!("file_manager"));
         assert_eq!(input[1]["type"], json!("function_call_output"));
         assert_eq!(input[1]["call_id"], json!("call_1"));
+    }
+
+    #[test]
+    fn responses_input_downgrades_unfinished_historical_tool_calls() {
+        let backend = OpenAiBackend::new("openai-codex");
+        let input = backend.build_responses_input(
+            &[LlmMessage {
+                role: "assistant".to_string(),
+                text: "진행 중이던 작업".to_string(),
+                tool_calls: vec![LlmToolCall {
+                    id: "call_orphan".to_string(),
+                    name: "run_coding_agent".to_string(),
+                    args: json!({"prompt": "investigate"}),
+                }],
+                ..Default::default()
+            }],
+            &[LlmToolDecl {
+                name: "run_coding_agent".to_string(),
+                description: "Run coding agent".to_string(),
+                parameters: json!({}),
+            }],
+        );
+
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0]["type"], json!("message"));
+        assert_eq!(input[0]["role"], json!("assistant"));
+        assert!(input[0]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Historical tool call 'run_coding_agent'"));
     }
 
     #[test]
