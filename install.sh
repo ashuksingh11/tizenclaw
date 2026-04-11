@@ -5,10 +5,12 @@ RELEASE_REPO="hjhun/tizenclaw"
 RELEASE_VERSION="latest"
 ASSET_URL=""
 SOURCE_INSTALL=false
+LOCAL_CHECKOUT=false
 
 REPO_URL="https://github.com/hjhun/tizenclaw.git"
 REPO_REF="develRust"
 SOURCE_DIR="${HOME}/.local/src/tizenclaw"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 HOST_BASE_DIR="${HOME}/.tizenclaw"
 HOST_BIN_DIR="${HOST_BASE_DIR}/bin"
@@ -48,6 +50,7 @@ Options:
   --version <tag>      Release tag to install (default: latest)
   --asset-url <url>    Override the bundle asset URL
   --source-install     Clone the repository and build on the local host
+  --local-checkout     Install from the current repository checkout
   --repo <url>         Override the Git repository URL for source install
   --ref <git-ref>      Git ref to checkout for source install
   --dir <path>         Repository clone directory for source install
@@ -60,6 +63,7 @@ Options:
 
 Examples:
   ./install.sh
+  ./install.sh --local-checkout
   ./install.sh --version v1.0.0
   ./install.sh --asset-url file:///tmp/tizenclaw-host-bundle.tar.gz
   ./install.sh --source-install --ref develRust
@@ -81,6 +85,10 @@ parse_args() {
         ;;
       --source-install)
         SOURCE_INSTALL=true
+        shift
+        ;;
+      --local-checkout)
+        LOCAL_CHECKOUT=true
         shift
         ;;
       --repo)
@@ -136,6 +144,21 @@ parse_args() {
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1
+}
+
+auto_select_local_checkout() {
+  if [[ "${SOURCE_INSTALL}" == true || "${LOCAL_CHECKOUT}" == true ]]; then
+    return
+  fi
+
+  if [[ -n "${ASSET_URL}" || "${RELEASE_VERSION}" != "latest" ]]; then
+    return
+  fi
+
+  if [[ -x "${SCRIPT_DIR}/deploy_host.sh" && -d "${SCRIPT_DIR}/.git" ]]; then
+    LOCAL_CHECKOUT=true
+    log "Detected repository checkout; defaulting to --local-checkout"
+  fi
 }
 
 install_runtime_deps() {
@@ -501,6 +524,17 @@ run_source_install() {
   )
 }
 
+run_local_checkout_install() {
+  [[ -x "${SCRIPT_DIR}/deploy_host.sh" ]] || fail "deploy_host.sh not found in ${SCRIPT_DIR}"
+  [[ -d "${SCRIPT_DIR}/.git" ]] || fail "${SCRIPT_DIR} is not a Git checkout"
+
+  log "Running deploy_host.sh from local checkout ${SCRIPT_DIR} ${HOST_ARGS[*]:-}"
+  (
+    cd "${SCRIPT_DIR}"
+    ./deploy_host.sh "${HOST_ARGS[@]}"
+  )
+}
+
 host_args_contain() {
   local wanted="$1"
   for arg in "${HOST_ARGS[@]}"; do
@@ -556,8 +590,16 @@ run_setup_wizard() {
 
 main() {
   parse_args "$@"
+  auto_select_local_checkout
 
-  if [[ "${SOURCE_INSTALL}" == true ]]; then
+  if [[ "${LOCAL_CHECKOUT}" == true ]]; then
+    if [[ "${SKIP_DEPS}" != true ]]; then
+      install_build_deps
+      install_rustup
+    fi
+    ensure_rust_in_shell
+    run_local_checkout_install
+  elif [[ "${SOURCE_INSTALL}" == true ]]; then
     if [[ "${SKIP_DEPS}" != true ]]; then
       install_build_deps
       install_rustup

@@ -549,6 +549,20 @@ do_test() {
   fi
 
   run_rust_workspace_tests
+
+  log "Running reconstruction parity harness"
+  if bash "${PROJECT_DIR}/rust/scripts/run_mock_parity_harness.sh"; then
+    ok "Mock parity harness passed"
+  else
+    fail "Mock parity harness failed"
+  fi
+
+  log "Running documentation-driven architecture verification"
+  if python3 "${PROJECT_DIR}/scripts/verify_doc_architecture.py"; then
+    ok "Documentation-driven verification passed"
+  else
+    fail "Documentation-driven verification failed"
+  fi
 }
 
 # ─────────────────────────────────────────────
