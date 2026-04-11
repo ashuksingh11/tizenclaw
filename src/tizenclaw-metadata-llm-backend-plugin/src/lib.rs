@@ -23,13 +23,30 @@
 
 use std::ffi::{c_char, c_int};
 
-use tizenclaw_metadata_plugin::ffi::GList;
+use tizenclaw_plugin::ffi::GList;
 
 /// Metadata key that this plugin monitors.
 const METADATA_KEY: &[u8] = b"http://tizen.org/metadata/tizenclaw/llm-backend\0";
 
 /// Plugin display name for log messages.
 const PLUGIN_NAME: &str = "LLM backend";
+const PLUGIN_INFO_JSON: &str = r#"{
+  "plugin_id": "tizenclaw-llm-backend",
+  "platform_name": "TizenClaw LLM Backend Metadata",
+  "version": "1.0.0",
+  "priority": 45,
+  "capabilities": ["llm_backend_metadata", "backend_discovery"]
+}"#;
+
+#[no_mangle]
+pub extern "C" fn claw_plugin_info() -> *const c_char {
+    tizenclaw_plugin::plugin_info_raw(PLUGIN_INFO_JSON)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn claw_plugin_free_string(s: *const c_char) {
+    tizenclaw_plugin::plugin_free_string(s);
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn PKGMGR_MDPARSER_PLUGIN_INSTALL(
@@ -37,7 +54,7 @@ pub unsafe extern "C" fn PKGMGR_MDPARSER_PLUGIN_INSTALL(
     _appid: *const c_char,
     metadata: *mut GList,
 ) -> c_int {
-    tizenclaw_metadata_plugin::validate_metadata(pkgid, metadata, METADATA_KEY, PLUGIN_NAME)
+    tizenclaw_plugin::validate_metadata(pkgid, metadata, METADATA_KEY, PLUGIN_NAME)
 }
 
 #[no_mangle]
@@ -46,7 +63,7 @@ pub unsafe extern "C" fn PKGMGR_MDPARSER_PLUGIN_UPGRADE(
     _appid: *const c_char,
     metadata: *mut GList,
 ) -> c_int {
-    tizenclaw_metadata_plugin::validate_metadata(pkgid, metadata, METADATA_KEY, PLUGIN_NAME)
+    tizenclaw_plugin::validate_metadata(pkgid, metadata, METADATA_KEY, PLUGIN_NAME)
 }
 
 #[no_mangle]

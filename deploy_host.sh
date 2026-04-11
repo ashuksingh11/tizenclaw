@@ -28,6 +28,7 @@ TOOL_EXECUTOR_NAME="tizenclaw-tool-executor"
 CLI_NAME="tizenclaw-cli"
 TEST_TOOL_NAME="tizenclaw-tests"
 WEB_DASHBOARD_NAME="tizenclaw-web-dashboard"
+METADATA_PLUGIN_PKG="tizenclaw-metadata-plugin"
 HOST_DASHBOARD_PORT_DEFAULT=9091
 DEVEL_BRANCH_PREFIX="devel"
 DEVEL_OAUTH_REGRESSION_SCENARIO="tests/system/openai_oauth_regression.json"
@@ -415,6 +416,7 @@ do_build() {
     "-p" "${CLI_NAME}"
     "-p" "${TEST_TOOL_NAME}"
     "-p" "${WEB_DASHBOARD_NAME}"
+    "-p" "${METADATA_PLUGIN_PKG}"
   )
 
   log "Running: cargo ${cargo_args[*]}"

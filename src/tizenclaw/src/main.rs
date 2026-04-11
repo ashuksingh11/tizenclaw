@@ -110,8 +110,6 @@ async fn main() {
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
 
-    let platform = Arc::new(platform);
-
     // ── Phase 4: Initialize AgentCore ──
     log::info!("[Boot] Initializing AgentCore...");
     let agent = core::agent_core::AgentCore::new(platform.clone());
@@ -183,8 +181,7 @@ async fn main() {
             None => {
                 devel_ok = false;
                 devel_detail = Some(
-                    "devel mode requested but no repository root with .dev was found"
-                        .to_string(),
+                    "devel mode requested but no repository root with .dev was found".to_string(),
                 );
             }
         }

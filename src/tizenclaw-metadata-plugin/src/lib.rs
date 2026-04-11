@@ -22,7 +22,25 @@
 pub mod ffi;
 pub mod logging;
 
-use std::ffi::{c_char, c_int, CStr};
+use std::ffi::{c_char, c_int, CStr, CString};
+
+#[cfg(any(
+    test,
+    all(feature = "platform-plugin-exports", not(feature = "helper-only"))
+))]
+const PLUGIN_INFO_JSON: &str = r#"{
+  "plugin_id": "tizen",
+  "platform_name": "Tizen",
+  "version": "1.0.0",
+  "priority": 100,
+  "capabilities": [
+    "logging",
+    "system_info",
+    "package_manager",
+    "app_control",
+    "system_events"
+  ]
+}"#;
 
 /// Validate metadata entries against a specific TizenClaw metadata key.
 ///
@@ -79,13 +97,13 @@ pub unsafe fn validate_metadata(
                 let value = if (*md).value.is_null() {
                     "(empty)"
                 } else {
-                    CStr::from_ptr((*md).value)
-                        .to_str()
-                        .unwrap_or("(invalid)")
+                    CStr::from_ptr((*md).value).to_str().unwrap_or("(invalid)")
                 };
                 crate::plugin_log_info!(
                     "Package({}) has valid platform signature for {}: {}",
-                    pkgid_str, plugin_name, value
+                    pkgid_str,
+                    plugin_name,
+                    value
                 );
                 break;
             }
@@ -94,6 +112,31 @@ pub unsafe fn validate_metadata(
     }
 
     0 // Allow installation
+}
+
+pub fn plugin_info_raw(json: &str) -> *const c_char {
+    match CString::new(json) {
+        Ok(value) => value.into_raw(),
+        Err(_) => std::ptr::null(),
+    }
+}
+
+pub unsafe fn plugin_free_string(s: *const c_char) {
+    if !s.is_null() {
+        let _ = CString::from_raw(s as *mut c_char);
+    }
+}
+
+#[cfg(all(feature = "platform-plugin-exports", not(feature = "helper-only")))]
+#[no_mangle]
+pub extern "C" fn claw_plugin_info() -> *const c_char {
+    plugin_info_raw(PLUGIN_INFO_JSON)
+}
+
+#[cfg(all(feature = "platform-plugin-exports", not(feature = "helper-only")))]
+#[no_mangle]
+pub unsafe extern "C" fn claw_plugin_free_string(s: *const c_char) {
+    plugin_free_string(s);
 }
 
 /// Check whether the current installer has platform-level privilege.
@@ -109,6 +152,8 @@ unsafe fn has_platform_privilege() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::PLUGIN_INFO_JSON;
+
     // Tests are executed on-device via deploy.sh, not locally.
     // Unit tests here validate pure-Rust logic only (no FFI calls).
 
@@ -120,9 +165,13 @@ mod tests {
         } else {
             &key[..]
         };
-        assert_eq!(
-            stripped,
-            b"http://tizen.org/metadata/tizenclaw/llm-backend"
-        );
+        assert_eq!(stripped, b"http://tizen.org/metadata/tizenclaw/llm-backend");
+    }
+
+    #[test]
+    fn plugin_info_json_is_valid() {
+        let info: serde_json::Value = serde_json::from_str(PLUGIN_INFO_JSON).unwrap();
+        assert_eq!(info["plugin_id"], "tizen");
+        assert_eq!(info["priority"], 100);
     }
 }

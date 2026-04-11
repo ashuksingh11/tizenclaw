@@ -1,8 +1,12 @@
-Restore Telegram menu number context
+Implement platform plugin metadata loading
 
-Persist recent Telegram command-menu context in chat state so
-plain numeric replies map back to the intended command flow.
+Add metadata-driven shared library discovery to libtizenclaw-core.
+PlatformContext now retains discovered plugins, works without plugins,
+and reports capabilities from loaded plugin metadata.
 
-Add focused Telegram regressions for select, backend, and
-model menus, and record the host validation evidence in the
-dashboard and design note.
+Export claw_plugin_info and claw_plugin_free_string from the
+standalone Tizen metadata plugin and add discovery metadata to the
+CLI, skill, and LLM backend metadata plugin crates.
+
+Refresh the host build flow to compile the reference metadata plugin,
+update Cargo.lock, and record the full six-stage workflow in DASHBOARD.

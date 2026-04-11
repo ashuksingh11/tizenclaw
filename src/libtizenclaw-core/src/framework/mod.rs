@@ -1,20 +1,19 @@
 //! claw-platform: Platform abstraction layer for TizenClaw.
 //!
 //! Provides trait-based interfaces for platform-specific functionality
-//! and a dynamic plugin loader that scans directories for `.so` plugins.
+//! plus metadata-driven platform plugin discovery.
 //!
 //! Architecture:
 //! - `PlatformPlugin`: Core trait every platform plugin must implement
 //! - `GenericLinuxPlatform`: Built-in fallback for standard Linux/Ubuntu
-//! - `PluginLoader`: Runtime `dlopen`-based loader scanning plugin dirs
-//! - `PlatformContext`: Singleton holding the active platform + all loaded plugins
+//! - `PlatformContext`: Singleton holding the active platform + discovered plugins
 
 pub mod generic_linux;
 pub mod loader;
 pub mod paths;
 
 use serde_json::Value;
-use std::path::PathBuf;
+use std::sync::Arc;
 
 // ─────────────────────────────────────────
 // Core Traits
@@ -41,18 +40,26 @@ pub trait PlatformPlugin: Send + Sync {
     fn plugin_id(&self) -> &str;
 
     /// Plugin version string.
-    fn version(&self) -> &str { "1.0.0" }
+    fn version(&self) -> &str {
+        "1.0.0"
+    }
 
     /// Priority for platform detection (higher = preferred).
     /// When multiple plugins claim to be compatible, the highest priority wins.
-    fn priority(&self) -> u32 { 0 }
+    fn priority(&self) -> u32 {
+        0
+    }
 
     /// Check if this plugin is compatible with the current environment.
     /// Called during plugin loading to determine which plugin to activate.
-    fn is_compatible(&self) -> bool { true }
+    fn is_compatible(&self) -> bool {
+        true
+    }
 
     /// Initialize the plugin. Called once after loading.
-    fn initialize(&mut self) -> bool { true }
+    fn initialize(&mut self) -> bool {
+        true
+    }
 
     /// Shutdown the plugin. Called once before unloading.
     fn shutdown(&mut self) {}
@@ -73,7 +80,9 @@ pub trait SystemInfoProvider: Send + Sync {
     fn get_device_profile(&self) -> Value;
 
     /// Get battery level (0-100), if available.
-    fn get_battery_level(&self) -> Option<u32> { None }
+    fn get_battery_level(&self) -> Option<u32> {
+        None
+    }
 
     /// Check if network is available.
     fn is_network_available(&self) -> bool {
@@ -124,13 +133,17 @@ pub trait AppControlProvider: Send + Sync {
     fn launch_app(&self, app_id: &str) -> Result<(), String>;
 
     /// List running applications.
-    fn list_running_apps(&self) -> Vec<String> { vec![] }
+    fn list_running_apps(&self) -> Vec<String> {
+        vec![]
+    }
 }
 
 /// Platform-specific system event monitoring.
 pub trait SystemEventProvider: Send + Sync {
     /// Start monitoring system events.
-    fn start(&mut self) -> bool { true }
+    fn start(&mut self) -> bool {
+        true
+    }
 
     /// Stop monitoring.
     fn stop(&mut self) {}
@@ -171,61 +184,116 @@ pub struct PlatformContext {
     pub app_control: Box<dyn AppControlProvider>,
     /// Platform-resolved paths.
     pub paths: paths::PlatformPaths,
+    /// Discovered platform plugins loaded from the plugins directory.
+    pub plugins: Vec<crate::plugin_core::PlatformPlugin>,
 }
 
 impl PlatformContext {
     /// Detect and load the appropriate platform.
     ///
-    /// 1. Scan plugin directories for `.so` files
-    /// 2. Load each plugin, check `is_compatible()`
-    /// 3. Select the highest-priority compatible plugin
-    /// 4. Fall back to `GenericLinuxPlatform` if no plugin matches
-    pub fn detect() -> Self {
-        // Determine paths first (used to find plugin directories)
+    /// 1. Resolve `PlatformPaths`
+    /// 2. Discover metadata plugins from `paths.plugins_dir`
+    /// 3. Return an `Arc<PlatformContext>` that remains valid with zero plugins
+    pub fn detect() -> Arc<Self> {
         let platform_paths = paths::PlatformPaths::detect();
+        let plugins = crate::plugin_core::load_plugins(&platform_paths.plugins_dir);
+        let platform: Box<dyn PlatformPlugin> = plugins
+            .first()
+            .map(|plugin| {
+                Box::new(DiscoveredPlatform::new(plugin.info.clone())) as Box<dyn PlatformPlugin>
+            })
+            .unwrap_or_else(|| Box::new(generic_linux::GenericLinuxPlatform::new()));
 
-        // Try loading platform plugins from the plugins directory
-        let plugin_dirs = vec![
-            platform_paths.plugins_dir.clone(),
-            // Also check standard system paths
-            PathBuf::from("/usr/lib/tizenclaw/plugins"),
-            PathBuf::from("/usr/local/lib/tizenclaw/plugins"),
-        ];
-
-        if let Some(ctx) = loader::try_load_platform_plugins(&plugin_dirs, &platform_paths) {
-            return ctx;
-        }
-
-        // Check if the built-in Tizen adapters are compatible natively
-        let mut tizen = crate::plugin_core::adapters::TizenPlatform;
-        if tizen.is_compatible() {
-            log::debug!("Tizen Platform detected natively. Using internal adapters.");
-            tizen.initialize();
-            return PlatformContext {
-                logger: std::sync::Arc::new(generic_linux::StderrLogger),
-                system_info: Box::new(crate::plugin_core::adapters::TizenSystemInfo),
-                package_manager: Box::new(crate::plugin_core::adapters::TizenPackageManager),
-                app_control: Box::new(crate::plugin_core::adapters::TizenAppControl),
-                platform: Box::new(tizen),
-                paths: platform_paths,
-            };
-        }
-
-        // Fallback: use built-in Generic Linux platform
-        log::debug!("No platform plugin found, using Generic Linux fallback");
-        let generic = generic_linux::GenericLinuxPlatform::new();
-        PlatformContext {
-            logger: std::sync::Arc::new(generic_linux::StderrLogger),
+        Arc::new(PlatformContext {
+            logger: Arc::new(generic_linux::StderrLogger),
             system_info: Box::new(generic_linux::LinuxSystemInfo),
             package_manager: Box::new(generic_linux::GenericPackageManager),
             app_control: Box::new(generic_linux::GenericAppControl),
-            platform: Box::new(generic),
+            platform,
             paths: platform_paths,
-        }
+            plugins,
+        })
     }
 
     /// Get the platform name.
     pub fn platform_name(&self) -> &str {
         self.platform.platform_name()
+    }
+
+    pub fn has_capability(&self, capability: &str) -> bool {
+        self.plugins
+            .iter()
+            .any(|plugin| plugin.has_capability(capability))
+    }
+}
+
+struct DiscoveredPlatform {
+    info: crate::plugin_core::PluginInfo,
+}
+
+impl DiscoveredPlatform {
+    fn new(info: crate::plugin_core::PluginInfo) -> Self {
+        Self { info }
+    }
+}
+
+impl PlatformPlugin for DiscoveredPlatform {
+    fn platform_name(&self) -> &str {
+        &self.info.platform_name
+    }
+
+    fn plugin_id(&self) -> &str {
+        &self.info.plugin_id
+    }
+
+    fn version(&self) -> &str {
+        &self.info.version
+    }
+
+    fn priority(&self) -> u32 {
+        self.info.priority.max(0) as u32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libloading::Library;
+    use std::path::PathBuf;
+
+    fn test_library() -> Library {
+        unsafe {
+            Library::new("libc.so.6")
+                .or_else(|_| Library::new("libc.so"))
+                .expect("host test library should load")
+        }
+    }
+
+    #[test]
+    fn has_capability_matches_loaded_plugin_metadata() {
+        let plugin = crate::plugin_core::PlatformPlugin::from_test_parts(
+            crate::plugin_core::PluginInfo {
+                plugin_id: "tizen".to_string(),
+                platform_name: "Tizen".to_string(),
+                version: "1.0.0".to_string(),
+                priority: 100,
+                capabilities: vec!["logging".to_string(), "package_manager".to_string()],
+            },
+            PathBuf::from("/tmp/libtizenclaw_plugin.so"),
+            test_library(),
+        );
+
+        let context = PlatformContext {
+            platform: Box::new(generic_linux::GenericLinuxPlatform::new()),
+            logger: Arc::new(generic_linux::StderrLogger),
+            system_info: Box::new(generic_linux::LinuxSystemInfo),
+            package_manager: Box::new(generic_linux::GenericPackageManager),
+            app_control: Box::new(generic_linux::GenericAppControl),
+            paths: paths::PlatformPaths::from_base(std::env::temp_dir().join("tizenclaw-test")),
+            plugins: vec![plugin],
+        };
+
+        assert!(context.has_capability("logging"));
+        assert!(!context.has_capability("system_events"));
     }
 }
