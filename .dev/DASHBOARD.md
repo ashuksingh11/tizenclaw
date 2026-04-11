@@ -97,6 +97,15 @@
     daemon IPC contract changed
 - Supervisor Gate: Stage 5 Test & Review PASS
   - Verified PASS verdict, test evidence, and runtime log/status proof
+- Stage 6 Commit completed:
+  - Cleanup command: `bash .agent/scripts/cleanup_workspace.sh`
+  - Commit command: `git commit -F .tmp/commit_msg.txt`
+  - Commit created: `8d840053` `Implement platform path detection`
+  - Commit scope: framework path/context files plus `.dev/DASHBOARD.md`
+    only; unrelated worktree changes were left unstaged
+- Supervisor Gate: Stage 6 Commit PASS
+  - Verified cleanup execution, commit-message file usage, and isolated
+    staged scope without `-m`
 
 ## Risks And Watchpoints
 
