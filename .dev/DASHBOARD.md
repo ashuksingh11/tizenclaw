@@ -4,10 +4,10 @@
 
 - Goal: Prompt 19: LLM Types and C FFI Layer
 - Cycle: host-default (`./deploy_host.sh`)
-- Current workflow phase: commit
-- Last completed workflow phase: test-review
-- Supervisor verdict: `PASS` through Stage 5
-- Resume point: Run cleanup and create a scoped commit for the FFI/API files
+- Current workflow phase: complete
+- Last completed workflow phase: commit
+- Supervisor verdict: `PASS`
+- Resume point: Prompt 19 complete
 
 ## Stage 1: Planning
 
@@ -121,14 +121,23 @@
 
 ## Stage 6: Commit
 
-- Status: in progress
-- Planned scope:
+- Status: complete
+- Committed scope:
   `.dev/DASHBOARD.md`
   `src/libtizenclaw-core/src/llm_types.rs`
   `src/libtizenclaw/src/api.rs`
   `src/libtizenclaw/src/lib.rs`
 - Commit message path:
   `.tmp/commit_msg.txt`
+- Commit result:
+  `0fdd2144 Align libtizenclaw LLM FFI handles`
+
+## Supervisor Gate
+
+- Stage 6 Commit: PASS
+  workspace cleanup ran, the commit used `.tmp/commit_msg.txt`, and the
+  commit scope excluded the unrelated dirty files already present in the
+  repository.
 
 ## Risks And Watchpoints
 
