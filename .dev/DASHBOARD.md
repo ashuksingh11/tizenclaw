@@ -14,6 +14,32 @@
 - Resume point: Continue Stage 2 design, then implement the selected guidance
   files before running the host validation path
 
+## Prompt-Derived Plan Sync
+
+- Rework cause:
+  - the previous run completed the repository changes and validation, but
+    `.dev/PLAN.md` and the session `PLAN.md` were left unchecked
+  - the supervisor therefore rejected the run on plan synchronization rather
+    than missing implementation work
+- Phase 1 completed:
+  - followed `AGENTS.md`, `.agent/rules/shell-detection.md`, and the required
+    stage skills before continuing the rework
+- Phase 2 completed:
+  - treated the guidance files as mandatory run instructions and kept the
+    host-default script path for validation evidence
+- Phase 3 completed:
+  - recorded the prompt guidance source in the stage log and aligned the
+    repository work with the requested onboarding scope
+- Phase 4 completed:
+  - used `AGENTS.md` as the governing project rule for the resumed cycle and
+    preserved its host-first, script-first workflow constraints
+- Phase 5 completed:
+  - verified the prompt slice was already implemented in commit `1974017f`
+  - confirmed the prior host validation evidence still matches the delivered
+    docs-only slice
+  - synchronized `.dev/DASHBOARD.md`, `.dev/PLAN.md`, and the current session
+    copies so the supervisor sees the completed checklist
+
 ## Stage Log
 
 ### Stage 1: Planning
