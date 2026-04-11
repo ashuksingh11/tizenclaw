@@ -2,14 +2,14 @@ mod client;
 mod scenario;
 
 use client::{ClientOptions, IpcClient};
-use scenario::{load_scenario, run_scenario};
+use scenario::{load_scenario, openai_oauth_regression_scenario, run_scenario};
 use serde_json::Value;
 
 fn print_usage() {
     eprintln!("Usage:");
-    eprintln!("  tizenclaw-tests call --method <name> [--params '<json>'] [--socket-path <path>] [--socket-name <name>]");
-    eprintln!("  tizenclaw-tests scenario --file <path> [--socket-path <path>] [--socket-name <name>]");
-    eprintln!("  tizenclaw-tests openai-oauth-regression [--socket-path <path>] [--socket-name <name>]");
+    eprintln!("  tizenclaw-tests call --method <name> [--params '<json>'] [--socket-path <path>]");
+    eprintln!("  tizenclaw-tests scenario --file <path> [--socket-path <path>]");
+    eprintln!("  tizenclaw-tests openai-oauth-regression [--socket-path <path>]");
 }
 
 fn parse_json(value: Option<String>) -> Result<Value, String> {
@@ -25,6 +25,7 @@ fn parse_common_options(args: &[String]) -> Result<(ClientOptions, Vec<String>),
     let mut socket_path = None;
     let mut remaining = Vec::new();
     let mut i = 0usize;
+
     while i < args.len() {
         match args[i].as_str() {
             "--socket-name" => {
@@ -60,6 +61,7 @@ fn handle_call(args: &[String]) -> Result<(), String> {
     let mut method = None;
     let mut params = None;
     let mut i = 0usize;
+
     while i < remaining.len() {
         match remaining[i].as_str() {
             "--method" => {
@@ -78,16 +80,17 @@ fn handle_call(args: &[String]) -> Result<(), String> {
     let method = method.ok_or_else(|| "--method is required".to_string())?;
     let params = parse_json(params)?;
     let client = IpcClient::new(options);
-    let result = client.call(&method, params)?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&serde_json::json!({
-            "method": method,
-            "result": result.result,
-            "streamed_chunks": result.streamed_chunks,
-        }))
-        .unwrap()
-    );
+    let response = client.call(&method, params)?;
+    let _response_id_seen = response.id.as_ref();
+
+    if let Some(error) = response.error {
+        return Err(format!(
+            "JSON-RPC error: {}",
+            serde_json::to_string(&error).unwrap_or_else(|_| error.to_string())
+        ));
+    }
+
+    println!("{}", serde_json::to_string(&response.result).unwrap());
     Ok(())
 }
 
@@ -95,6 +98,7 @@ fn handle_scenario(args: &[String]) -> Result<(), String> {
     let (options, remaining) = parse_common_options(args)?;
     let mut scenario_file = None;
     let mut i = 0usize;
+
     while i < remaining.len() {
         match remaining[i].as_str() {
             "--file" => {
@@ -110,27 +114,48 @@ fn handle_scenario(args: &[String]) -> Result<(), String> {
     let scenario = load_scenario(&scenario_file)?;
     let client = IpcClient::new(options);
     let results = run_scenario(&client, &scenario)?;
+    let step_names = results
+        .iter()
+        .map(|step| step.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let non_null_results = results.iter().filter(|step| !step.result.is_null()).count();
     println!(
-        "{}",
-        serde_json::to_string_pretty(&serde_json::json!({
-            "scenario": scenario.name,
-            "steps": results.into_iter().map(|step| serde_json::json!({
-                "name": step.name,
-                "result": step.result,
-            })).collect::<Vec<_>>()
-        }))
-        .unwrap()
+        "Scenario '{}' completed: {} step(s) passed [{}], {} result(s) returned",
+        scenario.name,
+        results.len(),
+        step_names,
+        non_null_results
     );
     Ok(())
 }
 
 fn handle_openai_oauth_regression(args: &[String]) -> Result<(), String> {
-    let mut scenario_args = vec![
-        "--file".to_string(),
-        "tests/system/openai_oauth_regression.json".to_string(),
-    ];
-    scenario_args.extend(args.iter().cloned());
-    handle_scenario(&scenario_args)
+    let (options, remaining) = parse_common_options(args)?;
+    if !remaining.is_empty() {
+        return Err(format!(
+            "Unknown option for openai-oauth-regression: {}",
+            remaining.join(" ")
+        ));
+    }
+
+    let scenario = openai_oauth_regression_scenario();
+    let client = IpcClient::new(options);
+    let results = run_scenario(&client, &scenario)?;
+    let step_names = results
+        .iter()
+        .map(|step| step.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let non_null_results = results.iter().filter(|step| !step.result.is_null()).count();
+    println!(
+        "Scenario '{}' completed: {} step(s) passed [{}], {} result(s) returned",
+        scenario.name,
+        results.len(),
+        step_names,
+        non_null_results
+    );
+    Ok(())
 }
 
 fn main() {

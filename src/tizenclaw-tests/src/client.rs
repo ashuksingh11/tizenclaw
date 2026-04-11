@@ -1,12 +1,13 @@
 use serde_json::{json, Value};
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::fd::FromRawFd;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const MAX_IPC_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 const DEFAULT_SOCKET_NAME: &str = "tizenclaw.sock";
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Debug, Default)]
 pub struct ClientOptions {
@@ -15,9 +16,10 @@ pub struct ClientOptions {
 }
 
 #[derive(Clone, Debug)]
-pub struct CallResult {
+pub struct IpcResponse {
+    pub id: Option<Value>,
     pub result: Value,
-    pub streamed_chunks: Vec<String>,
+    pub error: Option<Value>,
 }
 
 pub struct IpcClient {
@@ -29,7 +31,7 @@ impl IpcClient {
         Self { options }
     }
 
-    pub fn call(&self, method: &str, params: Value) -> Result<CallResult, String> {
+    pub fn call(&self, method: &str, params: Value) -> Result<IpcResponse, String> {
         let mut stream = self.connect()?;
         let request = json!({
             "jsonrpc": "2.0",
@@ -40,45 +42,19 @@ impl IpcClient {
 
         Self::write_frame(&mut stream, &request.to_string())?;
 
-        let mut streamed_chunks = Vec::new();
         loop {
             let frame = Self::read_frame(&mut stream)?;
-            let payload: Value =
-                serde_json::from_str(&frame).map_err(|err| format!("Invalid JSON-RPC frame: {}", err))?;
+            let payload: Value = serde_json::from_str(&frame)
+                .map_err(|err| format!("Invalid JSON-RPC response: {}", err))?;
 
             if payload.get("method").and_then(Value::as_str) == Some("stream_chunk") {
-                if let Some(chunk) = payload
-                    .get("params")
-                    .and_then(|value| value.get("chunk"))
-                    .and_then(Value::as_str)
-                {
-                    streamed_chunks.push(chunk.to_string());
-                }
                 continue;
             }
 
-            if let Some(error) = payload.get("error") {
-                let code = error
-                    .get("code")
-                    .and_then(Value::as_i64)
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "unknown".to_string());
-                let message = error
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("Unknown JSON-RPC error");
-                return Err(format!("JSON-RPC error {}: {}", code, message));
-            }
-
-            let result = payload
-                .get("result")
-                .cloned()
-                .ok_or_else(|| "Missing JSON-RPC result".to_string())?;
-
-            return Ok(CallResult {
-                result,
-                streamed_chunks,
-            });
+            let error = payload.get("error").cloned();
+            let result = payload.get("result").cloned().unwrap_or(Value::Null);
+            let id = payload.get("id").cloned();
+            return Ok(IpcResponse { id, result, error });
         }
     }
 
@@ -90,10 +66,8 @@ impl IpcClient {
             .filter(|value| !value.trim().is_empty())
         {
             let stream = UnixStream::connect(Path::new(path))
-                .map_err(|err| format!("Failed to connect to socket path '{}': {}", path, err))?;
-            stream
-                .set_read_timeout(Some(Duration::from_secs(30)))
-                .map_err(|err| format!("Failed to set read timeout: {}", err))?;
+                .map_err(|err| format!("Cannot connect to socket: {}: {}", path, err))?;
+            Self::configure_stream(&stream)?;
             return Ok(stream);
         }
 
@@ -105,9 +79,20 @@ impl IpcClient {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_SOCKET_NAME.to_string());
 
+        if socket_name.starts_with('/') {
+            let stream = UnixStream::connect(Path::new(&socket_name))
+                .map_err(|err| format!("Cannot connect to socket: {}: {}", socket_name, err))?;
+            Self::configure_stream(&stream)?;
+            return Ok(stream);
+        }
+
         let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
         if fd < 0 {
-            return Err("Failed to create IPC socket".into());
+            return Err(format!(
+                "Cannot connect to socket: @{}: {}",
+                socket_name,
+                std::io::Error::last_os_error()
+            ));
         }
 
         let connect_result = unsafe {
@@ -126,17 +111,21 @@ impl IpcClient {
             unsafe {
                 libc::close(fd);
             }
-            return Err(format!(
-                "Failed to connect to daemon socket '{}': {}",
-                socket_name, error
-            ));
+            return Err(format!("Cannot connect to socket: @{}: {}", socket_name, error));
         }
 
         let stream = unsafe { UnixStream::from_raw_fd(fd) };
-        stream
-            .set_read_timeout(Some(Duration::from_secs(30)))
-            .map_err(|err| format!("Failed to set read timeout: {}", err))?;
+        Self::configure_stream(&stream)?;
         Ok(stream)
+    }
+
+    fn configure_stream(stream: &UnixStream) -> Result<(), String> {
+        stream
+            .set_read_timeout(Some(DEFAULT_TIMEOUT))
+            .map_err(|err| format!("Failed to set read timeout: {}", err))?;
+        stream
+            .set_write_timeout(Some(DEFAULT_TIMEOUT))
+            .map_err(|err| format!("Failed to set write timeout: {}", err))
     }
 
     fn write_frame(stream: &mut UnixStream, payload: &str) -> Result<(), String> {
@@ -156,19 +145,107 @@ impl IpcClient {
     }
 
     fn read_frame(stream: &mut UnixStream) -> Result<String, String> {
+        let deadline = Instant::now() + DEFAULT_TIMEOUT;
         let mut len_buf = [0u8; 4];
-        stream
-            .read_exact(&mut len_buf)
-            .map_err(|err| format!("Failed to read IPC frame size: {}", err))?;
+        Self::read_exact_with_retry(stream, &mut len_buf, deadline, "read length")?;
         let payload_len = u32::from_be_bytes(len_buf) as usize;
-        if payload_len > MAX_IPC_MESSAGE_SIZE {
-            return Err(format!("Received oversized IPC frame: {}", payload_len));
+        if payload_len == 0 || payload_len > MAX_IPC_MESSAGE_SIZE {
+            return Err(format!("Invalid IPC payload size: {}", payload_len));
         }
 
         let mut payload = vec![0u8; payload_len];
-        stream
-            .read_exact(&mut payload)
-            .map_err(|err| format!("Failed to read IPC frame body: {}", err))?;
+        Self::read_exact_with_retry(stream, &mut payload, deadline, "read body")?;
         String::from_utf8(payload).map_err(|err| format!("Invalid UTF-8 IPC frame: {}", err))
+    }
+
+    fn read_exact_with_retry<R: Read>(
+        reader: &mut R,
+        buf: &mut [u8],
+        deadline: Instant,
+        context: &str,
+    ) -> Result<(), String> {
+        let mut offset = 0usize;
+        while offset < buf.len() {
+            match reader.read(&mut buf[offset..]) {
+                Ok(0) => {
+                    return Err(format!(
+                        "IPC {} failed: unexpected EOF after {} of {} bytes",
+                        context,
+                        offset,
+                        buf.len()
+                    ));
+                }
+                Ok(read) => offset += read,
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
+                    ) && Instant::now() < deadline =>
+                {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                Err(err) => return Err(format!("IPC {} failed: {}", context, err)),
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixListener;
+    use std::thread;
+    use tempfile::tempdir;
+
+    fn write_frame(stream: &mut UnixStream, payload: &str) {
+        let bytes = payload.as_bytes();
+        let len = (bytes.len() as u32).to_be_bytes();
+        stream.write_all(&len).unwrap();
+        stream.write_all(bytes).unwrap();
+    }
+
+    fn read_frame(stream: &mut UnixStream) -> String {
+        let mut len_buf = [0u8; 4];
+        stream.read_exact(&mut len_buf).unwrap();
+        let len = u32::from_be_bytes(len_buf) as usize;
+        let mut payload = vec![0u8; len];
+        stream.read_exact(&mut payload).unwrap();
+        String::from_utf8(payload).unwrap()
+    }
+
+    #[test]
+    fn call_reads_length_prefixed_jsonrpc_response() {
+        let dir = tempdir().unwrap();
+        let socket_path = dir.path().join("client-test.sock");
+        let listener = UnixListener::bind(&socket_path).unwrap();
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let request = read_frame(&mut stream);
+            let payload: Value = serde_json::from_str(&request).unwrap();
+            assert_eq!(payload["method"], "ping");
+
+            write_frame(
+                &mut stream,
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": { "pong": true }
+                })
+                .to_string(),
+            );
+        });
+
+        let client = IpcClient::new(ClientOptions {
+            socket_name: None,
+            socket_path: Some(socket_path.display().to_string()),
+        });
+        let response = client.call("ping", json!({})).unwrap();
+        assert_eq!(response.id, Some(json!(1)));
+        assert_eq!(response.result, json!({ "pong": true }));
+        assert_eq!(response.error, None);
+        server.join().unwrap();
     }
 }

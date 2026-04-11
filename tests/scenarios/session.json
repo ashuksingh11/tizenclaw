@@ -1,0 +1,48 @@
+{
+  "name": "session",
+  "steps": [
+    {
+      "name": "send-prompt",
+      "method": "process_prompt",
+      "params": {
+        "prompt": "Reply with a short acknowledgement.",
+        "session_id": "${unique_session_id:scenario-session}"
+      },
+      "assertions": [
+        {
+          "path": "session_id",
+          "exists": true
+        },
+        {
+          "path": "text",
+          "exists": true
+        }
+      ]
+    },
+    {
+      "name": "session-status",
+      "method": "session.status",
+      "params": {
+        "session_id": "${unique_session_id:scenario-session}"
+      },
+      "assertions": [
+        {
+          "path": "status",
+          "equals": "ok"
+        },
+        {
+          "path": "session_id",
+          "exists": true
+        },
+        {
+          "path": "session.message_file_count",
+          "greater_than": 0
+        },
+        {
+          "path": "session.resume_ready",
+          "exists": true
+        }
+      ]
+    }
+  ]
+}

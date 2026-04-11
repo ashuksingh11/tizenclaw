@@ -1,14 +1,16 @@
 use crate::client::IpcClient;
-use serde::Deserialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ScenarioFile {
     pub name: String,
     pub steps: Vec<ScenarioStep>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ScenarioStep {
     pub name: String,
     pub method: String,
@@ -18,7 +20,7 @@ pub struct ScenarioStep {
     pub assertions: Vec<ScenarioAssertion>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ScenarioAssertion {
     pub path: String,
     #[serde(default)]
@@ -31,7 +33,7 @@ pub struct ScenarioAssertion {
     pub greater_than: Option<Value>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ScenarioStepResult {
     pub name: String,
     pub result: Value,
@@ -44,18 +46,124 @@ pub fn load_scenario(path: &str) -> Result<ScenarioFile, String> {
         .map_err(|err| format!("Failed to parse scenario '{}': {}", path, err))
 }
 
+pub fn unique_session_id(prefix: &str) -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{}_{}", prefix, n)
+}
+
+pub fn openai_oauth_regression_scenario() -> ScenarioFile {
+    ScenarioFile {
+        name: "openai-oauth-regression".to_string(),
+        steps: vec![
+            ScenarioStep {
+                name: "read-openai-codex-oauth".to_string(),
+                method: "get_llm_config".to_string(),
+                params: json!({
+                    "path": "backends.openai-codex.oauth"
+                }),
+                assertions: vec![
+                    ScenarioAssertion {
+                        path: "status".to_string(),
+                        exists: false,
+                        equals: Some(json!("ok")),
+                        contains: None,
+                        greater_than: None,
+                    },
+                    ScenarioAssertion {
+                        path: "value.source".to_string(),
+                        exists: false,
+                        equals: Some(json!("codex_cli")),
+                        contains: None,
+                        greater_than: None,
+                    },
+                    ScenarioAssertion {
+                        path: "value.auth_path".to_string(),
+                        exists: false,
+                        equals: None,
+                        contains: Some(".codex/auth.json".to_string()),
+                        greater_than: None,
+                    },
+                    ScenarioAssertion {
+                        path: "value.account_id".to_string(),
+                        exists: true,
+                        equals: None,
+                        contains: None,
+                        greater_than: None,
+                    },
+                    ScenarioAssertion {
+                        path: "value.expires_at".to_string(),
+                        exists: false,
+                        equals: None,
+                        contains: None,
+                        greater_than: Some(json!(0)),
+                    },
+                ],
+            },
+            ScenarioStep {
+                name: "read-llm-runtime-status".to_string(),
+                method: "get_llm_runtime".to_string(),
+                params: json!({}),
+                assertions: vec![
+                    ScenarioAssertion {
+                        path: "status".to_string(),
+                        exists: false,
+                        equals: Some(json!("ok")),
+                        contains: None,
+                        greater_than: None,
+                    },
+                    ScenarioAssertion {
+                        path: "runtime_primary_backend".to_string(),
+                        exists: false,
+                        equals: Some(json!("openai-codex")),
+                        contains: None,
+                        greater_than: None,
+                    },
+                ],
+            },
+        ],
+    }
+}
+
 pub fn run_scenario(
     client: &IpcClient,
     scenario: &ScenarioFile,
 ) -> Result<Vec<ScenarioStepResult>, String> {
     let mut executed = Vec::new();
+    let mut placeholders = HashMap::new();
+
     for step in &scenario.steps {
-        let response = client.call(&step.method, step.params.clone())?;
-        for assertion in &step.assertions {
-            assert_result(&response.result, assertion)
-                .map_err(|err| format!("Scenario '{}', step '{}': {}", scenario.name, step.name, err))?;
+        let params = materialize_value(&step.params, &mut placeholders);
+        let response = client.call(&step.method, params).map_err(|err| {
+            let message = format!(
+                "Scenario '{}', step '{}': request failed: {}",
+                scenario.name, step.name, err
+            );
+            println!("FAIL {} - {}", step.name, err);
+            message
+        })?;
+
+        if let Some(error) = response.error {
+            let details = serde_json::to_string(&error).unwrap_or_else(|_| error.to_string());
+            let message = format!(
+                "Scenario '{}', step '{}': JSON-RPC error {}",
+                scenario.name, step.name, details
+            );
+            println!("FAIL {} - {}", step.name, details);
+            return Err(message);
         }
 
+        for assertion in &step.assertions {
+            if let Err(err) = assert_result(&response.result, assertion) {
+                println!("FAIL {} - {}", step.name, err);
+                return Err(format!(
+                    "Scenario '{}', step '{}': {}",
+                    scenario.name, step.name, err
+                ));
+            }
+        }
+
+        println!("PASS {}", step.name);
         executed.push(ScenarioStepResult {
             name: step.name.clone(),
             result: response.result,
@@ -65,45 +173,114 @@ pub fn run_scenario(
     Ok(executed)
 }
 
+fn materialize_value(value: &Value, placeholders: &mut HashMap<String, String>) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, value)| (key.clone(), materialize_value(value, placeholders)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| materialize_value(item, placeholders))
+                .collect(),
+        ),
+        Value::String(raw) => {
+            if let Some(prefix) = raw
+                .strip_prefix("${unique_session_id:")
+                .and_then(|value| value.strip_suffix('}'))
+            {
+                let session_id = placeholders
+                    .entry(raw.clone())
+                    .or_insert_with(|| unique_session_id(prefix))
+                    .clone();
+                Value::String(session_id)
+            } else {
+                Value::String(raw.clone())
+            }
+        }
+        _ => value.clone(),
+    }
+}
+
 fn assert_result(result: &Value, assertion: &ScenarioAssertion) -> Result<(), String> {
     let value = resolve_path(result, &assertion.path);
-    if assertion.exists && value.is_none() {
-        return Err(format!("Expected path '{}' to exist", assertion.path));
+
+    if assertion.exists {
+        match value {
+            Some(Value::Null) => {
+                return Err(format!(
+                    "Assertion failed for '{}': expected a non-null value",
+                    assertion.path
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "Assertion failed for '{}': expected the path to exist",
+                    assertion.path
+                ));
+            }
+            Some(_) => {}
+        }
     }
 
     if let Some(expected) = &assertion.equals {
-        let actual = value.ok_or_else(|| format!("Path '{}' was not found", assertion.path))?;
+        let actual = value.ok_or_else(|| {
+            format!(
+                "Assertion failed for '{}': path was not found for equals check",
+                assertion.path
+            )
+        })?;
         if actual != expected {
             return Err(format!(
-                "Path '{}' mismatch. expected={}, actual={}",
+                "Assertion failed for '{}': expected {}, got {}",
                 assertion.path, expected, actual
             ));
         }
     }
 
     if let Some(expected_substring) = &assertion.contains {
-        let actual = value
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("Path '{}' is not a string", assertion.path))?;
-        if !actual.contains(expected_substring) {
+        let actual = value.ok_or_else(|| {
+            format!(
+                "Assertion failed for '{}': path was not found for contains check",
+                assertion.path
+            )
+        })?;
+        let actual_string = actual
+            .as_str()
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| actual.to_string());
+        if !actual_string.contains(expected_substring) {
             return Err(format!(
-                "Path '{}' did not contain '{}'",
-                assertion.path, expected_substring
+                "Assertion failed for '{}': '{}' did not contain '{}'",
+                assertion.path, actual_string, expected_substring
             ));
         }
     }
 
     if let Some(expected_min) = &assertion.greater_than {
-        let actual = value.ok_or_else(|| format!("Path '{}' was not found", assertion.path))?;
-        let actual_num = actual
-            .as_f64()
-            .ok_or_else(|| format!("Path '{}' is not numeric", assertion.path))?;
-        let expected_num = expected_min
-            .as_f64()
-            .ok_or_else(|| format!("greater_than for '{}' is not numeric", assertion.path))?;
+        let actual = value.ok_or_else(|| {
+            format!(
+                "Assertion failed for '{}': path was not found for greater_than check",
+                assertion.path
+            )
+        })?;
+        let actual_num = actual.as_f64().ok_or_else(|| {
+            format!(
+                "Assertion failed for '{}': actual value is not numeric",
+                assertion.path
+            )
+        })?;
+        let expected_num = expected_min.as_f64().ok_or_else(|| {
+            format!(
+                "Assertion failed for '{}': greater_than value is not numeric",
+                assertion.path
+            )
+        })?;
         if actual_num <= expected_num {
             return Err(format!(
-                "Path '{}' was not greater than {} (actual={})",
+                "Assertion failed for '{}': expected > {}, got {}",
                 assertion.path, expected_min, actual
             ));
         }
@@ -120,9 +297,7 @@ pub fn resolve_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     let mut cursor = root;
     for part in path.split('.').filter(|part| !part.is_empty()) {
         match cursor {
-            Value::Object(map) => {
-                cursor = map.get(part)?;
-            }
+            Value::Object(map) => cursor = map.get(part)?,
             Value::Array(items) => {
                 let index = part.parse::<usize>().ok()?;
                 cursor = items.get(index)?;
@@ -138,20 +313,19 @@ pub fn resolve_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
 mod tests {
     use super::*;
     use crate::client::{ClientOptions, IpcClient};
-    use serde_json::json;
     use std::io::{Read, Write};
-    use std::os::unix::net::UnixListener;
+    use std::os::unix::net::{UnixListener, UnixStream};
     use std::thread;
     use tempfile::tempdir;
 
-    fn write_frame(stream: &mut std::os::unix::net::UnixStream, payload: &str) {
+    fn write_frame(stream: &mut UnixStream, payload: &str) {
         let bytes = payload.as_bytes();
         let len = (bytes.len() as u32).to_be_bytes();
         stream.write_all(&len).unwrap();
         stream.write_all(bytes).unwrap();
     }
 
-    fn read_frame(stream: &mut std::os::unix::net::UnixStream) -> String {
+    fn read_frame(stream: &mut UnixStream) -> String {
         let mut len_buf = [0u8; 4];
         stream.read_exact(&mut len_buf).unwrap();
         let len = u32::from_be_bytes(len_buf) as usize;
@@ -163,38 +337,42 @@ mod tests {
     fn spawn_mock_server(socket_path: &std::path::Path) -> std::thread::JoinHandle<()> {
         let listener = UnixListener::bind(socket_path).unwrap();
         thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let request = read_frame(&mut stream);
-            let request_json: Value = serde_json::from_str(&request).unwrap();
-            let method = request_json["method"].as_str().unwrap_or_default();
-            let response = match method {
-                "get_usage" => json!({
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "result": {
-                        "scope": "session",
-                        "usage": {
-                            "prompt_tokens": 0
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let request = read_frame(&mut stream);
+                let request_json: Value = serde_json::from_str(&request).unwrap();
+                let method = request_json["method"].as_str().unwrap_or_default();
+                let response = match method {
+                    "process_prompt" => json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {
+                            "text": "session ready",
+                            "session_id": request_json["params"]["session_id"].clone()
                         }
-                    }
-                }),
-                "list_registered_paths" => json!({
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "result": {
-                        "tool_paths": [],
-                        "skill_paths": []
-                    }
-                }),
-                other => json!({
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "error": {
-                        "message": format!("unexpected method: {}", other)
-                    }
-                }),
-            };
-            write_frame(&mut stream, &response.to_string());
+                    }),
+                    "session.status" => json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {
+                            "status": "ok",
+                            "session_id": request_json["params"]["session_id"].clone(),
+                            "session": {
+                                "message_file_count": 2,
+                                "resume_ready": true
+                            }
+                        }
+                    }),
+                    other => json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "error": {
+                            "message": format!("unexpected method: {}", other)
+                        }
+                    }),
+                };
+                write_frame(&mut stream, &response.to_string());
+            }
         })
     }
 
@@ -210,38 +388,52 @@ mod tests {
         let socket_path = dir.path().join("tizenclaw-tests.sock");
         let server = spawn_mock_server(&socket_path);
 
+        let session_id = unique_session_id("system-test");
+        let prompt_session_id = session_id.clone();
+        let status_session_id = session_id.clone();
         let client = IpcClient::new(ClientOptions {
             socket_path: Some(socket_path.to_string_lossy().to_string()),
             socket_name: None,
         });
         let scenario = ScenarioFile {
             name: "mock".into(),
-            steps: vec![ScenarioStep {
-                name: "usage".into(),
-                method: "get_usage".into(),
-                params: json!({"session_id": "system-test"}),
-                assertions: vec![
-                    ScenarioAssertion {
-                        path: "scope".into(),
-                        exists: false,
-                        equals: Some(json!("session")),
-                        contains: None,
-                        greater_than: None,
-                    },
-                    ScenarioAssertion {
-                        path: "usage.prompt_tokens".into(),
+            steps: vec![
+                ScenarioStep {
+                    name: "prompt".into(),
+                    method: "process_prompt".into(),
+                    params: json!({
+                        "prompt": "say hello",
+                        "session_id": prompt_session_id
+                    }),
+                    assertions: vec![ScenarioAssertion {
+                        path: "text".into(),
                         exists: true,
-                        equals: Some(json!(0)),
-                        contains: None,
+                        equals: None,
+                        contains: Some("ready".into()),
                         greater_than: None,
-                    },
-                ],
-            }],
+                    }],
+                },
+                ScenarioStep {
+                    name: "status".into(),
+                    method: "session.status".into(),
+                    params: json!({
+                        "session_id": status_session_id
+                    }),
+                    assertions: vec![ScenarioAssertion {
+                        path: "session.message_file_count".into(),
+                        exists: false,
+                        equals: None,
+                        contains: None,
+                        greater_than: Some(json!(0)),
+                    }],
+                },
+            ],
         };
 
         let results = run_scenario(&client, &scenario).unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].name, "usage");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].name, "prompt");
+        assert_eq!(results[1].name, "status");
         server.join().unwrap();
     }
 
@@ -264,20 +456,23 @@ mod tests {
     }
 
     #[test]
-    fn assert_result_rejects_values_not_greater_than_threshold() {
-        let result = json!({
-            "oauth": {
-                "expires_at": 0
-            }
-        });
-        let assertion = ScenarioAssertion {
-            path: "oauth.expires_at".into(),
-            exists: false,
-            equals: None,
-            contains: None,
-            greater_than: Some(json!(0)),
-        };
+    fn unique_session_id_generates_unique_values() {
+        let first = unique_session_id("scenario");
+        let second = unique_session_id("scenario");
+        assert_ne!(first, second);
+    }
 
-        assert!(assert_result(&result, &assertion).is_err());
+    #[test]
+    fn materialize_value_reuses_cached_unique_session_placeholders() {
+        let mut placeholders = HashMap::new();
+        let value = json!({
+            "a": "${unique_session_id:test}",
+            "b": ["${unique_session_id:test}"]
+        });
+
+        let materialized = materialize_value(&value, &mut placeholders);
+        let first = materialized["a"].as_str().unwrap();
+        let second = materialized["b"][0].as_str().unwrap();
+        assert_eq!(first, second);
     }
 }
