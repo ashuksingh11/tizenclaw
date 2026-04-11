@@ -396,6 +396,12 @@ impl TizenClaw {
         self.call_method("get_skill_capabilities", json!({}))
     }
 
+    /// Read daemon-reported tool execution audit state.
+    pub fn get_tool_audit(&self) -> Result<Value, String> {
+        self.ensure_initialized()?;
+        self.call_method("get_tool_audit", json!({}))
+    }
+
     /// List scheduler tasks visible through the daemon IPC channel.
     pub fn list_tasks(&self) -> Result<Value, String> {
         self.ensure_initialized()?;

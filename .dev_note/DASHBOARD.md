@@ -391,6 +391,136 @@
   - PASS: ownership, persistence, and IPC-observable assertions are
     documented
 
+## Tool Execution Audit Cycle
+
+- [x] Stage 1: Planning
+  - Corrective trigger:
+    the latest supervisor report marked the prior run as
+    `rework_required` because it stopped on the unresolved
+    `Project command?` question instead of leaving repository-visible
+    progress or an updated dashboard record
+  - Cycle classification:
+    host-default (`./deploy_host.sh`)
+  - Runtime surface:
+    external tool wrapper trust, inline command-carrier visibility,
+    textual skill prelude audit, and daemon/CLI inspection paths
+  - System-test requirement:
+    align `tests/system/basic_ipc_smoke.json` with `tool_audit` under
+    `get_session_runtime` and a dedicated `get_tool_audit` IPC call
+- [x] Supervisor Gate after Planning
+  - PASS: the rework root cause, host-default routing, runtime surface,
+    and IPC verification target are recorded
+
+- [x] Stage 2: Design
+  - Ownership boundary:
+    `core/tool_dispatcher.rs` owns wrapper/runtime classification and
+    execution-time tool audit logs, `core/textual_skill_scanner.rs`
+    owns skill prelude extraction, and `AgentCore`/CLI expose the
+    derived summaries without duplicating scan logic
+  - Persistence impact:
+    no new state file; audit metadata is derived from descriptor and
+    textual skill content already loaded at runtime
+  - IPC and CLI contract:
+    add `tool_audit` to `get_session_runtime`, add `get_tool_audit`,
+    and surface the daemon payload through
+    `tizenclaw-cli tools status`
+  - Design artifact:
+    `.dev_note/docs/tool_execution_audit_design_20260411.md`
+- [x] Supervisor Gate after Design
+  - PASS: wrapper, skill, and IPC ownership boundaries are documented
+
+- [x] Stage 3: Development
+  - Runtime-visible contract alignment:
+    `tests/system/basic_ipc_smoke.json` now asserts the `tool_audit`
+    shape from `get_session_runtime` and from the new `get_tool_audit`
+    IPC method
+  - Product-code result:
+    `ToolDispatcher` now classifies direct binaries, runtime wrappers,
+    and shell wrappers, emits execution-time audit logs, and exposes a
+    summary payload; textual skill scanning now extracts
+    `prelude_excerpt`, fenced command languages, and `shell_prelude`
+    metadata that flow through the capability summary and prefetch audit
+    logs
+  - CLI/API result:
+    added `get_tool_audit` to the Rust API/IPC surface and
+    `tizenclaw-cli tools status` for operator inspection
+  - Development verification:
+    `./deploy_host.sh -b` passed
+- [x] Supervisor Gate after Development
+  - PASS: runtime-visible contracts, unit coverage, and script-driven
+    host build verification are in place
+
+- [x] Stage 4: Build & Deploy
+  - Command:
+    `./deploy_host.sh`
+  - Result:
+    host binaries were installed under `/home/hjhun/.tizenclaw`, the
+    daemon restarted cleanly, and the dashboard stayed reachable on
+    `9091`
+  - Survival check:
+    `./deploy_host.sh --status` reported daemon pid `2653602`, tool
+    executor pid `2653597`, dashboard listener `2653620`, and
+    `Daemon ready (1252ms) startup sequence completed`
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: the host deployment path completed and the refreshed runtime
+    came back online
+
+- [x] Stage 5: Test & Review
+  - Static review focus:
+    audit metadata remains derived-only, tool execution still routes
+    through the existing dispatcher/container boundary, and skill
+    prelude scanning stays read-only over `SKILL.md`
+  - Runtime evidence:
+    `./deploy_host.sh --status` confirmed daemon, executor, and
+    dashboard health on port `9091`
+  - Log evidence:
+    `~/.tizenclaw/logs/tizenclaw.log` contained
+    `Daemon ready (1252ms) startup sequence completed`
+  - CLI evidence:
+    `~/.tizenclaw/bin/tizenclaw-cli tools status` returned the new audit
+    payload, and `~/.tizenclaw/bin/tizenclaw-cli skills status`
+    exposed `prelude_excerpt`, `code_fence_languages`, and
+    `shell_prelude`
+  - System test:
+    `~/.tizenclaw/bin/tizenclaw-tests scenario --file tests/system/basic_ipc_smoke.json`
+    passed and returned `tool_audit.total_count`,
+    `tool_audit.inline_command_carrier_count`, and
+    `tools.runtime_wrapper_count`
+  - Repository regression:
+    `./deploy_host.sh --test` passed, including the new
+    `core::tool_dispatcher::tests::audit_summary_counts_shell_wrappers_and_inline_carriers`
+    and
+    `core::textual_skill_scanner::tests::extracts_skill_prelude_and_shell_fences`
+  - Runtime refresh:
+    because `./deploy_host.sh --test` stops host processes,
+    `./deploy_host.sh` was rerun and `./deploy_host.sh --status`
+    reconfirmed the live host daemon
+  - QA verdict:
+    PASS
+- [x] Supervisor Gate after Test & Review
+  - PASS: runtime logs, IPC scenario proof, CLI inspection evidence,
+    and repository-wide regression results are captured
+
+- [x] Stage 6: Commit
+  - Workspace cleanup:
+    `bash .agent/scripts/cleanup_workspace.sh` must run before staging
+  - Intended staged scope:
+    tool execution audit metadata in `core/tool_dispatcher.rs`,
+    skill prelude audit metadata in
+    `core/textual_skill_scanner.rs` and
+    `core/skill_capability_manager.rs`, IPC/API/CLI inspection changes,
+    the updated smoke scenario, and this dashboard record
+  - Excluded existing generated scope:
+    `.dev/` session state and `DORMAMMU.log`
+  - Commit message path:
+    `.tmp/commit_msg.txt`
+  - Commit title:
+    `Add tool execution audit visibility`
+- [x] Supervisor Gate after Commit
+  - PASS: cleanup used the required script, `.tmp/commit_msg.txt` was
+    used for the commit, and only the validated tool-audit slice was
+    staged
+
 ## File Manager Observability Cycle
 
 - [x] Stage 1: Planning

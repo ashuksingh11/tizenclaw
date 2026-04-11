@@ -661,6 +661,8 @@ impl IpcServer {
                 agent.session_runtime_status(session_id)
             }
 
+            "get_tool_audit" => agent.tool_audit_status(),
+
             "get_skill_capabilities" => agent.skill_capability_status(),
 
             _ => {

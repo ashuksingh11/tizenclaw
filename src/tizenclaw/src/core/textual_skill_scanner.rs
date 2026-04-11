@@ -12,6 +12,9 @@ pub struct TextualSkill {
     pub examples: Vec<String>,
     pub openclaw_requires: Vec<String>,
     pub openclaw_install: Vec<String>,
+    pub prelude_excerpt: String,
+    pub code_fence_languages: Vec<String>,
+    pub shell_prelude: bool,
     pub searchable_text: String,
 }
 
@@ -43,13 +46,16 @@ pub fn scan_textual_skills(skills_dir: &str) -> Vec<TextualSkill> {
                     let absolute_path = skill_md_path.to_string_lossy().to_string();
                     let content = fs::read_to_string(&skill_md_path).unwrap_or_default();
                     let metadata = extract_skill_metadata(&content, &skill_name);
+                    let body = extract_skill_body(&content);
+                    let (prelude_excerpt, code_fence_languages, shell_prelude) =
+                        extract_skill_audit_metadata(&body);
                     let searchable_text = build_searchable_text(
                         &skill_name,
                         &metadata.description,
                         &metadata.tags,
                         &metadata.triggers,
                         &metadata.examples,
-                        &content,
+                        &body,
                     );
 
                     skills.push(TextualSkill {
@@ -61,6 +67,9 @@ pub fn scan_textual_skills(skills_dir: &str) -> Vec<TextualSkill> {
                         examples: metadata.examples,
                         openclaw_requires: metadata.openclaw_requires,
                         openclaw_install: metadata.openclaw_install,
+                        prelude_excerpt,
+                        code_fence_languages,
+                        shell_prelude,
                         searchable_text,
                     });
                 }
@@ -189,15 +198,8 @@ fn extract_frontmatter(content: &str) -> String {
     yaml_lines.join("\n")
 }
 
-fn build_searchable_text(
-    skill_name: &str,
-    description: &str,
-    tags: &[String],
-    triggers: &[String],
-    examples: &[String],
-    content: &str,
-) -> String {
-    let body = if content.starts_with("---") {
+fn extract_skill_body(content: &str) -> String {
+    if content.starts_with("---") {
         let mut lines = content.lines();
         let _ = lines.next();
         let mut past_frontmatter = false;
@@ -212,8 +214,67 @@ fn build_searchable_text(
         remaining.join("\n")
     } else {
         content.to_string()
-    };
+    }
+}
 
+fn extract_skill_audit_metadata(body: &str) -> (String, Vec<String>, bool) {
+    let mut prelude_lines = Vec::new();
+    let mut code_fence_languages = Vec::new();
+    let mut in_fence = false;
+
+    for raw_line in body.lines() {
+        let trimmed = raw_line.trim();
+        if let Some(rest) = trimmed.strip_prefix("```") {
+            let language = rest
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
+            if !in_fence && !language.is_empty() {
+                code_fence_languages.push(language);
+            }
+            in_fence = !in_fence;
+            continue;
+        }
+
+        if in_fence || trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            if !prelude_lines.is_empty() {
+                break;
+            }
+            continue;
+        }
+
+        prelude_lines.push(trimmed.to_string());
+        if prelude_lines.len() >= 3 {
+            break;
+        }
+    }
+
+    code_fence_languages.sort();
+    code_fence_languages.dedup();
+    let shell_prelude = code_fence_languages
+        .iter()
+        .any(|language| matches!(language.as_str(), "bash" | "sh" | "shell" | "zsh"));
+    let mut excerpt = prelude_lines.join(" ");
+    if excerpt.chars().count() > 240 {
+        excerpt = excerpt.chars().take(240).collect();
+    }
+
+    (excerpt, code_fence_languages, shell_prelude)
+}
+
+fn build_searchable_text(
+    skill_name: &str,
+    description: &str,
+    tags: &[String],
+    triggers: &[String],
+    examples: &[String],
+    body: &str,
+) -> String {
     format!(
         "{} {} {} {} {} {}",
         skill_name,
@@ -248,6 +309,8 @@ mod tests {
         assert!(skills[0].tags.is_empty());
         assert!(skills[0].triggers.is_empty());
         assert!(skills[0].openclaw_requires.is_empty());
+        assert!(skills[0].prelude_excerpt.contains("Body text"));
+        assert!(!skills[0].shell_prelude);
     }
 
     #[test]
@@ -337,5 +400,23 @@ mod tests {
         ]);
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].description, "First");
+    }
+
+    #[test]
+    fn extracts_skill_prelude_and_shell_fences() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = dir.path().join("shell_helper");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: Shell helper\n---\n# Shell Helper\nInspect runtime wrappers before execution.\nCollect trust metadata first.\n```bash\necho hi\n```\n",
+        )
+        .unwrap();
+
+        let skills = scan_textual_skills(&dir.path().to_string_lossy());
+        assert_eq!(skills.len(), 1);
+        assert!(skills[0].prelude_excerpt.contains("Inspect runtime wrappers"));
+        assert_eq!(skills[0].code_fence_languages, vec!["bash"]);
+        assert!(skills[0].shell_prelude);
     }
 }

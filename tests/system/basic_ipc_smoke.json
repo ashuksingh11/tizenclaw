@@ -122,6 +122,18 @@
           "equals": true
         },
         {
+          "path": "tool_audit.total_count",
+          "exists": true
+        },
+        {
+          "path": "tool_audit.inline_command_carrier_count",
+          "exists": true
+        },
+        {
+          "path": "tool_audit.shell_wrapper_count",
+          "exists": true
+        },
+        {
           "path": "execution.embedded.status",
           "equals": "documentation_only"
         },
@@ -171,6 +183,33 @@
         },
         {
           "path": "loop_snapshot",
+          "exists": true
+        }
+      ]
+    },
+    {
+      "name": "tool-audit-shape",
+      "method": "get_tool_audit",
+      "params": {},
+      "assertions": [
+        {
+          "path": "status",
+          "equals": "ok"
+        },
+        {
+          "path": "tools.total_count",
+          "exists": true
+        },
+        {
+          "path": "tools.runtime_wrapper_count",
+          "exists": true
+        },
+        {
+          "path": "tools.inline_command_carrier_count",
+          "exists": true
+        },
+        {
+          "path": "tools.entries",
           "exists": true
         }
       ]

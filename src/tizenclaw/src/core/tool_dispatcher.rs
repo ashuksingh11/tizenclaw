@@ -5,10 +5,31 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::Path;
-use std::process::Stdio;
-use tokio::process::Command;
 
 /// A registered tool declaration.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ToolAuditMetadata {
+    pub runtime: Option<String>,
+    pub script_path: Option<String>,
+    pub wrapper_kind: String,
+    pub trust_mode: String,
+    pub shell_wrapper: bool,
+    pub inline_command_carrier: bool,
+}
+
+impl Default for ToolAuditMetadata {
+    fn default() -> Self {
+        Self {
+            runtime: None,
+            script_path: None,
+            wrapper_kind: "direct_binary".into(),
+            trust_mode: "direct_binary_only".into(),
+            shell_wrapper: false,
+            inline_command_carrier: false,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ToolDecl {
     pub name: String,
@@ -18,6 +39,7 @@ pub struct ToolDecl {
     pub prepend_args: Vec<String>,
     pub timeout_secs: u64,
     pub side_effect: String,
+    pub audit: ToolAuditMetadata,
 }
 
 /// Executes tools by spawning CLI processes.
@@ -189,6 +211,7 @@ impl ToolDispatcher {
         }
         let (binary, prepend_args) =
             Self::resolve_tool_command(tool_dir, &original_name, &binary, &runtime, &script);
+        let audit = Self::build_audit_metadata(tool_dir, &binary, &prepend_args, &runtime);
 
         if binary.is_empty() {
             log::warn!(
@@ -207,7 +230,52 @@ impl ToolDispatcher {
             timeout_secs: timeout,
             parameters: json!({"type": "object", "properties": {"args": {"type": "string"}}}),
             side_effect: "reversible".into(),
+            audit,
         })
+    }
+
+    fn build_audit_metadata(
+        tool_dir: &std::path::Path,
+        binary_path: &str,
+        prepend_args: &[String],
+        runtime: &str,
+    ) -> ToolAuditMetadata {
+        let script_path = prepend_args.first().cloned();
+        let runtime = if !runtime.trim().is_empty() {
+            Some(Self::normalize_runtime_label(runtime))
+        } else {
+            script_path
+                .as_ref()
+                .and_then(|path| Self::infer_runtime_for_path(std::path::Path::new(path)))
+        };
+        let shell_wrapper = matches!(runtime.as_deref(), Some("bash" | "sh"));
+        let wrapper_kind = if shell_wrapper {
+            "shell_wrapper"
+        } else if script_path.is_some() {
+            "runtime_wrapper"
+        } else {
+            "direct_binary"
+        };
+        let trust_mode = if binary_path.is_empty() {
+            "missing_binary"
+        } else if shell_wrapper {
+            "audit_shell_wrapper"
+        } else if script_path.is_some() {
+            "audit_runtime_wrapper"
+        } else if Path::new(binary_path).starts_with(tool_dir) {
+            "local_binary"
+        } else {
+            "path_binary"
+        };
+
+        ToolAuditMetadata {
+            runtime,
+            script_path,
+            wrapper_kind: wrapper_kind.to_string(),
+            trust_mode: trust_mode.to_string(),
+            shell_wrapper,
+            inline_command_carrier: true,
+        }
     }
 
     fn resolve_tool_command(
@@ -314,15 +382,26 @@ impl ToolDispatcher {
             return String::new();
         }
 
-        let mapped = match trimmed.to_ascii_lowercase().as_str() {
-            "python" | "python3" => "python3",
-            "node" | "nodejs" => "node",
+        let mapped = match Self::normalize_runtime_label(trimmed).as_str() {
+            "python3" => "python3",
+            "node" => "node",
             "bash" => "bash",
             "sh" => "sh",
             _ => trimmed,
         };
 
         Self::lookup_on_path(mapped)
+    }
+
+    fn normalize_runtime_label(runtime: &str) -> String {
+        match runtime.trim().to_ascii_lowercase().as_str() {
+            "python" | "python3" => "python3",
+            "node" | "nodejs" => "node",
+            "bash" => "bash",
+            "sh" => "sh",
+            other => other,
+        }
+        .to_string()
     }
 
     fn lookup_on_path(name: &str) -> String {
@@ -425,6 +504,79 @@ impl ToolDispatcher {
         }
     }
 
+    pub fn audit_summary(&self) -> Value {
+        let mut entries = self
+            .tools
+            .values()
+            .map(|tool| {
+                json!({
+                    "name": tool.name,
+                    "binary_path": tool.binary_path,
+                    "script_path": tool.audit.script_path,
+                    "runtime": tool.audit.runtime,
+                    "wrapper_kind": tool.audit.wrapper_kind,
+                    "trust_mode": tool.audit.trust_mode,
+                    "shell_wrapper": tool.audit.shell_wrapper,
+                    "inline_command_carrier": tool.audit.inline_command_carrier,
+                    "prepend_args": tool.prepend_args,
+                })
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| {
+            left.get("name")
+                .and_then(|value| value.as_str())
+                .cmp(&right.get("name").and_then(|value| value.as_str()))
+        });
+
+        let total_count = entries.len();
+        let shell_wrapper_count = entries
+            .iter()
+            .filter(|entry| {
+                entry
+                    .get("shell_wrapper")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false)
+            })
+            .count();
+        let runtime_wrapper_count = entries
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.get("wrapper_kind").and_then(|value| value.as_str()),
+                    Some("runtime_wrapper" | "shell_wrapper")
+                )
+            })
+            .count();
+        let inline_command_carrier_count = entries
+            .iter()
+            .filter(|entry| {
+                entry
+                    .get("inline_command_carrier")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false)
+            })
+            .count();
+        let missing_binary_count = entries
+            .iter()
+            .filter(|entry| {
+                entry
+                    .get("binary_path")
+                    .and_then(|value| value.as_str())
+                    .map(|value| value.trim().is_empty())
+                    .unwrap_or(true)
+            })
+            .count();
+
+        json!({
+            "total_count": total_count,
+            "shell_wrapper_count": shell_wrapper_count,
+            "runtime_wrapper_count": runtime_wrapper_count,
+            "inline_command_carrier_count": inline_command_carrier_count,
+            "missing_binary_count": missing_binary_count,
+            "entries": entries,
+        })
+    }
+
     /// Execute a tool call.
     pub async fn execute(
         &self,
@@ -490,6 +642,16 @@ impl ToolDispatcher {
             decl.binary_path,
             exec_args
         );
+        log::info!(
+            "[ToolAudit] tool='{}' trust_mode={} wrapper_kind={} shell_wrapper={} inline_command_carrier={} runtime={:?} script={:?}",
+            tool_name,
+            decl.audit.trust_mode,
+            decl.audit.wrapper_kind,
+            decl.audit.shell_wrapper,
+            decl.audit.inline_command_carrier,
+            decl.audit.runtime,
+            decl.audit.script_path,
+        );
 
         let engine = crate::infra::container_engine::ContainerEngine::new();
         let args_ref: Vec<&str> = exec_args.iter().map(|s| s.as_str()).collect();
@@ -507,7 +669,7 @@ impl ToolDispatcher {
 
 #[cfg(test)]
 mod tests {
-    use super::{ToolDecl, ToolDispatcher};
+    use super::{ToolAuditMetadata, ToolDecl, ToolDispatcher};
     use serde_json::json;
     use std::fs;
 
@@ -604,6 +766,7 @@ script: worker.sh
             prepend_args: Vec::new(),
             timeout_secs: 30,
             side_effect: "none".into(),
+            audit: ToolAuditMetadata::default(),
         });
         dispatcher.register(ToolDecl {
             name: "calendar_tool".into(),
@@ -613,6 +776,7 @@ script: worker.sh
             prepend_args: Vec::new(),
             timeout_secs: 30,
             side_effect: "none".into(),
+            audit: ToolAuditMetadata::default(),
         });
 
         let empty_keywords = dispatcher.get_tool_declarations_filtered(&[]);
@@ -620,5 +784,32 @@ script: worker.sh
 
         assert_eq!(empty_keywords.len(), 2);
         assert_eq!(miss_keywords.len(), 2);
+    }
+
+    #[test]
+    fn audit_summary_counts_shell_wrappers_and_inline_carriers() {
+        let dir = tempfile::tempdir().unwrap();
+        let script_path = dir.path().join("worker.sh");
+        fs::write(&script_path, "#!/usr/bin/env bash\necho ok\n").unwrap();
+
+        let content = "\
+name: wrapped
+runtime: bash
+script: worker.sh
+";
+        let decl = ToolDispatcher::parse_tool_md(content, dir.path()).unwrap();
+        assert_eq!(decl.audit.wrapper_kind, "shell_wrapper");
+        assert_eq!(decl.audit.trust_mode, "audit_shell_wrapper");
+        assert!(decl.audit.shell_wrapper);
+        assert!(decl.audit.inline_command_carrier);
+
+        let mut dispatcher = ToolDispatcher::new();
+        dispatcher.register(decl);
+        let summary = dispatcher.audit_summary();
+
+        assert_eq!(summary["total_count"], 1);
+        assert_eq!(summary["shell_wrapper_count"], 1);
+        assert_eq!(summary["inline_command_carrier_count"], 1);
+        assert_eq!(summary["entries"][0]["script_path"], script_path.to_string_lossy().to_string());
     }
 }

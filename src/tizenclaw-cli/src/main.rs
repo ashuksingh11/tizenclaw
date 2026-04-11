@@ -1506,6 +1506,7 @@ fn print_usage() {
     eprintln!("  tizenclaw-cli auth openai-codex connect [--json]");
     eprintln!("  tizenclaw-cli auth openai-codex login [--json]\n");
     eprintln!("Inspection commands:");
+    eprintln!("  tizenclaw-cli tools status");
     eprintln!("  tizenclaw-cli skills status\n");
     eprintln!("If no prompt given, starts interactive mode.");
 }
@@ -1547,6 +1548,13 @@ fn cmd_devel_status(client: &TizenClaw) {
 
 fn cmd_skill_status(client: &TizenClaw) {
     match client.get_skill_capabilities() {
+        Ok(result) => print_json(&result),
+        Err(error) => print_error_and_exit(&error),
+    }
+}
+
+fn cmd_tool_status(client: &TizenClaw) {
+    match client.get_tool_audit() {
         Ok(result) => print_json(&result),
         Err(error) => print_error_and_exit(&error),
     }
@@ -1626,6 +1634,11 @@ fn main() {
                 cmd_devel_status(&client);
                 return;
             }
+            "tools" if i + 1 < args.len() && args[i + 1] == "status" => {
+                let client = create_client().unwrap_or_else(|err| print_error_and_exit(&err));
+                cmd_tool_status(&client);
+                return;
+            }
             "skills" if i + 1 < args.len() && args[i + 1] == "status" => {
                 let client = create_client().unwrap_or_else(|err| print_error_and_exit(&err));
                 cmd_skill_status(&client);
@@ -1667,6 +1680,10 @@ fn main() {
             }
             "devel" => {
                 eprintln!("Usage: tizenclaw-cli devel status");
+                std::process::exit(1);
+            }
+            "tools" => {
+                eprintln!("Usage: tizenclaw-cli tools status");
                 std::process::exit(1);
             }
             "skills" => {

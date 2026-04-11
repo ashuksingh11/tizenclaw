@@ -4784,6 +4784,15 @@ impl AgentCore {
             crate::core::skill_support::list_skill_reference_docs(&self.platform.paths.docs_dir);
         let prefetched_skills =
             select_relevant_skills(prompt, &textual_skills, MAX_PREFETCHED_SKILLS);
+        for skill in &prefetched_skills {
+            log::info!(
+                "[SkillAudit] skill='{}' shell_prelude={} code_fence_languages={:?} prelude_excerpt='{}'",
+                skill.file_name,
+                skill.shell_prelude,
+                skill.code_fence_languages,
+                utf8_safe_preview(&skill.prelude_excerpt, 160),
+            );
+        }
         loop_state.record_prefetch_skills(
             prefetched_skills
                 .iter()
@@ -6728,6 +6737,14 @@ impl AgentCore {
         let registrations = self.list_registered_paths();
         let skill_capabilities =
             skill_capability_manager::load_snapshot(&self.platform.paths, &registrations);
+        let tool_audit = self
+            .tool_dispatcher
+            .try_read()
+            .map(|dispatcher| dispatcher.audit_summary())
+            .unwrap_or_else(|_| json!({
+                "status": "busy",
+                "reason": "tool dispatcher is currently being updated",
+            }));
         let session = self
             .session_store
             .lock()
@@ -6805,6 +6822,7 @@ impl AgentCore {
             },
             "runtime_topology": self.runtime_topology_summary(),
             "execution": runtime_capabilities::summarize(&self.platform.paths, &registrations),
+            "tool_audit": tool_audit.clone(),
             "skills": skill_capabilities.summary_json(),
             "session": session,
             "memory": memory,
@@ -6815,6 +6833,21 @@ impl AgentCore {
                 "memory_total_entries": memory_total_entries,
             },
             "loop_snapshot": self.load_loop_snapshot(session_id),
+        })
+    }
+
+    pub fn tool_audit_status(&self) -> Value {
+        let tool_audit = self
+            .tool_dispatcher
+            .try_read()
+            .map(|dispatcher| dispatcher.audit_summary())
+            .unwrap_or_else(|_| json!({
+                "status": "busy",
+                "reason": "tool dispatcher is currently being updated",
+            }));
+        json!({
+            "status": "ok",
+            "tools": tool_audit,
         })
     }
 
@@ -7124,6 +7157,9 @@ mod tests {
                 examples: vec!["check battery status".into()],
                 openclaw_requires: Vec::new(),
                 openclaw_install: Vec::new(),
+                prelude_excerpt: String::new(),
+                code_fence_languages: Vec::new(),
+                shell_prelude: false,
                 searchable_text:
                     "battery_monitor inspect battery and power telemetry battery power check battery check battery status inspect device power".into(),
             },
@@ -7136,6 +7172,9 @@ mod tests {
                 examples: Vec::new(),
                 openclaw_requires: Vec::new(),
                 openclaw_install: Vec::new(),
+                prelude_excerpt: String::new(),
+                code_fence_languages: Vec::new(),
+                shell_prelude: false,
                 searchable_text: "calendar_sync handle schedule sync tasks".into(),
             },
         ];
@@ -7157,6 +7196,9 @@ mod tests {
             examples: Vec::new(),
             openclaw_requires: vec!["upower".into()],
             openclaw_install: vec!["apt install upower".into()],
+            prelude_excerpt: String::new(),
+            code_fence_languages: Vec::new(),
+            shell_prelude: false,
             searchable_text: "battery_monitor inspect battery and power telemetry".into(),
         }];
 
