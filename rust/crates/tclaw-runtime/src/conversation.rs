@@ -8,7 +8,7 @@ use crate::{
     compact::CompactionPlan,
     config::RuntimeConfig,
     hooks::{HookPhase, HookSpec},
-    permissions::{PermissionDecision, PermissionRequest, PermissionScope},
+    permissions::{PermissionDecision, PermissionLevel, PermissionRequest, PermissionScope},
     prompt::PromptAssembly,
     session::{
         ConversationMessage, SessionCompactionMetadata, SessionContentBlock, SessionMessageRole,
@@ -75,6 +75,8 @@ pub struct ToolDefinition {
     #[serde(default)]
     pub description: String,
     pub permission_scope: PermissionScope,
+    #[serde(default)]
+    pub minimum_permission_level: PermissionLevel,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -447,6 +449,10 @@ where
                     scope: tool_permission_scope(&self.tools.definitions(), &call.name),
                     target: call.name.clone(),
                     reason: format!("execute tool call {}", call.id),
+                    tool_name: Some(call.name.clone()),
+                    minimum_level: tool_permission_level(&self.tools.definitions(), &call.name),
+                    bash_plan: None,
+                    metadata: BTreeMap::new(),
                 };
                 let decision =
                     self.permissions
@@ -884,6 +890,14 @@ fn tool_permission_scope(definitions: &[ToolDefinition], tool_name: &str) -> Per
         .unwrap_or(PermissionScope::Execute)
 }
 
+fn tool_permission_level(definitions: &[ToolDefinition], tool_name: &str) -> PermissionLevel {
+    definitions
+        .iter()
+        .find(|definition| definition.name == tool_name)
+        .map(|definition| definition.minimum_permission_level)
+        .unwrap_or(PermissionLevel::Standard)
+}
+
 fn apply_compaction(
     session: &mut SessionRecord,
     summary: &str,
@@ -917,7 +931,7 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuntimeConfig, RuntimeProfile},
-        permissions::PermissionMode,
+        permissions::{PermissionDecisionSource, PermissionMode, PermissionOutcome},
         session::SessionRecord,
     };
 
@@ -988,11 +1002,24 @@ mod tests {
             Ok(PermissionDecision {
                 request,
                 allowed: self.allowed,
+                outcome: if self.allowed {
+                    PermissionOutcome::Allowed
+                } else {
+                    PermissionOutcome::Denied
+                },
                 rationale: if self.allowed {
                     "allowed by test policy".to_string()
                 } else {
                     "blocked by test policy".to_string()
                 },
+                reasons: vec![if self.allowed {
+                    "allowed by test policy".to_string()
+                } else {
+                    "blocked by test policy".to_string()
+                }],
+                source: PermissionDecisionSource::Mode,
+                matched_rule: None,
+                prompt: None,
             })
         }
     }
@@ -1167,6 +1194,7 @@ mod tests {
                 name: "list_files".to_string(),
                 description: "List files in a directory".to_string(),
                 permission_scope: PermissionScope::Read,
+                minimum_permission_level: PermissionLevel::Low,
             }],
             results: BTreeMap::from([(
                 "list_files".to_string(),
@@ -1239,6 +1267,7 @@ mod tests {
                 name: "broken_tool".to_string(),
                 description: "Always fails".to_string(),
                 permission_scope: PermissionScope::Execute,
+                minimum_permission_level: PermissionLevel::Standard,
             }],
             results: BTreeMap::from([(
                 "broken_tool".to_string(),
@@ -1365,6 +1394,7 @@ mod tests {
                 name: "lookup".to_string(),
                 description: "lookup".to_string(),
                 permission_scope: PermissionScope::Read,
+                minimum_permission_level: PermissionLevel::Low,
             }],
             results: BTreeMap::from([(
                 "lookup".to_string(),

@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-use crate::permissions::PermissionMode;
+use crate::{
+    permissions::PermissionMode,
+    policy_engine::PolicyEngineState,
+    sandbox::SandboxPolicy,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RuntimeProfile {
@@ -33,8 +37,12 @@ pub struct RuntimeConfig {
     pub profile: RuntimeProfile,
     pub paths: RuntimePaths,
     pub permission_mode: PermissionMode,
+    #[serde(default)]
+    pub permission_policy: PolicyEngineState,
     pub hooks_enabled: bool,
     pub sandbox_enabled: bool,
+    #[serde(default)]
+    pub sandbox_policy: SandboxPolicy,
     pub plugin_roots: Vec<String>,
 }
 
@@ -49,11 +57,17 @@ impl RuntimeConfig {
         if let Some(permission_mode) = patch.permission_mode {
             self.permission_mode = permission_mode;
         }
+        if let Some(permission_policy) = patch.permission_policy {
+            self.permission_policy = permission_policy;
+        }
         if let Some(hooks_enabled) = patch.hooks_enabled {
             self.hooks_enabled = hooks_enabled;
         }
         if let Some(sandbox_enabled) = patch.sandbox_enabled {
             self.sandbox_enabled = sandbox_enabled;
+        }
+        if let Some(sandbox_policy) = patch.sandbox_policy {
+            self.sandbox_policy = sandbox_policy;
         }
         if let Some(plugin_roots) = patch.plugin_roots {
             self.plugin_roots = plugin_roots;
@@ -67,8 +81,10 @@ impl Default for RuntimeConfig {
             profile: RuntimeProfile::Host,
             paths: RuntimePaths::default(),
             permission_mode: PermissionMode::Ask,
+            permission_policy: PolicyEngineState::default(),
             hooks_enabled: true,
             sandbox_enabled: true,
+            sandbox_policy: SandboxPolicy::default(),
             plugin_roots: vec!["plugins".to_string()],
         }
     }
@@ -79,8 +95,10 @@ pub struct RuntimeConfigPatch {
     pub profile: Option<RuntimeProfile>,
     pub paths: Option<RuntimePaths>,
     pub permission_mode: Option<PermissionMode>,
+    pub permission_policy: Option<PolicyEngineState>,
     pub hooks_enabled: Option<bool>,
     pub sandbox_enabled: Option<bool>,
+    pub sandbox_policy: Option<SandboxPolicy>,
     pub plugin_roots: Option<Vec<String>>,
 }
 
@@ -94,11 +112,18 @@ mod tests {
         config.apply_patch(RuntimeConfigPatch {
             profile: Some(RuntimeProfile::Test),
             sandbox_enabled: Some(false),
+            sandbox_policy: Some(SandboxPolicy {
+                enabled: false,
+                profile_name: "test".to_string(),
+                writable_roots: vec!["tests".to_string()],
+                network_access: true,
+            }),
             ..RuntimeConfigPatch::default()
         });
 
         assert_eq!(config.profile, RuntimeProfile::Test);
         assert!(!config.sandbox_enabled);
+        assert_eq!(config.sandbox_policy.profile_name, "test");
         assert_eq!(config.permission_mode, PermissionMode::Ask);
     }
 }

@@ -324,7 +324,10 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::permissions::{PermissionRequest, PermissionScope};
+    use crate::permissions::{
+        PermissionDecisionSource, PermissionLevel, PermissionOutcome, PermissionRequest,
+        PermissionScope,
+    };
 
     fn temp_dir(test_name: &str) -> PathBuf {
         let unique = SystemTime::now()
@@ -350,9 +353,18 @@ mod tests {
                 scope: PermissionScope::Write,
                 target: "session.json".to_string(),
                 reason: "save session".to_string(),
+                tool_name: Some("session_store".to_string()),
+                minimum_level: PermissionLevel::Standard,
+                bash_plan: None,
+                metadata: BTreeMap::new(),
             },
             allowed: true,
+            outcome: PermissionOutcome::Allowed,
             rationale: "session persistence is allowed".to_string(),
+            reasons: vec!["session persistence is allowed".to_string()],
+            source: PermissionDecisionSource::Mode,
+            matched_rule: None,
+            prompt: None,
         });
         record.push_message(
             ConversationMessage::with_text(SessionMessageRole::User, "hello").with_content(

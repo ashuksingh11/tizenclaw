@@ -66,10 +66,19 @@ pub use mcp_lifecycle_hardened::McpLifecyclePolicy;
 pub use mcp_server::McpServerRegistration;
 pub use mcp_stdio::{McpStdioServerSpec, StdioTransportMode};
 pub use oauth::{OAuthProvider, OAuthState};
-pub use permission_enforcer::PermissionEnforcerState;
-pub use permissions::{PermissionDecision, PermissionMode, PermissionRequest, PermissionScope};
+pub use permission_enforcer::{
+    DenyAllPrompter, PermissionEnforcer, PermissionEnforcerState, PermissionPrompter,
+    RecordingPrompter,
+};
+pub use permissions::{
+    PermissionDecision, PermissionDecisionSource, PermissionLevel, PermissionMode,
+    PermissionOutcome, PermissionPromptDecision, PermissionPromptRecord,
+    PermissionPromptRequest, PermissionRequest, PermissionScope,
+};
 pub use plugin_lifecycle::{PluginLifecyclePhase, PluginLifecycleState};
-pub use policy_engine::{PolicyEngineState, PolicyRule};
+pub use policy_engine::{
+    PolicyContext, PolicyEffect, PolicyEngine, PolicyEngineState, PolicyEvaluation, PolicyRule,
+};
 pub use prompt::{
     collect_context_files, ContextFile, ProjectContext, PromptAssembly, PromptBuilder,
     PromptEnvironmentContext, PromptError, PromptFragment, PromptFragmentKind,
