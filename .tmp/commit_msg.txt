@@ -1,12 +1,5 @@
-Refine daemon startup and shutdown flow
+Update build and deploy packaging
 
-Implement the requested 7-phase daemon boot sequence and
-daemon option parsing in the Rust entry point.
-
-Add the append-only boot phase logger, devel-mode prompt
-runner, and a stoppable mDNS scanner so graceful shutdown
-can complete after readiness.
-
-Update the IPC contract scenario and record the host build,
-runtime checks, devel verification, and host test results in
-the development dashboard.
+- switch host deploy to workspace builds and IPC readiness polling
+- add host validation for --no-restart and --release install flows
+- align Tizen deploy config, RPM install flow, and packaging paths

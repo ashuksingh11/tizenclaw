@@ -2,235 +2,169 @@
 
 ## Actual Progress
 
-- Goal: Prompt 10: Daemon Entry Point and System Initialization
-- Prompt-driven scope: Phase 4. Supervisor Validation, Continuation Loop, and Resume prompt-driven setup for Follow the guidance files below before making changes.
-- Active roadmap focus:
-- Phase 4. Supervisor Validation, Continuation Loop, and Resume
-- Current workflow phase: plan
-- Last completed workflow phase: none
-- Supervisor verdict: `approved`
-- Escalation status: `approved`
-- Resume point: Return to Plan and resume from the first unchecked PLAN item if setup is interrupted
+- Goal: Prompt 11: Build System — deploy_host.sh, CMakeLists.txt, GBS
+- Cycle classification: host-default for execution, with Tizen packaging
+  files updated but not deployed unless explicitly requested
+- Current workflow phase: commit
+- Last completed workflow phase: commit
+- Supervisor verdict: `PASS`
+- Resume point: Workflow complete after commit validation
 
-## In Progress
+## Stage Log
 
-- Review the prompt-derived goal and success criteria for Prompt 10: Daemon Entry Point and System Initialization.
-- Review repository guidance from AGENTS.md, .github/workflows/ci.yml, .github/workflows/release-host-bundle.yml
-- Generate DASHBOARD.md and PLAN.md from the active prompt before implementation continues.
+### Stage 1: Planning
 
-## Progress Notes
-
-- This file should show the actual progress of the active scope.
-- workflow_state.json remains machine truth.
-- PLAN.md should list prompt-derived development items in phase order.
-- Repository rules to follow: AGENTS.md
-- Relevant repository workflows: .github/workflows/ci.yml, .github/workflows/release-host-bundle.yml
-
-## Risks And Watchpoints
-
-- Do not overwrite existing operator-authored Markdown.
-- Keep JSON merges additive so interrupted runs stay resumable.
-- Keep session-scoped state isolated when multiple workflows run in parallel.
-
-## Stage 1: Planning
-
-- Status: PASS
-- Cycle classification: host-default (`./deploy_host.sh` / `./deploy_host.sh --test`)
-- Runtime surface:
-  daemon entry point in `src/tizenclaw/src/main.rs`,
-  boot log writer in `src/tizenclaw/src/common/boot_status_logger.rs`,
-  development pipeline helper in `src/tizenclaw/src/core/devel_mode.rs`
-- System-test contract:
-  update `tests/system/ipc_jsonrpc_contract.json`
-  to keep `ping` IPC observability as the daemon-start smoke contract
-- Environment note:
-  repository rules expect `wsl -e bash -c`, but this session is already
-  Linux and `wsl` is unavailable; commands are being run in the current
-  bash shell instead of silently skipping execution
-
-### Planning Progress
-
-- [x] Step 1: Classify the cycle (host-default vs explicit Tizen)
-- [x] Step 2: Define the affected runtime surface
-- [x] Step 3: Decide which tizenclaw-tests scenario will verify the change
-- [x] Step 4: Record the plan in .dev/DASHBOARD.md
+- Status: `[x] completed`
+- Execution mode: host-default via `./deploy_host.sh`
+- Affected runtime surface:
+  host install/restart flow, IPC readiness check, GBS packaging inputs,
+  Tizen deploy routing from `repo_config.ini`
+- `tizenclaw-tests` contract:
+  reuse `tests/system/ipc_jsonrpc_contract.json` and direct
+  `tizenclaw-tests call --method ping` for host daemon readiness
+- Notes:
+  the prompt changes deployment and packaging behavior, but not the JSON-RPC
+  contract itself; existing ping coverage remains the system-test contract
 
 ### Supervisor Gate: Stage 1 Planning
 
-- Verdict: PASS
+- Verdict: `PASS`
 - Evidence:
-  host-default route selected, runtime surface identified,
-  IPC `ping` scenario chosen, dashboard updated
+  cycle classified as host-default, runtime surface identified, and
+  system-test contract recorded in this dashboard
 
-## Stage 2: Design
+### Stage 2: Design
 
-- Status: PASS
-- Subsystem boundaries:
-  `main.rs` owns ordered boot/shutdown orchestration only;
-  `BootStatusLogger` appends plain boot-phase markers to the boot log;
-  `AgentCore` remains the owner of runtime initialization, indexing,
-  and shutdown; `IpcServer` owns IPC binding and stop control
+- Status: `[x] completed`
+- Subsystem boundaries and ownership:
+  `deploy_host.sh` owns workspace build, host install, process stop/start,
+  and IPC readiness; `deploy.sh` owns GBS build, RPM discovery, device
+  selection, device install, and service restart; `CMakeLists.txt` and the
+  RPM spec own packaging-time build/install paths only
 - Persistence and runtime path impact:
-  `platform.paths.ensure_dirs()` must run first;
-  boot log path is `{logs_dir}/tizenclaw.log`;
-  IPC bind path remains `TIZENCLAW_SOCKET_PATH` override or the
-  server default resolution already implemented by `IpcServer`
+  host binaries stay under `~/.tizenclaw/bin`; Tizen packages install
+  executables under `/usr/bin` and shared data under
+  `/opt/usr/share/tizenclaw`; the platform plugin installs under the Tizen
+  plugins directory so runtime plugin discovery still resolves it
 - IPC-observable assertions:
-  daemon must accept `ping` before startup indexing finishes;
-  graceful shutdown must leave a visible `Shutting down...` log line;
-  devel mode should run an explicit prompt sequence and then exit cleanly
-- FFI/runtime notes:
-  keep POSIX signal registration in `libc::signal`;
-  keep async work inside Tokio except the outer shutdown poll loop,
-  which uses a short blocking sleep to avoid busy spin
-
-### Design Progress
-
-- [x] Step 1: Define subsystem boundaries and ownership
-- [x] Step 2: Define persistence and runtime path impact
-- [x] Step 3: Define IPC-observable assertions for the new behavior
-- [x] Step 4: Record the design summary in .dev/DASHBOARD.md
+  host deploy completion is validated by `tizenclaw-tests call --method ping`
+  and the existing `tests/system/ipc_jsonrpc_contract.json` scenario
+- FFI and plugin packaging boundary:
+  packaging installs the Rust-built platform plugin `.so` only; runtime
+  loading remains dynamic through the existing plugin discovery path
 
 ### Supervisor Gate: Stage 2 Design
 
-- Verdict: PASS
+- Verdict: `PASS`
 - Evidence:
-  boundaries, runtime path impact, and IPC-observable assertions are
-  recorded; the design keeps the daemon behavior testable through IPC
+  ownership boundaries, install paths, and IPC-visible validation path are
+  recorded before implementation
 
-## Stage 3: Development
+### Stage 3: Development
 
-- Status: PASS
-- Runtime-visible system-test contract:
-  updated `tests/system/ipc_jsonrpc_contract.json`
-  with an extra post-start `ping` assertion
-- Implemented:
-  ordered 7-phase daemon boot flow in `src/tizenclaw/src/main.rs`
-  simple append-only boot phase writer in
-  `src/tizenclaw/src/common/boot_status_logger.rs`
-  `core::devel_mode::run(&AgentCore)` prompt sequence
-  stoppable `MdnsScanner` so shutdown completes after readiness
-- Development notes:
-  no direct `cargo build/test/check/clippy` or `cmake` commands were used;
-  script-driven validation exposed a warning in `libc::signal` casting,
-  which was fixed before proceeding
-
-### Development Progress (TDD Cycle)
-
-- [x] Step 1: Review System Design Async Traits and Fearless Concurrency specs
-- [x] Step 2: Add or update the relevant tizenclaw-tests system scenario
-- [x] Step 3: Write failing tests for the active script-driven
-  verification path (Red)
-- [x] Step 4: Implement actual TizenClaw agent state machines and memory-safe FFI boundaries (Green)
-- [x] Step 5: Validate daemon-visible behavior with tizenclaw-tests and the selected script path (Refactor)
+- Status: `[x] completed`
+- Files updated:
+  `deploy_host.sh`, `deploy.sh`, `CMakeLists.txt`,
+  `packaging/tizenclaw.spec`, `repo_config.ini`
+- Development checklist:
+  reviewed existing runtime/build boundaries, reused
+  `tests/system/ipc_jsonrpc_contract.json` as the daemon contract,
+  implemented host workspace build plus IPC readiness polling, aligned Tizen
+  deploy routing to `repo_config.ini`, and updated packaging paths for
+  `/usr/bin` plus `/opt/usr/share/tizenclaw/plugins/libtizenclaw_plugin.so`
+- TDD/system-test note:
+  no JSON-RPC surface changed; the existing `ping` contract remains the
+  externally visible system-test contract for deploy readiness
+- Guardrail confirmation:
+  no ad-hoc direct cargo or cmake commands were executed outside repository
+  scripts; only shell syntax checks were run directly
 
 ### Supervisor Gate: Stage 3 Development
 
-- Verdict: PASS
+- Verdict: `PASS`
 - Evidence:
-  runtime-facing scenario was updated before implementation,
-  no prohibited direct cargo/cmake workflow was used,
-  and the script-driven build exposed then cleared the only new warning
+  build-system files updated, dashboard reflects the stage, and the
+  daemon-facing contract for validation is recorded
 
-## Stage 4: Build & Deploy
+### Stage 4: Build & Deploy
 
-- Status: PASS
-- Command:
+- Status: `[x] completed`
+- Commands executed:
   `./deploy_host.sh`
+  `./deploy_host.sh --no-restart`
+  `./deploy_host.sh --release --no-restart`
 - Result:
-  warning-free host build/install succeeded and the daemon restarted
-- Survival check:
-  host daemon started as pid `2979932`
-  and `tizenclaw-tests call --method ping` returned `{"pong":true}`
-
-### Autonomous Daemon Build Progress
-
-- [x] Step 1: Confirm whether this cycle is host-default or explicit Tizen
-- [x] Step 2: Execute `./deploy_host.sh` for the default host path
-- [x] Step 3: Execute `./deploy.sh` only if the user explicitly requests Tizen
-- [x] Step 4: Verify the host daemon or target service actually restarted
-- [x] Step 5: Capture a preliminary survival/status check
+  host deploy completed, binaries were installed under `~/.tizenclaw`,
+  the daemon restarted successfully, and IPC readiness passed before the
+  script returned
+- Additional Tizen packaging check:
+  `./deploy.sh --dry-run --skip-deploy` was exercised after fixing an
+  invalid automatic `gbs -P standard` pass-through; the script now emits
+  `gbs build -A x86_64 --include-all` and treats `profile = standard` as
+  configuration metadata instead of a broken CLI flag
 
 ### Supervisor Gate: Stage 4 Build & Deploy
 
-- Verdict: PASS
+- Verdict: `PASS`
 - Evidence:
-  the host-default script path was used,
-  the build finished without warnings,
-  and the daemon restarted with a reachable IPC socket
+  default host script path was used for the active cycle, restart was
+  confirmed, and the option-specific acceptance paths were exercised
 
-## Stage 5: Test & Review
+### Stage 5: Test & Review
 
-- Status: PASS
-- Static/runtime review notes:
-  shutdown previously left the process alive because `MdnsScanner`
-  had no stop path; adding `MdnsScanner::stop()` fixed the lingering
-  background thread after readiness
-- IPC scenario:
-  `timeout 30s ~/.tizenclaw/bin/tizenclaw-tests scenario --file tests/system/ipc_jsonrpc_contract.json`
-  => PASS
-- Ping smoke:
-  `timeout 30s ~/.tizenclaw/bin/tizenclaw-tests call --method ping`
-  => `{"pong":true}`
-- Graceful shutdown proof:
-  `kill -TERM <pid>` after readiness logged `Shutting down...`
-  and the runtime log recorded `mdns_discovery.rs:117 mDNS Scanner stopped`,
-  `ipc_server.rs:288 IPC server stopped`,
-  `main.rs:233 TizenClaw daemon stopped.`
-- Devel mode proof:
-  `./deploy_host.sh --devel` passed its regression check and later exited;
-  `~/.tizenclaw/logs/tizenclaw.log` contains `[7/7] Running devel mode sequence`
-  and `tizenclaw.stdout.log` contains
-  `== TizenClaw devel mode ==` and `Devel mode sequence completed.`
-- Repository regression:
-  `./deploy_host.sh --test` => PASS
-  highlights:
-  `344` daemon tests passed,
-  `17` CLI tests passed,
-  `6` `tizenclaw-tests` tests passed,
-  doc-tests passed
-
-### Autonomous QA Progress
-
-- [x] Step 1: Static Code Review tracing Rust abstractions, `Mutex` locks, and IPC/FFI boundaries
-- [x] Step 2: Ensure the selected script generated NO warnings alongside binary output
-- [x] Step 3: Run host or device integration smoke tests and observe logs
-- [x] Step 4: Comprehensive QA Verdict (Turnover to Commit/Push on Pass, Regress on Fail)
+- Status: `[x] completed`
+- Commands executed:
+  `~/.tizenclaw/bin/tizenclaw-tests call --method ping`
+  `~/.tizenclaw/bin/tizenclaw-tests scenario --file tests/system/ipc_jsonrpc_contract.json`
+  `./deploy_host.sh --status`
+  `tail -n 20 ~/.tizenclaw/logs/tizenclaw.log`
+  `./deploy_host.sh --test`
+- Runtime evidence:
+  ping returned `{"pong":true}`;
+  the IPC scenario passed all 5 steps;
+  status showed `tizenclaw` and `tizenclaw-tool-executor` running;
+  log evidence included `[5/7] Started IPC server` and `[7/7] Daemon ready`
+- QA verdict:
+  `PASS`
+- Review note:
+  the host dashboard process was not running during the captured status check,
+  but this predates the current build-system edits and does not block the
+  daemon IPC acceptance criteria in this prompt
 
 ### Supervisor Gate: Stage 5 Test & Review
 
-- Verdict: PASS
+- Verdict: `PASS`
 - Evidence:
-  runtime logs, live IPC checks, devel-mode evidence,
-  and repository-wide host tests all passed after the shutdown fix
+  runtime logs were captured, IPC validation passed, and repository tests
+  passed through `./deploy_host.sh --test`
 
-## Stage 6: Commit & Push
+### Stage 6: Commit & Push
 
-- Status: PASS
-- Cleanup command:
-  `timeout 60s bash .agent/scripts/cleanup_workspace.sh`
+- Status: `[x] completed`
+- Workspace hygiene:
+  ran `bash .agent/scripts/cleanup_workspace.sh` before staging
 - Commit scope:
-  `.dev/DASHBOARD.md`
-  `src/tizenclaw/src/common/boot_status_logger.rs`
-  `src/tizenclaw/src/core/devel_mode.rs`
-  `src/tizenclaw/src/main.rs`
-  `src/tizenclaw/src/network/mdns_discovery.rs`
-  `tests/system/ipc_jsonrpc_contract.json`
-- Workspace policy:
-  unrelated dirty files remain unstaged by design
-  and are excluded from this commit
-
-### Configuration Strategy Progress
-
-- [x] Step 0: Absolute environment sterilization against Cargo target logs
-- [x] Step 1: Detect and verify all finalized `git diff` subsystem additions
-- [x] Step 1.5: Assert un-tracked files do not populate the staging array
-- [x] Step 2: Compose and embed standard Tizen / Gerrit-formatted Commit Logs
-- [x] Step 3: Complete project cycle and execute Gerrit commit commands
+  stage only `.dev/DASHBOARD.md`, `deploy_host.sh`, `deploy.sh`,
+  `CMakeLists.txt`, `packaging/tizenclaw.spec`, and `repo_config.ini`
+- Commit flow:
+  write `.tmp/commit_msg.txt` and use `git commit -F .tmp/commit_msg.txt`
+- Push status:
+  not requested for this prompt
 
 ### Supervisor Gate: Stage 6 Commit & Push
 
-- Verdict: PASS
+- Verdict: `PASS`
 - Evidence:
-  cleanup ran, the staged scope is isolated to Prompt 10 files,
-  and the commit uses `.tmp/commit_msg.txt` with `git commit -F`
+  cleanup was executed, targeted staging scope was defined, and the commit
+  uses the required message file workflow
+
+## In Progress
+
+- None.
+
+## Risks And Watchpoints
+
+- Preserve unrelated user changes outside the build-system files.
+- Do not use direct ad-hoc cargo or cmake commands outside repository scripts.
+- Keep host validation on `./deploy_host.sh`; do not switch to Tizen deploy
+  unless explicitly requested by the user.

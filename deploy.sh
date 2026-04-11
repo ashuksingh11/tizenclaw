@@ -5,10 +5,8 @@
 # Usage:
 #   ./deploy.sh                    # Full pipeline (build + deploy)
 #   ./deploy.sh -s                 # Skip build, deploy only
-#   ./deploy.sh -n                 # Use --noinit for faster rebuild
 #   ./deploy.sh --dry-run          # Print commands without executing
 #   ./deploy.sh -d <serial>        # Target a specific sdb device
-#   ./deploy.sh --test             # Build + deploy + run E2E smoke tests
 #
 # See ./scripts/deploy.sh --help for all options.
 
@@ -48,6 +46,9 @@ NC='\033[0m'
 REPO_CONFIG="${PROJECT_DIR}/repo_config.ini"
 REPO_BASE=""
 REPO_PLATFORM=""
+CONFIG_DEVICE_TARGET=""
+CONFIG_DEVICE_ARCH=""
+CONFIG_BUILD_PROFILE=""
 
 # ─────────────────────────────────────────────
 # Defaults
@@ -100,20 +101,49 @@ load_repo_config() {
     return 0
   fi
 
-  while IFS='=' read -r key val; do
-    key=$(echo "$key" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    val=$(echo "$val" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-    case "$key" in
-      base)     REPO_BASE="$val" ;;
-      platform) REPO_PLATFORM="$val" ;;
+  local current_section=""
+  while IFS= read -r raw_line; do
+    local line="${raw_line%%#*}"
+    line="$(echo "${line}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [ -z "${line}" ] && continue
+
+    if [[ "${line}" =~ ^\[(.+)\]$ ]]; then
+      current_section="${BASH_REMATCH[1]}"
+      continue
+    fi
+
+    if [[ "${line}" != *=* ]]; then
+      continue
+    fi
+
+    local key="${line%%=*}"
+    local val="${line#*=}"
+    key="$(echo "${key}" | sed 's/[[:space:]]*$//')"
+    val="$(echo "${val}" | sed 's/^[[:space:]]*//')"
+
+    case "${current_section}:${key}" in
+      repos:base) REPO_BASE="${val}" ;;
+      repos:platform) REPO_PLATFORM="${val}" ;;
+      device:target) CONFIG_DEVICE_TARGET="${val}" ;;
+      device:architecture) CONFIG_DEVICE_ARCH="${val}" ;;
+      build:profile) CONFIG_BUILD_PROFILE="${val}" ;;
     esac
-  done < <(grep -v '^#' "${REPO_CONFIG}" | grep -v '^\[' | grep '=')
+  done < "${REPO_CONFIG}"
 
   if [ -n "${REPO_BASE}" ]; then
     ok "Repo base    : ${REPO_BASE}"
   fi
   if [ -n "${REPO_PLATFORM}" ]; then
     ok "Repo platform: ${REPO_PLATFORM}"
+  fi
+  if [ -n "${CONFIG_DEVICE_TARGET}" ]; then
+    ok "Config target: ${CONFIG_DEVICE_TARGET}"
+  fi
+  if [ -n "${CONFIG_DEVICE_ARCH}" ]; then
+    ok "Config arch  : ${CONFIG_DEVICE_ARCH}"
+  fi
+  if [ -n "${CONFIG_BUILD_PROFILE}" ]; then
+    ok "Config profile: ${CONFIG_BUILD_PROFILE}"
   fi
 }
 
@@ -126,6 +156,12 @@ detect_arch() {
   # If user explicitly specified arch via -a, skip auto-detection
   if [ "${ARCH_EXPLICIT}" = true ]; then
     log "Using explicit architecture: ${ARCH}"
+    return 0
+  fi
+
+  if [ -n "${CONFIG_DEVICE_ARCH}" ]; then
+    ARCH="${CONFIG_DEVICE_ARCH}"
+    ok "Using architecture from repo_config.ini: ${ARCH}"
     return 0
   fi
 
@@ -176,7 +212,7 @@ ${CYAN}Usage:${NC}
   $(basename "$0") [options]
 
 ${CYAN}Options:${NC}
-  -a, --arch <arch>     Build architecture (default: auto-detect via sdb)
+  -a, --arch <arch>     Build architecture (default: repo_config.ini or sdb)
   -n, --noinit          Skip build-env init (faster rebuild)
   -i, --incremental     Use --incremental and --skip-srcrpm for fast iterative build
   -s, --skip-build      Skip GBS build, deploy existing RPM
@@ -284,7 +320,7 @@ do_build() {
   header "Step 1/4: GBS Build"
 
   local gbs_args=("-A" "${ARCH}" "--include-all")
-  
+
   if [ "${INCREMENTAL}" = true ]; then
     gbs_args+=("--incremental" "--skip-srcrpm")
     log "Using --incremental & --skip-srcrpm (fast iterative build)"
@@ -303,6 +339,9 @@ do_build() {
   fi
 
   log "Running: gbs build ${gbs_args[*]}"
+  if [ -n "${CONFIG_BUILD_PROFILE}" ]; then
+    log "Configured build profile hint: ${CONFIG_BUILD_PROFILE}"
+  fi
   cd "${PROJECT_DIR}"
 
   if [ "${DRY_RUN}" = true ]; then
@@ -437,6 +476,10 @@ do_deploy() {
     log "[DRY-RUN] sdb devices"
   fi
 
+  if [ -z "${DEVICE_SERIAL}" ]; then
+    DEVICE_SERIAL="${TIZENCLAW_DEVICE:-${CONFIG_DEVICE_TARGET}}"
+  fi
+
   # 3-2. Root access
   log "Acquiring root access..."
   run sdb_cmd root on
@@ -455,7 +498,7 @@ do_deploy() {
     ok "RPM transferred: ${rpm_basename}"
 
     log "Installing ${rpm_basename}..."
-    run sdb_shell rpm -Uvh --force "/tmp/${rpm_basename}"
+    run sdb_shell pkgcmd -i -q -t rpm -p "/tmp/${rpm_basename}"
     ok "RPM installed: ${rpm_basename}"
 
     log "Cleaning up /tmp/${rpm_basename}..."
@@ -674,14 +717,17 @@ show_summary() {
 # ─────────────────────────────────────────────
 main() {
   parse_args "$@"
+  load_repo_config
   if [ "${REMOVE_PACKAGE}" = true ]; then
     detect_arch
     check_prerequisites
     remove_from_device
     exit 0
   fi
+  if [ -z "${DEVICE_SERIAL}" ]; then
+    DEVICE_SERIAL="${TIZENCLAW_DEVICE:-${CONFIG_DEVICE_TARGET}}"
+  fi
   detect_arch
-  load_repo_config
   check_prerequisites
   do_build
   find_rpm

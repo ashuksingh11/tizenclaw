@@ -4,9 +4,11 @@
 # without Tizen GBS — uses `cargo build` with vendored sources.
 #
 # Usage:
-#   ./deploy_host.sh                   # Build (release) + install + run
+#   ./deploy_host.sh                   # Build (debug) + install + run
+#   ./deploy_host.sh --release         # Build in release mode
 #   ./deploy_host.sh -d, --debug       # Build in debug mode
 #   ./deploy_host.sh -b, --build-only  # Build only, do not run
+#   ./deploy_host.sh --no-restart      # Build + install only
 #   ./deploy_host.sh --restart-only    # Restart using installed host files
 #   ./deploy_host.sh -s, --stop        # Stop running daemon
 #   ./deploy_host.sh --status          # Show daemon status
@@ -28,6 +30,7 @@ TOOL_EXECUTOR_NAME="tizenclaw-tool-executor"
 CLI_NAME="tizenclaw-cli"
 TEST_TOOL_NAME="tizenclaw-tests"
 WEB_DASHBOARD_NAME="tizenclaw-web-dashboard"
+PLATFORM_PLUGIN_NAME="libtizenclaw_plugin.so"
 METADATA_PLUGIN_PKG="tizenclaw-metadata-plugin"
 HOST_DASHBOARD_PORT_DEFAULT=9091
 DEVEL_BRANCH_PREFIX="devel"
@@ -69,8 +72,9 @@ NC='\033[0m'
 # ─────────────────────────────────────────────
 # Defaults
 # ─────────────────────────────────────────────
-BUILD_MODE="release"
+BUILD_MODE="${BUILD_MODE:-debug}"
 BUILD_ONLY=false
+NO_RESTART=false
 STOP_DAEMON=false
 RESTART_ONLY=false
 SHOW_STATUS=false
@@ -256,8 +260,10 @@ ${CYAN}Usage:${NC}
   ${ENTRYPOINT_NAME} [options]
 
 ${CYAN}Options:${NC}
-  -d, --debug             Build in debug mode (default: release)
+      --release           Build in release mode
+  -d, --debug             Build in debug mode (default)
   -b, --build-only        Build only, do not install or run
+      --no-restart        Build and install only, do not restart the daemon
       --test              Build + run cargo tests (offline, vendored)
       --restart-only      Restart the installed host daemon only
   -s, --stop              Stop the running host daemon
@@ -271,7 +277,8 @@ ${CYAN}Options:${NC}
   -h, --help              Show this help
 
 ${CYAN}Examples:${NC}
-  ${ENTRYPOINT_NAME}                           # Release build + install + run
+  ${ENTRYPOINT_NAME}                           # Debug build + install + run
+  ${ENTRYPOINT_NAME} --release                 # Release build + install + run
   ${ENTRYPOINT_NAME} -d                        # Debug build + install + run
   ${ENTRYPOINT_NAME} -b                        # Build only
   ${ENTRYPOINT_NAME} --test                    # Run unit/integration tests
@@ -292,8 +299,10 @@ EOF
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --release)         BUILD_MODE="release"; shift ;;
       -d|--debug)       BUILD_MODE="debug"; shift ;;
       -b|--build-only)  BUILD_ONLY=true; shift ;;
+      --no-restart)     NO_RESTART=true; shift ;;
       --test)           RUN_TESTS=true; shift ;;
       --restart-only)   RESTART_ONLY=true; shift ;;
       -s|--stop)        STOP_DAEMON=true; shift ;;
@@ -332,6 +341,7 @@ check_prerequisites() {
   log "Build mode  : ${BUILD_MODE}"
   log "Project dir : ${PROJECT_DIR}"
   log "Build only  : ${BUILD_ONLY}"
+  log "No restart  : ${NO_RESTART}"
   log "Devel mode  : ${DEVEL_MODE}"
   log "Data dir    : ${DATA_DIR}"
   log "Build root  : ${CARGO_TARGET_DIR_HOST}"
@@ -403,21 +413,10 @@ cleanup_legacy_host_install() {
 do_build() {
   header "Step 1/3: Cargo Build (Host — Generic Linux)"
 
-  local cargo_args=("build" "--offline" "--locked")
+  local cargo_args=("build" "--workspace" "--offline" "--locked")
   if [ "${BUILD_MODE}" = "release" ]; then
     cargo_args+=("--release")
   fi
-
-  # Build daemon + tool-executor + CLI + web-dashboard + shared client library
-  cargo_args+=(
-    "-p" "${PKG_NAME}"
-    "-p" "libtizenclaw"
-    "-p" "${TOOL_EXECUTOR_NAME}"
-    "-p" "${CLI_NAME}"
-    "-p" "${TEST_TOOL_NAME}"
-    "-p" "${WEB_DASHBOARD_NAME}"
-    "-p" "${METADATA_PLUGIN_PKG}"
-  )
 
   log "Running: cargo ${cargo_args[*]}"
   cd "${PROJECT_DIR}"
@@ -450,18 +449,18 @@ do_test() {
     process_report || true
   fi
 
-  log "Running: cargo test --offline --locked"
+  log "Running: cargo test --workspace --offline --locked"
   cd "${PROJECT_DIR}"
 
   if [ "${DRY_RUN}" = true ]; then
     echo -e "  ${YELLOW}[DRY-RUN]${NC} export CARGO_TARGET_DIR='${CARGO_TARGET_DIR_HOST}'"
-    echo -e "  ${YELLOW}[DRY-RUN]${NC} cargo test --offline --locked"
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} cargo test --workspace --offline --locked"
     return 0
   fi
 
   mkdir -p "${CARGO_TARGET_DIR_HOST}"
 
-  if CARGO_TARGET_DIR="${CARGO_TARGET_DIR_HOST}" cargo test --offline --locked -- --test-threads=1 2>&1; then
+  if CARGO_TARGET_DIR="${CARGO_TARGET_DIR_HOST}" cargo test --workspace --offline --locked -- --test-threads=1 2>&1; then
     ok "All tests passed"
   else
     warn "Some tests failed (see output above)"
@@ -515,6 +514,7 @@ do_install() {
     "libtizenclaw.rlib"
     "libtizenclaw_core.so"
     "libtizenclaw_core.rlib"
+    "${PLATFORM_PLUGIN_NAME}"
   )
   for lib_name in "${lib_candidates[@]}"; do
     local lib_path="${build_dir}/${lib_name}"
@@ -525,6 +525,14 @@ do_install() {
     run install -m 755 "${lib_path}" "${LIB_DIR}/${lib_name}"
     ok "Installed library: ${lib_name}"
   done
+
+  local platform_plugin_path="${build_dir}/${PLATFORM_PLUGIN_NAME}"
+  if [ "${DRY_RUN}" = false ] && [ -f "${platform_plugin_path}" ]; then
+    log "Installing platform plugin → ${DATA_DIR}/plugins/${PLATFORM_PLUGIN_NAME}"
+    run install -m 755 "${platform_plugin_path}" \
+      "${DATA_DIR}/plugins/${PLATFORM_PLUGIN_NAME}"
+    ok "Installed platform plugin"
+  fi
 
   log "Installing public headers → ${INCLUDE_DIR}/tizenclaw"
   run install -m 644 "${PROJECT_DIR}/src/libtizenclaw/include/tizenclaw.h" \
@@ -878,6 +886,41 @@ do_run() {
   fi
 }
 
+wait_for_ipc_ready() {
+  header "IPC Readiness Check"
+
+  local test_cmd=("${INSTALL_DIR}/${TEST_TOOL_NAME}" "call" "--method" "ping")
+  local socket_path="${TIZENCLAW_SOCKET_PATH:-}"
+  local deadline=$((SECONDS + 5))
+  local socket_seen=false
+
+  if [ "${DRY_RUN}" = true ]; then
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} wait for daemon IPC readiness"
+    return 0
+  fi
+
+  while [ "${SECONDS}" -lt "${deadline}" ]; do
+    if [ -n "${socket_path}" ] && [ -S "${socket_path}" ]; then
+      socket_seen=true
+    fi
+
+    if "${test_cmd[@]}" >/dev/null 2>&1; then
+      if [ -n "${socket_path}" ]; then
+        ok "Daemon IPC is ready at ${socket_path}"
+      elif [ "${socket_seen}" = true ]; then
+        ok "Daemon IPC is ready"
+      else
+        ok "Daemon IPC is ready via abstract socket"
+      fi
+      return 0
+    fi
+
+    sleep 0.2
+  done
+
+  fail "Timed out waiting for daemon IPC readiness"
+}
+
 run_devel_entry_tests() {
   if [ "${DEVEL_MODE}" != true ]; then
     return 0
@@ -993,7 +1036,12 @@ main() {
   fi
 
   do_install
+  if [ "${NO_RESTART}" = true ]; then
+    ok "Build and install complete. Daemon restart skipped."
+    exit 0
+  fi
   do_run
+  wait_for_ipc_ready
   run_devel_entry_tests
   show_summary
 }
