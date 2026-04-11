@@ -186,6 +186,10 @@ pub struct PlatformContext {
     pub paths: paths::PlatformPaths,
     /// Discovered platform plugins loaded from the plugins directory.
     pub plugins: Vec<crate::plugin_core::PlatformPlugin>,
+    /// True when Tizen filesystem markers are present.
+    pub is_tizen: bool,
+    /// Current CPU architecture string.
+    pub arch: String,
 }
 
 impl PlatformContext {
@@ -195,8 +199,10 @@ impl PlatformContext {
     /// 2. Discover metadata plugins from `paths.plugins_dir`
     /// 3. Return an `Arc<PlatformContext>` that remains valid with zero plugins
     pub fn detect() -> Arc<Self> {
-        let platform_paths = paths::PlatformPaths::detect();
+        let platform_paths = paths::PlatformPaths::resolve();
         let plugins = crate::plugin_core::load_plugins(&platform_paths.plugins_dir);
+        let is_tizen = platform_paths.is_tizen();
+        let arch = generic_linux::get_arch();
         let platform: Box<dyn PlatformPlugin> = plugins
             .first()
             .map(|plugin| {
@@ -212,6 +218,8 @@ impl PlatformContext {
             platform,
             paths: platform_paths,
             plugins,
+            is_tizen,
+            arch,
         })
     }
 
@@ -225,6 +233,36 @@ impl PlatformContext {
             .iter()
             .any(|plugin| plugin.has_capability(capability))
     }
+
+    pub fn os_info_string(&self) -> String {
+        if self.is_tizen {
+            match detect_tizen_version() {
+                Some(version) => format!("Tizen {} {}", version, self.arch),
+                None => format!("Tizen {}", self.arch),
+            }
+        } else {
+            match generic_linux::get_os_pretty_name().or_else(|| {
+                let name = generic_linux::get_os_name();
+                (name != "Linux").then_some(name)
+            }) {
+                Some(name) => format!("Linux {} ({})", self.arch, name),
+                None => format!("Linux {}", self.arch),
+            }
+        }
+    }
+}
+
+fn detect_tizen_version() -> Option<String> {
+    let content = std::fs::read_to_string("/etc/tizen-release").ok()?;
+
+    content.split_whitespace().find_map(|token| {
+        let cleaned = token.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.');
+        if cleaned.chars().any(|c| c.is_ascii_digit()) {
+            Some(cleaned.to_string())
+        } else {
+            None
+        }
+    })
 }
 
 struct DiscoveredPlatform {
@@ -291,9 +329,18 @@ mod tests {
             app_control: Box::new(generic_linux::GenericAppControl),
             paths: paths::PlatformPaths::from_base(std::env::temp_dir().join("tizenclaw-test")),
             plugins: vec![plugin],
+            is_tizen: false,
+            arch: "x86_64".to_string(),
         };
 
         assert!(context.has_capability("logging"));
         assert!(!context.has_capability("system_events"));
+    }
+
+    #[test]
+    fn os_info_string_is_non_empty_on_host_context() {
+        let context = PlatformContext::detect();
+
+        assert!(!context.os_info_string().trim().is_empty());
     }
 }

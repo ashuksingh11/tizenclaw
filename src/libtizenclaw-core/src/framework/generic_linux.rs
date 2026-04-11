@@ -5,8 +5,8 @@
 //! Works on any standard Linux distribution (Ubuntu, Debian, Fedora, etc.)
 
 use super::{
-    AppControlProvider, LogLevel, PackageInfo, PackageManagerProvider,
-    PlatformLogger, PlatformPlugin, SystemInfoProvider,
+    AppControlProvider, LogLevel, PackageInfo, PackageManagerProvider, PlatformLogger,
+    PlatformPlugin, SystemInfoProvider,
 };
 use serde_json::{json, Value};
 use std::process::Command;
@@ -30,11 +30,21 @@ impl Default for GenericLinuxPlatform {
 }
 
 impl PlatformPlugin for GenericLinuxPlatform {
-    fn platform_name(&self) -> &str { "Generic Linux" }
-    fn plugin_id(&self) -> &str { "generic-linux" }
-    fn version(&self) -> &str { env!("CARGO_PKG_VERSION") }
-    fn priority(&self) -> u32 { 0 } // Lowest priority — always a fallback
-    fn is_compatible(&self) -> bool { true } // Always works on Linux
+    fn platform_name(&self) -> &str {
+        "Generic Linux"
+    }
+    fn plugin_id(&self) -> &str {
+        "generic-linux"
+    }
+    fn version(&self) -> &str {
+        env!("CARGO_PKG_VERSION")
+    }
+    fn priority(&self) -> u32 {
+        0
+    } // Lowest priority — always a fallback
+    fn is_compatible(&self) -> bool {
+        true
+    } // Always works on Linux
 }
 
 // ─────────────────────────────────────────
@@ -53,21 +63,23 @@ impl PlatformLogger for StderrLogger {
         if is_tizen {
             let prio = match level {
                 LogLevel::Error => crate::tizen_sys::dlog::DLOG_ERROR,
-                LogLevel::Warn  => crate::tizen_sys::dlog::DLOG_WARN,
-                LogLevel::Info  => crate::tizen_sys::dlog::DLOG_INFO,
+                LogLevel::Warn => crate::tizen_sys::dlog::DLOG_WARN,
+                LogLevel::Info => crate::tizen_sys::dlog::DLOG_INFO,
                 LogLevel::Debug => crate::tizen_sys::dlog::DLOG_DEBUG,
             };
-            let tag_c = std::ffi::CString::new(tag).unwrap_or_else(|_| std::ffi::CString::new("TIZENCLAW").unwrap());
+            let tag_c = std::ffi::CString::new(tag)
+                .unwrap_or_else(|_| std::ffi::CString::new("TIZENCLAW").unwrap());
             let safe_msg = msg.replace("%", "%%");
-            let msg_c = std::ffi::CString::new(safe_msg).unwrap_or_else(|_| std::ffi::CString::new("Error in log message").unwrap());
+            let msg_c = std::ffi::CString::new(safe_msg)
+                .unwrap_or_else(|_| std::ffi::CString::new("Error in log message").unwrap());
             unsafe {
                 crate::tizen_sys::dlog::dlog_print(prio, tag_c.as_ptr(), msg_c.as_ptr());
             }
         } else {
             let (prefix, _color) = match level {
                 LogLevel::Error => ("E", "\x1b[31m"),
-                LogLevel::Warn  => ("W", "\x1b[33m"),
-                LogLevel::Info  => ("I", "\x1b[32m"),
+                LogLevel::Warn => ("W", "\x1b[33m"),
+                LogLevel::Info => ("I", "\x1b[32m"),
                 LogLevel::Debug => ("D", "\x1b[36m"),
             };
             eprintln!("[{}] [{}] {}", prefix, tag, msg);
@@ -92,7 +104,10 @@ impl SystemInfoProvider for LinuxSystemInfo {
             }
         }
         // Fallback: uname -r
-        Command::new("uname").arg("-r").output().ok()
+        Command::new("uname")
+            .arg("-r")
+            .output()
+            .ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
     }
 
@@ -117,8 +132,11 @@ impl SystemInfoProvider for LinuxSystemInfo {
         if let Ok(meminfo) = std::fs::read_to_string("/proc/meminfo") {
             for line in meminfo.lines() {
                 if line.starts_with("MemTotal:") {
-                    let kb: u64 = line.split_whitespace().nth(1)
-                        .and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let kb: u64 = line
+                        .split_whitespace()
+                        .nth(1)
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0);
                     profile["memory_mb"] = json!(kb / 1024);
                     break;
                 }
@@ -159,6 +177,28 @@ impl SystemInfoProvider for LinuxSystemInfo {
     }
 }
 
+pub fn get_os_name() -> String {
+    read_os_release_field("NAME").unwrap_or_else(|| "Linux".to_string())
+}
+
+pub fn get_arch() -> String {
+    std::env::consts::ARCH.to_string()
+}
+
+pub(crate) fn get_os_pretty_name() -> Option<String> {
+    read_os_release_field("PRETTY_NAME")
+}
+
+fn read_os_release_field(field: &str) -> Option<String> {
+    let prefix = format!("{field}=");
+    let content = std::fs::read_to_string("/etc/os-release").ok()?;
+
+    content.lines().find_map(|line| {
+        line.strip_prefix(&prefix)
+            .map(|value| value.trim_matches('"').to_string())
+    })
+}
+
 // ─────────────────────────────────────────
 // GenericPackageManager — PackageManagerProvider
 // ─────────────────────────────────────────
@@ -173,8 +213,14 @@ impl PackageManagerProvider for GenericPackageManager {
             return parse_dpkg_list(&stdout);
         }
         // Try rpm (Fedora/RHEL)
-        if let Ok(out) = Command::new("rpm").args(["-qa", "--queryformat",
-            "%{NAME}\\t%{VERSION}\\t%{RELEASE}\\n"]).output() {
+        if let Ok(out) = Command::new("rpm")
+            .args([
+                "-qa",
+                "--queryformat",
+                "%{NAME}\\t%{VERSION}\\t%{RELEASE}\\n",
+            ])
+            .output()
+        {
             let stdout = String::from_utf8_lossy(&out.stdout);
             return parse_rpm_list(&stdout);
         }
@@ -267,9 +313,7 @@ impl AppControlProvider for GenericAppControl {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.chars().all(|c| c.is_ascii_digit()) {
-                    if let Ok(cmdline) = std::fs::read_to_string(
-                        entry.path().join("cmdline")
-                    ) {
+                    if let Ok(cmdline) = std::fs::read_to_string(entry.path().join("cmdline")) {
                         if let Some(cmd) = cmdline.split('\0').next() {
                             if !cmd.is_empty() {
                                 apps.push(cmd.to_string());
@@ -280,5 +324,20 @@ impl AppControlProvider for GenericAppControl {
             }
         }
         apps
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{get_arch, get_os_name};
+
+    #[test]
+    fn get_arch_returns_non_empty_value() {
+        assert!(!get_arch().is_empty());
+    }
+
+    #[test]
+    fn get_os_name_returns_non_empty_value() {
+        assert!(!get_os_name().is_empty());
     }
 }

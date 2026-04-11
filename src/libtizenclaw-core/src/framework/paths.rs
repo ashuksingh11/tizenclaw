@@ -9,7 +9,7 @@
 //! 2. Tizen standard paths (if /opt/usr/share/tizenclaw exists)
 //! 3. Host Linux paths (~/.tizenclaw)
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// All resolved platform paths.
 #[derive(Debug, Clone)]
@@ -50,46 +50,65 @@ pub struct PlatformPaths {
 
 /// Tizen standard base path.
 const TIZEN_DATA_DIR: &str = "/opt/usr/share/tizenclaw";
-const TIZEN_TOOLS_DIR: &str = "/opt/usr/share/tizenclaw/tools";
+const HOST_DATA_DIR_NAME: &str = ".tizenclaw";
 
 impl PlatformPaths {
-    /// Auto-detect paths based on environment and OS.
+    /// Resolve platform paths from environment and runtime markers.
+    pub fn resolve() -> Self {
+        let is_tizen = has_tizen_markers();
+        let data_dir = std::env::var_os("TIZENCLAW_DATA_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| default_data_dir(is_tizen));
+
+        Self {
+            data_dir: data_dir.clone(),
+            config_dir: resolve_path("TIZENCLAW_CONFIG_DIR", data_dir.join("config")),
+            tools_dir: resolve_path("TIZENCLAW_TOOLS_DIR", data_dir.join("tools")),
+            skills_dir: resolve_path("TIZENCLAW_SKILLS_DIR", data_dir.join("workspace/skills")),
+            skill_hubs_dir: resolve_path(
+                "TIZENCLAW_SKILL_HUBS_DIR",
+                data_dir.join("workspace/skill-hubs"),
+            ),
+            embedded_tools_dir: resolve_path(
+                "TIZENCLAW_EMBEDDED_TOOLS_DIR",
+                data_dir.join("embedded"),
+            ),
+            plugins_dir: resolve_path("TIZENCLAW_PLUGINS_DIR", data_dir.join("plugins")),
+            llm_plugins_dir: resolve_path(
+                "TIZENCLAW_LLM_PLUGINS_DIR",
+                data_dir.join("plugins/llm"),
+            ),
+            cli_plugins_dir: resolve_path(
+                "TIZENCLAW_CLI_PLUGINS_DIR",
+                data_dir.join("plugins/cli"),
+            ),
+            docs_dir: resolve_path("TIZENCLAW_DOCS_DIR", data_dir.join("docs")),
+            web_root: resolve_path("TIZENCLAW_WEB_ROOT", data_dir.join("web")),
+            workflows_dir: resolve_path("TIZENCLAW_WORKFLOWS_DIR", data_dir.join("workflows")),
+            codes_dir: resolve_path("TIZENCLAW_CODES_DIR", data_dir.join("codes")),
+            logs_dir: resolve_path("TIZENCLAW_LOGS_DIR", data_dir.join("logs")),
+            actions_dir: resolve_path("TIZENCLAW_ACTIONS_DIR", data_dir.join("actions")),
+            pipelines_dir: resolve_path("TIZENCLAW_PIPELINES_DIR", data_dir.join("pipelines")),
+        }
+    }
+
+    /// Backward-compatible alias for older callers.
     pub fn detect() -> Self {
-        // Check environment overrides first
-        if let Ok(data_dir) = std::env::var("TIZENCLAW_DATA_DIR") {
-            return Self::from_base(PathBuf::from(data_dir));
-        }
-
-        // Check if Tizen paths exist
-        if PathBuf::from(TIZEN_DATA_DIR).exists() || is_tizen_environment() {
-            return Self::tizen_defaults();
-        }
-
-        // Fallback: XDG-compliant Linux paths
-        Self::linux_defaults()
+        Self::resolve()
     }
 
     /// Build paths from a custom base directory.
     pub fn from_base(base: PathBuf) -> Self {
-        let tools_dir = std::env::var("TIZENCLAW_TOOLS_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| base.join("tools"));
-
-        let skills_dir = base.join("workspace/skills");
-        let skill_hubs_dir = std::env::var("TIZENCLAW_SKILL_HUBS_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| base.join("workspace/skill-hubs"));
-        let embedded_tools_dir = std::env::var("TIZENCLAW_EMBEDDED_TOOLS_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| base.join("embedded"));
-
         PlatformPaths {
+            data_dir: base.clone(),
             config_dir: base.join("config"),
-            tools_dir,
-            skills_dir,
-            skill_hubs_dir,
-            embedded_tools_dir,
+            tools_dir: base.join("tools"),
+            skills_dir: base.join("workspace/skills"),
+            skill_hubs_dir: base.join("workspace/skill-hubs"),
+            embedded_tools_dir: base.join("embedded"),
             plugins_dir: base.join("plugins"),
+            llm_plugins_dir: base.join("plugins/llm"),
+            cli_plugins_dir: base.join("plugins/cli"),
             docs_dir: base.join("docs"),
             web_root: base.join("web"),
             workflows_dir: base.join("workflows"),
@@ -97,50 +116,7 @@ impl PlatformPaths {
             logs_dir: base.join("logs"),
             actions_dir: base.join("actions"),
             pipelines_dir: base.join("pipelines"),
-            llm_plugins_dir: base.join("plugins/llm"),
-            cli_plugins_dir: base.join("plugins/cli"),
-            data_dir: base,
         }
-    }
-
-    /// Standard Tizen paths.
-    fn tizen_defaults() -> Self {
-        let tools_dir = std::env::var("TIZENCLAW_TOOLS_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(TIZEN_TOOLS_DIR));
-
-        let skills_dir = PathBuf::from(TIZEN_DATA_DIR).join("workspace/skills");
-        let skill_hubs_dir = std::env::var("TIZENCLAW_SKILL_HUBS_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(TIZEN_DATA_DIR).join("workspace/skill-hubs"));
-        let embedded_tools_dir = std::env::var("TIZENCLAW_EMBEDDED_TOOLS_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(TIZEN_DATA_DIR).join("embedded"));
-
-        PlatformPaths {
-            data_dir: PathBuf::from(TIZEN_DATA_DIR),
-            config_dir: PathBuf::from(TIZEN_DATA_DIR).join("config"),
-            tools_dir,
-            skills_dir,
-            skill_hubs_dir,
-            embedded_tools_dir,
-            plugins_dir: PathBuf::from(TIZEN_DATA_DIR).join("plugins"),
-            docs_dir: PathBuf::from(TIZEN_DATA_DIR).join("docs"),
-            web_root: PathBuf::from(TIZEN_DATA_DIR).join("web"),
-            workflows_dir: PathBuf::from(TIZEN_DATA_DIR).join("workflows"),
-            codes_dir: PathBuf::from(TIZEN_DATA_DIR).join("codes"),
-            logs_dir: PathBuf::from(TIZEN_DATA_DIR).join("logs"),
-            actions_dir: PathBuf::from(TIZEN_DATA_DIR).join("actions"),
-            pipelines_dir: PathBuf::from(TIZEN_DATA_DIR).join("pipelines"),
-            llm_plugins_dir: PathBuf::from(TIZEN_DATA_DIR).join("plugins/llm"),
-            cli_plugins_dir: PathBuf::from(TIZEN_DATA_DIR).join("plugins/cli"),
-        }
-    }
-
-    /// Host Linux paths.
-    fn linux_defaults() -> Self {
-        let base = dirs_or_home().join(".tizenclaw");
-        Self::from_base(base)
     }
 
     /// Ensure all directories exist (create if missing).
@@ -158,14 +134,20 @@ impl PlatformPaths {
             &self.workflows_dir,
             &self.codes_dir,
             &self.logs_dir,
+            &self.actions_dir,
+            &self.pipelines_dir,
+            &self.llm_plugins_dir,
+            &self.cli_plugins_dir,
         ];
-        for dir in &dirs {
-            if !dir.exists() {
-                if let Err(e) = std::fs::create_dir_all(dir) {
-                    log::error!("Warning: failed to create dir {:?}: {}", dir, e);
-                }
+        for dir in dirs {
+            if let Err(err) = std::fs::create_dir_all(dir) {
+                log::warn!("Failed to create dir {:?}: {}", dir, err);
             }
         }
+    }
+
+    pub fn is_tizen(&self) -> bool {
+        has_tizen_markers()
     }
 
     /// Get the session database path.
@@ -199,12 +181,24 @@ impl PlatformPaths {
     }
 }
 
-/// Check if we're running in a Tizen environment.
-fn is_tizen_environment() -> bool {
-    PathBuf::from("/etc/tizen-release").exists()
+fn resolve_path(env_key: &str, default: PathBuf) -> PathBuf {
+    std::env::var_os(env_key)
+        .map(PathBuf::from)
+        .unwrap_or(default)
 }
 
-/// Get the user's home directory.
+fn default_data_dir(is_tizen: bool) -> PathBuf {
+    if is_tizen {
+        PathBuf::from(TIZEN_DATA_DIR)
+    } else {
+        dirs_or_home().join(HOST_DATA_DIR_NAME)
+    }
+}
+
+fn has_tizen_markers() -> bool {
+    Path::new("/etc/tizen-release").exists() || Path::new(TIZEN_DATA_DIR).exists()
+}
+
 fn dirs_or_home() -> PathBuf {
     std::env::var("HOME")
         .map(PathBuf::from)
@@ -214,6 +208,12 @@ fn dirs_or_home() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn from_base_places_embedded_tools_under_base() {
@@ -249,6 +249,67 @@ mod tests {
     }
 
     #[test]
+    fn resolve_prefers_environment_overrides() {
+        let _guard = env_lock().lock().unwrap();
+        let original_data_dir = std::env::var_os("TIZENCLAW_DATA_DIR");
+        let original_tools_dir = std::env::var_os("TIZENCLAW_TOOLS_DIR");
+        let base = std::env::temp_dir().join(format!(
+            "tizenclaw-env-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let tools = base.join("custom-tools");
+
+        unsafe {
+            std::env::set_var("TIZENCLAW_DATA_DIR", &base);
+            std::env::set_var("TIZENCLAW_TOOLS_DIR", &tools);
+        }
+
+        let paths = PlatformPaths::resolve();
+
+        assert_eq!(paths.data_dir, base);
+        assert_eq!(paths.tools_dir, tools);
+        assert_eq!(paths.plugins_dir, base.join("plugins"));
+        assert_eq!(paths.llm_plugins_dir, base.join("plugins/llm"));
+
+        unsafe {
+            restore_env_var("TIZENCLAW_DATA_DIR", original_data_dir);
+            restore_env_var("TIZENCLAW_TOOLS_DIR", original_tools_dir);
+        }
+    }
+
+    #[test]
+    fn resolve_uses_home_based_host_paths_without_overrides() {
+        let _guard = env_lock().lock().unwrap();
+        let original_home = std::env::var_os("HOME");
+        let original_data_dir = std::env::var_os("TIZENCLAW_DATA_DIR");
+        let home = std::env::temp_dir().join(format!(
+            "tizenclaw-home-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        unsafe {
+            std::env::remove_var("TIZENCLAW_DATA_DIR");
+            std::env::set_var("HOME", &home);
+        }
+
+        let paths = PlatformPaths::resolve();
+
+        assert_eq!(paths.data_dir, home.join(".tizenclaw"));
+        assert_eq!(paths.config_dir, home.join(".tizenclaw/config"));
+
+        unsafe {
+            restore_env_var("HOME", original_home);
+            restore_env_var("TIZENCLAW_DATA_DIR", original_data_dir);
+        }
+    }
+
+    #[test]
     fn discover_skill_hub_roots_lists_child_directories() {
         let unique = format!(
             "tizenclaw-skill-hubs-{}",
@@ -268,5 +329,12 @@ mod tests {
         assert_eq!(roots, vec![paths.skill_hubs_dir.join("openclaw")]);
 
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    unsafe fn restore_env_var(key: &str, value: Option<std::ffi::OsString>) {
+        match value {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
     }
 }
