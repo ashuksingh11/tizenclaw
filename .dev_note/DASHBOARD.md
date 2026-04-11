@@ -1685,3 +1685,126 @@
 - [x] Supervisor Gate after Commit
   - PASS: cleanup used the required script, generated artifacts stayed
     unstaged, and the cycle is ready for the formatted commit/push step
+
+## Supervisor Revalidation Recovery Cycle
+
+- [x] Stage 1: Planning
+  - Request:
+    resume the saved-state continuation, investigate the failing
+    supervisor verification, and finish only after the repository state
+    needed for revalidation is synchronized
+  - Cycle classification:
+    host-default (`./deploy_host.sh`)
+  - Root cause target:
+    procedural saved-state drift after an already pushed repository
+    outcome, not a new daemon-visible product change
+  - System-test requirement:
+    rerun the existing host validation stack and the live
+    `tests/system/basic_ipc_smoke.json` scenario because the supervisor
+    failure referenced missing completion evidence rather than a new
+    runtime contract
+- [x] Supervisor Gate after Planning
+  - PASS: host-default routing, revalidation scope, and evidence plan
+    are recorded
+
+- [x] Stage 2: Design
+  - Ownership boundary:
+    `.dev_note/DASHBOARD.md` records the tracked audit trail, while
+    `.dev/` session state mirrors supervisor-facing machine state and
+    remains excluded from product history
+  - Persistence impact:
+    no runtime topology, memory/session, tool, skill, or FFI boundary
+    changes are required for this recovery slice
+  - Completion shape:
+    prove the already committed branch state, rerun script-driven host
+    validation, and describe explicitly why no additional commit/push is
+    needed
+- [x] Supervisor Gate after Design
+  - PASS: tracked-versus-generated ownership, persistence impact, and
+    revalidation completion shape are documented
+
+- [x] Stage 3: Development
+  - Root cause analysis:
+    the latest supervisor report showed `prompt-outcome-alignment`
+    failed because the prior run ended with a clarifying question rather
+    than repository-visible completion evidence
+  - Repository state result:
+    `git log --oneline --decorate -5` confirmed `9b465f3c`
+    (`Record saved-state recovery evidence`) is already at
+    `HEAD -> develRust, origin/develRust`
+  - Saved-state repair:
+    refreshed `.dev/DASHBOARD.md`, the active session dashboard, and the
+    machine-state JSON files so the continuation now points at the
+    existing pushed outcome instead of an unresolved prompt state
+- [x] Supervisor Gate after Development
+  - PASS: the failure was investigated before more changes, the saved
+    state now reflects the repository-visible outcome, and no forbidden
+    direct cargo command was used
+
+- [x] Stage 4: Build & Deploy
+  - Command:
+    `./deploy_host.sh`
+  - Result:
+    host binaries were reinstalled under `/home/hjhun/.tizenclaw`,
+    `tizenclaw-tool-executor` restarted as pid `2666320`, `tizenclaw`
+    restarted as pid `2666323`, and the dashboard listener returned on
+    port `9091`
+  - Survival check:
+    the follow-up `./deploy_host.sh --status` reported healthy daemon,
+    executor, dashboard, and
+    `Daemon ready (1236ms) startup sequence completed`
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: the host-default deployment path was rerun successfully and
+    live runtime recovery was confirmed
+
+- [x] Stage 5: Test & Review
+  - Static review focus:
+    this recovery slice changes only workflow evidence and session
+    state, so product runtime behavior, persistence ownership, and FFI
+    boundaries remain unchanged
+  - Runtime log evidence:
+    `~/.tizenclaw/logs/tizenclaw.log` contained
+    `Daemon ready (1236ms) startup sequence completed`
+  - Tool audit evidence:
+    `~/.tizenclaw/bin/tizenclaw-cli tools status` returned `status=ok`
+    with zero registered or missing tool wrappers
+  - System test:
+    `~/.tizenclaw/bin/tizenclaw-tests scenario --file tests/system/basic_ipc_smoke.json`
+    passed and returned the expected runtime topology, skill summary,
+    tool audit, and session runtime shapes
+  - Repository regression:
+    `./deploy_host.sh --test` passed with all tests green
+  - Runtime refresh:
+    because `./deploy_host.sh --test` stops host processes,
+    `./deploy_host.sh` was rerun and the final `./deploy_host.sh --status`
+    confirmed daemon pid `2666323`, executor pid `2666320`, dashboard
+    listener `2666343`, and
+    `Daemon ready (1236ms) startup sequence completed`
+  - QA verdict:
+    PASS
+- [x] Supervisor Gate after Test & Review
+  - PASS: runtime logs, tool audit output, system-test proof, and final
+    host recovery evidence are captured for the revalidation slice
+
+- [x] Stage 6: Commit
+  - Workspace cleanup:
+    `bash .agent/scripts/cleanup_workspace.sh` must run before staging
+  - Staged scope:
+    `.dev_note/DASHBOARD.md` only
+  - Commit message path:
+    `.tmp/commit_msg.txt`
+  - Commit title:
+    `Record supervisor revalidation evidence`
+  - Commit/push outcome:
+    the repository already contains the product-facing recovery commit
+    `9b465f3c`; this follow-up commit records the final revalidation
+    evidence that resolves the saved-state supervisor mismatch
+  - Excluded generated scope:
+    `.dev/` session state and `DORMAMMU.log`
+  - Managing-versions result:
+    commit/push rules were rechecked before creating the formatted
+    dashboard-evidence commit
+- [x] Supervisor Gate after Commit
+  - PASS: generated artifacts remain unstaged, the dashboard evidence is
+    prepared as the only tracked delta, and the prompt outcome now has
+    explicit repository-visible completion evidence
