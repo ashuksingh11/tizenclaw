@@ -10,10 +10,7 @@ use tclaw_api::SurfaceDescriptor;
 use tclaw_plugins::{
     PluginPermission, PluginPermissionLevel, PluginPermissionScope, PluginToolManifest,
 };
-use tclaw_runtime::{
-    McpToolBridge, PermissionLevel, PermissionScope, ToolCallRequest, ToolExecutionOutput,
-    ToolRuntimeError,
-};
+use tclaw_runtime::{McpToolBridge, PermissionLevel, PermissionScope, ToolCallRequest, ToolRuntimeError};
 
 pub use builtins::{
     built_in_tool_registry, FetchToolBackend, FileToolBackend, GlobalToolContext,
@@ -213,8 +210,8 @@ mod tests {
         mcp_client::McpClient, mcp_client::McpClientSpec,
         mcp_lifecycle_hardened::ManagedMcpServer, mcp_lifecycle_hardened::McpLifecyclePolicy,
         mcp_stdio::McpStdioServerSpec, mcp_stdio::McpTransport, mcp_stdio::McpTransportError,
-        PermissionEnforcer, PermissionMode, RecordingPrompter, RuntimeProfile, ToolExecutor,
-        WorkerBootSpec, WorkerBootState, WorkerIdentity, WorkerKind,
+        PermissionEnforcer, PermissionMode, RecordingPrompter, RuntimeProfile, ToolExecutionOutput,
+        ToolExecutor, WorkerBootSpec, WorkerBootState, WorkerIdentity, WorkerKind,
     };
 
     use super::*;
@@ -277,14 +274,30 @@ mod tests {
                     summary: "refresh manifests".to_string(),
                     priority: tclaw_runtime::TaskPriority::High,
                     labels: vec!["tools".to_string()],
+                    status: tclaw_runtime::TaskStatus::Queued,
+                    assignment: Some(tclaw_runtime::TaskAssignment {
+                        lane_id: "tools".to_string(),
+                        worker_id: None,
+                        session_id: None,
+                    }),
+                    trust: None,
+                    metadata: std::collections::BTreeMap::new(),
+                    failure: None,
                 }],
                 completed_tasks: vec!["task-0".to_string()],
+                failed_tasks: Vec::new(),
+                lane_events: Vec::new(),
             },
             cron_registry: tclaw_runtime::TeamCronRegistry {
                 entries: vec![tclaw_runtime::TeamCronEntry {
+                    entry_id: "cron-1".to_string(),
                     schedule: "0 * * * *".to_string(),
                     task_name: "metadata.sync".to_string(),
+                    lane_id: "maintenance".to_string(),
                     enabled: true,
+                    priority: tclaw_runtime::TaskPriority::Normal,
+                    labels: vec!["cron".to_string()],
+                    trust: None,
                 }],
             },
             workers: vec![WorkerBootSpec {
@@ -346,7 +359,7 @@ mod tests {
                 input: json!({"path": "src/lib.rs", "query": "tool"}),
             })
             .expect("search text");
-        assert_eq!(search.output["matches"][0]["line_number"], 2);
+        assert_eq!(search.output["matches"][0]["line_number"], 3);
 
         let shell = executor
             .execute(&ToolCallRequest {

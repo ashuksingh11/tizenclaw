@@ -66,15 +66,15 @@ impl ToolCatalog {
 
     pub fn get(&self, name: &str) -> Option<&ToolManifestEntry> {
         let resolved = self.resolve_name(name)?;
-        self.manifests.get(resolved)
+        self.manifests.get(&resolved)
     }
 
-    pub fn resolve_name(&self, name: &str) -> Option<&str> {
+    pub fn resolve_name(&self, name: &str) -> Option<String> {
         if self.manifests.contains_key(name) {
-            return Some(name);
+            return Some(name.to_string());
         }
 
-        self.aliases.get(name).map(String::as_str)
+        self.aliases.get(name).cloned()
     }
 
     pub fn search(&self, query: &str) -> Vec<ToolManifestEntry> {

@@ -387,12 +387,9 @@ where
         let mut usage = TurnUsageReport::default();
         let mut tool_names = Vec::new();
         let mut request_count = 0usize;
-        let mut final_assistant_text = String::new();
         let mut compacted = false;
-
-        session.set_state(SessionState::Active);
-
-        loop {
+        let final_assistant_text = loop {
+            session.set_state(SessionState::Active);
             if request_count >= self.options.max_model_requests {
                 return Err(ConversationRuntimeError::MaxModelRequestsExceeded {
                     max_model_requests: self.options.max_model_requests,
@@ -439,8 +436,7 @@ where
             }
 
             if tool_calls.is_empty() {
-                final_assistant_text = assistant_text;
-                break;
+                break assistant_text;
             }
 
             for call in tool_calls {
@@ -551,7 +547,7 @@ where
             }
 
             request_count += 1;
-        }
+        };
 
         request_count += 1;
 

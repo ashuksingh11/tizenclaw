@@ -1,8 +1,8 @@
 use serde::Serialize;
-use tclaw_plugins::{plugin_command_manifests, plugin_manifests, plugin_tool_manifests, PluginManifest};
+use tclaw_plugins::{plugin_manifests, plugin_tool_manifests, PluginManifest};
 use tclaw_runtime::{
     runtime_command_registry, CommandRegistry, RegistryParseOutcome, ResolvedSlashCommand,
-    RuntimeBootstrap, RuntimeConfig, RuntimeProfile, SessionControlResult,
+    RuntimeBootstrap, RuntimeConfig, SessionControlResult,
 };
 use tclaw_tools::built_in_tool_registry;
 
@@ -97,7 +97,6 @@ pub fn dispatch_cli(
     let built_in_tools = built_in_tool_registry()
         .map_err(|error| CliDispatchError::ToolRegistry(error.to_string()))?;
     let plugins = plugin_manifests();
-    let plugin_commands = plugin_command_manifests();
     let plugin_tools = plugin_tool_manifests();
 
     let mut config = RuntimeConfig::default();
@@ -237,11 +236,7 @@ fn resume_result(session_id: &str, note: Option<&str>) -> SessionControlResult {
         _ => "resume queued".to_string(),
     };
 
-    SessionControlResult {
-        session_id: session_id.to_string(),
-        accepted: true,
-        message,
-    }
+    SessionControlResult::accepted(session_id, message)
 }
 
 fn build_help(
@@ -350,7 +345,7 @@ mod tests {
         parsed.mode = CliMode::PrintConfig;
         let outcome = dispatch_cli(parsed, None).expect("dispatch");
         assert_eq!(outcome.mode, "config");
-        assert_eq!(outcome.config.profile, RuntimeProfile::Host);
+        assert_eq!(outcome.config.profile, tclaw_runtime::RuntimeProfile::Host);
     }
 
     #[test]

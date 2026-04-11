@@ -2,7 +2,7 @@
 
 ## Actual Progress
 
-- Goal: Prompt 41: CLI Surface and Terminal UX
+- Goal: Prompt 42: Worker, Sub-Agent, and Lane Orchestration
 - Prompt-driven scope: Phase 4. Supervisor Validation, Continuation Loop, and Resume prompt-driven setup for Follow the guidance files below before making changes.
 - Active roadmap focus:
 - Phase 4. Supervisor Validation, Continuation Loop, and Resume
@@ -14,7 +14,7 @@
 
 ## In Progress
 
-- Review the prompt-derived goal and success criteria for Prompt 41: CLI Surface and Terminal UX.
+- Review the prompt-derived goal and success criteria for Prompt 42: Worker, Sub-Agent, and Lane Orchestration.
 - Review repository guidance from AGENTS.md, .github/workflows/ci.yml, .github/workflows/release-host-bundle.yml
 - Generate DASHBOARD.md and PLAN.md from the active prompt before implementation continues.
 
@@ -32,163 +32,175 @@
 - Keep JSON merges additive so interrupted runs stay resumable.
 - Keep session-scoped state isolated when multiple workflows run in parallel.
 
-## Stage Log
+## 2026-04-12 Prompt 42 Cycle
 
 ### Stage 1: Planning
 
-- Status: completed
-- Cycle classification: host-default (`./deploy_host.sh`)
-- Affected runtime surface:
-  - `rust/crates/tclaw-cli` becomes the production Rust CLI entry point
-  - integrates with `tclaw-runtime`, `tclaw-commands`, `tclaw-tools`,
-    and `tclaw-plugins`
-  - preserves CLI-facing parsing, stdin merging, mode dispatch, help,
-    rendering, and structured output behavior
-- System-test scenario decision:
-  - No new `tests/system/` scenario planned initially because the requested
-    behavior is CLI-surface reconstruction, not a daemon IPC contract change
-  - If development exposes daemon-visible behavior changes, add a scenario
-    before completing Development
+- Cycle classification: `host-default`
+- Runtime surface: `rust/crates/tclaw-runtime/src/{worker_boot,task_registry,task_packet,lane_events,session_control,trust_resolver,team_cron_registry}.rs`
+- Planned verification:
+  - Repository path: `./deploy_host.sh`
+  - Repository tests: `./deploy_host.sh --test`
+  - System scenario: no current daemon IPC exposes worker orchestration, so
+    this cycle uses runtime crate tests as the executable contract and does
+    not add a synthetic `tizenclaw-tests` scenario that the daemon cannot
+    serve yet.
+- Notes:
+  - Prompt reference docs under `docs/claw-code-analysis/files/...` are not
+    present in this checkout. The live `tclaw-runtime` sources are the active
+    reconstruction baseline for this cycle.
+- Stage status: `completed`
 
-### Supervisor Gate Records
+### Supervisor Gate: Stage 1 Planning
 
-- Stage 1 Planning: PASS
-  - Host-default cycle classified and recorded in this dashboard
+- Verdict: `PASS`
+- Evidence: host-default path classified, runtime surface identified, and the
+  missing daemon IPC surface for system-scenario coverage documented.
 
 ### Stage 2: Design
 
-- Status: completed
-- Subsystem boundaries and ownership:
-  - `rust/crates/tclaw-cli/src/main.rs`: thin process entry point and exit
-    code mapping only
-  - `rust/crates/tclaw-cli/src/init.rs`: CLI config defaults, runtime
-    bootstrap, command registry, plugin/runtime surface summaries, and mode
-    dispatch preparation
-  - `rust/crates/tclaw-cli/src/input.rs`: argv parsing, stdin detection,
-    piped stdin reading, prompt/stdin merge, slash-command recognition
-  - `rust/crates/tclaw-cli/src/render.rs`: output shape and human/json/compact
-    rendering rules kept separate from orchestration
-- Persistence and runtime path impact:
-  - CLI reads runtime defaults from `tclaw-runtime::RuntimeConfig::default()`
-  - no new persistence format introduced
-  - plugin and command discovery remain delegated to existing runtime/plugin
-    crates
-- IPC/daemon observability and assertions:
-  - command parsing and resume routing verified by CLI unit tests
-  - output format contracts verified by renderer tests
-  - no new daemon IPC contract planned unless implementation proves one is
-    necessary
-- FFI / `Send + Sync` / dynamic loading notes:
-  - no new CLI-side FFI boundary
-  - CLI remains pure Rust and delegates any dynamic loading behavior to
-    downstream runtime/plugin/tool crates
-  - no new thread-sharing primitive is introduced in the CLI surface; any
-    `Send + Sync` or `libloading` behavior stays in existing runtime modules
+- Ownership boundaries:
+  - `worker_boot.rs`: worker identity, lifecycle state machine, event log, and
+    thread-safe registry APIs.
+  - `trust_resolver.rs`: typed trust requirements, resolution results, and
+    failure reasons.
+  - `task_packet.rs`: serializable task/lane/worker assignment payloads.
+  - `lane_events.rs`: typed lane/task lifecycle event payloads.
+  - `task_registry.rs`: deterministic registry snapshots plus task/lane event
+    coordination.
+  - `team_cron_registry.rs`: typed scheduled task registration that can emit
+    task packets without UI-owned transitions.
+  - `session_control.rs`: explicit session control commands/results used by
+    orchestration flows.
+- Persistence/runtime impact:
+  - New lifecycle and trust types remain serde-serializable.
+  - Registries use deterministic sequence numbers instead of wall-clock-only
+    observability so tests and telemetry can inspect transitions reliably.
+- IPC-observable path:
+  - No daemon IPC method exists yet for worker orchestration.
+  - Design keeps snapshots and events serializable so a future IPC layer can
+    expose them without rewriting runtime internals.
+- FFI / runtime boundaries:
+  - No new FFI is introduced in this cycle.
+  - Concurrency boundary is limited to Rust `Arc<RwLock<...>>` registry state
+    with deterministic ordered snapshots.
+- Stage status: `completed`
 
-- Stage 2 Design: PASS
-  - CLI module boundaries, runtime ownership, and observability path recorded
+### Supervisor Gate: Stage 2 Design
+
+- Verdict: `PASS`
+- Evidence: subsystem ownership, persistence impact, observability path, and
+  concurrency boundary were defined in the dashboard before implementation.
 
 ### Stage 3: Development
 
-- Status: completed
 - Implemented:
-  - added `rust/crates/rusty-claude-cli`
-  - added `main.rs`, `init.rs`, `input.rs`, and `render.rs`
-  - wired `rust/crates/tclaw-cli` to delegate to the new production CLI
-  - implemented argv parsing, piped stdin handling, prompt/stdin merge,
-    local help, slash command resolution, resume dispatch, and structured
-    output rendering
-  - integrated command, runtime, plugin, and tool summaries using the
-    existing `tclaw-*` crates
-- Tests added:
-  - flag parsing
-  - config default behavior
-  - prompt/stdin merge
-  - output format contracts
-  - compact output contract
-  - resume/slash command handling
-- System-test scenario:
-  - not added because this change remained in the CLI surface and did not
-    introduce a new daemon IPC contract
-- TDD note:
-  - representative CLI tests were added alongside the implementation to lock
-    the parsing, output, and resume flows in the rebuilt workspace
+  - Rebuilt `tclaw-runtime` worker orchestration around explicit lifecycle
+    state, typed trust decisions, lane events, task packets, task registry
+    coordination, and cron-to-task emission.
+  - Added thread-safe registries with deterministic sequence ordering for
+    worker and task observability.
+  - Expanded runtime exports so CLI/runtime integration can consume the new
+    orchestration API without ad hoc rewrites.
+  - Fixed downstream canonical-workspace issues in `tclaw-tools` and
+    `rusty-claude-cli` that blocked the runtime crate from building cleanly.
+  - Extended `deploy_host.sh` so the required host script validates the
+    canonical `rust/` workspace in addition to the legacy root workspace.
+- Tests added or updated:
+  - `worker_boot.rs`: creation, sequencing, trust denial, invalid transition,
+    and runtime failure coverage.
+  - `trust_resolver.rs`: allow/deny and serialization coverage.
+  - `task_packet.rs`, `lane_events.rs`, `task_registry.rs`,
+    `team_cron_registry.rs`, and `session_control.rs`: contract and failure
+    path coverage.
+  - `tclaw-tools` test fixture updated for the richer task/cron payloads.
+- System-test note:
+  - No new `tests/system/` scenario was added because worker orchestration is
+    not yet exposed through daemon IPC. The runtime crate tests are the active
+    executable contract for this cycle.
+- Stage status: `completed`
 
-- Stage 3 Development: PASS
-  - CLI source and representative tests added; no direct cargo command used
+### Supervisor Gate: Stage 3 Development
+
+- Verdict: `PASS`
+- Evidence: implementation and tests landed under `rust/crates/tclaw-runtime`
+  and the host script remained the execution entrypoint for validation.
 
 ### Stage 4: Build & Deploy
 
-- Status: completed
 - Commands executed:
   - `./deploy_host.sh -b`
   - `./deploy_host.sh`
 - Evidence:
-  - host build completed successfully through the required script path
-  - install phase completed and the script reported:
+  - root host workspace build passed through the required script path
+  - canonical `rust/` workspace build also passed through `deploy_host.sh`
+    after the script's network-backed fallback engaged for incomplete vendor
+    coverage
+  - install phase completed and host start-up reported:
     - `tizenclaw daemon started`
     - `Daemon IPC is ready via abstract socket`
-- Scope note:
-  - `deploy_host.sh` validates the legacy root workspace under `src/`
-  - it does not build the reconstructed `rust/` workspace, so it provides
-    repository-required host-cycle evidence but not direct compile proof for
-    `rust/crates/rusty-claude-cli`
+- Stage status: `completed`
 
-- Stage 4 Build & Deploy: PASS
-  - required host script path executed successfully with install/start evidence
+### Supervisor Gate: Stage 4 Build & Deploy
+
+- Verdict: `PASS`
+- Evidence: required host build/install/restart path executed successfully and
+  the daemon reported IPC readiness.
 
 ### Stage 5: Test & Review
 
-- Status: completed with risk noted
 - Commands executed:
   - `./deploy_host.sh --test`
-  - `./deploy_host.sh --restart-only`
   - `./deploy_host.sh --status`
-  - `tail -20 ~/.tizenclaw/logs/tizenclaw.log`
-- Repository test evidence:
-  - `./deploy_host.sh --test` passed
-  - observed summaries included:
-    - `3 passed` in `tizenclaw`
-    - `28 passed` in `tizenclaw_core`
-    - `371 passed` in `src/tizenclaw`
-    - `17 passed` in legacy `tizenclaw-cli`
-    - `7 passed` in `tizenclaw-tests`
-- Runtime log evidence:
-  - `Detected platform and initialized paths`
-  - `Initialized AgentCore`
-  - `Started IPC server`
-  - `Daemon ready`
-  - `Shutting down...`
+  - `tail -n 40 ~/.tizenclaw/logs/tizenclaw.log`
+- Review evidence:
+  - root host workspace tests passed through `deploy_host.sh --test`
+  - canonical `rust/` workspace tests passed through the same script path,
+    including:
+    - `tclaw-runtime`: `53 passed`
+    - `tclaw-tools`: `5 passed`
+    - `rusty_claude_cli`: `10 passed`
+  - host runtime status confirmed:
+    - `tizenclaw is running`
+    - `tizenclaw-tool-executor is running`
+  - host log excerpts captured:
+    - `Detected platform and initialized paths`
+    - `Initialized AgentCore`
+    - `Started IPC server`
+    - `Daemon ready`
 - Review verdict:
-  - PASS for the required scripted host regression run
-  - Risk: the legacy host daemon does not remain running after restart in this
-    environment (`--status` reported no PID file after startup), which limits
-    live host-daemon verification and appears outside the rebuilt `rust/`
-    workspace change set
-- System-test scenario:
-  - no `tests/system/` scenario was executed for this prompt because the
-    implemented surface stayed CLI-local rather than introducing a new daemon
-    IPC contract
+  - `PASS`
+  - Residual note: the canonical `rust/` workspace still requires a
+    network-backed dependency fallback because the shared vendor tree is not
+    fully synchronized for both workspaces.
+- Stage status: `completed`
 
-- Stage 5 Test & Review: PASS
-  - scripted host regression completed; runtime persistence risk recorded
+### Supervisor Gate: Stage 5 Test & Review
+
+- Verdict: `PASS`
+- Evidence: scripted regression path passed and runtime status/log proof was
+  recorded in this dashboard.
 
 ### Stage 6: Commit & Push
 
-- Status: completed
-- Cleanup:
+- Workspace cleanup executed:
   - `bash .agent/scripts/cleanup_workspace.sh`
-  - result: PASS
 - Commit scope:
-  - `rust/Cargo.toml`
-  - `rust/crates/tclaw-cli/Cargo.toml`
-  - `rust/crates/tclaw-cli/src/main.rs`
-  - `rust/crates/rusty-claude-cli/**`
-  - `.dev/DASHBOARD.md`
-- Commit policy:
-  - commit message prepared via `.tmp/commit_msg.txt`
-  - no inline `git commit -m` usage
-  - unrelated modified files remain unstaged
+  - canonical runtime worker lifecycle, trust gating, task packets, lane
+    events, task registry coordination, and cron emission
+  - canonical workspace validation updates in `deploy_host.sh`
+  - supporting canonical workspace fixes in `tclaw-tools` and
+    `rusty-claude-cli`
+  - vendored dependency additions required by the canonical `rust/`
+    workspace lockfile
+- Commit procedure:
+  - compose commit message in `.tmp/commit_msg.txt`
+  - execute `git commit -F .tmp/commit_msg.txt`
+- Stage status: `completed`
 
-- Stage 6 Commit & Push: PASS
-  - workspace cleaned and commit scope restricted to the Prompt 41 CLI work
+### Supervisor Gate: Stage 6 Commit & Push
+
+- Verdict: `PASS`
+- Evidence: workspace cleanup was executed, only the scoped orchestration
+  files were prepared for staging, and the commit used the required
+  file-based message flow.

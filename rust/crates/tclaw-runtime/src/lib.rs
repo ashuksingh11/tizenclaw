@@ -61,7 +61,7 @@ pub use git_context::GitContextSnapshot;
 pub use green_contract::GreenContract;
 pub use hooks::{HookPhase, HookSpec};
 pub use json::{JsonEnvelope, JsonEnvelopeError};
-pub use lane_events::{LaneEvent, LaneEventKind};
+pub use lane_events::{LaneEvent, LaneEventKind, LaneEventPayload};
 pub use lsp_client::LspClientSpec;
 pub use mcp::{
     bridged_tool_name, JsonRpcError, JsonRpcId, JsonRpcNotification, JsonRpcRequest,
@@ -103,12 +103,14 @@ pub use session::{
     ConversationMessage, SessionCompactionMetadata, SessionContentBlock, SessionError,
     SessionForkMetadata, SessionMessageRole, SessionRecord, SessionState, SessionStore,
 };
-pub use session_control::{SessionControlCommand, SessionControlResult};
+pub use session_control::{SessionControlCommand, SessionControlResult, SessionControlStatus};
 pub use stale_base::StaleBaseReport;
 pub use stale_branch::StaleBranchReport;
 pub use summary_compression::SummaryCompressionResult;
-pub use task_packet::{TaskPacket, TaskPriority};
-pub use task_registry::TaskRegistrySnapshot;
+pub use task_packet::{
+    TaskAssignment, TaskFailure, TaskPacket, TaskPriority, TaskStatus, TaskTrustGate,
+};
+pub use task_registry::{TaskRegistry, TaskRegistryError, TaskRegistrySnapshot};
 pub use tclaw_api::{canonical_surfaces, SurfaceDescriptor};
 pub use tclaw_commands::{
     built_in_command_manifests, parse_slash_command, CommandManifestEntry, CommandRegistry,
@@ -118,9 +120,16 @@ pub use tclaw_commands::{
     SlashCommandParseError, SlashCommandParseOutcome,
 };
 pub use team_cron_registry::{TeamCronEntry, TeamCronRegistry};
-pub use trust_resolver::{TrustLevel, TrustResolution};
+pub use trust_resolver::{
+    TrustDecision, TrustFailureReason, TrustLevel, TrustRequirement, TrustResolution,
+    TrustResolver, TrustSubject, TrustSubjectKind,
+};
 pub use usage::{TokenUsage, UsageSnapshot};
-pub use worker_boot::{WorkerBootSpec, WorkerBootState, WorkerIdentity, WorkerKind};
+pub use worker_boot::{
+    WorkerBootSpec, WorkerBootState, WorkerEvent, WorkerEventPayload, WorkerFailureReason,
+    WorkerIdentity, WorkerKind, WorkerRecord, WorkerRegistry, WorkerRegistryError,
+    WorkerRegistrySnapshot, WorkerTaskBinding,
+};
 
 #[cfg(test)]
 mod tests {

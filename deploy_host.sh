@@ -85,6 +85,8 @@ REMOVE_INSTALL=false
 DEVEL_MODE=false
 LLM_CONFIG=""
 CARGO_TARGET_DIR_HOST="${CARGO_TARGET_DIR:-${CARGO_TARGET_DIR_DEFAULT}}"
+RUST_WORKSPACE_MANIFEST="${PROJECT_DIR}/rust/Cargo.toml"
+RUST_WORKSPACE_TARGET_DIR="${BUILD_ROOT_DIR}/rust-cargo-target"
 
 # ─────────────────────────────────────────────
 # Logging helpers
@@ -345,6 +347,84 @@ check_prerequisites() {
   log "Devel mode  : ${DEVEL_MODE}"
   log "Data dir    : ${DATA_DIR}"
   log "Build root  : ${CARGO_TARGET_DIR_HOST}"
+  if [ -f "${RUST_WORKSPACE_MANIFEST}" ]; then
+    log "Rust ws     : ${RUST_WORKSPACE_MANIFEST}"
+  fi
+}
+
+run_rust_workspace_build() {
+  local cargo_args=("build" "--manifest-path" "${RUST_WORKSPACE_MANIFEST}" "--workspace" "--offline" "--locked")
+  local retry_args=("build" "--manifest-path" "${RUST_WORKSPACE_MANIFEST}" "--workspace")
+  if [ "${BUILD_MODE}" = "release" ]; then
+    cargo_args+=("--release")
+  fi
+
+  if [ ! -f "${RUST_WORKSPACE_MANIFEST}" ]; then
+    return 0
+  fi
+
+  log "Running canonical rust workspace build: cargo ${cargo_args[*]}"
+  if [ "${DRY_RUN}" = true ]; then
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} export CARGO_TARGET_DIR='${RUST_WORKSPACE_TARGET_DIR}'"
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} cargo ${cargo_args[*]}"
+    return 0
+  fi
+
+  mkdir -p "${RUST_WORKSPACE_TARGET_DIR}"
+  if CARGO_TARGET_DIR="${RUST_WORKSPACE_TARGET_DIR}" cargo "${cargo_args[@]}"; then
+    ok "Canonical rust workspace build succeeded (${BUILD_MODE})"
+  elif run_rust_workspace_without_vendor "${retry_args[@]}"; then
+    warn "Canonical rust workspace build required network-backed dependency resolution"
+    ok "Canonical rust workspace build succeeded (${BUILD_MODE})"
+  else
+    fail "Canonical rust workspace build failed"
+  fi
+}
+
+run_rust_workspace_tests() {
+  local cargo_args=("test" "--manifest-path" "${RUST_WORKSPACE_MANIFEST}" "--workspace" "--offline" "--locked" "--" "--test-threads=1")
+  local retry_args=("test" "--manifest-path" "${RUST_WORKSPACE_MANIFEST}" "--workspace" "--" "--test-threads=1")
+
+  if [ ! -f "${RUST_WORKSPACE_MANIFEST}" ]; then
+    return 0
+  fi
+
+  log "Running canonical rust workspace tests: cargo ${cargo_args[*]}"
+  if [ "${DRY_RUN}" = true ]; then
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} export CARGO_TARGET_DIR='${RUST_WORKSPACE_TARGET_DIR}'"
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} cargo ${cargo_args[*]}"
+    return 0
+  fi
+
+  mkdir -p "${RUST_WORKSPACE_TARGET_DIR}"
+  if CARGO_TARGET_DIR="${RUST_WORKSPACE_TARGET_DIR}" cargo "${cargo_args[@]}" 2>&1; then
+    ok "Canonical rust workspace tests passed"
+  elif run_rust_workspace_without_vendor "${retry_args[@]}"; then
+    warn "Canonical rust workspace tests required network-backed dependency resolution"
+    ok "Canonical rust workspace tests passed"
+  else
+    fail "Canonical rust workspace tests failed"
+  fi
+}
+
+run_rust_workspace_without_vendor() {
+  local cargo_config="${PROJECT_DIR}/.cargo/config.toml"
+  local cargo_config_backup="${PROJECT_DIR}/.cargo/config.toml.deploy_host_backup"
+
+  if [ ! -f "${cargo_config}" ]; then
+    CARGO_TARGET_DIR="${RUST_WORKSPACE_TARGET_DIR}" cargo "$@"
+    return $?
+  fi
+
+  mv "${cargo_config}" "${cargo_config_backup}"
+  if CARGO_TARGET_DIR="${RUST_WORKSPACE_TARGET_DIR}" cargo "$@"; then
+    mv "${cargo_config_backup}" "${cargo_config}"
+    return 0
+  else
+    local status=$?
+    mv "${cargo_config_backup}" "${cargo_config}"
+    return "${status}"
+  fi
 }
 
 ensure_shell_path() {
@@ -435,6 +515,8 @@ do_build() {
   else
     fail "Cargo build failed"
   fi
+
+  run_rust_workspace_build
 }
 
 # ─────────────────────────────────────────────
@@ -465,6 +547,8 @@ do_test() {
   else
     warn "Some tests failed (see output above)"
   fi
+
+  run_rust_workspace_tests
 }
 
 # ─────────────────────────────────────────────

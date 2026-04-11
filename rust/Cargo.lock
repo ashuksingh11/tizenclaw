@@ -190,6 +190,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusty-claude-cli"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tclaw-commands",
+ "tclaw-plugins",
+ "tclaw-runtime",
+ "tclaw-tools",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -261,7 +273,7 @@ dependencies = [
 name = "tclaw-cli"
 version = "0.1.0"
 dependencies = [
- "tclaw-runtime",
+ "rusty-claude-cli",
 ]
 
 [[package]]
@@ -276,8 +288,11 @@ dependencies = [
 name = "tclaw-plugins"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "tclaw-api",
  "tclaw-commands",
+ "thiserror",
 ]
 
 [[package]]
@@ -297,7 +312,12 @@ dependencies = [
 name = "tclaw-tools"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
  "tclaw-api",
+ "tclaw-plugins",
+ "tclaw-runtime",
+ "thiserror",
 ]
 
 [[package]]
