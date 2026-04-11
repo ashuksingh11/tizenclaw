@@ -1,7 +1,12 @@
 //! IPC server — Unix domain socket with JSON-RPC 2.0 protocol.
 
 use serde_json::{json, Value};
-use std::path::PathBuf;
+use std::fs;
+use std::io::{Read, Write};
+use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -10,8 +15,54 @@ use crate::core::agent_core::AgentCore;
 use crate::core::registration_store::RegistrationKind;
 
 const MAX_CONCURRENT_CLIENTS: usize = 8;
-const MAX_PAYLOAD_SIZE: usize = 10 * 1024 * 1024; // 10MB
+const MAX_PAYLOAD_SIZE: usize = 10 * 1024 * 1024; // 10 MB
+const DEFAULT_ABSTRACT_SOCKET_NAME: &str = "tizenclaw.sock";
+
 static SESSION_COUNTER: AtomicUsize = AtomicUsize::new(1);
+
+#[derive(Clone, Debug)]
+enum SocketEndpoint {
+    Filesystem(PathBuf),
+    Abstract(String),
+}
+
+impl SocketEndpoint {
+    fn resolve(requested_path: &str) -> Self {
+        if let Ok(path) = std::env::var("TIZENCLAW_SOCKET_PATH") {
+            let trimmed = path.trim();
+            if !trimmed.is_empty() {
+                return Self::Filesystem(PathBuf::from(trimmed));
+            }
+        }
+
+        if let Ok(name) = std::env::var("TIZENCLAW_SOCKET_NAME") {
+            let trimmed = name.trim();
+            if !trimmed.is_empty() {
+                return Self::Abstract(trimmed.to_string());
+            }
+        }
+
+        let trimmed = requested_path.trim();
+        if !trimmed.is_empty() {
+            return Self::Filesystem(PathBuf::from(trimmed));
+        }
+
+        Self::Abstract(DEFAULT_ABSTRACT_SOCKET_NAME.to_string())
+    }
+
+    fn describe(&self) -> String {
+        match self {
+            Self::Filesystem(path) => path.display().to_string(),
+            Self::Abstract(name) => format!("\\0{}", name),
+        }
+    }
+
+    fn cleanup(&self) {
+        if let Self::Filesystem(path) = self {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
 
 pub struct IpcServer {
     running: Arc<AtomicBool>,
@@ -25,54 +76,1102 @@ impl Default for IpcServer {
 }
 
 impl IpcServer {
+    pub fn new() -> Self {
+        Self {
+            running: Arc::new(AtomicBool::new(false)),
+            active_clients: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    pub fn start(
+        &self,
+        socket_path: &str,
+        agent: Arc<AgentCore>,
+        channel_registry: Arc<Mutex<ChannelRegistry>>,
+    ) -> std::thread::JoinHandle<()> {
+        let running = self.running.clone();
+        let active_clients = self.active_clients.clone();
+        let endpoint = SocketEndpoint::resolve(socket_path);
+        let rt_handle = tokio::runtime::Handle::current();
+        running.store(true, Ordering::SeqCst);
+
+        std::thread::spawn(move || {
+            Self::server_loop(
+                rt_handle,
+                running,
+                active_clients,
+                endpoint,
+                agent,
+                channel_registry,
+            );
+        })
+    }
+
+    pub fn stop(&self) {
+        self.running.store(false, Ordering::SeqCst);
+    }
+
     fn configure_client_fd(fd: i32) {
         unsafe {
             let timeout = libc::timeval {
                 tv_sec: 5,
                 tv_usec: 0,
             };
+            let timeout_ptr = &timeout as *const _ as *const libc::c_void;
+            let timeout_len = std::mem::size_of::<libc::timeval>() as libc::socklen_t;
+
             let _ = libc::setsockopt(
                 fd,
                 libc::SOL_SOCKET,
                 libc::SO_RCVTIMEO,
-                &timeout as *const _ as *const libc::c_void,
-                std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+                timeout_ptr,
+                timeout_len,
             );
             let _ = libc::setsockopt(
                 fd,
                 libc::SOL_SOCKET,
                 libc::SO_SNDTIMEO,
-                &timeout as *const _ as *const libc::c_void,
-                std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+                timeout_ptr,
+                timeout_len,
             );
         }
     }
 
-    pub fn new() -> Self {
-        IpcServer {
-            running: Arc::new(AtomicBool::new(false)),
-            active_clients: Arc::new(AtomicUsize::new(0)),
+    fn bind_listener(endpoint: &SocketEndpoint) -> Result<i32, String> {
+        endpoint.cleanup();
+
+        let fd = unsafe { libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0) };
+        if fd < 0 {
+            return Err(format!(
+                "Failed to create IPC socket: {}",
+                std::io::Error::last_os_error()
+            ));
         }
+
+        let bind_result = unsafe {
+            let mut addr: libc::sockaddr_un = std::mem::zeroed();
+            addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
+
+            let addr_len = match endpoint {
+                SocketEndpoint::Filesystem(path) => {
+                    let bytes = path.as_os_str().as_bytes();
+                    if bytes.len() >= addr.sun_path.len() {
+                        libc::close(fd);
+                        return Err(format!(
+                            "IPC socket path too long: {}",
+                            path.display()
+                        ));
+                    }
+
+                    for (index, byte) in bytes.iter().enumerate() {
+                        addr.sun_path[index] = *byte as libc::c_char;
+                    }
+
+                    (std::mem::size_of::<libc::sa_family_t>() + bytes.len() + 1)
+                        as libc::socklen_t
+                }
+                SocketEndpoint::Abstract(name) => {
+                    let bytes = name.as_bytes();
+                    if bytes.len() + 1 >= addr.sun_path.len() {
+                        libc::close(fd);
+                        return Err(format!("IPC socket name too long: {}", name));
+                    }
+
+                    for (index, byte) in bytes.iter().enumerate() {
+                        addr.sun_path[index + 1] = *byte as libc::c_char;
+                    }
+
+                    (std::mem::size_of::<libc::sa_family_t>() + bytes.len() + 1)
+                        as libc::socklen_t
+                }
+            };
+
+            if libc::bind(fd, &addr as *const _ as *const libc::sockaddr, addr_len) < 0 {
+                let error = std::io::Error::last_os_error();
+                libc::close(fd);
+                return Err(format!(
+                    "Failed to bind IPC socket '{}': {}",
+                    endpoint.describe(),
+                    error
+                ));
+            }
+
+            let timeout = libc::timeval {
+                tv_sec: 1,
+                tv_usec: 0,
+            };
+            let timeout_ptr = &timeout as *const _ as *const libc::c_void;
+            let timeout_len = std::mem::size_of::<libc::timeval>() as libc::socklen_t;
+            let _ = libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVTIMEO,
+                timeout_ptr,
+                timeout_len,
+            );
+
+            libc::listen(fd, 64)
+        };
+
+        if bind_result < 0 {
+            let error = std::io::Error::last_os_error();
+            unsafe {
+                libc::close(fd);
+            }
+            endpoint.cleanup();
+            return Err(format!(
+                "Failed to listen on IPC socket '{}': {}",
+                endpoint.describe(),
+                error
+            ));
+        }
+
+        Ok(fd)
     }
 
-    /// Start the IPC server in a new thread.
-    pub fn start(
-        &self,
+    fn server_loop(
+        rt_handle: tokio::runtime::Handle,
+        running: Arc<AtomicBool>,
+        active_clients: Arc<AtomicUsize>,
+        endpoint: SocketEndpoint,
         agent: Arc<AgentCore>,
-        registry: Arc<Mutex<ChannelRegistry>>,
-    ) -> std::thread::JoinHandle<()> {
-        let running = self.running.clone();
-        let active_clients = self.active_clients.clone();
-        running.store(true, Ordering::SeqCst);
-        let rt_handle = tokio::runtime::Handle::current();
+        channel_registry: Arc<Mutex<ChannelRegistry>>,
+    ) {
+        let listener_fd = match Self::bind_listener(&endpoint) {
+            Ok(fd) => fd,
+            Err(err) => {
+                log::error!("{}", err);
+                return;
+            }
+        };
 
-        std::thread::spawn(move || {
-            Self::server_loop(rt_handle, running, active_clients, agent, registry);
+        log::info!("IPC server listening on {}", endpoint.describe());
+
+        while running.load(Ordering::SeqCst) {
+            let client_fd =
+                unsafe { libc::accept(listener_fd, std::ptr::null_mut(), std::ptr::null_mut()) };
+            if client_fd < 0 {
+                let errno = std::io::Error::last_os_error()
+                    .raw_os_error()
+                    .unwrap_or_default();
+                if errno != libc::EAGAIN
+                    && errno != libc::EWOULDBLOCK
+                    && errno != libc::EINTR
+                {
+                    log::error!("IPC accept failed: errno={}", errno);
+                }
+                continue;
+            }
+
+            Self::configure_client_fd(client_fd);
+
+            if active_clients
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+                    (current < MAX_CONCURRENT_CLIENTS).then_some(current + 1)
+                })
+                .is_err()
+            {
+                let mut busy_stream = unsafe { UnixStream::from_raw_fd(client_fd) };
+                let busy = Self::jsonrpc_error(
+                    Value::Null,
+                    -32000,
+                    "Server busy".to_string(),
+                );
+                let _ = Self::write_payload(&mut busy_stream, busy.as_bytes());
+                continue;
+            }
+
+            let agent = agent.clone();
+            let channel_registry = channel_registry.clone();
+            let active_clients = active_clients.clone();
+            let rt_handle = rt_handle.clone();
+
+            std::thread::spawn(move || {
+                let stream = unsafe { UnixStream::from_raw_fd(client_fd) };
+                Self::handle_client(rt_handle, stream, agent, channel_registry);
+                active_clients.fetch_sub(1, Ordering::SeqCst);
+            });
+        }
+
+        unsafe {
+            libc::close(listener_fd);
+        }
+        endpoint.cleanup();
+        log::info!("IPC server stopped");
+    }
+
+    fn handle_client(
+        rt_handle: tokio::runtime::Handle,
+        mut stream: UnixStream,
+        agent: Arc<AgentCore>,
+        channel_registry: Arc<Mutex<ChannelRegistry>>,
+    ) {
+        let connection_id = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let writer = match stream.try_clone() {
+            Ok(writer) => Arc::new(Mutex::new(writer)),
+            Err(err) => {
+                log::error!(
+                    "IPC connection {} failed to clone writer: {}",
+                    connection_id,
+                    err
+                );
+                return;
+            }
+        };
+
+        loop {
+            let payload = match Self::read_payload(&mut stream) {
+                Ok(payload) => payload,
+                Err(err) => {
+                    let eof = err.contains("UnexpectedEof")
+                        || err.contains("Connection reset by peer")
+                        || err.contains("connection closed");
+                    if !eof {
+                        log::warn!("IPC connection {} read failed: {}", connection_id, err);
+                    }
+                    break;
+                }
+            };
+
+            let response = Self::dispatch_request(
+                &rt_handle,
+                &payload,
+                &writer,
+                &agent,
+                &channel_registry,
+            );
+
+            let write_result = writer
+                .lock()
+                .map_err(|_| "IPC writer lock poisoned".to_string())
+                .and_then(|mut guard| Self::write_payload(&mut guard, response.as_bytes()));
+            if let Err(err) = write_result {
+                log::warn!("IPC connection {} write failed: {}", connection_id, err);
+                break;
+            }
+        }
+
+        log::debug!("IPC connection {} closed", connection_id);
+    }
+
+    fn read_payload(stream: &mut UnixStream) -> Result<Vec<u8>, String> {
+        let mut len_buf = [0u8; 4];
+        stream
+            .read_exact(&mut len_buf)
+            .map_err(|err| format!("Failed to read payload length: {}", err))?;
+
+        let payload_len = u32::from_be_bytes(len_buf) as usize;
+        if payload_len > MAX_PAYLOAD_SIZE {
+            return Err(format!(
+                "Payload too large: {} bytes exceeds {} bytes",
+                payload_len, MAX_PAYLOAD_SIZE
+            ));
+        }
+
+        let mut payload = vec![0u8; payload_len];
+        stream
+            .read_exact(&mut payload)
+            .map_err(|err| format!("Failed to read payload body: {}", err))?;
+        Ok(payload)
+    }
+
+    fn write_payload(stream: &mut UnixStream, data: &[u8]) -> Result<(), String> {
+        if data.len() > MAX_PAYLOAD_SIZE {
+            return Err(format!(
+                "Payload too large to send: {} bytes exceeds {} bytes",
+                data.len(),
+                MAX_PAYLOAD_SIZE
+            ));
+        }
+
+        let len = (data.len() as u32).to_be_bytes();
+        stream
+            .write_all(&len)
+            .and_then(|_| stream.write_all(data))
+            .and_then(|_| stream.flush())
+            .map_err(|err| format!("Failed to write IPC payload: {}", err))
+    }
+
+    fn dispatch_request(
+        rt_handle: &tokio::runtime::Handle,
+        raw_payload: &[u8],
+        writer: &Arc<Mutex<UnixStream>>,
+        agent: &Arc<AgentCore>,
+        channel_registry: &Arc<Mutex<ChannelRegistry>>,
+    ) -> String {
+        let request: Value = match serde_json::from_slice(raw_payload) {
+            Ok(value) => value,
+            Err(err) => {
+                return Self::jsonrpc_error(
+                    Value::Null,
+                    -32700,
+                    format!("Parse error: {}", err),
+                );
+            }
+        };
+
+        if request.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+            return Self::jsonrpc_error(Value::Null, -32600, "Invalid Request".to_string());
+        }
+
+        let method = match request.get("method").and_then(Value::as_str) {
+            Some(method) if !method.trim().is_empty() => method,
+            _ => {
+                let req_id = request.get("id").cloned().unwrap_or(Value::Null);
+                return Self::jsonrpc_error(req_id, -32600, "Invalid Request".to_string());
+            }
+        };
+
+        let req_id = request.get("id").cloned().unwrap_or(Value::Null);
+        let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
+
+        let result = match method {
+            "process_prompt" | "process_prompt_stream" | "prompt" => {
+                match Self::handle_process_prompt(
+                    rt_handle,
+                    method,
+                    &params,
+                    &req_id,
+                    writer,
+                    agent,
+                ) {
+                    Ok(result) => result,
+                    Err(response) => return response,
+                }
+            }
+            "session.clear" => match Self::handle_session_clear(agent, &params, &req_id) {
+                Ok(result) => result,
+                Err(response) => return response,
+            },
+            "session.list" => Self::handle_session_list(agent),
+            "session.status" => match Self::required_str(&params, "session_id", &req_id) {
+                Ok(session_id) => agent.session_runtime_status(session_id),
+                Err(response) => return response,
+            },
+            "tool.list" | "bridge_list_tools" => {
+                Self::handle_tool_list(rt_handle, agent)
+            }
+            "tool.reload" => match Self::handle_tool_reload(rt_handle, agent) {
+                Ok(result) => result,
+                Err(response) => return response,
+            },
+            "backend.list" => match Self::handle_backend_list(agent) {
+                Ok(result) => result,
+                Err(response) => return Self::jsonrpc_error(req_id, -32000, response),
+            },
+            "backend.reload" | "reload_llm_backends" => {
+                match Self::handle_backend_reload(rt_handle, agent, &req_id) {
+                    Ok(result) => result,
+                    Err(response) => return response,
+                }
+            }
+            "backend.config.get" | "get_llm_config" => {
+                match Self::handle_backend_config_get(agent, &params, &req_id) {
+                    Ok(result) => result,
+                    Err(response) => return response,
+                }
+            }
+            "backend.config.set" | "set_llm_config" => {
+                match Self::handle_backend_config_set(rt_handle, agent, &params, &req_id) {
+                    Ok(result) => result,
+                    Err(response) => return response,
+                }
+            }
+            "unset_llm_config" => match Self::handle_backend_config_unset(
+                rt_handle,
+                agent,
+                &params,
+                &req_id,
+            ) {
+                Ok(result) => result,
+                Err(response) => return response,
+            },
+            "dashboard.start" => match Self::handle_dashboard_start(
+                channel_registry,
+                &params,
+                &req_id,
+            ) {
+                Ok(result) => result,
+                Err(response) => return response,
+            },
+            "dashboard.stop" => match Self::handle_dashboard_stop(channel_registry, &req_id) {
+                Ok(result) => result,
+                Err(response) => return response,
+            },
+            "dashboard.status" => {
+                match Self::handle_dashboard_status(channel_registry, &req_id) {
+                    Ok(result) => result,
+                    Err(response) => return response,
+                }
+            }
+            "register_path" => match Self::handle_register_path(
+                rt_handle,
+                agent,
+                &params,
+                &req_id,
+            ) {
+                Ok(result) => result,
+                Err(response) => return response,
+            },
+            "unregister_path" => match Self::handle_unregister_path(
+                rt_handle,
+                agent,
+                &params,
+                &req_id,
+            ) {
+                Ok(result) => result,
+                Err(response) => return response,
+            },
+            "runtime_status" => Self::handle_runtime_status(agent, channel_registry),
+            "ping" => json!({"pong": true}),
+            "get_usage" => match Self::handle_get_usage(agent, &params, &req_id) {
+                Ok(result) => result,
+                Err(response) => return response,
+            },
+            "list_tasks" => match Self::handle_list_tasks(&req_id) {
+                Ok(result) => result,
+                Err(response) => return response,
+            },
+            "get_devel_status" => Self::handle_devel_status(),
+            "get_devel_result" => Self::handle_devel_result(),
+            "clear_agent_data" => match Self::handle_clear_agent_data(agent, &params, &req_id) {
+                Ok(result) => result,
+                Err(response) => return response,
+            },
+            "bridge_tool" => match Self::handle_bridge_tool(
+                rt_handle,
+                agent,
+                &params,
+                &req_id,
+            ) {
+                Ok(result) => result,
+                Err(response) => return response,
+            },
+            "get_llm_runtime" => {
+                let runtime = agent.get_llm_runtime();
+                json!({
+                    "status": "ok",
+                    "configured_active_backend": runtime["configured_active_backend"].clone(),
+                    "configured_fallback_backends": runtime["configured_fallback_backends"].clone(),
+                    "runtime_primary_backend": runtime["runtime_primary_backend"].clone(),
+                    "runtime_has_primary_backend": runtime["runtime_has_primary_backend"].clone()
+                })
+            }
+            "start_channel" => match Self::handle_start_channel(channel_registry, &params, &req_id)
+            {
+                Ok(result) => result,
+                Err(response) => return response,
+            },
+            "stop_channel" => match Self::handle_stop_channel(channel_registry, &params, &req_id) {
+                Ok(result) => result,
+                Err(response) => return response,
+            },
+            "channel_status" => {
+                match Self::handle_channel_status(channel_registry, &params, &req_id) {
+                    Ok(result) => result,
+                    Err(response) => return response,
+                }
+            }
+            "list_registered_paths" => {
+                let registrations = agent.list_registered_paths();
+                json!({
+                    "status": "ok",
+                    "registrations": registrations,
+                    "runtime_topology": agent.runtime_topology_summary(),
+                })
+            }
+            "get_session_runtime" => match Self::required_str(&params, "session_id", &req_id) {
+                Ok(session_id) => agent.session_runtime_status(session_id),
+                Err(response) => return response,
+            },
+            "get_tool_audit" => agent.tool_audit_status(),
+            "get_skill_capabilities" => agent.skill_capability_status(),
+            _ => {
+                return Self::jsonrpc_error(
+                    req_id,
+                    -32601,
+                    format!("Method not found: {}", method),
+                );
+            }
+        };
+
+        Self::jsonrpc_result(req_id, result)
+    }
+
+    fn handle_process_prompt(
+        rt_handle: &tokio::runtime::Handle,
+        method: &str,
+        params: &Value,
+        req_id: &Value,
+        writer: &Arc<Mutex<UnixStream>>,
+        agent: &Arc<AgentCore>,
+    ) -> Result<Value, String> {
+        let prompt = match method {
+            "prompt" => params.get("text").and_then(Value::as_str).unwrap_or(""),
+            _ => params.get("prompt").and_then(Value::as_str).unwrap_or(""),
+        }
+        .trim();
+
+        if prompt.is_empty() {
+            return Err(Self::jsonrpc_error(
+                req_id.clone(),
+                -32602,
+                "Missing 'prompt'".to_string(),
+            ));
+        }
+
+        let session_id = Self::resolve_session_id(
+            params.get("session_id").and_then(Value::as_str),
+            "ipc",
+        );
+        let stream = params.get("stream").and_then(Value::as_bool).unwrap_or(false)
+            || method == "process_prompt_stream";
+
+        let response = if stream {
+            let stream_writer = writer.clone();
+            let stream_request_id = req_id.clone();
+            let on_chunk = move |chunk: &str| {
+                let frame = json!({
+                    "jsonrpc": "2.0",
+                    "method": "stream_chunk",
+                    "params": {
+                        "id": stream_request_id,
+                        "chunk": chunk,
+                    }
+                })
+                .to_string();
+
+                if let Ok(mut guard) = stream_writer.lock() {
+                    let _ = Self::write_payload(&mut guard, frame.as_bytes());
+                }
+            };
+
+            tokio::task::block_in_place(|| {
+                rt_handle.block_on(agent.process_prompt(&session_id, prompt, Some(&on_chunk)))
+            })
+        } else {
+            tokio::task::block_in_place(|| {
+                rt_handle.block_on(agent.process_prompt(&session_id, prompt, None))
+            })
+        };
+
+        Ok(json!({
+            "text": response,
+            "session_id": session_id,
+        }))
+    }
+
+    fn handle_session_clear(
+        agent: &Arc<AgentCore>,
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let session_id = Self::required_str(params, "session_id", req_id)?;
+        let Some(session_store) = agent.get_session_store() else {
+            return Err(Self::jsonrpc_error(
+                req_id.clone(),
+                -32000,
+                "Session store unavailable".to_string(),
+            ));
+        };
+
+        session_store.store().clear_session(session_id);
+        Ok(json!({
+            "status": "ok",
+            "session_id": session_id,
+            "cleared": true,
+        }))
+    }
+
+    fn handle_session_list(agent: &Arc<AgentCore>) -> Value {
+        let sessions_dir = agent
+            .runtime_topology_summary()
+            .get("sessions_dir")
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .unwrap_or_else(|| crate::core::runtime_paths::default_data_dir().join("sessions"));
+
+        let mut session_ids = fs::read_dir(sessions_dir)
+            .ok()
+            .into_iter()
+            .flat_map(|entries| entries.filter_map(Result::ok))
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .filter_map(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.to_string())
+            })
+            .collect::<Vec<_>>();
+        session_ids.sort();
+
+        json!({
+            "status": "ok",
+            "sessions": session_ids,
         })
     }
 
-    pub fn stop(&self) {
-        self.running.store(false, Ordering::SeqCst);
+    fn handle_tool_list(
+        rt_handle: &tokio::runtime::Handle,
+        agent: &Arc<AgentCore>,
+    ) -> Value {
+        let tools = tokio::task::block_in_place(|| {
+            rt_handle.block_on(agent.get_bridge_tool_declarations(&[]))
+        });
+
+        json!({
+            "status": "ok",
+            "count": tools.len(),
+            "tools": tools.into_iter().map(|tool| json!({
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    fn handle_tool_reload(
+        rt_handle: &tokio::runtime::Handle,
+        agent: &Arc<AgentCore>,
+    ) -> Result<Value, String> {
+        tokio::task::block_in_place(|| rt_handle.block_on(agent.reload_tools()));
+        Ok(Self::handle_tool_list(rt_handle, agent))
+    }
+
+    fn handle_backend_list(agent: &Arc<AgentCore>) -> Result<Value, String> {
+        let config = agent.get_llm_config(None)?;
+        let runtime = agent.get_llm_runtime();
+        let active_backend = runtime
+            .get("configured_active_backend")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let fallback_backends = runtime
+            .get("configured_fallback_backends")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+
+        let backends = config
+            .get("backends")
+            .and_then(Value::as_object)
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|(name, value)| {
+                        let is_fallback = fallback_backends.iter().any(|entry| entry == name);
+                        json!({
+                            "name": name,
+                            "configured": value,
+                            "is_active": name == active_backend,
+                            "is_fallback": is_fallback,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        Ok(json!({
+            "status": "ok",
+            "backends": backends,
+            "runtime": runtime,
+        }))
+    }
+
+    fn handle_backend_reload(
+        rt_handle: &tokio::runtime::Handle,
+        agent: &Arc<AgentCore>,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let config = tokio::task::block_in_place(|| rt_handle.block_on(agent.reload_llm_backends()))
+            .map_err(|err| Self::jsonrpc_error(req_id.clone(), -32000, err))?;
+        Ok(json!({
+            "status": "ok",
+            "config": config,
+            "runtime": agent.get_llm_runtime(),
+        }))
+    }
+
+    fn handle_backend_config_get(
+        agent: &Arc<AgentCore>,
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let path = params.get("path").and_then(Value::as_str);
+        agent.get_llm_config(path)
+            .map(|value| {
+                json!({
+                    "status": "ok",
+                    "path": path,
+                    "value": value,
+                })
+            })
+            .map_err(|err| Self::jsonrpc_error(req_id.clone(), -32000, err))
+    }
+
+    fn handle_backend_config_set(
+        rt_handle: &tokio::runtime::Handle,
+        agent: &Arc<AgentCore>,
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let path = Self::required_str(params, "path", req_id)?;
+        let Some(value) = params.get("value").cloned() else {
+            return Err(Self::jsonrpc_error(
+                req_id.clone(),
+                -32602,
+                "Missing 'value'".to_string(),
+            ));
+        };
+
+        let saved = tokio::task::block_in_place(|| rt_handle.block_on(agent.set_llm_config(path, value)))
+            .map_err(|err| Self::jsonrpc_error(req_id.clone(), -32000, err))?;
+        Ok(json!({
+            "status": "ok",
+            "path": path,
+            "value": saved,
+        }))
+    }
+
+    fn handle_backend_config_unset(
+        rt_handle: &tokio::runtime::Handle,
+        agent: &Arc<AgentCore>,
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let path = Self::required_str(params, "path", req_id)?;
+        let removed = tokio::task::block_in_place(|| rt_handle.block_on(agent.unset_llm_config(path)))
+            .map_err(|err| Self::jsonrpc_error(req_id.clone(), -32000, err))?;
+        Ok(json!({
+            "status": "ok",
+            "path": path,
+            "removed": removed,
+        }))
+    }
+
+    fn handle_dashboard_start(
+        channel_registry: &Arc<Mutex<ChannelRegistry>>,
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let mut dashboard_params = json!({
+            "name": "web_dashboard",
+        });
+        if let Some(port) = params.get("port").cloned() {
+            dashboard_params["settings"] = json!({ "port": port });
+        }
+        Self::handle_start_channel(channel_registry, &dashboard_params, req_id)
+    }
+
+    fn handle_dashboard_stop(
+        channel_registry: &Arc<Mutex<ChannelRegistry>>,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        Self::handle_stop_channel(channel_registry, &json!({"name": "web_dashboard"}), req_id)
+    }
+
+    fn handle_dashboard_status(
+        channel_registry: &Arc<Mutex<ChannelRegistry>>,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        Self::handle_channel_status(channel_registry, &json!({"name": "web_dashboard"}), req_id)
+    }
+
+    fn handle_register_path(
+        rt_handle: &tokio::runtime::Handle,
+        agent: &Arc<AgentCore>,
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let kind = Self::registration_kind(params, req_id)?;
+        let path = Self::required_str(params, "path", req_id)?;
+        let registrations = tokio::task::block_in_place(|| {
+            rt_handle.block_on(agent.register_external_path(kind, path))
+        })
+        .map_err(|err| Self::jsonrpc_error(req_id.clone(), -32000, err))?;
+        Ok(json!({
+            "status": "ok",
+            "kind": kind.as_str(),
+            "registrations": registrations,
+        }))
+    }
+
+    fn handle_unregister_path(
+        rt_handle: &tokio::runtime::Handle,
+        agent: &Arc<AgentCore>,
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let kind = Self::registration_kind(params, req_id)?;
+        let path = Self::required_str(params, "path", req_id)?;
+        let (registrations, removed) = tokio::task::block_in_place(|| {
+            rt_handle.block_on(agent.unregister_external_path(kind, path))
+        })
+        .map_err(|err| Self::jsonrpc_error(req_id.clone(), -32000, err))?;
+        Ok(json!({
+            "status": "ok",
+            "kind": kind.as_str(),
+            "removed": removed,
+            "registrations": registrations,
+        }))
+    }
+
+    fn handle_runtime_status(
+        agent: &Arc<AgentCore>,
+        channel_registry: &Arc<Mutex<ChannelRegistry>>,
+    ) -> Value {
+        let registrations = agent.list_registered_paths();
+        let dashboard = match channel_registry.lock() {
+            Ok(registry) => registry.channel_status("web_dashboard").map(|running| {
+                json!({
+                    "name": "web_dashboard",
+                    "running": running,
+                })
+            }),
+            Err(_) => None,
+        }
+        .unwrap_or_else(|| {
+            json!({
+                "name": "web_dashboard",
+                "running": false,
+            })
+        });
+
+        json!({
+            "status": "ok",
+            "runtime_topology": agent.runtime_topology_summary(),
+            "registrations": registrations,
+            "llm_runtime": agent.get_llm_runtime(),
+            "tool_audit": agent.tool_audit_status(),
+            "skills": agent.skill_capability_status(),
+            "dashboard": dashboard,
+        })
+    }
+
+    fn handle_get_usage(
+        agent: &Arc<AgentCore>,
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let Some(session_store) = agent.get_session_store() else {
+            return Err(Self::jsonrpc_error(
+                req_id.clone(),
+                -32000,
+                "No session store".to_string(),
+            ));
+        };
+
+        let session_id = params
+            .get("session_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let date = params
+            .get("date")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let usage = if session_id.is_empty() {
+            session_store.store().load_daily_usage(date)
+        } else {
+            session_store.store().load_token_usage(session_id)
+        };
+        let baseline = crate::storage::session_store::TokenUsage::from_json(
+            params.get("baseline"),
+        );
+        let delta = usage.diff_from(&baseline);
+        Ok(json!({
+            "scope": if session_id.is_empty() { "daily" } else { "session" },
+            "session_id": if session_id.is_empty() { Value::Null } else { Value::String(session_id.to_string()) },
+            "date": if session_id.is_empty() {
+                Value::String(if date.is_empty() { "today".to_string() } else { date.to_string() })
+            } else {
+                Value::Null
+            },
+            "usage": usage.to_json(),
+            "delta": delta.to_json(),
+            "prompt_tokens": usage.total_prompt_tokens,
+            "completion_tokens": usage.total_completion_tokens,
+            "cache_creation_input_tokens": usage.total_cache_creation_input_tokens,
+            "cache_read_input_tokens": usage.total_cache_read_input_tokens,
+            "total_requests": usage.total_requests
+        }))
+    }
+
+    fn handle_list_tasks(req_id: &Value) -> Result<Value, String> {
+        let task_dir = crate::core::runtime_paths::default_data_dir().join("tasks");
+        crate::core::task_scheduler::TaskScheduler::list_tasks_from_dir(&task_dir)
+            .map(|tasks| {
+                json!({
+                    "status": "success",
+                    "count": tasks.len(),
+                    "tasks": tasks.into_iter().map(|task| json!({
+                        "id": task.id,
+                        "name": task.name,
+                        "session_id": task.session_id,
+                        "interval_secs": task.interval_secs,
+                        "schedule": task.schedule_expr,
+                        "one_shot": task.one_shot,
+                        "enabled": task.enabled,
+                        "project_dir": task.project_dir,
+                        "coding_backend": task.coding_backend,
+                        "coding_model": task.coding_model,
+                        "execution_mode": task.execution_mode,
+                        "auto_approve": task.auto_approve,
+                        "prompt": task.prompt,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+            .map_err(|err| Self::jsonrpc_error(req_id.clone(), -32000, err))
+    }
+
+    fn handle_devel_status() -> Value {
+        let task_dir = crate::core::runtime_paths::default_data_dir().join("tasks");
+        let repo_root = std::env::current_dir()
+            .ok()
+            .and_then(|cwd| crate::core::devel_mode::detect_repo_root(&cwd))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        crate::core::devel_mode::devel_status_json(&task_dir, &repo_root)
+    }
+
+    fn handle_devel_result() -> Value {
+        let task_dir = crate::core::runtime_paths::default_data_dir().join("tasks");
+        let repo_root = std::env::current_dir()
+            .ok()
+            .and_then(|cwd| crate::core::devel_mode::detect_repo_root(&cwd))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        crate::core::devel_mode::devel_result_json(&task_dir, &repo_root)
+    }
+
+    fn handle_clear_agent_data(
+        agent: &Arc<AgentCore>,
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let include_memory = params
+            .get("include_memory")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let include_sessions = params
+            .get("include_sessions")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        agent.clear_agent_data(include_memory, include_sessions)
+            .map_err(|err| Self::jsonrpc_error(req_id.clone(), -32000, err))
+    }
+
+    fn handle_bridge_tool(
+        rt_handle: &tokio::runtime::Handle,
+        agent: &Arc<AgentCore>,
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let tool_name = Self::required_str(params, "tool_name", req_id)?;
+        let args = params.get("args").cloned().unwrap_or_else(|| json!({}));
+        let allowed_tools = Self::string_array(params.get("allowed_tools"));
+        Ok(tokio::task::block_in_place(|| {
+            rt_handle.block_on(agent.execute_bridge_tool(tool_name, &args, &allowed_tools))
+        }))
+    }
+
+    fn handle_start_channel(
+        channel_registry: &Arc<Mutex<ChannelRegistry>>,
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let name = Self::required_str(params, "name", req_id)?;
+        let settings = params.get("settings");
+        let mut registry = channel_registry.lock().map_err(|_| {
+            Self::jsonrpc_error(req_id.clone(), -32000, "Registry lock failed".to_string())
+        })?;
+
+        registry
+            .start_channel(name, settings)
+            .map(|()| json!({"status": "ok", "name": name}))
+            .map_err(|err| Self::jsonrpc_error(req_id.clone(), -32000, err))
+    }
+
+    fn handle_stop_channel(
+        channel_registry: &Arc<Mutex<ChannelRegistry>>,
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let name = Self::required_str(params, "name", req_id)?;
+        let mut registry = channel_registry.lock().map_err(|_| {
+            Self::jsonrpc_error(req_id.clone(), -32000, "Registry lock failed".to_string())
+        })?;
+
+        registry
+            .stop_channel(name)
+            .map(|()| json!({"status": "ok", "name": name}))
+            .map_err(|err| Self::jsonrpc_error(req_id.clone(), -32000, err))
+    }
+
+    fn handle_channel_status(
+        channel_registry: &Arc<Mutex<ChannelRegistry>>,
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let name = Self::required_str(params, "name", req_id)?;
+        let registry = channel_registry.lock().map_err(|_| {
+            Self::jsonrpc_error(req_id.clone(), -32000, "Registry lock failed".to_string())
+        })?;
+
+        registry
+            .channel_status(name)
+            .map(|running| json!({"name": name, "running": running}))
+            .ok_or_else(|| {
+                Self::jsonrpc_error(
+                    req_id.clone(),
+                    -32000,
+                    "Channel not registered".to_string(),
+                )
+            })
+    }
+
+    fn required_str<'a>(
+        params: &'a Value,
+        key: &str,
+        req_id: &Value,
+    ) -> Result<&'a str, String> {
+        params
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                Self::jsonrpc_error(
+                    req_id.clone(),
+                    -32602,
+                    format!("Missing '{}'", key),
+                )
+            })
+    }
+
+    fn registration_kind(
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<RegistrationKind, String> {
+        match params.get("kind").and_then(Value::as_str).unwrap_or("") {
+            "tool" => Ok(RegistrationKind::Tool),
+            "skill" => Ok(RegistrationKind::Skill),
+            _ => Err(Self::jsonrpc_error(
+                req_id.clone(),
+                -32602,
+                "Invalid 'kind'. Expected 'tool' or 'skill'".to_string(),
+            )),
+        }
+    }
+
+    fn string_array(value: Option<&Value>) -> Vec<String> {
+        value
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(|value| value.to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
     }
 
     fn resolve_session_id(requested: Option<&str>, prefix: &str) -> String {
@@ -89,620 +1188,64 @@ impl IpcServer {
         format!("{}_{}_{}", prefix, ts, seq)
     }
 
-    fn server_loop(
-        rt_handle: tokio::runtime::Handle,
-        running: Arc<AtomicBool>,
-        active_clients: Arc<AtomicUsize>,
-        agent: Arc<AgentCore>,
-        registry: Arc<Mutex<ChannelRegistry>>,
-    ) {
-        let sock = unsafe {
-            let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
-            if fd < 0 {
-                log::error!("Failed to create IPC socket");
-                return;
-            }
-
-            let mut addr: libc::sockaddr_un = std::mem::zeroed();
-            addr.sun_family = libc::AF_UNIX as u16;
-            let name = b"tizenclaw.sock";
-            for (i, b) in name.iter().enumerate() {
-                addr.sun_path[1 + i] = *b as libc::c_char;
-            }
-            let addr_len =
-                (std::mem::size_of::<libc::sa_family_t>() + 1 + name.len()) as libc::socklen_t;
-
-            if libc::bind(fd, &addr as *const _ as *const libc::sockaddr, addr_len) < 0 {
-                log::error!("Failed to bind IPC socket");
-                libc::close(fd);
-                return;
-            }
-            if libc::listen(fd, 64) < 0 {
-                log::error!("Failed to listen IPC socket");
-                libc::close(fd);
-                return;
-            }
-
-            let timeout = libc::timeval {
-                tv_sec: 1,
-                tv_usec: 0,
-            };
-            libc::setsockopt(
-                fd,
-                libc::SOL_SOCKET,
-                libc::SO_RCVTIMEO,
-                &timeout as *const _ as *const libc::c_void,
-                std::mem::size_of::<libc::timeval>() as libc::socklen_t,
-            );
-            fd
-        };
-
-        log::info!("IPC Server listening on \\0tizenclaw.sock");
-
-        while running.load(Ordering::SeqCst) {
-            let client_fd =
-                unsafe { libc::accept(sock, std::ptr::null_mut(), std::ptr::null_mut()) };
-            if client_fd < 0 {
-                let errno = std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or_default();
-                if errno != libc::EAGAIN && errno != libc::EWOULDBLOCK {
-                    log::error!("IPC accept failed: errno={}", errno);
-                }
-                continue;
-            }
-
-            Self::configure_client_fd(client_fd);
-
-            if active_clients.load(Ordering::SeqCst) >= MAX_CONCURRENT_CLIENTS {
-                log::warn!("Max concurrent clients reached");
-                let busy = json!({"jsonrpc":"2.0","error":{"code":-32000,"message":"Server busy"}})
-                    .to_string();
-                Self::send_response(client_fd, &busy);
-                unsafe {
-                    libc::close(client_fd);
-                }
-                continue;
-            }
-
-            let agent = agent.clone();
-            let registry = registry.clone();
-            let active = active_clients.clone();
-            let rt_handle_clone = rt_handle.clone();
-            active.fetch_add(1, Ordering::SeqCst);
-
-            std::thread::spawn(move || {
-                Self::handle_client(rt_handle_clone, client_fd, agent, registry);
-                active.fetch_sub(1, Ordering::SeqCst);
-                unsafe {
-                    libc::close(client_fd);
-                }
-            });
-        }
-
-        unsafe {
-            libc::close(sock);
-        }
-        log::info!("IPC Server stopped")
+    fn jsonrpc_result(id: Value, result: Value) -> String {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": result,
+        })
+        .to_string()
     }
 
-    fn handle_client(
-        rt_handle: tokio::runtime::Handle,
-        fd: i32,
-        agent: Arc<AgentCore>,
-        registry: Arc<Mutex<ChannelRegistry>>,
-    ) {
-        loop {
-            let mut len_buf = [0u8; 4];
-            let n = unsafe { libc::recv(fd, len_buf.as_mut_ptr() as *mut _, 4, libc::MSG_WAITALL) };
-            if n != 4 {
-                break;
+    fn jsonrpc_error(id: Value, code: i64, message: String) -> String {
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "error": {
+                "code": code,
+                "message": message,
             }
+        })
+        .to_string()
+    }
+}
 
-            let payload_len = u32::from_be_bytes(len_buf) as usize;
-            if payload_len > MAX_PAYLOAD_SIZE {
-                log::error!("Payload too large: {}", payload_len);
-                break;
-            }
+#[cfg(test)]
+mod tests {
+    use super::IpcServer;
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
 
-            let mut buf = vec![0u8; payload_len];
-            let n = unsafe {
-                libc::recv(
-                    fd,
-                    buf.as_mut_ptr() as *mut _,
-                    payload_len,
-                    libc::MSG_WAITALL,
-                )
-            };
-            if n as usize != payload_len {
-                break;
-            }
-
-            let raw_msg = String::from_utf8_lossy(&buf).to_string();
-            if raw_msg.is_empty() {
-                break;
-            }
-
-            let response = Self::dispatch_request(&rt_handle, &raw_msg, &agent, &registry, fd);
-            Self::send_response(fd, &response);
-        }
+    #[test]
+    fn read_payload_roundtrip_uses_big_endian_length_prefix() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        IpcServer::write_payload(&mut client, br#"{"jsonrpc":"2.0"}"#).unwrap();
+        let payload = IpcServer::read_payload(&mut server).unwrap();
+        assert_eq!(payload, br#"{"jsonrpc":"2.0"}"#);
     }
 
-    fn dispatch_request(
-        rt_handle: &tokio::runtime::Handle,
-        raw: &str,
-        agent: &Arc<AgentCore>,
-        registry: &Arc<Mutex<ChannelRegistry>>,
-        client_fd: i32,
-    ) -> String {
-        let req: Value = match serde_json::from_str(raw) {
-            Ok(v) => v,
-            Err(_) => {
-                let fut = agent.process_prompt("default", raw, None);
-                let result = tokio::task::block_in_place(|| rt_handle.block_on(fut));
-                return json!({"jsonrpc":"2.0","id":null,"result":{"text":result}}).to_string();
-            }
-        };
+    #[test]
+    fn read_payload_rejects_oversized_frames() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        let oversized = ((super::MAX_PAYLOAD_SIZE + 1) as u32).to_be_bytes();
+        client.write_all(&oversized).unwrap();
+        client.write_all(&[0u8; 4]).unwrap();
 
-        if req.get("jsonrpc").and_then(|v| v.as_str()) != Some("2.0") || req.get("method").is_none()
-        {
-            return json!({"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":null})
-                .to_string();
-        }
-
-        let method = req["method"].as_str().unwrap_or("");
-        let params = req.get("params").cloned().unwrap_or(json!({}));
-        let req_id = req.get("id").cloned().unwrap_or(Value::Null);
-
-        let result: Value = match method {
-            "prompt" => {
-                let session_id = Self::resolve_session_id(params["session_id"].as_str(), "ipc");
-                let text = params["text"].as_str().unwrap_or("");
-                let stream = params
-                    .get("stream")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                if text.is_empty() {
-                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Empty prompt"},"id":req_id})
-                        .to_string();
-                }
-
-                let result = if stream {
-                    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-                    let req_id_clone = req_id.clone();
-                    let fd_clone = client_fd;
-                    rt_handle.spawn(async move {
-                        while let Some(chunk) = rx.recv().await {
-                            let stream_resp = json!({
-                                "jsonrpc": "2.0",
-                                "method": "stream_chunk",
-                                "params": {"id": &req_id_clone, "chunk": chunk}
-                            })
-                            .to_string();
-                            let _ = tokio::task::spawn_blocking(move || {
-                                IpcServer::send_response(fd_clone, &stream_resp);
-                            })
-                            .await;
-                        }
-                    });
-                    let on_chunk = move |chunk: &str| {
-                        let _ = tx.send(chunk.to_string());
-                    };
-                    let fut = agent.process_prompt(&session_id, text, Some(&on_chunk));
-                    tokio::task::block_in_place(|| rt_handle.block_on(fut))
-                } else {
-                    let fut = agent.process_prompt(&session_id, text, None);
-                    tokio::task::block_in_place(|| rt_handle.block_on(fut))
-                };
-
-                json!({"text": result, "session_id": session_id})
-            }
-
-            "get_usage" => {
-                if let Some(ss_ref) = agent.get_session_store() {
-                    let session_id = params
-                        .get("session_id")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("")
-                        .trim();
-                    let date = params
-                        .get("date")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or("")
-                        .trim();
-                    let usage = if session_id.is_empty() {
-                        ss_ref.store().load_daily_usage(date)
-                    } else {
-                        ss_ref.store().load_token_usage(session_id)
-                    };
-                    let baseline = crate::storage::session_store::TokenUsage::from_json(
-                        params.get("baseline"),
-                    );
-                    let delta = usage.diff_from(&baseline);
-                    json!({
-                        "scope": if session_id.is_empty() { "daily" } else { "session" },
-                        "session_id": if session_id.is_empty() { Value::Null } else { Value::String(session_id.to_string()) },
-                        "date": if session_id.is_empty() { Value::String(if date.is_empty() { "today".to_string() } else { date.to_string() }) } else { Value::Null },
-                        "usage": usage.to_json(),
-                        "delta": delta.to_json(),
-                        "prompt_tokens": usage.total_prompt_tokens,
-                        "completion_tokens": usage.total_completion_tokens,
-                        "cache_creation_input_tokens": usage.total_cache_creation_input_tokens,
-                        "cache_read_input_tokens": usage.total_cache_read_input_tokens,
-                        "total_requests": usage.total_requests
-                    })
-                } else {
-                    json!({"error": "No session store"})
-                }
-            }
-
-            "list_tasks" => {
-                let task_dir = crate::core::runtime_paths::default_data_dir().join("tasks");
-                match crate::core::task_scheduler::TaskScheduler::list_tasks_from_dir(&task_dir) {
-                    Ok(tasks) => json!({
-                        "status": "success",
-                        "count": tasks.len(),
-                        "tasks": tasks.into_iter().map(|task| json!({
-                            "id": task.id,
-                            "name": task.name,
-                            "session_id": task.session_id,
-                            "interval_secs": task.interval_secs,
-                            "schedule": task.schedule_expr,
-                            "one_shot": task.one_shot,
-                            "enabled": task.enabled,
-                            "project_dir": task.project_dir,
-                            "coding_backend": task.coding_backend,
-                            "coding_model": task.coding_model,
-                            "execution_mode": task.execution_mode,
-                            "auto_approve": task.auto_approve,
-                            "prompt": task.prompt,
-                        })).collect::<Vec<_>>(),
-                    }),
-                    Err(err) => {
-                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":err},"id":req_id})
-                            .to_string();
-                    }
-                }
-            }
-
-            "get_devel_status" => {
-                let task_dir = crate::core::runtime_paths::default_data_dir().join("tasks");
-                let repo_root = std::env::current_dir()
-                    .ok()
-                    .and_then(|cwd| crate::core::devel_mode::detect_repo_root(&cwd))
-                    .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-                crate::core::devel_mode::devel_status_json(&task_dir, &repo_root)
-            }
-
-            "get_devel_result" => {
-                let task_dir = crate::core::runtime_paths::default_data_dir().join("tasks");
-                let repo_root = std::env::current_dir()
-                    .ok()
-                    .and_then(|cwd| crate::core::devel_mode::detect_repo_root(&cwd))
-                    .unwrap_or_else(|| {
-                        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-                    });
-                crate::core::devel_mode::devel_result_json(&task_dir, &repo_root)
-            }
-
-            "clear_agent_data" => {
-                let include_memory = params
-                    .get("include_memory")
-                    .and_then(|value| value.as_bool())
-                    .unwrap_or(true);
-                let include_sessions = params
-                    .get("include_sessions")
-                    .and_then(|value| value.as_bool())
-                    .unwrap_or(true);
-                match agent.clear_agent_data(include_memory, include_sessions) {
-                    Ok(result) => result,
-                    Err(err) => {
-                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":err},"id":req_id})
-                            .to_string();
-                    }
-                }
-            }
-
-            "bridge_tool" => {
-                let tool_name = params["tool_name"].as_str().unwrap_or("").trim();
-                if tool_name.is_empty() {
-                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'tool_name'"},"id":req_id})
-                        .to_string();
-                }
-                let args = params.get("args").cloned().unwrap_or_else(|| json!({}));
-                let allowed_tools = params
-                    .get("allowed_tools")
-                    .and_then(|value| value.as_array())
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|item| item.as_str().map(|item| item.to_string()))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                let fut = agent.execute_bridge_tool(tool_name, &args, &allowed_tools);
-                tokio::task::block_in_place(|| rt_handle.block_on(fut))
-            }
-
-            "bridge_list_tools" => {
-                let allowed_tools = params
-                    .get("allowed_tools")
-                    .and_then(|value| value.as_array())
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|item| item.as_str().map(|item| item.to_string()))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                let fut = agent.get_bridge_tool_declarations(&allowed_tools);
-                let tools = tokio::task::block_in_place(|| rt_handle.block_on(fut));
-                json!({
-                    "tools": tools.into_iter().map(|tool| json!({
-                        "name": tool.name,
-                        "description": tool.description,
-                        "parameters": tool.parameters,
-                    })).collect::<Vec<_>>()
-                })
-            }
-
-            "get_llm_config" => {
-                let path = params["path"].as_str();
-                match agent.get_llm_config(path) {
-                    Ok(value) => json!({
-                        "status": "ok",
-                        "path": path,
-                        "value": value
-                    }),
-                    Err(err) => {
-                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":err},"id":req_id})
-                            .to_string();
-                    }
-                }
-            }
-
-            "set_llm_config" => {
-                let path = params["path"].as_str().unwrap_or("");
-                if path.is_empty() {
-                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'path'"},"id":req_id})
-                        .to_string();
-                }
-                if params.get("value").is_none() {
-                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'value'"},"id":req_id})
-                        .to_string();
-                }
-
-                let value = params["value"].clone();
-                let fut = agent.set_llm_config(path, value);
-                match tokio::task::block_in_place(|| rt_handle.block_on(fut)) {
-                    Ok(saved) => json!({
-                        "status": "ok",
-                        "path": path,
-                        "value": saved
-                    }),
-                    Err(err) => {
-                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":err},"id":req_id})
-                            .to_string();
-                    }
-                }
-            }
-
-            "unset_llm_config" => {
-                let path = params["path"].as_str().unwrap_or("");
-                if path.is_empty() {
-                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'path'"},"id":req_id})
-                        .to_string();
-                }
-
-                let fut = agent.unset_llm_config(path);
-                match tokio::task::block_in_place(|| rt_handle.block_on(fut)) {
-                    Ok(removed) => json!({
-                        "status": "ok",
-                        "path": path,
-                        "removed": removed
-                    }),
-                    Err(err) => {
-                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":err},"id":req_id})
-                            .to_string();
-                    }
-                }
-            }
-
-            "reload_llm_backends" => {
-                let fut = agent.reload_llm_backends();
-                match tokio::task::block_in_place(|| rt_handle.block_on(fut)) {
-                    Ok(config) => json!({
-                        "status": "ok",
-                        "config": config
-                    }),
-                    Err(err) => {
-                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":err},"id":req_id})
-                            .to_string();
-                    }
-                }
-            }
-
-            "get_llm_runtime" => {
-                let runtime = agent.get_llm_runtime();
-                json!({
-                    "status": "ok",
-                    "configured_active_backend": runtime["configured_active_backend"].clone(),
-                    "configured_fallback_backends": runtime["configured_fallback_backends"].clone(),
-                    "runtime_primary_backend": runtime["runtime_primary_backend"].clone(),
-                    "runtime_has_primary_backend": runtime["runtime_has_primary_backend"].clone()
-                })
-            }
-
-            "start_channel" => {
-                let name = params["name"].as_str().unwrap_or("");
-                if name.is_empty() {
-                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'name'"},"id":req_id})
-                        .to_string();
-                }
-                let settings = params.get("settings");
-                match registry.lock() {
-                    Ok(mut reg) => match reg.start_channel(name, settings) {
-                        Ok(()) => json!({"status": "ok", "name": name}),
-                        Err(e) => {
-                            return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":e},"id":req_id})
-                                .to_string();
-                        }
-                    },
-                    Err(_) => {
-                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":"Registry lock failed"},"id":req_id})
-                            .to_string();
-                    }
-                }
-            }
-
-            "stop_channel" => {
-                let name = params["name"].as_str().unwrap_or("");
-                if name.is_empty() {
-                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'name'"},"id":req_id})
-                        .to_string();
-                }
-                match registry.lock() {
-                    Ok(mut reg) => match reg.stop_channel(name) {
-                        Ok(()) => json!({"status": "ok", "name": name}),
-                        Err(e) => {
-                            return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":e},"id":req_id})
-                                .to_string();
-                        }
-                    },
-                    Err(_) => {
-                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":"Registry lock failed"},"id":req_id})
-                            .to_string();
-                    }
-                }
-            }
-
-            "channel_status" => {
-                let name = params["name"].as_str().unwrap_or("");
-                if name.is_empty() {
-                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'name'"},"id":req_id})
-                        .to_string();
-                }
-                match registry.lock() {
-                    Ok(reg) => match reg.channel_status(name) {
-                        Some(running) => json!({"name": name, "running": running}),
-                        None => {
-                            return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":"Channel not registered"},"id":req_id})
-                                .to_string();
-                        }
-                    },
-                    Err(_) => {
-                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":"Registry lock failed"},"id":req_id})
-                            .to_string();
-                    }
-                }
-            }
-
-            "register_path" => {
-                let kind = match params["kind"].as_str().unwrap_or("") {
-                    "tool" => RegistrationKind::Tool,
-                    "skill" => RegistrationKind::Skill,
-                    _ => {
-                        return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Invalid 'kind'. Expected 'tool' or 'skill'"},"id":req_id})
-                            .to_string();
-                    }
-                };
-                let path = params["path"].as_str().unwrap_or("");
-                if path.is_empty() {
-                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'path'"},"id":req_id})
-                        .to_string();
-                }
-                let fut = agent.register_external_path(kind, path);
-                match tokio::task::block_in_place(|| rt_handle.block_on(fut)) {
-                    Ok(registrations) => json!({
-                        "status": "ok",
-                        "kind": kind.as_str(),
-                        "registrations": registrations,
-                    }),
-                    Err(err) => {
-                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":err},"id":req_id})
-                            .to_string();
-                    }
-                }
-            }
-
-            "unregister_path" => {
-                let kind = match params["kind"].as_str().unwrap_or("") {
-                    "tool" => RegistrationKind::Tool,
-                    "skill" => RegistrationKind::Skill,
-                    _ => {
-                        return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Invalid 'kind'. Expected 'tool' or 'skill'"},"id":req_id})
-                            .to_string();
-                    }
-                };
-                let path = params["path"].as_str().unwrap_or("");
-                if path.is_empty() {
-                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'path'"},"id":req_id})
-                        .to_string();
-                }
-                let fut = agent.unregister_external_path(kind, path);
-                match tokio::task::block_in_place(|| rt_handle.block_on(fut)) {
-                    Ok((registrations, removed)) => json!({
-                        "status": "ok",
-                        "kind": kind.as_str(),
-                        "removed": removed,
-                        "registrations": registrations,
-                    }),
-                    Err(err) => {
-                        return json!({"jsonrpc":"2.0","error":{"code":-32000,"message":err},"id":req_id})
-                            .to_string();
-                    }
-                }
-            }
-
-            "list_registered_paths" => {
-                let registrations = agent.list_registered_paths();
-                json!({
-                    "status": "ok",
-                    "registrations": registrations,
-                    "runtime_topology": agent.runtime_topology_summary(),
-                })
-            }
-
-            "get_session_runtime" => {
-                let session_id = params["session_id"].as_str().unwrap_or("").trim();
-                if session_id.is_empty() {
-                    return json!({"jsonrpc":"2.0","error":{"code":-32602,"message":"Missing 'session_id'"},"id":req_id})
-                        .to_string();
-                }
-                agent.session_runtime_status(session_id)
-            }
-
-            "get_tool_audit" => agent.tool_audit_status(),
-
-            "get_skill_capabilities" => agent.skill_capability_status(),
-
-            _ => {
-                return json!({"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":req_id})
-                    .to_string();
-            }
-        };
-
-        json!({"jsonrpc":"2.0","id":req_id,"result":result}).to_string()
+        let err = IpcServer::read_payload(&mut server).unwrap_err();
+        assert!(err.contains("Payload too large"));
     }
 
-    fn send_response(fd: i32, response: &str) {
-        let mut msg_buf = Vec::with_capacity(4 + response.len());
-        msg_buf.extend_from_slice(&(response.len() as u32).to_be_bytes());
-        msg_buf.extend_from_slice(response.as_bytes());
+    #[test]
+    fn write_payload_prefixes_body_length() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        IpcServer::write_payload(&mut client, b"pong").unwrap();
 
-        unsafe {
-            let mut sent: usize = 0;
-            while sent < msg_buf.len() {
-                let n = libc::write(
-                    fd,
-                    msg_buf.as_ptr().add(sent) as *const _,
-                    msg_buf.len() - sent,
-                );
-                if n <= 0 {
-                    break;
-                }
-                sent += n as usize;
-            }
-        }
+        let mut len_buf = [0u8; 4];
+        server.read_exact(&mut len_buf).unwrap();
+        assert_eq!(u32::from_be_bytes(len_buf), 4);
+
+        let mut body = [0u8; 4];
+        server.read_exact(&mut body).unwrap();
+        assert_eq!(&body, b"pong");
     }
 }

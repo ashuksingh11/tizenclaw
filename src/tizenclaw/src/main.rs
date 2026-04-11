@@ -245,7 +245,8 @@ async fn main() {
     // ── Phase 7.5: Start IPC server (with registry reference) ──
     log::info!("[Boot] Starting IPC server...");
     let ipc = core::ipc_server::IpcServer::new();
-    let ipc_handle = ipc.start(agent.clone(), channel_registry.clone());
+    let ipc_socket_path = std::env::var("TIZENCLAW_SOCKET_PATH").unwrap_or_default();
+    let ipc_handle = ipc.start(&ipc_socket_path, agent.clone(), channel_registry.clone());
     boot_logger.record_status("IPC server", true, "ipc server thread started");
 
     // ── Phase 8.5: Start mDNS Scanner ──

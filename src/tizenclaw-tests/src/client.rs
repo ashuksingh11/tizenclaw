@@ -58,11 +58,16 @@ impl IpcClient {
             }
 
             if let Some(error) = payload.get("error") {
+                let code = error
+                    .get("code")
+                    .and_then(Value::as_i64)
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
                 let message = error
                     .get("message")
                     .and_then(Value::as_str)
                     .unwrap_or("Unknown JSON-RPC error");
-                return Err(message.to_string());
+                return Err(format!("JSON-RPC error {}: {}", code, message));
             }
 
             let result = payload
