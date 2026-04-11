@@ -58,6 +58,7 @@ use crate::core::llm_config_store;
 use crate::core::prompt_builder::{PromptMode, ReasoningPolicy};
 use crate::core::registration_store::{self, RegisteredPaths, RegistrationKind};
 use crate::core::runtime_capabilities;
+use crate::core::skill_capability_manager;
 use crate::core::textual_skill_scanner::TextualSkill;
 use crate::core::tool_dispatcher::ToolDispatcher;
 use crate::infra::key_store::KeyStore;
@@ -4667,10 +4668,15 @@ impl AgentCore {
         // Extract intent keywords for optimal tool injection
         let intent_keywords = Self::extract_intent_keywords(prompt);
 
-        let skill_roots = collect_skill_roots(&self.platform.paths);
-        let textual_skills = crate::core::textual_skill_scanner::scan_textual_skills_from_roots(
-            skill_roots.iter().map(|root| root.as_str()),
-        );
+        let registrations = self.list_registered_paths();
+        let skill_capabilities =
+            skill_capability_manager::load_snapshot(&self.platform.paths, &registrations);
+        let skill_roots = skill_capabilities
+            .roots
+            .iter()
+            .map(|root| root.path.clone())
+            .collect::<Vec<_>>();
+        let textual_skills = skill_capabilities.enabled_skills();
         let is_dashboard_web_app_request = Self::is_web_dashboard_app_request(session_id, prompt);
         let is_file_management_request = is_simple_file_management_request(prompt);
         let mut session_profile = self.resolve_session_profile(session_id);
@@ -4836,7 +4842,7 @@ impl AgentCore {
                 }
             }
 
-            let formatted_skills = textual_skills
+            let formatted_skills = prefetched_skills
                 .into_iter()
                 .map(|s| {
                     let summary = format_skill_summary(&s);
@@ -5395,7 +5401,14 @@ impl AgentCore {
 
                 for tc in detected_tool_calls.iter() {
                     let skills_dir = self.platform.paths.skills_dir.clone();
-                    let skill_roots = collect_skill_roots(&self.platform.paths);
+                    let skill_roots = skill_capability_manager::load_snapshot(
+                        &self.platform.paths,
+                        &RegisteredPaths::load(&self.platform.paths.config_dir),
+                    )
+                    .roots
+                    .into_iter()
+                    .map(|root| root.path)
+                    .collect::<Vec<_>>();
                     let docs_dir = self.platform.paths.docs_dir.clone();
                     let td_guard_ref = &*td_guard;
                     let tc_name = tc.name.clone();
@@ -5500,21 +5513,50 @@ impl AgentCore {
                                         Some(skill_md_path) => {
                                             match std::fs::read_to_string(&skill_md_path) {
                                                 Ok(content) => {
-                                                    let metadata = crate::core::textual_skill_scanner::scan_textual_skills_from_roots(
-                                                        skill_roots.iter().map(|root| root.as_str()),
-                                                    )
-                                                    .into_iter()
-                                                    .find(|skill| skill.file_name == normalized_name);
-                                                    serde_json::json!({
-                                                        "status": "success",
-                                                        "name": normalized_name,
-                                                        "path": skill_md_path.to_string_lossy().to_string(),
-                                                        "content": content,
-                                                        "openclaw": {
-                                                            "requires": metadata.as_ref().map(|skill| skill.openclaw_requires.clone()).unwrap_or_default(),
-                                                            "install": metadata.as_ref().map(|skill| skill.openclaw_install.clone()).unwrap_or_default(),
+                                                    let snapshot = skill_capability_manager::load_snapshot(
+                                                        &self.platform.paths,
+                                                        &RegisteredPaths::load(&self.platform.paths.config_dir),
+                                                    );
+                                                    if let Some(metadata) = snapshot.find_skill(&normalized_name) {
+                                                        if !metadata.enabled {
+                                                            serde_json::json!({
+                                                                "error": format!(
+                                                                    "Skill '{}' is disabled or missing dependencies. Check '{}'.",
+                                                                    normalized_name,
+                                                                    snapshot.config_path
+                                                                ),
+                                                                "skill": {
+                                                                    "name": metadata.skill.file_name,
+                                                                    "dependency_ready": metadata.dependency_ready,
+                                                                    "missing_requires": metadata.missing_requires,
+                                                                    "install_hints": metadata.skill.openclaw_install,
+                                                                    "enabled": metadata.enabled,
+                                                                }
+                                                            })
+                                                        } else {
+                                                            serde_json::json!({
+                                                                "status": "success",
+                                                                "name": normalized_name,
+                                                                "path": skill_md_path.to_string_lossy().to_string(),
+                                                                "content": content,
+                                                                "openclaw": {
+                                                                    "requires": metadata.skill.openclaw_requires.clone(),
+                                                                    "install": metadata.skill.openclaw_install.clone(),
+                                                                }
+                                                            })
                                                         }
-                                                    })
+                                                    } else {
+                                                        serde_json::json!({
+                                                            "status": "success",
+                                                            "name": normalized_name,
+                                                            "path": skill_md_path.to_string_lossy().to_string(),
+                                                            "content": content,
+                                                            "openclaw": {
+                                                                "requires": Vec::<String>::new(),
+                                                                "install": Vec::<String>::new(),
+                                                            }
+                                                        })
+                                                    }
                                                 }
                                                 Err(e) => serde_json::json!({"error": format!("Failed to read skill '{}': {}", normalized_name, e)})
                                             }
@@ -6622,6 +6664,8 @@ impl AgentCore {
 
     pub fn session_runtime_status(&self, session_id: &str) -> Value {
         let registrations = self.list_registered_paths();
+        let skill_capabilities =
+            skill_capability_manager::load_snapshot(&self.platform.paths, &registrations);
         let session = self
             .session_store
             .lock()
@@ -6699,6 +6743,7 @@ impl AgentCore {
             },
             "runtime_topology": self.runtime_topology_summary(),
             "execution": runtime_capabilities::summarize(&self.platform.paths, &registrations),
+            "skills": skill_capabilities.summary_json(),
             "session": session,
             "memory": memory,
             "context_flow": {
@@ -6708,6 +6753,15 @@ impl AgentCore {
                 "memory_total_entries": memory_total_entries,
             },
             "loop_snapshot": self.load_loop_snapshot(session_id),
+        })
+    }
+
+    pub fn skill_capability_status(&self) -> Value {
+        let registrations = self.list_registered_paths();
+        let snapshot = skill_capability_manager::load_snapshot(&self.platform.paths, &registrations);
+        json!({
+            "status": "ok",
+            "skills": snapshot.summary_json(),
         })
     }
 

@@ -661,6 +661,8 @@ impl IpcServer {
                 agent.session_runtime_status(session_id)
             }
 
+            "get_skill_capabilities" => agent.skill_capability_status(),
+
             _ => {
                 return json!({"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":req_id})
                     .to_string();

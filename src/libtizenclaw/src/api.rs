@@ -390,6 +390,12 @@ impl TizenClaw {
         self.call_method("list_registered_paths", json!({}))
     }
 
+    /// Read daemon-reported skill capability state.
+    pub fn get_skill_capabilities(&self) -> Result<Value, String> {
+        self.ensure_initialized()?;
+        self.call_method("get_skill_capabilities", json!({}))
+    }
+
     /// List scheduler tasks visible through the daemon IPC channel.
     pub fn list_tasks(&self) -> Result<Value, String> {
         self.ensure_initialized()?;
