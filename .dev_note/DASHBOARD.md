@@ -2390,3 +2390,125 @@
 - [x] Supervisor Gate after Commit
   - PASS: cleanup script, formatted commit flow, and generated-file
     exclusion were all preserved for the Telegram recovery slice
+
+## Telegram Menu Context Cycle
+
+- [x] Stage 1: Planning
+  - Request:
+    Telegram channel asks the user to choose by number, but when the
+    user replies with the number the daemon loses the menu context and
+    answers as if it does not understand the selection.
+  - Cycle classification:
+    host-default (`./deploy_host.sh`)
+  - Runtime target:
+    preserve recent Telegram command-menu context long enough to resolve
+    numeric follow-up replies into the intended command selection
+  - System-test note:
+    there is no current JSON-RPC surface that can drive Telegram message
+    routing through `tizenclaw-tests`, so this cycle will add focused
+    Telegram channel regression tests and keep host script validation
+    for the live daemon path
+- [x] Supervisor Gate after Planning
+  - PASS: host-default routing, Telegram context scope, and validation
+    limitation were recorded in the dashboard
+
+- [x] Stage 2: Design
+  - Ownership boundary:
+    keep Telegram menu resolution fully inside
+    `src/tizenclaw/src/channel/telegram_client.rs` so the fix stays at
+    the channel boundary and does not leak into core agent logic
+  - Persistence boundary:
+    extend persisted `TelegramChatState` with a compact pending-menu
+    marker so numbered follow-up replies survive process restarts
+  - Runtime contract:
+    when `/select`, `/coding_agent`, `/model`, `/mode`, or
+    `/auto_approve` shows a menu without arguments, the channel records
+    that menu; the next plain-text numeric reply resolves to the same
+    command argument and clears the pending marker
+  - Verification path:
+    add unit regressions for select and backend/model menu number
+    resolution, then validate with the host deployment path
+  - Design artifact:
+    `.dev_note/docs/telegram_menu_context_design_20260411.md`
+- [x] Supervisor Gate after Design
+  - PASS: channel ownership, state persistence impact, and observable
+    Telegram selection contract were documented
+
+- [x] Stage 3: Development
+  - Channel fix:
+    `TelegramChatState` now persists a compact pending-menu marker for
+    recent Telegram command menus
+  - Menu recovery:
+    plain numeric follow-up replies are translated back into
+    `/select`, `/coding_agent`, `/model`, `/mode`, and
+    `/auto_approve` command arguments before normal routing continues
+  - TDD evidence:
+    added focused Telegram regressions for select, backend, and model
+    menu number resolution inside
+    `src/tizenclaw/src/channel/telegram_client.rs`
+  - Development verification:
+    `./deploy_host.sh -b` passed after the change
+  - System-test limitation:
+    there is still no direct `tizenclaw-tests` JSON-RPC path for
+    Telegram message routing, so this slice uses focused channel
+    regressions plus host script validation
+- [x] Supervisor Gate after Development
+  - PASS: the Telegram runtime fix stayed inside the channel boundary,
+    script-driven build verification passed, and no forbidden direct
+    cargo command was used
+
+- [x] Stage 4: Build & Deploy
+  - Commands:
+    `./deploy_host.sh`
+    `./deploy_host.sh --status`
+  - Result:
+    host daemon restarted with `tizenclaw` pid `2757994` and
+    `tizenclaw-tool-executor` pid `2757988`
+  - Survival check:
+    `./deploy_host.sh --status` reported the daemon, tool executor, and
+    dashboard alive, and the host log ended with
+    `Daemon ready (1275ms) startup sequence completed`
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: host deployment completed, the daemon restarted cleanly, and
+    runtime survival evidence was captured
+
+- [x] Stage 5: Test & Review
+  - Static review focus:
+    the fix remains isolated to Telegram channel state and does not
+    change IPC, FFI, or core agent ownership boundaries
+  - Repository regression:
+    `./deploy_host.sh --test` passed with all tests green, including the
+    new Telegram numeric menu regressions
+  - Runtime evidence:
+    after restoring the host runtime with `./deploy_host.sh`,
+    `./deploy_host.sh --status` reported healthy daemon, tool executor,
+    and dashboard processes
+  - Log evidence:
+    `~/.tizenclaw/logs/tizenclaw.log` ended with
+    `Daemon ready (1277ms) startup sequence completed`
+  - System-test note:
+    there is still no direct `tizenclaw-tests` scenario path for
+    Telegram message routing, so the externally visible behavior is
+    locked by focused Telegram channel regressions instead
+  - QA verdict:
+    PASS
+- [x] Supervisor Gate after Test & Review
+  - PASS: repository-wide regression, runtime status, and host log
+    evidence prove the Telegram menu-context fix
+
+- [x] Stage 6: Commit
+  - Workspace cleanup:
+    `bash .agent/scripts/cleanup_workspace.sh`
+  - Staged scope:
+    `src/tizenclaw/src/channel/telegram_client.rs`,
+    `.dev_note/DASHBOARD.md`,
+    `.dev_note/docs/telegram_menu_context_design_20260411.md`
+  - Commit message path:
+    `.tmp/commit_msg.txt`
+  - Commit title:
+    `Restore Telegram menu number context`
+  - Excluded generated scope:
+    `.dev/`, `DORMAMMU.log`
+- [x] Supervisor Gate after Commit
+  - PASS: cleanup script, formatted commit flow, and generated-file
+    exclusion were preserved for the Telegram menu-context slice

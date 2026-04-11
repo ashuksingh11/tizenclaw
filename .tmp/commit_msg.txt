@@ -1,0 +1,8 @@
+Restore Telegram menu number context
+
+Persist recent Telegram command-menu context in chat state so
+plain numeric replies map back to the intended command flow.
+
+Add focused Telegram regressions for select, backend, and
+model menus, and record the host validation evidence in the
+dashboard and design note.
