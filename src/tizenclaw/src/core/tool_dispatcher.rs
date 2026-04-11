@@ -577,6 +577,10 @@ impl ToolDispatcher {
         })
     }
 
+    pub fn side_effect_for_tool(&self, tool_name: &str) -> Option<&str> {
+        self.tools.get(tool_name).map(|decl| decl.side_effect.as_str())
+    }
+
     /// Execute a tool call.
     pub async fn execute(
         &self,

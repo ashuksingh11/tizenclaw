@@ -54,12 +54,14 @@ use crate::core::agent_role::{AgentRole, AgentRoleRegistry};
 use crate::core::context_engine::{
     ContextEngine, SizedContextEngine, DEFAULT_TOOL_RESULT_BUDGET_CHARS,
 };
+use crate::core::event_bus::{EventBus, EventType, SystemEvent};
 use crate::core::fallback_parser::FallbackParser;
 use crate::core::feature_tools;
 use crate::core::llm_config_store;
 use crate::core::prompt_builder::{PromptMode, ReasoningPolicy};
 use crate::core::registration_store::{self, RegisteredPaths, RegistrationKind};
 use crate::core::runtime_capabilities;
+use crate::core::safety_guard::{SafetyGuard, SideEffect};
 use crate::core::skill_capability_manager;
 use crate::core::textual_skill_scanner::TextualSkill;
 use crate::core::tool_dispatcher::ToolDispatcher;
@@ -2960,15 +2962,29 @@ struct LlmConfig {
 
 impl Default for LlmConfig {
     fn default() -> Self {
-        LlmConfig {
-            active_backend: "gemini".into(),
-            fallback_backends: vec![],
-            backends: json!({}),
-        }
+        Self::from_document(&llm_config_store::default_document())
     }
 }
 
 impl LlmConfig {
+    fn from_document(json: &Value) -> Self {
+        LlmConfig {
+            active_backend: json["active_backend"]
+                .as_str()
+                .unwrap_or("gemini")
+                .to_string(),
+            fallback_backends: json["fallback_backends"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_else(|| vec!["openai".into(), "ollama".into()]),
+            backends: json.get("backends").cloned().unwrap_or_else(|| json!({})),
+        }
+    }
+
     /// Load LLM config from a JSON file.
     fn load(path: &str) -> Self {
         let content = match std::fs::read_to_string(path) {
@@ -2987,21 +3003,7 @@ impl LlmConfig {
             }
         };
 
-        LlmConfig {
-            active_backend: json["active_backend"]
-                .as_str()
-                .unwrap_or("gemini")
-                .to_string(),
-            fallback_backends: json["fallback_backends"]
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            backends: json.get("backends").cloned().unwrap_or(json!({})),
-        }
+        Self::from_document(&json)
     }
 
     /// Get config for a specific backend.
@@ -3261,6 +3263,9 @@ pub struct AgentCore {
     fallback_backends: tokio::sync::RwLock<Vec<Box<dyn LlmBackend>>>,
     session_store: Mutex<Option<SessionStore>>,
     tool_dispatcher: tokio::sync::RwLock<ToolDispatcher>,
+    safety_guard: Mutex<SafetyGuard>,
+    context_engine: Arc<SizedContextEngine>,
+    event_bus: Arc<EventBus>,
     key_store: Mutex<KeyStore>,
     system_prompt: RwLock<String>,
     soul_content: RwLock<Option<String>>,
@@ -3287,6 +3292,9 @@ impl AgentCore {
             fallback_backends: tokio::sync::RwLock::new(Vec::new()),
             session_store: Mutex::new(None),
             tool_dispatcher: tokio::sync::RwLock::new(ToolDispatcher::new()),
+            safety_guard: Mutex::new(SafetyGuard::new()),
+            context_engine: Arc::new(SizedContextEngine::new()),
+            event_bus: Arc::new(EventBus::new()),
             key_store: Mutex::new(KeyStore::new()),
             system_prompt: RwLock::new(String::new()),
             soul_content: RwLock::new(None),
@@ -3316,6 +3324,74 @@ impl AgentCore {
 
     fn role_file_path(&self) -> PathBuf {
         self.platform.paths.config_dir.join("agent_roles.json")
+    }
+
+    fn safety_guard_path(&self) -> PathBuf {
+        self.platform.paths.config_dir.join("safety_guard.json")
+    }
+
+    fn reload_safety_guard(&self) {
+        let guard_path = self.safety_guard_path();
+        if let Ok(mut safety_guard) = self.safety_guard.lock() {
+            *safety_guard = SafetyGuard::new();
+            safety_guard.load_config(&guard_path.to_string_lossy());
+        }
+    }
+
+    fn publish_runtime_event(&self, event_name: &str, data: Value) {
+        self.event_bus.publish(SystemEvent {
+            event_type: EventType::Custom(event_name.to_string()),
+            source: "agent_core".to_string(),
+            data,
+            timestamp: 0,
+        });
+    }
+
+    fn persist_compacted_messages(&self, session_id: &str, messages: &[LlmMessage]) {
+        if let Ok(ss) = self.session_store.lock() {
+            if let Some(store) = ss.as_ref() {
+                use crate::storage::session_store::SessionMessage;
+                let session_msgs: Vec<SessionMessage> = messages
+                    .iter()
+                    .map(SessionMessage::from_llm_message)
+                    .collect();
+                if let Err(err) = store.save_compacted_structured(session_id, &session_msgs) {
+                    log::warn!(
+                        "[ContextEngine] Failed to save compacted structured snapshot: {}",
+                        err
+                    );
+                }
+                if let Err(err) = store.save_compacted(session_id, &session_msgs) {
+                    log::warn!("[ContextEngine] Failed to save compacted.md: {}", err);
+                }
+            }
+        }
+    }
+
+    fn check_context_message_limit(
+        &self,
+        session_id: &str,
+        messages: &[LlmMessage],
+        loop_state: &mut AgentLoopState,
+    ) -> Result<(), String> {
+        if messages.len() <= MAX_CONTEXT_MESSAGES {
+            return Ok(());
+        }
+
+        let error = format!(
+            "Context message limit exceeded for session '{}': {} > {}",
+            session_id,
+            messages.len(),
+            MAX_CONTEXT_MESSAGES
+        );
+        log::error!("[AgentLoop] {}", error);
+        loop_state.last_error = Some(error.clone());
+        loop_state.mark_terminal(
+            LoopTransitionReason::RoundLimitReached,
+            format!("message count {} exceeded {}", messages.len(), MAX_CONTEXT_MESSAGES),
+        );
+        self.persist_loop_snapshot(loop_state);
+        Err(error)
     }
 
     fn resolve_session_profile(&self, session_id: &str) -> Option<SessionPromptProfile> {
@@ -4197,6 +4273,7 @@ impl AgentCore {
     pub async fn initialize(&self) -> bool {
         log::debug!("AgentCore initializing...");
         let paths = &self.platform.paths;
+        let _ = self.event_bus.start();
 
         // Load API keys
         let key_path = paths.config_dir.join("keys.json");
@@ -4208,6 +4285,7 @@ impl AgentCore {
         if let Ok(mut tp) = self.tool_policy.lock() {
             tp.load_config(&policy_path.to_string_lossy());
         }
+        self.reload_safety_guard();
 
         // Load system prompt
         let prompt_path = paths.config_dir.join("system_prompt.txt");
@@ -4238,7 +4316,6 @@ impl AgentCore {
         // Load LLM config (supports multi-backend + fallback)
         let llm_config_path = paths.config_dir.join("llm_config.json");
         let config = LlmConfig::load(&llm_config_path.to_string_lossy());
-        let active_name = config.active_backend.clone();
         let fallback_names = config.fallback_backends.clone();
 
         // Initialize plugin manager
@@ -4352,6 +4429,14 @@ impl AgentCore {
             bridge.start();
         }
 
+        self.publish_runtime_event(
+            "initialize",
+            json!({
+                "primary_backend": self.get_llm_runtime()["runtime_primary_backend"],
+                "tool_roots": collect_tool_roots(paths),
+            }),
+        );
+
         true
     }
 
@@ -4396,13 +4481,11 @@ impl AgentCore {
         let paths = &self.platform.paths;
         let llm_config_path = paths.config_dir.join("llm_config.json");
         let config = LlmConfig::load(&llm_config_path.to_string_lossy());
+        self.reload_safety_guard();
 
         // Re-scan plugins
         let mut plugin_manager = crate::llm::plugin_manager::PluginManager::new();
         plugin_manager.scan_plugins(Some(self.platform.package_manager.as_ref()));
-
-        let active_name = config.active_backend.clone();
-        let fallback_names = config.fallback_backends.clone();
 
         // Unified priority-based selection
         let candidates = self.get_backend_candidates(&config, &plugin_manager);
@@ -4449,6 +4532,8 @@ impl AgentCore {
         if let Ok(mut stored_config) = self.llm_config.lock() {
             *stored_config = config;
         }
+
+        self.publish_runtime_event("reload_backends", self.get_llm_runtime());
     }
 
     /// Create and initialize an LLM backend by name using the provided merged config.
@@ -4830,6 +4915,9 @@ impl AgentCore {
         if messages.is_empty() || messages.last().map(|m| m.role.as_str()) != Some("user") {
             messages.push(LlmMessage::user(prompt));
         }
+        if let Err(err) = self.check_context_message_limit(session_id, &messages, &mut loop_state) {
+            return format!("Error: {}", err);
+        }
 
         // Extract intent keywords for optimal tool injection
         let intent_keywords = Self::extract_intent_keywords(prompt);
@@ -5201,7 +5289,8 @@ impl AgentCore {
 
         // ── Phase 3: Planning (Cognitive Plan-and-Solve & compaction) ────
         loop_state.transition(AgentPhase::Planning);
-        let context_engine = SizedContextEngine::new().with_threshold(loop_state.compact_threshold);
+        let context_engine =
+            SizedContextEngine::new().with_threshold(loop_state.compact_threshold);
 
         log_payload_breakdown(
             session_id,
@@ -5282,13 +5371,16 @@ impl AgentCore {
 
         // Update token_used estimate
         loop_state.token_used = context_engine.estimate_tokens(&messages);
-        if loop_state.needs_compaction() {
+        if context_engine.should_compact(&messages, loop_state.token_budget)
+            || loop_state.needs_compaction()
+        {
             log::debug!(
                 "[AgentLoop] Pre-loop compaction triggered ({}% used)",
                 (loop_state.token_used as f32 / loop_state.token_budget as f32 * 100.0) as u32
             );
             messages = context_engine.compact(messages, loop_state.token_budget);
             loop_state.token_used = context_engine.estimate_tokens(&messages);
+            self.persist_compacted_messages(session_id, &messages);
         }
 
         // ── Phases 4–13: Main agentic loop ───────────────────────────────
@@ -5604,11 +5696,28 @@ impl AgentCore {
                     let grounded_csv_headers_snapshot = grounded_csv_headers_snapshot.clone();
 
                     // ── Phase 11: SafetyCheck per tool ───────────────────
-                    let block_reason = if let Ok(tp) = self.tool_policy.lock() {
+                    let policy_block_reason = if let Ok(tp) = self.tool_policy.lock() {
                         tp.check_policy(session_id, &tc_name, &tc_args).err()
                     } else {
                         None
                     };
+                    let safety_block_reason = if let Ok(safety_guard) = self.safety_guard.lock() {
+                        let side_effect = td_guard_ref
+                            .side_effect_for_tool(&tc_name)
+                            .map(SideEffect::from_str)
+                            .unwrap_or(SideEffect::Reversible);
+                        safety_guard
+                            .check_tool_call(
+                                &tc_name,
+                                &tc_args,
+                                &side_effect,
+                                loop_state.total_tool_calls,
+                            )
+                            .err()
+                    } else {
+                        None
+                    };
+                    let block_reason = policy_block_reason.or(safety_block_reason);
 
                     futures_list.push(async move {
                         if let Some(reason) = block_reason {
@@ -6360,6 +6469,11 @@ impl AgentCore {
                 } else {
                     messages.extend(results);
                 }
+                if let Err(err) =
+                    self.check_context_message_limit(session_id, &messages, &mut loop_state)
+                {
+                    return format!("Error: {}", err);
+                }
 
                 // ── Phase 7: Evaluating (partial progress) ───────────────
                 loop_state.transition(AgentPhase::Evaluating);
@@ -6627,39 +6741,16 @@ impl AgentCore {
 
             // In-loop size-based compaction
             loop_state.token_used = context_engine.estimate_tokens(&messages);
-            if loop_state.needs_compaction() {
+            if context_engine.should_compact(&messages, loop_state.token_budget)
+                || loop_state.needs_compaction()
+            {
                 log::debug!(
                     "[ContextEngine] In-loop compaction triggered (round {})",
                     loop_state.round
                 );
                 messages = context_engine.compact(messages, loop_state.token_budget);
                 loop_state.token_used = context_engine.estimate_tokens(&messages);
-
-                // Persist compacted snapshot to disk (compacted.md)
-                if let Ok(ss) = self.session_store.lock() {
-                    if let Some(store) = ss.as_ref() {
-                        use crate::storage::session_store::SessionMessage;
-                        let session_msgs: Vec<SessionMessage> = messages
-                            .iter()
-                            .map(SessionMessage::from_llm_message)
-                            .collect();
-                        if let Err(e) = store.save_compacted_structured(session_id, &session_msgs) {
-                            log::warn!(
-                                "[ContextEngine] Failed to save compacted structured snapshot: {}",
-                                e
-                            );
-                        }
-                        match store.save_compacted(session_id, &session_msgs) {
-                            Ok(_) => log::debug!(
-                                "[ContextEngine] compacted.md saved ({} msgs)",
-                                session_msgs.len()
-                            ),
-                            Err(e) => {
-                                log::warn!("[ContextEngine] Failed to save compacted.md: {}", e)
-                            }
-                        }
-                    }
-                }
+                self.persist_compacted_messages(session_id, &messages);
             }
 
             // ── Phase 9: TerminationCheck ─────────────────────────────────
@@ -6693,6 +6784,7 @@ impl AgentCore {
 
     pub async fn shutdown(&self) {
         log::info!("AgentCore shutting down");
+        self.event_bus.stop();
         if let Some(b) = self.backend.write().await.as_mut() {
             b.shutdown();
         }
@@ -7084,6 +7176,10 @@ impl AgentCore {
             registration_store::register_path(&self.platform.paths.config_dir, kind, raw_path)?;
         self.reload_tools().await;
         self.run_startup_indexing().await;
+        self.publish_runtime_event(
+            "register_external_path",
+            json!({"kind": kind.as_str(), "path": raw_path}),
+        );
         Ok(registrations)
     }
 
@@ -7096,6 +7192,10 @@ impl AgentCore {
             registration_store::unregister_path(&self.platform.paths.config_dir, kind, raw_path)?;
         self.reload_tools().await;
         self.run_startup_indexing().await;
+        self.publish_runtime_event(
+            "unregister_external_path",
+            json!({"kind": kind.as_str(), "path": raw_path, "removed": removed}),
+        );
         Ok((registrations, removed))
     }
 
@@ -7105,16 +7205,22 @@ impl AgentCore {
             *td = ToolDispatcher::new();
             let tool_roots = collect_tool_roots(&self.platform.paths);
             td.load_tools_from_paths(tool_roots.iter().map(|root| root.as_str()));
+            log::info!(
+                "Tools reloaded: {} declarations from {:?}",
+                td.get_tool_declarations().len(),
+                tool_roots
+            );
         }
-        log::info!(
-            "Tools reloaded from {:?}",
-            collect_tool_roots(&self.platform.paths)
+        self.publish_runtime_event(
+            "reload_tools",
+            json!({"tool_roots": collect_tool_roots(&self.platform.paths)}),
         );
     }
 
     pub async fn run_startup_indexing(&self) {
         use crate::core::tool_indexer;
 
+        self.reload_tools().await;
         let root_dir = self.platform.paths.tools_dir.to_string_lossy().to_string();
         // Embedded descriptors are documentation/indexing metadata for
         // code-defined built-in tools. They are not the execution source.
@@ -7125,6 +7231,22 @@ impl AgentCore {
             .to_string_lossy()
             .to_string();
         let scan_roots = [root_dir.as_str(), embedded_dir.as_str()];
+        let skill_roots = collect_skill_roots(&self.platform.paths);
+        let skill_count = crate::core::textual_skill_scanner::scan_textual_skills_from_roots(
+            skill_roots.iter().map(|root| root.as_str()),
+        )
+        .len();
+        let tool_count = self
+            .tool_dispatcher
+            .read()
+            .await
+            .get_tool_declarations()
+            .len();
+        log::info!(
+            "[Startup Indexing] Registered {} tools and {} skills from runtime paths.",
+            tool_count,
+            skill_count
+        );
 
         // Phase 1: Hash-based change detection (fast, no I/O beyond stat)
         if !tool_indexer::needs_reindex_for_roots(&root_dir, &scan_roots) {
@@ -7194,6 +7316,15 @@ impl AgentCore {
         }
 
         log::info!("[Startup Indexing] Completed.");
+        self.publish_runtime_event(
+            "startup_indexing",
+            json!({
+                "tool_count": tool_count,
+                "skill_count": skill_count,
+                "tool_roots": scan_roots,
+                "skill_roots": skill_roots,
+            }),
+        );
     }
 
     /// Extractor sub-task logic. Invokes the LLM to glean long-term knowledge.
@@ -7473,6 +7604,31 @@ mod tests {
             .find(|candidate| candidate.name == "openai-codex")
             .map(|candidate| candidate.priority >= AUTHENTICATED_BACKEND_PRIORITY_BOOST)
             .unwrap_or(false));
+    }
+
+    #[test]
+    fn llm_config_default_includes_expected_fallbacks() {
+        let config = LlmConfig::default();
+
+        assert_eq!(config.active_backend, "gemini");
+        assert_eq!(
+            config.fallback_backends,
+            vec!["openai".to_string(), "ollama".to_string()]
+        );
+    }
+
+    #[test]
+    fn llm_config_load_uses_default_fallbacks_when_file_missing() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("missing-llm-config.json");
+
+        let config = LlmConfig::load(&config_path.to_string_lossy());
+
+        assert_eq!(config.active_backend, "gemini");
+        assert_eq!(
+            config.fallback_backends,
+            vec!["openai".to_string(), "ollama".to_string()]
+        );
     }
 
     #[test]

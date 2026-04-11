@@ -1,6 +1,6 @@
 //! Safety guard — controls which tools are allowed based on safety policy.
 
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashSet;
 
 /// Side effect classification for tools.
@@ -113,6 +113,26 @@ impl SafetyGuard {
         Ok(())
     }
 
+    /// Check a structured tool call against the active policy.
+    pub fn check_tool_call(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        side_effect: &SideEffect,
+        tool_calls_so_far: usize,
+    ) -> Result<(), String> {
+        if self.max_tool_calls_per_session > 0
+            && tool_calls_so_far >= self.max_tool_calls_per_session
+        {
+            return Err(format!(
+                "Tool call budget exceeded for session (limit: {})",
+                self.max_tool_calls_per_session
+            ));
+        }
+
+        self.check_tool(tool_name, &args.to_string(), side_effect)
+    }
+
     /// Check if prompt contains injection attempts.
     pub fn check_prompt_injection(&self, prompt: &str) -> bool {
         let lower = prompt.to_lowercase();
@@ -210,5 +230,31 @@ mod tests {
         );
         assert_eq!(SideEffect::from_str("reversible"), SideEffect::Reversible);
         assert_eq!(SideEffect::from_str("other"), SideEffect::Reversible);
+    }
+
+    #[test]
+    fn structured_tool_call_respects_blocked_tools() {
+        let mut guard = SafetyGuard::new();
+        guard.blocked_tools.insert("danger_tool".to_string());
+
+        let result =
+            guard.check_tool_call("danger_tool", &serde_json::json!({"path": "/tmp"}), &SideEffect::None, 0);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn structured_tool_call_respects_session_budget() {
+        let mut guard = SafetyGuard::new();
+        guard.max_tool_calls_per_session = 1;
+
+        let result = guard.check_tool_call(
+            "echo",
+            &serde_json::json!({"args": "hello"}),
+            &SideEffect::None,
+            1,
+        );
+
+        assert!(result.is_err());
     }
 }
