@@ -1513,8 +1513,13 @@ name = "tizenclaw-web-dashboard"
 version = "1.0.0"
 dependencies = [
  "axum",
+ "base64",
+ "hyper",
+ "hyper-util",
  "libc",
  "log",
+ "openssl",
+ "rusqlite",
  "serde",
  "serde_json",
  "tokio",

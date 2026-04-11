@@ -1086,8 +1086,15 @@ impl IpcServer {
 
         registry
             .start_channel(name, settings)
-            .map(|()| json!({"status": "ok", "name": name}))
-            .map_err(|err| Self::jsonrpc_error(req_id.clone(), -32000, err))
+            .map_err(|err| Self::jsonrpc_error(req_id.clone(), -32000, err))?;
+
+        let mut status = registry
+            .channel_snapshot(name)
+            .unwrap_or_else(|| json!({"name": name, "running": true}));
+        if let Some(object) = status.as_object_mut() {
+            object.insert("status".to_string(), json!("ok"));
+        }
+        Ok(status)
     }
 
     fn handle_stop_channel(
@@ -1102,8 +1109,15 @@ impl IpcServer {
 
         registry
             .stop_channel(name)
-            .map(|()| json!({"status": "ok", "name": name}))
-            .map_err(|err| Self::jsonrpc_error(req_id.clone(), -32000, err))
+            .map_err(|err| Self::jsonrpc_error(req_id.clone(), -32000, err))?;
+
+        let mut status = registry
+            .channel_snapshot(name)
+            .unwrap_or_else(|| json!({"name": name, "running": false}));
+        if let Some(object) = status.as_object_mut() {
+            object.insert("status".to_string(), json!("ok"));
+        }
+        Ok(status)
     }
 
     fn handle_channel_status(
@@ -1116,41 +1130,23 @@ impl IpcServer {
             Self::jsonrpc_error(req_id.clone(), -32000, "Registry lock failed".to_string())
         })?;
 
-        registry
-            .channel_status(name)
-            .map(|running| json!({"name": name, "running": running}))
-            .ok_or_else(|| {
-                Self::jsonrpc_error(
-                    req_id.clone(),
-                    -32000,
-                    "Channel not registered".to_string(),
-                )
-            })
+        registry.channel_snapshot(name).ok_or_else(|| {
+            Self::jsonrpc_error(req_id.clone(), -32000, "Channel not registered".to_string())
+        })
     }
 
-    fn required_str<'a>(
-        params: &'a Value,
-        key: &str,
-        req_id: &Value,
-    ) -> Result<&'a str, String> {
+    fn required_str<'a>(params: &'a Value, key: &str, req_id: &Value) -> Result<&'a str, String> {
         params
             .get(key)
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
-                Self::jsonrpc_error(
-                    req_id.clone(),
-                    -32602,
-                    format!("Missing '{}'", key),
-                )
+                Self::jsonrpc_error(req_id.clone(), -32602, format!("Missing '{}'", key))
             })
     }
 
-    fn registration_kind(
-        params: &Value,
-        req_id: &Value,
-    ) -> Result<RegistrationKind, String> {
+    fn registration_kind(params: &Value, req_id: &Value) -> Result<RegistrationKind, String> {
         match params.get("kind").and_then(Value::as_str).unwrap_or("") {
             "tool" => Ok(RegistrationKind::Tool),
             "skill" => Ok(RegistrationKind::Skill),

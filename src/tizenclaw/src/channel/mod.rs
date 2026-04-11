@@ -1,6 +1,6 @@
 //! Channel module — abstract channel interface and implementations.
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// Channel configuration from channel_config.json.
 pub struct ChannelConfig {
@@ -26,6 +26,12 @@ pub trait Channel: Send {
     fn stop(&mut self);
     fn is_running(&self) -> bool;
     fn send_message(&self, text: &str) -> Result<(), String>;
+    fn status(&self) -> Value {
+        json!({
+            "name": self.name(),
+            "running": self.is_running(),
+        })
+    }
     fn configure(&mut self, _settings: &Value) -> Result<(), String> {
         Ok(())
     }
@@ -129,6 +135,13 @@ impl ChannelRegistry {
             .iter()
             .find(|c| c.name() == name)
             .map(|c| c.is_running())
+    }
+
+    pub fn channel_snapshot(&self, name: &str) -> Option<Value> {
+        self.channels
+            .iter()
+            .find(|c| c.name() == name)
+            .map(|c| c.status())
     }
 
     pub fn broadcast(&self, text: &str) {
