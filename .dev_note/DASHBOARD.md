@@ -391,6 +391,104 @@
   - PASS: ownership, persistence, and IPC-observable assertions are
     documented
 
+## File Manager Observability Cycle
+
+- [x] Stage 1: Planning
+  - Cycle classification:
+    host-default (`./deploy_host.sh`)
+  - Runtime surface:
+    `bridge_tool` access to `file_manager`, session-scoped bridge
+    workdirs, and daemon-visible backend selection for file operations
+  - System-test requirement:
+    add a focused `tests/system/file_manager_bridge.json` scenario
+    before product-code changes so host regression can observe both the
+    Linux-utility path and the Rust fallback path
+- [x] Supervisor Gate after Planning
+  - PASS: host-default routing, runtime surface, and focused system-test
+    plan are recorded
+
+- [x] Stage 2: Design
+  - Ownership boundary:
+    `AgentCore::execute_bridge_tool` owns bridge routing while
+    `file_manager_tool` remains the single execution owner for backend
+    selection, workspace resolution, and response shaping
+  - Compatibility rule:
+    default behavior remains Linux-utility-first; deterministic fallback
+    coverage is enabled only through an explicit
+    `backend_preference=rust_fallback`
+  - Design artifact:
+    `.dev_note/docs/file_manager_bridge_observability_design_20260411.md`
+- [x] Supervisor Gate after Design
+  - PASS: bridge ownership, fallback contract, and scenario scope are
+    documented
+
+- [x] Stage 3: Development
+  - TDD contract:
+    added `tests/system/file_manager_bridge.json` before the code change
+    to define bridge-level observability for `mkdir`, `read`, `list`,
+    `stat`, `copy`, `move`, and `remove`
+  - Product-code result:
+    `bridge_tool` can now execute `file_manager` directly, bridge calls
+    can target a stable session workdir through `session_id`, and
+    `file_manager` accepts an explicit `backend_preference` for
+    deterministic fallback coverage
+  - Unit coverage:
+    added `agent_core` tests proving forced Rust fallback for read and
+    move operations
+  - Development verification:
+    `./deploy_host.sh -b` passed
+- [x] Supervisor Gate after Development
+  - PASS: the scenario was added first, the bridge-level
+    file-manager observability contract is implemented, and the host
+    build path passed without ad-hoc cargo commands
+
+- [x] Stage 4: Build & Deploy
+  - Command:
+    `./deploy_host.sh`
+  - Result:
+    host binaries were reinstalled under `/home/hjhun/.tizenclaw`,
+    `tizenclaw-tool-executor` restarted as pid `2647549`, and
+    `tizenclaw` restarted as pid `2647557`
+  - Survival check:
+    `./deploy_host.sh --status` reported healthy daemon, executor, and
+    dashboard processes with `Daemon ready (1324ms)`
+- [x] Supervisor Gate after Build & Deploy
+  - PASS: the host deployment path completed and the updated daemon came
+    back online cleanly
+
+- [x] Stage 5: Test & Review
+  - Runtime log evidence:
+    `./deploy_host.sh --status` showed the daemon, executor, dashboard,
+    and `Daemon ready (1324ms) startup sequence completed`
+  - System test:
+    `~/.tizenclaw/bin/tizenclaw-tests scenario --file tests/system/file_manager_bridge.json`
+    passed and showed `backend=linux_utility` for `mkdir/read/list/copy/remove`
+    plus `backend=rust_fallback` for forced `read/stat/move/remove`
+  - Repository regression:
+    `./deploy_host.sh --test` passed, including the new
+    `file_manager_tool_can_force_rust_fallback_for_reads` and
+    `file_manager_tool_can_force_rust_fallback_for_moves` unit tests
+  - QA verdict:
+    PASS
+- [x] Supervisor Gate after Test & Review
+  - PASS: live daemon evidence, focused scenario output, and
+    repository-wide regression proof are captured
+
+- [x] Stage 6: Commit
+  - Workspace cleanup:
+    `bash .agent/scripts/cleanup_workspace.sh` completed before staging
+  - Staged scope:
+    bridge-level `file_manager` observability in `AgentCore`, the
+    `backend_preference` declaration update, the focused
+    `tests/system/file_manager_bridge.json` scenario, and the matching
+    `.dev_note` dashboard/design artifacts only
+  - Excluded generated scope:
+    `.dev/` session state and `DORMAMMU.log`
+  - Commit message path:
+    `.tmp/commit_msg.txt`
+  - Commit title:
+    `Add file manager bridge observability`
+
 - [x] Stage 3: Development
   - TDD contract:
     updated `tests/system/basic_ipc_smoke.json` before product-code

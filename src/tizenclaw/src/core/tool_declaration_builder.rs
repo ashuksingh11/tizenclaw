@@ -205,6 +205,11 @@ impl ToolDeclarationBuilder {
                     "dest": {
                         "type": "string",
                         "description": "Destination path for the download operation"
+                    },
+                    "backend_preference": {
+                        "type": "string",
+                        "enum": ["linux_utility", "rust_fallback"],
+                        "description": "Optional backend override for observability and regression checks"
                     }
                 },
                 "required": ["operation"]
