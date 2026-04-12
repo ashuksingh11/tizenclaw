@@ -162,6 +162,52 @@ fn truncate_text_with_head_tail(text: &str, max_chars: usize) -> (String, bool) 
     (format!("{}\n... [truncated] ...\n{}", head, tail), true)
 }
 
+fn count_words(text: &str) -> usize {
+    text.split_whitespace().count()
+}
+
+fn requested_word_budget_bounds(prompt: &str) -> Option<(usize, usize)> {
+    let target_words = requested_word_target(prompt)?;
+    if target_words < 100 {
+        return None;
+    }
+
+    if prompt_requests_longform_markdown_writing(prompt) {
+        let tolerance = (target_words / 6).clamp(40, 85);
+        Some((
+            target_words.saturating_sub(tolerance),
+            target_words.saturating_add(tolerance),
+        ))
+    } else {
+        Some((
+            target_words.saturating_mul(8) / 10,
+            target_words.saturating_mul(12) / 10,
+        ))
+    }
+}
+
+fn requested_word_target(prompt: &str) -> Option<usize> {
+    let regex = regex::Regex::new(r"(?ix)\b(\d{2,5})\s*(?:-|–)?\s*word\b").ok()?;
+    regex
+        .captures(prompt)
+        .and_then(|captures| captures.get(1))
+        .and_then(|value| value.as_str().parse::<usize>().ok())
+}
+
+fn requested_paragraph_count(prompt: &str) -> Option<usize> {
+    let regex = regex::Regex::new(r"(?ix)\b(\d{1,2})\s*(?:-|–)?\s*paragraphs?\b").ok()?;
+    regex
+        .captures(prompt)
+        .and_then(|captures| captures.get(1))
+        .and_then(|value| value.as_str().parse::<usize>().ok())
+}
+
+fn paragraph_count(text: &str) -> usize {
+    text.split("\n\n")
+        .filter(|paragraph| !paragraph.trim().is_empty())
+        .count()
+}
+
 fn extract_text_match_snippets(
     text: &str,
     pattern: &str,
@@ -343,11 +389,15 @@ fn build_text_read_payload(content: &str, pattern: Option<&str>, max_chars: usiz
         collected
     });
 
-    let combined = snippets
-        .as_ref()
-        .filter(|items| !items.is_empty())
-        .map(|items| items.join("\n\n"))
-        .unwrap_or_else(|| content.to_string());
+    let combined = if total_chars <= max_chars {
+        content.to_string()
+    } else {
+        snippets
+            .as_ref()
+            .filter(|items| !items.is_empty())
+            .map(|items| items.join("\n\n"))
+            .unwrap_or_else(|| content.to_string())
+    };
     let (truncated_content, truncated) = truncate_text_with_head_tail(&combined, max_chars);
 
     json!({
@@ -1276,7 +1326,10 @@ fn expected_file_management_targets(prompt: &str) -> Vec<Vec<String>> {
     let intent_prompt = normalize_prompt_intent_text(prompt);
     let mut groups = extract_relative_file_paths(intent_prompt)
         .into_iter()
-        .filter(|path| path_is_likely_output_target(intent_prompt, path))
+        .filter(|path| {
+            path_is_likely_output_target(intent_prompt, path)
+                && !path_is_likely_input_reference(intent_prompt, path)
+        })
         .map(|path| vec![path])
         .collect::<Vec<_>>();
 
@@ -1346,6 +1399,31 @@ fn path_is_likely_output_target(prompt: &str, path: &str) -> bool {
     ]
     .iter()
     .any(|needle| context.contains(needle))
+}
+
+fn path_is_likely_input_reference(prompt: &str, path: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let path_lower = path.to_ascii_lowercase();
+    let Some(_path_index) = prompt_lower.find(&path_lower) else {
+        return false;
+    };
+
+    let escaped_path = regex::escape(&path_lower);
+    let patterns = [
+        format!(r"\bread(?:\s+the)?(?:\s+(?:document|file|emails?))?(?:\s+in|\s+from)?\s+`?{escaped_path}`?\b"),
+        format!(r"\bopen(?:\s+the)?(?:\s+(?:document|file))?(?:\s+in|\s+from)?\s+`?{escaped_path}`?\b"),
+        format!(r"\b(?:inspect|review|analy[sz]e|summari[sz]e)(?:\s+the)?(?:\s+(?:document|file))?(?:\s+in|\s+from)?\s+`?{escaped_path}`?\b"),
+        format!(r"\b(?:document|file)\s+in\s+`?{escaped_path}`?\b"),
+        format!(r"\b(?:source|input)\s+(?:document|file)\s+`?{escaped_path}`?\b"),
+        format!(r"\bfiles?\s+named\s+`?{escaped_path}`?\b"),
+        format!(r"\bprovided\s+to\s+you\s+in\s+`?{escaped_path}`?\b"),
+    ];
+
+    patterns.iter().any(|pattern| {
+        regex::Regex::new(pattern)
+            .map(|regex| regex.is_match(&prompt_lower))
+            .unwrap_or(false)
+    })
 }
 
 fn prompt_mentions_history_or_memory(prompt: &str) -> bool {
@@ -1618,20 +1696,119 @@ fn requested_research_entry_count(prompt: &str) -> Option<usize> {
 }
 
 fn extract_url_hosts(content: &str) -> HashSet<String> {
+    extract_url_host_counts(content).into_keys().collect()
+}
+
+fn extract_url_host_counts(content: &str) -> HashMap<String, usize> {
     let Ok(url_re) = regex::Regex::new(r#"https?://[^\s)>"]+"#) else {
+        return HashMap::new();
+    };
+
+    let mut counts = HashMap::new();
+    for matched in url_re.find_iter(content) {
+        let raw = matched.as_str().trim_end_matches(|ch: char| ",.;|".contains(ch));
+        let Some(host) = reqwest::Url::parse(raw)
+            .ok()
+            .and_then(|url| url.host_str().map(ToString::to_string))
+        else {
+            continue;
+        };
+        let normalized = host.trim_start_matches("www.").to_string();
+        *counts.entry(normalized).or_insert(0) += 1;
+    }
+    counts
+}
+
+fn tokenize_significant_research_text(text: &str) -> HashSet<String> {
+    let stopwords = [
+        "and",
+        "conference",
+        "conferences",
+        "congress",
+        "event",
+        "events",
+        "expo",
+        "for",
+        "forum",
+        "global",
+        "in",
+        "international",
+        "location",
+        "name",
+        "north",
+        "south",
+        "east",
+        "west",
+        "summit",
+        "tech",
+        "technology",
+        "upcoming",
+        "website",
+        "world",
+        "year",
+    ];
+    let stopwords: HashSet<&str> = stopwords.into_iter().collect();
+
+    let Ok(token_re) = regex::Regex::new(r"[A-Za-z0-9][A-Za-z0-9:+-]*") else {
         return HashSet::new();
     };
 
-    url_re
-        .find_iter(content)
+    token_re
+        .find_iter(text)
         .filter_map(|matched| {
-            let raw = matched.as_str().trim_end_matches(|ch: char| ",.;|".contains(ch));
-            let host = reqwest::Url::parse(raw)
-                .ok()
-                .and_then(|url| url.host_str().map(ToString::to_string))?;
-            Some(host.trim_start_matches("www.").to_string())
+            let token = matched
+                .as_str()
+                .trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
+                .to_ascii_lowercase();
+            if token.len() < 3 || token.chars().all(|ch| ch.is_ascii_digit()) {
+                return None;
+            }
+            if stopwords.contains(token.as_str()) {
+                return None;
+            }
+            Some(token)
         })
         .collect()
+}
+
+fn extract_url_identity_text(url: &str) -> Option<String> {
+    let Some(parsed) = reqwest::Url::parse(url).ok() else {
+        return None;
+    };
+
+    let mut combined = String::new();
+    if let Some(host) = parsed.host_str() {
+        combined.push_str(&host.to_ascii_lowercase());
+        combined.push(' ');
+    }
+    combined.push_str(&parsed.path().to_ascii_lowercase());
+    Some(combined)
+}
+
+fn output_contains_suspicious_research_host_mismatch(content: &str) -> bool {
+    let Ok(url_re) = regex::Regex::new(r#"https?://[^\s)>"]+"#) else {
+        return false;
+    };
+
+    content.lines().any(|line| {
+        let Some(url_match) = url_re.find(line) else {
+            return false;
+        };
+        let url = url_match
+            .as_str()
+            .trim_end_matches(|ch: char| ",.;|".contains(ch));
+        let line_prefix = line[..url_match.start()].replace('|', " ");
+        let name_tokens = tokenize_significant_research_text(&line_prefix);
+        if name_tokens.len() < 2 {
+            return false;
+        }
+        let Some(url_identity) = extract_url_identity_text(url) else {
+            return false;
+        };
+        !name_tokens
+            .iter()
+            .any(|token| url_identity.contains(token.as_str()))
+    })
 }
 
 fn output_lacks_current_research_details(prompt: &str, content: &str) -> bool {
@@ -1672,7 +1849,15 @@ fn output_lacks_current_research_details(prompt: &str, content: &str) -> bool {
         if url_count < expected_entries {
             return true;
         }
-        if expected_entries >= 4 && extract_url_hosts(trimmed).len() < 3 {
+        let host_counts = extract_url_host_counts(trimmed);
+        if expected_entries >= 4 && host_counts.len() < 3 {
+            return true;
+        }
+        let dominant_host_count = host_counts.values().copied().max().unwrap_or(0);
+        if expected_entries >= 5 && dominant_host_count > 2 {
+            return true;
+        }
+        if output_contains_suspicious_research_host_mismatch(trimmed) {
             return true;
         }
     }
@@ -1699,6 +1884,175 @@ fn output_lacks_current_research_details(prompt: &str, content: &str) -> bool {
     }
 
     false
+}
+
+fn tool_results_lack_current_research_diversity(prompt: &str, messages: &[LlmMessage]) -> bool {
+    if !prompt_requests_current_web_research(prompt) {
+        return false;
+    }
+
+    let expected_entries = requested_research_entry_count(prompt).unwrap_or(1);
+    if expected_entries < 4 {
+        return false;
+    }
+
+    let mut corpus = String::new();
+    for message in messages.iter().filter(|message| message.role == "tool") {
+        if !message.text.trim().is_empty() {
+            corpus.push_str(&message.text);
+            corpus.push('\n');
+        }
+        if !message.tool_result.is_null() {
+            if let Ok(serialized) = serde_json::to_string(&message.tool_result) {
+                corpus.push_str(&serialized);
+                corpus.push('\n');
+            }
+        }
+    }
+
+    let hosts = extract_url_hosts(&corpus);
+    hosts.len() < 3
+}
+
+fn output_lacks_markdown_research_structure(prompt: &str, content: &str) -> bool {
+    if !prompt_requests_current_web_research(prompt) {
+        return false;
+    }
+
+    let expected_entries = requested_research_entry_count(prompt).unwrap_or(1);
+    if expected_entries < 3 {
+        return false;
+    }
+
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    if trimmed.starts_with('[') || trimmed.starts_with('{') {
+        return true;
+    }
+
+    let has_heading = trimmed.lines().any(|line| line.trim_start().starts_with('#'));
+    let has_table = trimmed
+        .lines()
+        .take(8)
+        .any(|line| line.contains('|') && !line.trim().is_empty());
+    let list_count = trimmed
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            trimmed.starts_with("- ")
+                || regex::Regex::new(r"^\d+\.\s")
+                    .map(|re| re.is_match(trimmed))
+                    .unwrap_or(false)
+        })
+        .count();
+
+    !(has_table || (has_heading && list_count >= expected_entries.min(3)))
+}
+
+fn prompt_requests_longform_markdown_writing(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let requests_longform = ["blog post", "article", "essay"]
+        .iter()
+        .any(|needle| prompt_lower.contains(needle));
+    requests_longform
+        && expected_file_management_targets(prompt)
+            .iter()
+            .flatten()
+            .any(|path| path.ends_with(".md"))
+}
+
+fn prompt_requests_concise_summary_file(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let mentions_summary = prompt_lower.contains("summary");
+    let requests_concise = ["concise", "brief", "short"]
+        .iter()
+        .any(|needle| prompt_lower.contains(needle));
+    let targets_saved_text = expected_file_management_targets(prompt)
+        .iter()
+        .flatten()
+        .any(|path| path.ends_with(".txt") || path.ends_with(".md"));
+    mentions_summary && requests_concise && targets_saved_text
+}
+
+fn output_lacks_longform_markdown_structure(prompt: &str, content: &str) -> bool {
+    if !prompt_requests_longform_markdown_writing(prompt) {
+        return false;
+    }
+
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    let heading_count = trimmed
+        .lines()
+        .filter(|line| line.trim_start().starts_with('#'))
+        .count();
+    let has_conclusion_heading = trimmed
+        .lines()
+        .any(|line| line.to_ascii_lowercase().contains("conclusion"));
+
+    heading_count < 3 || !has_conclusion_heading
+}
+
+fn output_violates_requested_word_budget(prompt: &str, content: &str) -> bool {
+    let Some((minimum_words, maximum_words)) = requested_word_budget_bounds(prompt) else {
+        return false;
+    };
+    let actual_words = count_words(content);
+    actual_words < minimum_words || actual_words > maximum_words
+}
+
+fn output_lacks_concise_summary_structure(prompt: &str, content: &str) -> bool {
+    if !prompt_requests_concise_summary_file(prompt) {
+        return false;
+    }
+
+    let actual_words = count_words(content);
+    if !(120..=350).contains(&actual_words) {
+        return true;
+    }
+
+    if let Some(expected_paragraphs) = requested_paragraph_count(prompt) {
+        return paragraph_count(content) != expected_paragraphs;
+    }
+
+    false
+}
+
+fn tool_results_lack_direct_current_research_evidence(
+    prompt: &str,
+    messages: &[LlmMessage],
+) -> bool {
+    if !prompt_requests_current_web_research(prompt) {
+        return false;
+    }
+
+    let expected_entries = requested_research_entry_count(prompt).unwrap_or(1);
+    if expected_entries < 4 {
+        return false;
+    }
+
+    let direct_evidence_calls = messages
+        .iter()
+        .filter(|message| message.role == "tool")
+        .filter(|message| {
+            matches!(
+                message.tool_name.as_str(),
+                "read_file" | "extract_document_text" | "inspect_tabular_data"
+            ) || message
+                .tool_result
+                .get("operation")
+                .and_then(Value::as_str)
+                .map(|op| op == "download" || op == "read")
+                .unwrap_or(false)
+        })
+        .count();
+
+    direct_evidence_calls == 0
 }
 
 fn tool_results_lack_current_research_grounding(prompt: &str, messages: &[LlmMessage]) -> bool {
@@ -1778,6 +2132,14 @@ fn should_force_current_research_synthesis(
     }
 
     if tool_results_lack_current_research_grounding(prompt, messages) {
+        return false;
+    }
+
+    if tool_results_lack_current_research_diversity(prompt, messages) {
+        return false;
+    }
+
+    if tool_results_lack_direct_current_research_evidence(prompt, messages) {
         return false;
     }
 
@@ -1909,7 +2271,18 @@ fn invalid_file_management_targets(
                             output_lacks_descriptive_answer(prompt, &content)
                                 || output_lacks_numeric_market_fact(prompt, &content)
                                 || output_lacks_current_research_details(prompt, &content)
+                                || output_lacks_longform_markdown_structure(prompt, &content)
+                                || output_violates_requested_word_budget(prompt, &content)
+                                || output_lacks_concise_summary_structure(prompt, &content)
+                                || (ext == "md"
+                                    && output_lacks_markdown_research_structure(
+                                        prompt, &content,
+                                    ))
                                 || tool_results_lack_current_research_grounding(prompt, messages)
+                                || tool_results_lack_current_research_diversity(prompt, messages)
+                                || tool_results_lack_direct_current_research_evidence(
+                                    prompt, messages,
+                                )
                         })
                         .unwrap_or(false)
                 {
@@ -1934,6 +2307,87 @@ fn invalid_file_management_targets(
             });
 
             invalid.or_else(|| None)
+        })
+        .collect()
+}
+
+fn describe_invalid_file_management_targets(
+    prompt: &str,
+    session_workdir: &Path,
+    invalid_targets: &[String],
+) -> Vec<String> {
+    invalid_targets
+        .iter()
+        .map(|target| {
+            let absolute = session_workdir.join(target);
+            let Some(content) = std::fs::read_to_string(&absolute).ok() else {
+                return format!("{target}: rewrite the file with valid task output.");
+            };
+
+            if prompt_requests_longform_markdown_writing(prompt) {
+                if let Some((minimum_words, maximum_words)) = requested_word_budget_bounds(prompt) {
+                    let actual_words = count_words(&content);
+                    if actual_words < minimum_words || actual_words > maximum_words {
+                        return format!(
+                            "{target}: current draft is {actual_words} words; revise it to {}-{} words and keep the Markdown article structure.",
+                            minimum_words, maximum_words
+                        );
+                    }
+                }
+                let strong_example_markers = [
+                    "for example",
+                    "for instance",
+                    "in practice",
+                    "consider a developer",
+                    "consider an engineer",
+                ];
+                let marker_count = strong_example_markers
+                    .iter()
+                    .filter(|needle| content.to_ascii_lowercase().contains(**needle))
+                    .count();
+                if marker_count == 0 {
+                    return format!(
+                        "{target}: add at least one concrete example or real-world developer scenario so the article is more specific and engaging."
+                    );
+                }
+            }
+
+            if prompt_requests_concise_summary_file(prompt) {
+                let actual_words = count_words(&content);
+                if !(120..=350).contains(&actual_words) {
+                    return format!(
+                        "{target}: current draft is {actual_words} words; keep the summary concise at roughly 120-350 words."
+                    );
+                }
+                if let Some(expected_paragraphs) = requested_paragraph_count(prompt) {
+                    let actual_paragraphs = paragraph_count(&content);
+                    if actual_paragraphs != expected_paragraphs {
+                        return format!(
+                            "{target}: current draft has {actual_paragraphs} paragraphs; rewrite it to exactly {expected_paragraphs} paragraphs."
+                        );
+                    }
+                }
+            }
+
+            if prompt_requests_current_web_research(prompt) {
+                let host_counts = extract_url_host_counts(&content);
+                let dominant_host_count = host_counts.values().copied().max().unwrap_or(0);
+                if requested_research_entry_count(prompt).unwrap_or(1) >= 5 && dominant_host_count > 2
+                {
+                    return format!(
+                        "{target}: too many entries come from one organizer or domain; replace weaker duplicates with other strong verified conferences from different hosts."
+                    );
+                }
+                if output_contains_suspicious_research_host_mismatch(&content) {
+                    return format!(
+                        "{target}: at least one event name does not match its website branding; replace that entry with a conference whose official URL clearly aligns with the event name."
+                    );
+                }
+            }
+
+            format!(
+                "{target}: rewrite the file so it satisfies the requested content and format."
+            )
         })
         .collect()
 }
@@ -6346,7 +6800,7 @@ impl AgentCore {
             inject_context_message(
                 &mut messages,
                 format!(
-                    "## File Grounding\nThe user explicitly referenced these real input files:\n{}\nInspect the relevant files before generating or executing code. Base every answer and script on the real file contents. Do not invent substitute datasets, placeholder paths, or mock values.",
+                    "## File Grounding\nThe user explicitly referenced these real input files:\n{}\nInspect the relevant files before generating or executing code. Base every answer and script on the real file contents. Treat these referenced files as read-only inputs unless the user explicitly asks you to modify them. Do not invent substitute datasets, placeholder paths, or mock values.",
                     explicit_prompt_paths
                         .iter()
                         .map(|path| format!("- {}", path))
@@ -6405,6 +6859,49 @@ impl AgentCore {
                 &mut messages,
                 "## Research Verification Hint\nWhen the task asks for current dates, URLs, or other factual fields, do not finalize from vague search snippets alone. If the first search results do not contain the exact field values, fetch or read the cited source pages in the workspace and write only the facts that are explicitly grounded in those tool results.".to_string(),
             );
+            inject_context_message(
+                &mut messages,
+                "## Multi-Item Research Guard\nFor multi-item current-research roundups, search snippets are only for candidate discovery. Before you finalize the saved artifact, inspect direct source evidence for the strongest candidates by downloading or reading the cited official pages in the workspace. Do not rely only on snippet text for exact dates or locations.".to_string(),
+            );
+            if expected_file_management_targets(prompt)
+                .iter()
+                .flatten()
+                .any(|path| path.ends_with(".md"))
+            {
+                inject_context_message(
+                    &mut messages,
+                    "## Research Output Contract\nIf the requested research artifact is a `.md` file, save the final result as real Markdown, not raw JSON or CSV. Prefer a short heading and then either a Markdown table or a bullet list with one item per verified entry and the requested fields.".to_string(),
+                );
+            }
+            let search_runtime = feature_tools::validate_web_search(
+                &self.platform.paths.config_dir,
+                None,
+            );
+            if let Some(engines) = search_runtime.get("engines").and_then(Value::as_array) {
+                let ready_engines = engines
+                    .iter()
+                    .filter(|entry| entry.get("ready").and_then(Value::as_bool) == Some(true))
+                    .filter_map(|entry| entry.get("engine").and_then(Value::as_str))
+                    .collect::<Vec<_>>();
+                let default_engine = search_runtime
+                    .get("default_engine")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                if !ready_engines.is_empty() {
+                    inject_context_message(
+                        &mut messages,
+                        format!(
+                            "## Search Runtime Hint\nConfigured default search engine: `{}`. Ready search engines in this runtime: {}. Prefer a ready engine directly when calling `web_search`, and if one query returns weak aggregator pages, broaden the organizer mix instead of downloading multiple events from one host family.",
+                            default_engine,
+                            ready_engines
+                                .iter()
+                                .map(|engine| format!("`{}`", engine))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    );
+                }
+            }
         }
         if tools.iter().any(|tool| tool.name == "web_search")
             && prompt_requests_numeric_market_fact(prompt)
@@ -6475,6 +6972,31 @@ impl AgentCore {
                     cached_hash
                 );
             }
+        }
+        if prompt_requests_longform_markdown_writing(prompt) {
+            let exact_budget = if let Some((min_words, max_words)) =
+                requested_word_budget_bounds(prompt)
+            {
+                format!(
+                    " Keep the final draft between {} and {} words.",
+                    min_words, max_words
+                )
+            } else {
+                String::new()
+            };
+            inject_context_message(
+                &mut messages,
+                format!(
+                    "## Long-Form Writing Contract\nFor a blog post or article saved to Markdown, draft the full article mentally first, then save one polished final version with a clear title, an introduction, multiple titled body sections, and an explicit conclusion. Cover several distinct points instead of restating the same benefit, and make the body specific to the requested audience or role with concrete reasoning, examples, or practical implications. Avoid extra stat or reread verification after a successful text-file write unless you are correcting a known issue. If the prompt gives a target word count, treat it as a planning budget rather than a loose suggestion, and bias the first draft slightly under the number rather than over it.{}",
+                    exact_budget
+                ),
+            );
+        }
+        if prompt_requests_concise_summary_file(prompt) {
+            inject_context_message(
+                &mut messages,
+                "## Concise Summary Contract\nFor a concise summary saved to a text file, preserve the requested paragraph count exactly and keep the total length compact. Favor roughly 150-300 words unless the user explicitly asks for a different length. Use each paragraph for a distinct job such as overview, core findings or benefits, and challenges or outlook when the source supports that structure. Avoid restating examples or details that are not necessary to capture the main themes.".to_string(),
+            );
         }
 
         // ── Phase 3: Planning (Cognitive Plan-and-Solve & compaction) ────
@@ -7892,6 +8414,11 @@ impl AgentCore {
                     let invalid_targets =
                         invalid_file_management_targets(prompt, &session_workdir, &messages);
                     if !invalid_targets.is_empty() {
+                        let invalid_target_details = describe_invalid_file_management_targets(
+                            prompt,
+                            &session_workdir,
+                            &invalid_targets,
+                        );
                         loop_state.mark_follow_up(
                             LoopTransitionReason::FileTargetsMissing,
                             format!(
@@ -7905,8 +8432,8 @@ impl AgentCore {
                             ..Default::default()
                         });
                         messages.push(LlmMessage::user(&format!(
-                            "The task is not complete yet. The following requested files exist but are still empty or invalid for their expected type:\n{}\nRewrite them with real task output. Use specialized native tools for PDFs, images, spreadsheets, or current web research instead of placeholders. For general current-research roundups, prefer diverse organizers or ecosystems instead of multiple entries from one source family unless the prompt explicitly asks for that source.",
-                            invalid_targets.join("\n")
+                            "The task is not complete yet. The following requested files exist but are still invalid:\n{}\nRewrite only those listed output files with a targeted fix for the stated issue. Do not overwrite other prompt-referenced source or input files unless the user explicitly asked for that. Use specialized native tools for PDFs, images, spreadsheets, or current web research instead of placeholders. For general current-research roundups, prefer diverse organizers or ecosystems instead of multiple entries from one source family unless the prompt explicitly asks for that source. If the target file is Markdown, keep it as real Markdown that matches the requested task shape rather than raw JSON or CSV.",
+                            invalid_target_details.join("\n")
                         )));
                         loop_state.transition(AgentPhase::RePlanning);
                         continue;
@@ -8930,34 +9457,37 @@ impl<'a> SessionStoreRef<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_dashboard_outbound_message, backend_has_preferred_auth,
+        append_dashboard_outbound_message, backend_has_preferred_auth, build_text_read_payload,
         build_authoritative_problem_requirements_context, build_backend_candidates,
         build_prefetched_prompt_file_context, build_prefetched_prompt_file_messages,
         build_progress_marker, build_role_supervisor_hint, build_skill_prefetch_message,
         canonical_tool_trace, collect_grounded_csv_headers, collect_grounded_paths,
-        dashboard_outbound_queue_path, expected_file_management_targets,
+        count_words, dashboard_outbound_queue_path, expected_file_management_targets,
         expected_persisted_level_script_paths, extract_explicit_directory_paths,
         extract_explicit_file_paths, extract_explicit_paths, extract_final_text,
         extract_level_number_from_output_path, file_manager_tool, format_unix_timestamp_utc,
-        generated_code_runtime_spec, generated_code_script_path,
-        invalid_file_management_targets,
+        generated_code_runtime_spec, generated_code_script_path, invalid_file_management_targets,
         is_simple_file_management_request, manage_generated_code_tool,
         missing_file_management_targets, normalize_conversation_log_text,
-        output_lacks_current_research_details, output_lacks_descriptive_answer,
-        output_lacks_expected_ignore_patterns, output_lacks_numeric_market_fact,
-        parse_shell_like_args, parse_tool_uri, persist_generated_code_copy,
+        output_lacks_concise_summary_structure, output_lacks_current_research_details,
+        output_lacks_descriptive_answer, output_lacks_expected_ignore_patterns,
+        output_lacks_markdown_research_structure, output_lacks_longform_markdown_structure,
+        output_lacks_numeric_market_fact, output_violates_requested_word_budget,
+        parse_shell_like_args, parse_tool_uri, paragraph_count, persist_generated_code_copy,
         prompt_explicitly_forbids_tools, prompt_mode_from_doc,
-        prompt_prefers_direct_specialized_tools,
-        prompt_requests_current_web_research, prompt_requests_descriptive_answer_file,
-        prompt_requests_document_extraction, prompt_requests_gitignore_file,
-        prompt_requests_numeric_market_fact,
+        prompt_prefers_direct_specialized_tools, prompt_requests_concise_summary_file,
+        prompt_requests_longform_markdown_writing, prompt_requests_current_web_research,
+        prompt_requests_descriptive_answer_file, prompt_requests_document_extraction,
+        prompt_requests_gitignore_file, prompt_requests_numeric_market_fact,
         prompt_requests_image_generation, prompt_requires_literal_json_output,
-        reasoning_policy_from_doc, role_relevance_score, score_tool_search_match,
-        sanitize_generated_code_name, select_delegate_roles, select_relevant_skills,
-        should_force_current_research_synthesis, should_skip_memory_for_prompt,
-        tool_results_lack_current_research_grounding, utf8_safe_preview,
-        validate_generated_code_execution_output, validate_generated_code_grounding, AgentRole,
-        LlmConfig, AUTHENTICATED_BACKEND_PRIORITY_BOOST, MAX_OUTBOUND_DASHBOARD_MESSAGES,
+        reasoning_policy_from_doc, requested_paragraph_count, requested_word_target,
+        role_relevance_score, score_tool_search_match, sanitize_generated_code_name,
+        select_delegate_roles, select_relevant_skills, should_force_current_research_synthesis,
+        should_skip_memory_for_prompt, tool_results_lack_direct_current_research_evidence,
+        tool_results_lack_current_research_diversity, tool_results_lack_current_research_grounding,
+        utf8_safe_preview, validate_generated_code_execution_output,
+        validate_generated_code_grounding, AgentRole, LlmConfig,
+        AUTHENTICATED_BACKEND_PRIORITY_BOOST, MAX_OUTBOUND_DASHBOARD_MESSAGES,
     };
     use crate::core::prompt_builder::{PromptMode, ReasoningPolicy};
     use crate::core::textual_skill_scanner::TextualSkill;
@@ -9036,6 +9566,38 @@ mod tests {
     fn prompt_prefers_direct_specialized_tools_detects_pdf_flow() {
         let prompt = "Read openclaw_report.pdf and write the extracted answers to answer.txt.";
         assert!(prompt_prefers_direct_specialized_tools(prompt));
+    }
+
+    #[test]
+    fn prompt_requests_longform_markdown_writing_detects_blog_request() {
+        let prompt = "Write a 500-word blog post about remote work and save it to blog_post.md.";
+        assert!(prompt_requests_longform_markdown_writing(prompt));
+    }
+
+    #[test]
+    fn requested_word_target_extracts_hyphenated_budget() {
+        let prompt = "Write a 500-word blog post about remote work and save it to blog_post.md.";
+        assert_eq!(requested_word_target(prompt), Some(500));
+    }
+
+    #[test]
+    fn requested_paragraph_count_extracts_summary_requirement() {
+        let prompt = "Read the document and write a concise 3-paragraph summary to summary_output.txt.";
+        assert_eq!(requested_paragraph_count(prompt), Some(3));
+    }
+
+    #[test]
+    fn prompt_requests_concise_summary_file_detects_saved_summary_prompt() {
+        let prompt =
+            "Read the document in summary_source.txt and write a concise 3-paragraph summary to summary_output.txt.";
+        assert!(prompt_requests_concise_summary_file(prompt));
+    }
+
+    #[test]
+    fn count_words_and_paragraph_count_track_basic_output_shape() {
+        let text = "First paragraph here.\n\nSecond paragraph there.\n\nThird paragraph now.";
+        assert_eq!(count_words(text), 9);
+        assert_eq!(paragraph_count(text), 3);
     }
 
     #[test]
@@ -9140,6 +9702,16 @@ mod tests {
                 ),
                 LlmMessage::tool_result(
                     "call_2",
+                    "read_file",
+                    json!({
+                        "success": true,
+                        "operation": "read",
+                        "path": "official_events_excerpt.html",
+                        "content": "CES 2026 January 6-9, 2026 Las Vegas Nevada USA\nSXSW 2026 March 12-18, 2026 Austin Texas USA\nGoogle Cloud Next 2026 April 22-24, 2026 Las Vegas Nevada USA"
+                    }),
+                ),
+                LlmMessage::tool_result(
+                    "call_3",
                     "file_write",
                     json!({"success": true, "path": output.to_string_lossy()}),
                 ),
@@ -9186,6 +9758,16 @@ mod tests {
                 ),
                 LlmMessage::tool_result(
                     "call_2",
+                    "read_file",
+                    json!({
+                        "success": true,
+                        "operation": "read",
+                        "path": "official_events_excerpt.html",
+                        "content": "CES 2026 January 6-9, 2026 Las Vegas Nevada USA https://www.ces.tech/\nSXSW 2026 March 12-18, 2026 Austin Texas USA https://schedule.sxsw.com/?year=2026\nGoogle Cloud Next 2026 April 22-24, 2026 Las Vegas Nevada USA https://www.googlecloudevents.com/next-vegas\nData + AI Summit 2026 June 8-11, 2026 San Francisco California USA https://dataaisummit.databricks.com/flow/db/dais2026/landing/page/home\nWWDC 2026 June 8-12, 2026 Cupertino California USA https://developer.apple.com/wwdc26/"
+                    }),
+                ),
+                LlmMessage::tool_result(
+                    "call_3",
                     "file_write",
                     json!({"success": true, "path": output.to_string_lossy()}),
                 ),
@@ -9232,6 +9814,16 @@ mod tests {
                 ),
                 LlmMessage::tool_result(
                     "call_2",
+                    "read_file",
+                    json!({
+                        "success": true,
+                        "operation": "read",
+                        "path": "official_events_excerpt.html",
+                        "content": "CES 2026 January 6-9, 2026 Las Vegas Nevada USA https://www.ces.tech/\nSXSW 2026 March 12-18, 2026 Austin Texas USA https://schedule.sxsw.com/?year=2026\nGoogle Cloud Next 2026 April 22-24, 2026 Las Vegas Nevada USA https://www.googlecloudevents.com/next-vegas\nData + AI Summit 2026 June 8-11, 2026 San Francisco California USA https://dataaisummit.databricks.com/flow/db/dais2026/landing/page/home\nWWDC 2026 June 8-12, 2026 Cupertino California USA https://developer.apple.com/wwdc26/"
+                    }),
+                ),
+                LlmMessage::tool_result(
+                    "call_3",
                     "file_write",
                     json!({"success": true, "path": output.to_string_lossy()}),
                 ),
@@ -9296,7 +9888,32 @@ mod tests {
     }
 
     #[test]
-    fn should_force_current_research_synthesis_when_grounding_is_sufficient() {
+    fn tool_results_lack_current_research_diversity_flags_single_host_results() {
+        let prompt =
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.";
+        let messages = vec![LlmMessage::tool_result(
+            "call_1",
+            "web_search",
+            json!({
+                "status": "success",
+                "query": "upcoming tech conferences 2026",
+                "result": {
+                    "results": [
+                        {"title": "Open Source in Finance Forum Toronto | April 14, 2026", "url": "https://events.linuxfoundation.org/open-source-finance-forum-toronto/", "snippet": ""},
+                        {"title": "OpenSearchCon Europe | April 16-17, 2026", "url": "https://events.linuxfoundation.org/opensearchcon-europe/", "snippet": ""},
+                        {"title": "MCP Dev Summit North America | April 2-3, 2026", "url": "https://events.linuxfoundation.org/mcp-dev-summit-north-america/", "snippet": ""},
+                        {"title": "Open Source Summit Europe | October 7-9, 2026", "url": "https://events.linuxfoundation.org/open-source-summit-europe/", "snippet": ""},
+                        {"title": "KubeCon + CloudNativeCon North America | November 9-12, 2026", "url": "https://events.linuxfoundation.org/kubecon-cloudnativecon-north-america/", "snippet": ""}
+                    ]
+                }
+            }),
+        )];
+
+        assert!(tool_results_lack_current_research_diversity(prompt, &messages));
+    }
+
+    #[test]
+    fn tool_results_lack_current_research_diversity_accepts_mixed_hosts() {
         let prompt =
             "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.";
         let messages = vec![LlmMessage::tool_result(
@@ -9308,14 +9925,222 @@ mod tests {
                 "result": {
                     "results": [
                         {"title": "CES 2026 | January 6-9, 2026", "url": "https://www.ces.tech/", "snippet": ""},
-                        {"title": "MWC Barcelona | March 2-5, 2026", "url": "https://www.mwcbarcelona.com/mymwc/schedule/", "snippet": ""},
-                        {"title": "SXSW Conferences & Festivals | March 12-18, 2026", "url": "https://www.sxsw.com/", "snippet": ""},
-                        {"title": "NVIDIA GTC 2026 | March 16-19, 2026", "url": "https://www.nvidia.com/gtc/", "snippet": ""},
-                        {"title": "Google Cloud Next 2026 | April 22-24, 2026", "url": "https://www.googlecloudevents.com/next-vegas", "snippet": ""}
+                        {"title": "SXSW Conferences & Festivals | March 12-18, 2026", "url": "https://schedule.sxsw.com/?year=2026", "snippet": ""},
+                        {"title": "Google Cloud Next 2026 | April 22-24, 2026", "url": "https://www.googlecloudevents.com/next-vegas", "snippet": ""},
+                        {"title": "Data + AI Summit 2026 | June 8-11, 2026", "url": "https://dataaisummit.databricks.com/flow/db/dais2026/landing/page/home", "snippet": ""},
+                        {"title": "WWDC 2026 | June 8-12, 2026", "url": "https://developer.apple.com/wwdc26/", "snippet": ""}
                     ]
                 }
             }),
         )];
+
+        assert!(!tool_results_lack_current_research_diversity(prompt, &messages));
+    }
+
+    #[test]
+    fn output_lacks_markdown_research_structure_flags_raw_json_payload() {
+        let prompt =
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.";
+        let content = r#"[
+  {"name":"CES 2026","date":"2026-01-06","location":"Las Vegas","website":"https://www.ces.tech/"}
+]"#;
+
+        assert!(output_lacks_markdown_research_structure(prompt, content));
+    }
+
+    #[test]
+    fn output_lacks_markdown_research_structure_accepts_markdown_table() {
+        let prompt =
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.";
+        let content = "# Upcoming Tech Conferences\n\n| Name | Date | Location | Website |\n|---|---|---|---|\n| CES 2026 | January 6-9, 2026 | Las Vegas, Nevada, USA | https://www.ces.tech/ |\n| SXSW 2026 | March 12-18, 2026 | Austin, Texas, USA | https://schedule.sxsw.com/?year=2026 |\n| Google Cloud Next 2026 | April 22-24, 2026 | Las Vegas, Nevada, USA | https://www.googlecloudevents.com/next-vegas |\n| Data + AI Summit 2026 | June 8-11, 2026 | San Francisco, California, USA | https://dataaisummit.databricks.com/flow/db/dais2026/landing/page/home |\n| WWDC 2026 | June 8-12, 2026 | Cupertino, California, USA | https://developer.apple.com/wwdc26/ |\n";
+
+        assert!(!output_lacks_markdown_research_structure(prompt, content));
+    }
+
+    #[test]
+    fn output_lacks_longform_markdown_structure_flags_missing_sections() {
+        let prompt =
+            "Write a 500-word blog post about the benefits of remote work for software developers. Save it to blog_post.md.";
+        let content = "# Remote Work for Developers\n\nRemote work is useful.\n\nIt improves focus and flexibility.\n";
+        assert!(output_lacks_longform_markdown_structure(prompt, content));
+    }
+
+    #[test]
+    fn output_lacks_longform_markdown_structure_accepts_structured_blog() {
+        let prompt =
+            "Write a 500-word blog post about the benefits of remote work for software developers. Save it to blog_post.md.";
+        let content = "# Remote Work for Developers\n\n## Focus\n\nDevelopers benefit from uninterrupted deep work.\n\n## Flexibility\n\nFlexible schedules help teams align complex work with their peak energy.\n\n## Career Growth\n\nRemote hiring expands access to stronger teams and projects.\n\n## Conclusion\n\nRemote work improves focus, flexibility, and opportunity when teams communicate well.\n";
+        assert!(!output_lacks_longform_markdown_structure(prompt, content));
+    }
+
+    #[test]
+    fn output_violates_requested_word_budget_flags_oversized_blog_post() {
+        let prompt =
+            "Write a 500-word blog post about the benefits of remote work for software developers. Save it to blog_post.md.";
+        let content = "word ".repeat(650);
+        assert!(output_violates_requested_word_budget(prompt, &content));
+    }
+
+    #[test]
+    fn output_violates_requested_word_budget_accepts_near_target_blog_post() {
+        let prompt =
+            "Write a 500-word blog post about the benefits of remote work for software developers. Save it to blog_post.md.";
+        let content = "word ".repeat(579);
+        assert!(!output_violates_requested_word_budget(prompt, &content));
+    }
+
+    #[test]
+    fn output_violates_requested_word_budget_flags_long_blog_post_past_relaxed_window() {
+        let prompt =
+            "Write a 500-word blog post about the benefits of remote work for software developers. Save it to blog_post.md.";
+        let content = "word ".repeat(590);
+        assert!(output_violates_requested_word_budget(prompt, &content));
+    }
+
+    #[test]
+    fn output_lacks_current_research_details_flags_host_family_overconcentration() {
+        let prompt =
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.";
+        let content = "# Upcoming Tech Conferences\n\n| Name | Date | Location | Website |\n|---|---|---|---|\n| Open Source in Finance Forum Toronto | Apr 14, 2026 | Toronto, Canada | https://events.linuxfoundation.org/open-source-finance-forum-toronto/ |\n| OpenSearchCon Europe | Apr 16-17, 2026 | Prague, Czechia | https://events.linuxfoundation.org/opensearchcon-europe/ |\n| Open Source Summit North America | May 18-20, 2026 | Minneapolis, Minnesota | https://events.linuxfoundation.org/open-source-summit-north-america/ |\n| Microsoft Ignite 2026 | November 17-20, 2026 | San Francisco, California, USA | https://ignite.microsoft.com/en-US/home |\n| Web Summit | November 9-12, 2026 | Lisbon, Portugal | https://websummit.com/ |\n";
+
+        assert!(output_lacks_current_research_details(prompt, content));
+    }
+
+    #[test]
+    fn output_lacks_current_research_details_flags_brand_host_mismatch() {
+        let prompt =
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.";
+        let content = "# Upcoming Tech Conferences\n\n| Name | Date | Location | Website |\n|---|---|---|---|\n| AI Dev 26 x SF | April 28-29, 2026 | San Francisco, California, USA | https://ai-dev.deeplearning.ai/ |\n| NDC Toronto 2026 | May 5-8, 2026 | Toronto, Canada | https://ndctoronto.com/ |\n| Web Summit Vancouver | May 11-14, 2026 | Vancouver, Canada | https://collisionconf.com/ |\n| 76th IEEE Electronic Components and Technology Conference (ECTC) | May 26-29, 2026 | Orlando, Florida, USA | https://ectc.net/ |\n| Fortune Brainstorm Tech 2026 | June 8-10, 2026 | Aspen, Colorado, USA | https://conferences.fortune.com/brainstorm-tech/ |\n";
+
+        assert!(output_lacks_current_research_details(prompt, content));
+    }
+
+    #[test]
+    fn output_lacks_current_research_details_accepts_matching_brand_and_host() {
+        let prompt =
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.";
+        let content = "# Upcoming Tech Conferences\n\n| Name | Date | Location | Website |\n|---|---|---|---|\n| AI Dev 26 x SF | April 28-29, 2026 | San Francisco, California, USA | https://ai-dev.deeplearning.ai/ |\n| NDC Toronto 2026 | May 5-8, 2026 | Toronto, Canada | https://ndctoronto.com/ |\n| Web Summit Vancouver | May 11-14, 2026 | Vancouver, Canada | https://vancouver.websummit.com/ |\n| 76th IEEE Electronic Components and Technology Conference (ECTC) | May 26-29, 2026 | Orlando, Florida, USA | https://ectc.net/ |\n| Fortune Brainstorm Tech 2026 | June 8-10, 2026 | Aspen, Colorado, USA | https://conferences.fortune.com/brainstorm-tech/ |\n";
+
+        assert!(!output_lacks_current_research_details(prompt, content));
+    }
+
+    #[test]
+    fn output_lacks_concise_summary_structure_flags_verbose_summary() {
+        let prompt =
+            "Read the document in summary_source.txt and write a concise 3-paragraph summary to summary_output.txt.";
+        let paragraph = "This paragraph repeats details to stay overly long for a concise summary while still sounding coherent and accurate. ";
+        let content = format!(
+            "{}\n\n{}\n\n{}",
+            paragraph.repeat(18),
+            paragraph.repeat(18),
+            paragraph.repeat(18)
+        );
+        assert!(output_lacks_concise_summary_structure(prompt, &content));
+    }
+
+    #[test]
+    fn output_lacks_concise_summary_structure_accepts_compact_three_paragraph_summary() {
+        let prompt =
+            "Read the document in summary_source.txt and write a concise 3-paragraph summary to summary_output.txt.";
+        let content = "Artificial intelligence is reshaping healthcare by improving diagnosis, treatment planning, and patient care through systems that can analyze large amounts of clinical data more quickly than traditional workflows. The article presents AI as a major shift in medical practice rather than a narrow technical trend.\n\nIts strongest applications include medical imaging, drug discovery, and predictive analytics. In each area, the technology helps clinicians detect disease earlier, identify promising treatments faster, and anticipate patient risks before conditions worsen, which can improve outcomes and reduce costs.\n\nThe article also stresses important challenges, including patient privacy, algorithmic bias, limited transparency, and evolving regulation. Its final point is that AI should support human clinicians, combining machine efficiency with human judgment, empathy, and ethical responsibility.";
+        assert!(!output_lacks_concise_summary_structure(prompt, content));
+    }
+
+    #[test]
+    fn tool_results_lack_direct_current_research_evidence_flags_search_only_roundup() {
+        let prompt =
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.";
+        let messages = vec![LlmMessage::tool_result(
+            "call_1",
+            "web_search",
+            json!({
+                "status": "success",
+                "query": "upcoming tech conferences 2026",
+                "result": {
+                    "results": [
+                        {"title": "CES 2026 | January 6-9, 2026", "url": "https://www.ces.tech/", "snippet": ""},
+                        {"title": "SXSW Conferences & Festivals | March 12-18, 2026", "url": "https://schedule.sxsw.com/?year=2026", "snippet": ""},
+                        {"title": "Google Cloud Next 2026 | April 22-24, 2026", "url": "https://www.googlecloudevents.com/next-vegas", "snippet": ""},
+                        {"title": "Data + AI Summit 2026 | June 8-11, 2026", "url": "https://dataaisummit.databricks.com/flow/db/dais2026/landing/page/home", "snippet": ""},
+                        {"title": "WWDC 2026 | June 8-12, 2026", "url": "https://developer.apple.com/wwdc26/", "snippet": ""}
+                    ]
+                }
+            }),
+        )];
+
+        assert!(tool_results_lack_direct_current_research_evidence(prompt, &messages));
+    }
+
+    #[test]
+    fn tool_results_lack_direct_current_research_evidence_accepts_page_reads() {
+        let prompt =
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.";
+        let messages = vec![
+            LlmMessage::tool_result(
+                "call_1",
+                "web_search",
+                json!({
+                    "status": "success",
+                    "query": "upcoming tech conferences 2026",
+                    "result": {
+                        "results": [
+                            {"title": "CES 2026 | January 6-9, 2026", "url": "https://www.ces.tech/", "snippet": ""},
+                            {"title": "SXSW Conferences & Festivals | March 12-18, 2026", "url": "https://schedule.sxsw.com/?year=2026", "snippet": ""},
+                            {"title": "Google Cloud Next 2026 | April 22-24, 2026", "url": "https://www.googlecloudevents.com/next-vegas", "snippet": ""},
+                            {"title": "Data + AI Summit 2026 | June 8-11, 2026", "url": "https://dataaisummit.databricks.com/flow/db/dais2026/landing/page/home", "snippet": ""},
+                            {"title": "WWDC 2026 | June 8-12, 2026", "url": "https://developer.apple.com/wwdc26/", "snippet": ""}
+                        ]
+                    }
+                }),
+            ),
+            LlmMessage::tool_result(
+                "call_2",
+                "read_file",
+                json!({
+                    "success": true,
+                    "operation": "read",
+                    "path": "official_event.html",
+                    "content": "startDate 2026-06-08 endDate 2026-06-12 Cupertino"
+                }),
+            ),
+        ];
+
+        assert!(!tool_results_lack_direct_current_research_evidence(prompt, &messages));
+    }
+
+    #[test]
+    fn should_force_current_research_synthesis_when_grounding_is_sufficient() {
+        let prompt =
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.";
+        let messages = vec![
+            LlmMessage::tool_result(
+                "call_1",
+                "web_search",
+                json!({
+                    "status": "success",
+                    "query": "upcoming tech conferences 2026",
+                    "result": {
+                        "results": [
+                            {"title": "CES 2026 | January 6-9, 2026", "url": "https://www.ces.tech/", "snippet": ""},
+                            {"title": "MWC Barcelona | March 2-5, 2026", "url": "https://www.mwcbarcelona.com/mymwc/schedule/", "snippet": ""},
+                            {"title": "SXSW Conferences & Festivals | March 12-18, 2026", "url": "https://www.sxsw.com/", "snippet": ""},
+                            {"title": "NVIDIA GTC 2026 | March 16-19, 2026", "url": "https://www.nvidia.com/gtc/", "snippet": ""},
+                            {"title": "Google Cloud Next 2026 | April 22-24, 2026", "url": "https://www.googlecloudevents.com/next-vegas", "snippet": ""}
+                        ]
+                    }
+                }),
+            ),
+            LlmMessage::tool_result(
+                "call_2",
+                "read_file",
+                json!({
+                    "success": true,
+                    "operation": "read",
+                    "path": "grounded_events_excerpt.html",
+                    "content": "CES 2026 January 6-9, 2026 Las Vegas\nMWC Barcelona March 2-5, 2026 Barcelona\nSXSW March 12-18, 2026 Austin"
+                }),
+            ),
+        ];
 
         assert!(should_force_current_research_synthesis(
             prompt, &messages, true, false, 2, 5
@@ -10393,6 +11218,15 @@ mod tests {
             .contains("260.48"));
     }
 
+    #[test]
+    fn build_text_read_payload_returns_full_small_file_even_with_pattern() {
+        let content = "# Upcoming Tech Conferences\n\n| Name | Date |\n|---|---|\n| ExampleConf 2026 | June 2-3, 2026 |\n";
+        let payload = build_text_read_payload(content, Some("Upcoming|ExampleConf"), 400);
+
+        assert_eq!(payload["truncated"], json!(false));
+        assert_eq!(payload["content"], json!(content));
+    }
+
     #[tokio::test]
     async fn file_manager_tool_read_supports_alternative_patterns() {
         let dir = tempdir().unwrap();
@@ -10657,6 +11491,20 @@ startxref
         assert!(!targets
             .iter()
             .any(|group| group.iter().any(|path| path == "email_13.txt")));
+    }
+
+    #[test]
+    fn expected_file_management_targets_ignore_named_source_file_when_output_is_explicit() {
+        let targets = expected_file_management_targets(
+            "Read the document in summary_source.txt and write a concise 3-paragraph summary to summary_output.txt.",
+        );
+
+        assert!(targets
+            .iter()
+            .any(|group| group.iter().any(|path| path == "summary_output.txt")));
+        assert!(!targets
+            .iter()
+            .any(|group| group.iter().any(|path| path == "summary_source.txt")));
     }
 
     #[test]

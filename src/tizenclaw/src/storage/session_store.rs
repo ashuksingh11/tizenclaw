@@ -190,6 +190,30 @@ fn utf8_suffix(text: &str, max_chars: usize) -> String {
     text.chars().skip(total.saturating_sub(max_chars)).collect()
 }
 
+fn summarized_text_metadata(text: &str) -> Value {
+    let word_count = text.split_whitespace().count();
+    let line_count = text.lines().count();
+    let paragraph_count = text
+        .split("\n\n")
+        .filter(|paragraph| !paragraph.trim().is_empty())
+        .count();
+    let heading_count = text
+        .lines()
+        .filter(|line| line.trim_start().starts_with('#'))
+        .count();
+    let url_count = regex::Regex::new(r"https?://\S+")
+        .map(|regex| regex.find_iter(text).count())
+        .unwrap_or(0);
+
+    json!({
+        "word_count": word_count,
+        "line_count": line_count,
+        "paragraph_count": paragraph_count,
+        "heading_count": heading_count,
+        "url_count": url_count,
+    })
+}
+
 fn summarize_large_argument_fields(value: &Value) -> Value {
     const MAX_INLINE_ARG_CHARS: usize = 1600;
     const MAX_INLINE_ARG_HEAD_CHARS: usize = 1000;
@@ -204,12 +228,26 @@ fn summarize_large_argument_fields(value: &Value) -> Value {
                         if matches!(key.as_str(), "content" | "code" | "text")
                             && text.chars().count() > MAX_INLINE_ARG_CHARS =>
                     {
-                        json!({
-                            "preview": utf8_prefix(text, MAX_INLINE_ARG_HEAD_CHARS),
-                            "tail_preview": utf8_suffix(text, MAX_INLINE_ARG_TAIL_CHARS),
-                            "char_count": text.chars().count(),
-                            "truncated": true
-                        })
+                        let mut summary = serde_json::Map::new();
+                        summary.insert(
+                            "preview".to_string(),
+                            Value::String(utf8_prefix(text, MAX_INLINE_ARG_HEAD_CHARS)),
+                        );
+                        summary.insert(
+                            "tail_preview".to_string(),
+                            Value::String(utf8_suffix(text, MAX_INLINE_ARG_TAIL_CHARS)),
+                        );
+                        summary.insert(
+                            "char_count".to_string(),
+                            json!(text.chars().count()),
+                        );
+                        summary.insert("truncated".to_string(), json!(true));
+                        if let Some(metadata) = summarized_text_metadata(text).as_object() {
+                            for (meta_key, meta_value) in metadata {
+                                summary.insert(meta_key.clone(), meta_value.clone());
+                            }
+                        }
+                        Value::Object(summary)
                     }
                     _ => summarize_large_argument_fields(entry),
                 };
@@ -936,8 +974,9 @@ impl SessionStore {
         let path = self.transcript_path(session_id);
         let _g = self.lock.write().unwrap();
         if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
-            let _ = file.write_all(event.to_string().as_bytes());
-            let _ = file.write_all(b"\n");
+            let mut line = event.to_string();
+            line.push('\n');
+            let _ = file.write_all(line.as_bytes());
             let _ = file.flush();
             let _ = file.sync_all();
         }
@@ -1651,6 +1690,37 @@ mod tests {
             .as_str()
             .unwrap()
             .ends_with("/workdirs/runtime"));
+    }
+
+    #[test]
+    fn test_summarized_text_metadata_reports_shape_signals() {
+        let text = "# Title\n\nFirst paragraph with https://example.com.\n\n## Conclusion\n\nSecond paragraph.";
+        let metadata = summarized_text_metadata(text);
+
+        assert_eq!(metadata["word_count"], json!(10));
+        assert_eq!(metadata["paragraph_count"], json!(4));
+        assert_eq!(metadata["heading_count"], json!(2));
+        assert_eq!(metadata["url_count"], json!(1));
+    }
+
+    #[test]
+    fn test_summarize_large_argument_fields_preserves_word_count_for_large_text() {
+        let text = format!(
+            "# Title\n\n{}\n\n## Conclusion\n\n{} https://example.com",
+            "word ".repeat(500),
+            "tail ".repeat(40)
+        );
+        let payload = json!({ "content": text });
+        let summarized = summarize_large_argument_fields(&payload);
+
+        assert!(
+            summarized["content"]["word_count"]
+                .as_u64()
+                .expect("word_count should be present")
+                > 500
+        );
+        assert_eq!(summarized["content"]["heading_count"], json!(2));
+        assert_eq!(summarized["content"]["url_count"], json!(1));
     }
 
     #[test]
