@@ -259,6 +259,54 @@ fn is_placeholder(value: &str) -> bool {
     value.trim().is_empty() || value.starts_with("YOUR_")
 }
 
+fn search_engine_required_fields(engine: &str) -> &'static [&'static str] {
+    match engine {
+        "naver" => &["client_id", "client_secret"],
+        "google" => &["api_key", "search_engine_id"],
+        "brave" => &["api_key"],
+        "gemini" | "grok" | "perplexity" => &["api_key"],
+        "kimi" => &["api_key", "base_url"],
+        _ => &[],
+    }
+}
+
+fn search_engine_ready(doc: &Value, engine: &str) -> bool {
+    if matches!(engine, "duckduckgo" | "duckduckgo_mirror") {
+        return true;
+    }
+
+    let cfg = doc.get(engine).cloned().unwrap_or_else(|| json!({}));
+    search_engine_required_fields(engine).iter().all(|field| {
+        let value = cfg
+            .get(*field)
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        !is_placeholder(value)
+    })
+}
+
+fn resolve_search_engine(doc: &Value, requested_engine: Option<&str>) -> String {
+    if let Some(requested) = requested_engine
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+    {
+        return requested;
+    }
+
+    let default_engine = doc
+        .get("default_engine")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_else(|| "duckduckgo_mirror".to_string());
+
+    if search_engine_ready(doc, &default_engine) {
+        default_engine
+    } else {
+        "duckduckgo_mirror".to_string()
+    }
+}
+
 fn parse_requested_image_size(value: &str) -> (u32, u32) {
     let normalized = value.trim().to_ascii_lowercase();
     let Some((w, h)) = normalized.split_once('x') else {
@@ -669,6 +717,156 @@ fn strip_markdown_markup(text: &str) -> String {
         .to_string()
 }
 
+fn collapse_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn extract_html_excerpt(body: &str) -> String {
+    let meta_description = Regex::new(
+        r#"(?is)<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']"#,
+    )
+    .ok()
+    .and_then(|re| re.captures(body))
+    .and_then(|captures| captures.get(1).map(|value| collapse_whitespace(value.as_str())))
+    .filter(|value| !value.is_empty());
+    if let Some(description) = meta_description {
+        return description;
+    }
+
+    let without_scripts = Regex::new(r"(?is)<script[^>]*>.*?</script>|<style[^>]*>.*?</style>")
+        .map(|re| re.replace_all(body, " ").into_owned())
+        .unwrap_or_else(|_| body.to_string());
+    let text = Regex::new(r"(?is)<[^>]+>")
+        .map(|re| re.replace_all(&without_scripts, " ").into_owned())
+        .unwrap_or(without_scripts);
+    let compact = collapse_whitespace(&text);
+    if compact.is_empty() {
+        return String::new();
+    }
+
+    let date_re = Regex::new(
+        r"(?ix)
+        \b
+        (?:
+            (?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|
+             jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|
+             nov(?:ember)?|dec(?:ember)?)
+            \s+\d{1,2}(?:\s*[–-]\s*\d{1,2})?,\s+\d{4}
+            |
+            \d{4}-\d{2}-\d{2}
+        )
+        \b",
+    )
+    .ok();
+    if let Some(re) = date_re {
+        if let Some(matched) = re.find(&compact) {
+            let start = matched.start().saturating_sub(120);
+            let end = (matched.end() + 180).min(compact.len());
+            return compact[start..end].trim().to_string();
+        }
+    }
+
+    compact.chars().take(320).collect::<String>().trim().to_string()
+}
+
+fn text_contains_specific_date(value: &str) -> bool {
+    Regex::new(
+        r"(?ix)
+        \b
+        (?:
+            (?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|
+             jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|
+             nov(?:ember)?|dec(?:ember)?)
+            \s+\d{1,2}(?:\s*[–-]\s*\d{1,2})?,\s+\d{4}
+            |
+            \d{4}-\d{2}-\d{2}
+        )
+        \b",
+    )
+    .map(|re| re.is_match(value))
+    .unwrap_or(false)
+}
+
+fn search_result_quality_score(title: &str, snippet: &str, url: &str) -> i32 {
+    let title_lower = title.to_ascii_lowercase();
+    let snippet_lower = snippet.to_ascii_lowercase();
+    let url_lower = url.to_ascii_lowercase();
+
+    let mut score = 0;
+    if text_contains_specific_date(title) || text_contains_specific_date(snippet) {
+        score += 5;
+    }
+    if snippet_lower.contains("official") {
+        score += 2;
+    }
+    if url_lower.starts_with("https://") {
+        score += 1;
+    }
+    if !snippet.trim().is_empty() {
+        score += 1;
+    }
+
+    let ancillary_markers = [
+        "/session/",
+        "/sessions/",
+        "/on-demand/",
+        "/news",
+        "/blog",
+        "/article",
+        "/tickets",
+        "/ticket",
+        "/investor-pass",
+        "/exhibit",
+        "/watch",
+        "/keynotes",
+        "/support/",
+    ];
+    if ancillary_markers
+        .iter()
+        .any(|marker| url_lower.contains(marker))
+    {
+        score -= 8;
+    }
+
+    let weak_title_markers = [
+        "latest news",
+        "tickets",
+        "investor pass",
+        "watch on demand",
+        "session catalog",
+        "event overview",
+        "keynote",
+        "blog",
+    ];
+    if weak_title_markers
+        .iter()
+        .any(|marker| title_lower.contains(marker))
+    {
+        score -= 5;
+    }
+
+    if url_lower.contains('?') {
+        score -= 2;
+    }
+
+    score
+}
+
+async fn fetch_search_result_excerpt(url: &str) -> Option<String> {
+    let client = crate::generic::infra::http_client::default_client();
+    let response = client.get(url).send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let body = response.text().await.ok()?;
+    let excerpt = extract_html_excerpt(&body);
+    if excerpt.is_empty() {
+        None
+    } else {
+        Some(excerpt)
+    }
+}
+
 async fn fallback_search_duckduckgo(query: &str, limit: usize) -> Result<Value, String> {
     let encoded_query = percent_encode_query(query);
     let url = format!(
@@ -717,19 +915,46 @@ async fn fallback_search_duckduckgo(query: &str, limit: usize) -> Result<Value, 
             .map(strip_markdown_markup)
             .find(|line| !line.is_empty())
             .unwrap_or_default();
+        let title = strip_markdown_markup(capture.name("title").map(|m| m.as_str()).unwrap_or(""));
+        let url = decode_duckduckgo_redirect(capture.name("url").map(|m| m.as_str()).unwrap_or(""));
+        let snippet = if snippet.is_empty() {
+            fetch_search_result_excerpt(&url).await.unwrap_or_default()
+        } else {
+            snippet
+        };
         results.push(json!({
-            "title": strip_markdown_markup(capture.name("title").map(|m| m.as_str()).unwrap_or("")),
+            "title": title,
             "snippet": snippet,
-            "url": decode_duckduckgo_redirect(capture.name("url").map(|m| m.as_str()).unwrap_or("")),
+            "url": url,
         }));
-        if results.len() >= limit {
-            break;
-        }
     }
 
     if results.is_empty() {
         return Err("DuckDuckGo mirror returned no parsable results".to_string());
     }
+
+    results.sort_by(|left, right| {
+        let left_title = left.get("title").and_then(|value| value.as_str()).unwrap_or("");
+        let left_snippet = left
+            .get("snippet")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let left_url = left.get("url").and_then(|value| value.as_str()).unwrap_or("");
+        let right_title = right
+            .get("title")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let right_snippet = right
+            .get("snippet")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let right_url = right.get("url").and_then(|value| value.as_str()).unwrap_or("");
+
+        search_result_quality_score(right_title, right_snippet, right_url).cmp(
+            &search_result_quality_score(left_title, left_snippet, left_url),
+        )
+    });
+    results.truncate(limit);
 
     Ok(json!({
         "engine": "duckduckgo_mirror",
@@ -1102,15 +1327,7 @@ pub fn validate_web_search(config_dir: &Path, engine: Option<&str>) -> Value {
             }
         }
         let cfg = doc.get(key).cloned().unwrap_or_else(|| json!({}));
-        let required_fields: &[&str] = match key {
-            "naver" => &["client_id", "client_secret"],
-            "google" => &["api_key", "search_engine_id"],
-            "brave" => &["api_key"],
-            "gemini" | "grok" | "perplexity" => &["api_key"],
-            "kimi" => &["api_key", "base_url"],
-            _ => &[],
-        };
-        let missing: Vec<String> = required_fields
+        let missing: Vec<String> = search_engine_required_fields(key)
             .iter()
             .filter_map(|field| {
                 let value = cfg
@@ -1363,15 +1580,7 @@ pub async fn web_search(
         Ok(config) => config,
         Err(err) => return json!({ "error": err }),
     };
-    let selected_engine = requested_engine
-        .clone()
-        .or_else(|| {
-            config
-                .get("default_engine")
-                .and_then(|value| value.as_str())
-                .map(ToString::to_string)
-        })
-        .unwrap_or_else(|| "google".to_string());
+    let selected_engine = resolve_search_engine(&config, requested_engine.as_deref());
 
     let cli_args = if let Some(engine) = &requested_engine {
         vec![
@@ -1443,12 +1652,78 @@ mod tests {
     }
 
     #[test]
+    fn resolve_search_engine_uses_duckduckgo_when_default_is_unconfigured() {
+        let config = json!({
+            "default_engine": "naver",
+            "naver": {
+                "client_id": "YOUR_NAVER_CLIENT_ID",
+                "client_secret": "YOUR_NAVER_CLIENT_SECRET"
+            }
+        });
+
+        assert_eq!(
+            resolve_search_engine(&config, None),
+            "duckduckgo_mirror".to_string()
+        );
+    }
+
+    #[test]
     fn duckduckgo_redirect_decoder_extracts_actual_url() {
         let url = "http://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fevent%3Fa%3D1%26b%3D2&rut=abc";
         assert_eq!(
             decode_duckduckgo_redirect(url),
             "https://example.com/event?a=1&b=2"
         );
+    }
+
+    #[test]
+    fn extract_html_excerpt_prefers_meta_description_and_dates() {
+        let html = r#"
+        <html>
+          <head>
+            <meta name="description" content="Conference date: April 22-24, 2026 in Las Vegas." />
+          </head>
+          <body>
+            <p>Ignore this body text.</p>
+          </body>
+        </html>
+        "#;
+
+        let excerpt = extract_html_excerpt(html);
+        assert!(excerpt.contains("April 22-24, 2026"));
+        assert!(excerpt.contains("Las Vegas"));
+    }
+
+    #[test]
+    fn search_result_quality_score_prefers_primary_event_page() {
+        let landing_score = search_result_quality_score(
+            "Microsoft Build, June 2-3, 2026 / San Francisco and online",
+            "Go deep on real code and real systems with the teams building and scaling AI.",
+            "https://build.microsoft.com/en-US/home",
+        );
+        let ticket_score = search_result_quality_score(
+            "TechCrunch Disrupt 2026 - Tickets",
+            "TechCrunch Disrupt 2026 is the startup epicenter for tech and VC leaders.",
+            "https://techcrunch.com/events/tc-disrupt-2026/tickets/",
+        );
+
+        assert!(landing_score > ticket_score);
+    }
+
+    #[test]
+    fn search_result_quality_score_penalizes_session_pages() {
+        let event_score = search_result_quality_score(
+            "NVIDIA GTC 2026 | March 16-19, 2026",
+            "NVIDIA GTC 2026 will take place March 16-19, 2026 in San Jose, California.",
+            "https://www.nvidia.com/gtc/",
+        );
+        let session_score = search_result_quality_score(
+            "GTC 2026 Keynote S81595 | GTC San Jose 2026 | NVIDIA On-Demand",
+            "In this keynote, NVIDIA founder and CEO Jensen Huang looks ahead to the future.",
+            "https://www.nvidia.com/en-us/on-demand/session/gtc26-s81595/",
+        );
+
+        assert!(event_score > session_score);
     }
 
     #[test]

@@ -1,0 +1,48 @@
+{
+  "name": "json-only-transcript-runtime-contract",
+  "steps": [
+    {
+      "name": "prompt-persists-json-only-assistant-response",
+      "method": "process_prompt",
+      "params": {
+        "session_id": "${unique_session_id:json-only-transcript}",
+        "prompt": "You are a grading function. Your ONLY job is to output a single JSON object.\nDo NOT use any tools.\nDo NOT create files or run commands.\nDo NOT write any prose, explanation, or commentary outside the JSON.\nRespond with ONLY this JSON structure (no markdown, no code fences, no extra text): {\"scores\":{\"accuracy\":0.0},\"total\":0.0,\"notes\":\"brief justification\"}\n\nTask summary:\n- The worker was asked to write a summary into blog_post.md.\n- The worker also mentioned notes.txt during the transcript.\n- Your task is only to grade the transcript and return the JSON object.\n\nArtifact: The implementation uses Rust, preserves assistant transcript durability, and avoids benchmark-specific hacks."
+      },
+      "assertions": [
+        {
+          "path": "session_id",
+          "exists": true
+        },
+        {
+          "path": "text",
+          "contains": "{"
+        }
+      ]
+    },
+    {
+      "name": "session-runtime-reports-assistant-transcript",
+      "method": "get_session_runtime",
+      "params": {
+        "session_id": "${unique_session_id:json-only-transcript}"
+      },
+      "assertions": [
+        {
+          "path": "status",
+          "equals": "ok"
+        },
+        {
+          "path": "session.transcript_exists",
+          "equals": true
+        },
+        {
+          "path": "session.assistant_message_count",
+          "greater_than": 0
+        },
+        {
+          "path": "session.resume_ready",
+          "equals": true
+        }
+      ]
+    }
+  ]
+}

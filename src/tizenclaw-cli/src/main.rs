@@ -27,6 +27,7 @@ static RPC_REQUEST_COUNTER: AtomicUsize = AtomicUsize::new(1);
 const DEFAULT_SOCKET_NAME: &str = "tizenclaw.sock";
 const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 const DEFAULT_PROMPT_TIMEOUT_MS: u64 = 180_000;
+const LONG_PROMPT_STREAM_THRESHOLD_CHARS: usize = 6_000;
 const MAX_IPC_MESSAGE_SIZE: usize = 10 * 1024 * 1024;
 const CONNECTION_ERROR_MESSAGE: &str = "Cannot connect to tizenclaw daemon. Is it running?";
 const STREAM_CHUNK_METHOD: &str = "stream_chunk";
@@ -243,7 +244,9 @@ impl IpcClient {
     ) -> Result<PromptCall, String> {
         let prompt_client = self.with_timeout_floor(Duration::from_millis(DEFAULT_PROMPT_TIMEOUT_MS));
         if stream {
-            prompt_client.process_prompt_stream(session_id, prompt)
+            prompt_client.process_prompt_stream(session_id, prompt, true)
+        } else if prompt.len() >= LONG_PROMPT_STREAM_THRESHOLD_CHARS {
+            prompt_client.process_prompt_stream(session_id, prompt, false)
         } else {
             let payload = prompt_client.call_raw_with_fallback(
                 "process_prompt",
@@ -282,7 +285,12 @@ impl IpcClient {
         }
     }
 
-    fn process_prompt_stream(&self, session_id: &str, prompt: &str) -> Result<PromptCall, String> {
+    fn process_prompt_stream(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        emit_chunks: bool,
+    ) -> Result<PromptCall, String> {
         let primary_request = json!({
             "jsonrpc": "2.0",
             "id": next_request_id(),
@@ -293,8 +301,8 @@ impl IpcClient {
             },
         });
 
-        match self.send_stream_request(primary_request) {
-            Ok(response) => Ok(self.prompt_call_from_stream_response(response)),
+        match self.send_stream_request(primary_request, emit_chunks) {
+            Ok(response) => Ok(self.prompt_call_from_stream_response(response, emit_chunks)),
             Err(error) if method_not_found(&error) => {
                 let fallback_request = json!({
                     "jsonrpc": "2.0",
@@ -306,14 +314,18 @@ impl IpcClient {
                         "stream": true,
                     },
                 });
-                let response = self.send_stream_request(fallback_request)?;
-                Ok(self.prompt_call_from_stream_response(response))
+                let response = self.send_stream_request(fallback_request, emit_chunks)?;
+                Ok(self.prompt_call_from_stream_response(response, emit_chunks))
             }
             Err(error) => Err(error),
         }
     }
 
-    fn prompt_call_from_stream_response(&self, response: RpcResponse) -> PromptCall {
+    fn prompt_call_from_stream_response(
+        &self,
+        response: RpcResponse,
+        emit_chunks: bool,
+    ) -> PromptCall {
         let result = extract_result(&response.payload).unwrap_or_else(|_| Value::Null);
         let text = extract_prompt_text(&result).or_else(|| {
             if response.streamed_chunks.is_empty() {
@@ -326,11 +338,11 @@ impl IpcClient {
         PromptCall {
             payload: response.payload,
             text,
-            stream_received: !response.streamed_chunks.is_empty(),
+            stream_received: emit_chunks && !response.streamed_chunks.is_empty(),
         }
     }
 
-    fn send_stream_request(&self, request: Value) -> Result<RpcResponse, String> {
+    fn send_stream_request(&self, request: Value, emit_chunks: bool) -> Result<RpcResponse, String> {
         let mut stream = self.connect()?;
         write_frame(&mut stream, &request.to_string())?;
 
@@ -346,7 +358,9 @@ impl IpcClient {
                     .and_then(|value| value.get("chunk"))
                     .and_then(Value::as_str)
                 {
-                    print_stream_delta(chunk);
+                    if emit_chunks {
+                        print_stream_delta(chunk);
+                    }
                     streamed_chunks.push(chunk.to_string());
                 }
                 continue;
@@ -358,7 +372,9 @@ impl IpcClient {
                     .and_then(|value| value.get("delta"))
                     .and_then(Value::as_str)
             }) {
-                print_stream_delta(delta);
+                if emit_chunks {
+                    print_stream_delta(delta);
+                }
                 streamed_chunks.push(delta.to_string());
                 continue;
             }
@@ -369,7 +385,9 @@ impl IpcClient {
                 .filter(|value| value.contains('\n'))
             {
                 for delta in extract_ndjson_deltas(lines) {
-                    print_stream_delta(&delta);
+                    if emit_chunks {
+                        print_stream_delta(&delta);
+                    }
                     streamed_chunks.push(delta);
                 }
             }
@@ -2619,7 +2637,8 @@ mod tests {
         codex_auth_string, codex_oauth_snapshot, dashboard_port_from_doc, extract_ndjson_deltas,
         merge_missing, parse_chat_ids, parse_cli, parse_codex_login_state, reload_message,
         should_retry_reload_error, try_reload_llm_backends_with, CliOptions, CommandMode,
-        IpcClient, DEFAULT_PROMPT_TIMEOUT_MS, DEFAULT_TIMEOUT_MS,
+        IpcClient, RpcResponse, DEFAULT_PROMPT_TIMEOUT_MS, DEFAULT_TIMEOUT_MS,
+        LONG_PROMPT_STREAM_THRESHOLD_CHARS,
     };
     use serde_json::json;
     use std::time::Duration;
@@ -2891,6 +2910,29 @@ mod tests {
             client.with_timeout_floor(Duration::from_millis(DEFAULT_PROMPT_TIMEOUT_MS));
 
         assert_eq!(prompt_client.timeout, Duration::from_millis(240_000));
+    }
+
+    #[test]
+    fn prompt_call_from_silent_stream_keeps_final_text_non_streaming() {
+        let client = IpcClient::from_options(&CliOptions::default());
+        let response = RpcResponse {
+            payload: json!({
+                "result": {
+                    "text": "{\"total\":0.8}"
+                }
+            }),
+            streamed_chunks: vec!["{\"tot".to_string(), "al\":0.8}".to_string()],
+        };
+
+        let prompt_call = client.prompt_call_from_stream_response(response, false);
+
+        assert_eq!(prompt_call.text.as_deref(), Some("{\"total\":0.8}"));
+        assert!(!prompt_call.stream_received);
+    }
+
+    #[test]
+    fn long_prompt_threshold_is_large_enough_for_normal_cli_prompts() {
+        assert!(LONG_PROMPT_STREAM_THRESHOLD_CHARS > 4000);
     }
 
     #[test]

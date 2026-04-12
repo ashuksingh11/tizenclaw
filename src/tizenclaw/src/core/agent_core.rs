@@ -262,6 +262,33 @@ fn append_text_match_snippet(
     }
 }
 
+fn format_unix_timestamp_utc(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let secs_of_day = secs % 86_400;
+    let hour = secs_of_day / 3_600;
+    let minute = (secs_of_day % 3_600) / 60;
+    let second = secs_of_day % 60;
+
+    // Howard Hinnant's civil_from_days algorithm.
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let mut year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = mp + if mp < 10 { 3 } else { -9 };
+    if month <= 2 {
+        year += 1;
+    }
+
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
+        year, month, day, hour, minute, second
+    )
+}
+
 fn split_match_patterns(pattern: &str) -> Vec<String> {
     let trimmed = pattern.trim();
     if trimmed.is_empty() {
@@ -1554,6 +1581,210 @@ fn output_lacks_numeric_market_fact(prompt: &str, content: &str) -> bool {
     has_placeholder || !has_numeric_price
 }
 
+fn prompt_requests_url_field(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    ["website", "url", "link"]
+        .iter()
+        .any(|needle| prompt_lower.contains(needle))
+}
+
+fn prompt_requests_date_field(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    ["date", "dates", "when"]
+        .iter()
+        .any(|needle| prompt_lower.contains(needle))
+}
+
+fn requested_research_entry_count(prompt: &str) -> Option<usize> {
+    let prompt_normalized = normalize_prompt_intent_text(prompt);
+    let patterns = [
+        r"(?i)\b(?:find|identify|list|gather|collect|provide|research)\s+(\d{1,2})\b",
+        r"(?i)\b(\d{1,2})\s+(?:upcoming|current|recent|latest|real|tech|conference|event|items?|examples?)\b",
+    ];
+    for pattern in patterns {
+        if let Ok(re) = regex::Regex::new(pattern) {
+            if let Some(captures) = re.captures(&prompt_normalized) {
+                if let Some(count) = captures
+                    .get(1)
+                    .and_then(|value| value.as_str().parse::<usize>().ok())
+                    .filter(|value| *value > 0)
+                {
+                    return Some(count);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_url_hosts(content: &str) -> HashSet<String> {
+    let Ok(url_re) = regex::Regex::new(r#"https?://[^\s)>"]+"#) else {
+        return HashSet::new();
+    };
+
+    url_re
+        .find_iter(content)
+        .filter_map(|matched| {
+            let raw = matched.as_str().trim_end_matches(|ch: char| ",.;|".contains(ch));
+            let host = reqwest::Url::parse(raw)
+                .ok()
+                .and_then(|url| url.host_str().map(ToString::to_string))?;
+            Some(host.trim_start_matches("www.").to_string())
+        })
+        .collect()
+}
+
+fn output_lacks_current_research_details(prompt: &str, content: &str) -> bool {
+    if !prompt_requests_current_web_research(prompt) {
+        return false;
+    }
+
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    let content_lower = trimmed.to_ascii_lowercase();
+    let has_placeholder = [
+        "tbd",
+        "to be determined",
+        "unknown",
+        "not available",
+        "not provided",
+        "not specified",
+        "could not",
+        "couldn't",
+        "preserved that as-is",
+        "rather than guessing",
+    ]
+    .iter()
+    .any(|needle| content_lower.contains(needle));
+    if has_placeholder {
+        return true;
+    }
+
+    let expected_entries = requested_research_entry_count(prompt).unwrap_or(1);
+
+    if prompt_requests_url_field(prompt) {
+        let url_count = regex::Regex::new(r"https?://\S+")
+            .map(|re| re.find_iter(trimmed).count())
+            .unwrap_or(0);
+        if url_count < expected_entries {
+            return true;
+        }
+        if expected_entries >= 4 && extract_url_hosts(trimmed).len() < 3 {
+            return true;
+        }
+    }
+
+    if prompt_requests_date_field(prompt) {
+        let specific_date_count = regex::Regex::new(
+            r"(?ix)
+            \b
+            (?:
+                (?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|
+                 jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|
+                 nov(?:ember)?|dec(?:ember)?)
+                \s+\d{1,2}(?:\s*[–-]\s*\d{1,2})?,\s+\d{4}
+                |
+                \d{4}-\d{2}-\d{2}
+            )
+            \b",
+        )
+        .map(|re| re.find_iter(trimmed).count())
+        .unwrap_or(0);
+        if specific_date_count < expected_entries {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn tool_results_lack_current_research_grounding(prompt: &str, messages: &[LlmMessage]) -> bool {
+    if !prompt_requests_current_web_research(prompt) {
+        return false;
+    }
+
+    let expected_entries = requested_research_entry_count(prompt).unwrap_or(1);
+    let mut corpus = String::new();
+    for message in messages.iter().filter(|message| message.role == "tool") {
+        if !message.text.trim().is_empty() {
+            corpus.push_str(&message.text);
+            corpus.push('\n');
+        }
+        if !message.tool_result.is_null() {
+            if let Ok(serialized) = serde_json::to_string(&message.tool_result) {
+                corpus.push_str(&serialized);
+                corpus.push('\n');
+            }
+        }
+    }
+
+    if corpus.trim().is_empty() {
+        return true;
+    }
+
+    if prompt_requests_url_field(prompt) {
+        let url_count = regex::Regex::new(r"https?://\S+")
+            .map(|re| re.find_iter(&corpus).count())
+            .unwrap_or(0);
+        if url_count < expected_entries {
+            return true;
+        }
+    }
+
+    if prompt_requests_date_field(prompt) {
+        let specific_date_count = regex::Regex::new(
+            r"(?ix)
+            \b
+            (?:
+                (?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|
+                 jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|
+                 nov(?:ember)?|dec(?:ember)?)
+                \s+\d{1,2}(?:\s*[–-]\s*\d{1,2})?,\s+\d{4}
+                |
+                \d{4}-\d{2}-\d{2}
+            )
+            \b",
+        )
+        .map(|re| re.find_iter(&corpus).count())
+        .unwrap_or(0);
+        if specific_date_count < expected_entries {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn should_force_current_research_synthesis(
+    prompt: &str,
+    messages: &[LlmMessage],
+    has_expected_file_targets: bool,
+    literal_json_output: bool,
+    round: usize,
+    total_tool_calls: usize,
+) -> bool {
+    if literal_json_output
+        || !has_expected_file_targets
+        || !prompt_requests_current_web_research(prompt)
+    {
+        return false;
+    }
+
+    if collect_successful_file_management_actions(messages) > 0 {
+        return false;
+    }
+
+    if tool_results_lack_current_research_grounding(prompt, messages) {
+        return false;
+    }
+
+    let expected_entries = requested_research_entry_count(prompt).unwrap_or(1);
+    round >= 2 && total_tool_calls >= expected_entries
+}
+
 fn prompt_requests_gitignore_file(prompt: &str) -> bool {
     let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
     prompt_lower.contains(".gitignore")
@@ -1677,6 +1908,8 @@ fn invalid_file_management_targets(
                         .map(|content| {
                             output_lacks_descriptive_answer(prompt, &content)
                                 || output_lacks_numeric_market_fact(prompt, &content)
+                                || output_lacks_current_research_details(prompt, &content)
+                                || tool_results_lack_current_research_grounding(prompt, messages)
                         })
                         .unwrap_or(false)
                 {
@@ -6054,10 +6287,7 @@ impl AgentCore {
             let data_dir = session_workdir.to_string_lossy().to_string();
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| {
-                    let secs = d.as_secs();
-                    format!("UNIX:{}", secs) // Simple enough for now
-                })
+                .map(|d| format_unix_timestamp_utc(d.as_secs()))
                 .unwrap_or_else(|_| "unknown".into());
             builder = builder.set_runtime_context(platform_name, model_name, data_dir, now);
 
@@ -6170,6 +6400,10 @@ impl AgentCore {
             inject_context_message(
                 &mut messages,
                 "## Direct Tool Hint\nThis request depends on current external information. Call `web_search` directly with focused queries before drafting the answer, instead of starting with generic tool discovery.".to_string(),
+            );
+            inject_context_message(
+                &mut messages,
+                "## Research Verification Hint\nWhen the task asks for current dates, URLs, or other factual fields, do not finalize from vague search snippets alone. If the first search results do not contain the exact field values, fetch or read the cited source pages in the workspace and write only the facts that are explicitly grounded in those tool results.".to_string(),
             );
         }
         if tools.iter().any(|tool| tool.name == "web_search")
@@ -7555,6 +7789,30 @@ impl AgentCore {
                     }
                 }
 
+                if should_force_current_research_synthesis(
+                    prompt,
+                    &messages,
+                    has_expected_file_targets,
+                    literal_json_output,
+                    loop_state.round,
+                    loop_state.total_tool_calls,
+                ) {
+                    loop_state.mark_follow_up(
+                        LoopTransitionReason::FileActionRequired,
+                        "current research evidence is sufficient; synthesize the requested file now",
+                    );
+                    messages.push(LlmMessage {
+                        role: "assistant".into(),
+                        text: response.text.clone(),
+                        ..Default::default()
+                    });
+                    messages.push(LlmMessage::user(
+                        "The task is not complete yet, but you already have enough verified current research evidence in the existing tool results. Stop gathering more sources and create the requested file now using only the strongest verified entries already collected. For a general roundup, prefer diverse organizers or ecosystems instead of filling the list from one event family. If one candidate is weak, replace it with a stronger verified candidate from the existing evidence instead of searching again.",
+                    ));
+                    loop_state.transition(AgentPhase::RePlanning);
+                    continue;
+                }
+
                 // If it was a workflow tool, we just successfully completed it! Save output and advance.
                 if is_workflow_tool {
                     let last_msg = messages.last().unwrap();
@@ -7585,7 +7843,8 @@ impl AgentCore {
                     continue; // Immediately start next round to pick up next workflow step
                 }
             } else {
-                if has_expected_file_targets
+                if !literal_json_output
+                    && has_expected_file_targets
                     && collect_successful_file_management_actions(&messages) == 0
                 {
                     loop_state.mark_follow_up(
@@ -7606,7 +7865,7 @@ impl AgentCore {
                     loop_state.transition(AgentPhase::RePlanning);
                     continue;
                 }
-                if has_expected_file_targets {
+                if !literal_json_output && has_expected_file_targets {
                     let missing_targets =
                         missing_file_management_targets(prompt, &session_workdir, &messages);
                     if !missing_targets.is_empty() {
@@ -7646,7 +7905,7 @@ impl AgentCore {
                             ..Default::default()
                         });
                         messages.push(LlmMessage::user(&format!(
-                            "The task is not complete yet. The following requested files exist but are still empty or invalid for their expected type:\n{}\nRewrite them with real task output. Use specialized native tools for PDFs, images, spreadsheets, or current web research instead of placeholders.",
+                            "The task is not complete yet. The following requested files exist but are still empty or invalid for their expected type:\n{}\nRewrite them with real task output. Use specialized native tools for PDFs, images, spreadsheets, or current web research instead of placeholders. For general current-research roundups, prefer diverse organizers or ecosystems instead of multiple entries from one source family unless the prompt explicitly asks for that source.",
                             invalid_targets.join("\n")
                         )));
                         loop_state.transition(AgentPhase::RePlanning);
@@ -7654,7 +7913,11 @@ impl AgentCore {
                     }
                 }
 
-                let expected_output_paths = expected_persisted_level_script_paths(prompt);
+                let expected_output_paths = if literal_json_output {
+                    Vec::new()
+                } else {
+                    expected_persisted_level_script_paths(prompt)
+                };
                 if !expected_output_paths.is_empty() {
                     let saved_output_paths = collect_successful_saved_output_paths(&messages);
                     let missing_output_paths = expected_output_paths
@@ -8303,6 +8566,9 @@ impl AgentCore {
                     "compacted_snapshot_exists": false,
                     "structured_compaction_exists": false,
                     "transcript_exists": false,
+                    "transcript_message_count": 0,
+                    "assistant_message_count": 0,
+                    "tool_result_count": 0,
                     "resume_ready": false,
                 })
             });
@@ -8672,12 +8938,13 @@ mod tests {
         dashboard_outbound_queue_path, expected_file_management_targets,
         expected_persisted_level_script_paths, extract_explicit_directory_paths,
         extract_explicit_file_paths, extract_explicit_paths, extract_final_text,
-        extract_level_number_from_output_path, file_manager_tool, generated_code_runtime_spec,
-        generated_code_script_path, invalid_file_management_targets,
+        extract_level_number_from_output_path, file_manager_tool, format_unix_timestamp_utc,
+        generated_code_runtime_spec, generated_code_script_path,
+        invalid_file_management_targets,
         is_simple_file_management_request, manage_generated_code_tool,
         missing_file_management_targets, normalize_conversation_log_text,
-        output_lacks_descriptive_answer, output_lacks_expected_ignore_patterns,
-        output_lacks_numeric_market_fact,
+        output_lacks_current_research_details, output_lacks_descriptive_answer,
+        output_lacks_expected_ignore_patterns, output_lacks_numeric_market_fact,
         parse_shell_like_args, parse_tool_uri, persist_generated_code_copy,
         prompt_explicitly_forbids_tools, prompt_mode_from_doc,
         prompt_prefers_direct_specialized_tools,
@@ -8687,7 +8954,8 @@ mod tests {
         prompt_requests_image_generation, prompt_requires_literal_json_output,
         reasoning_policy_from_doc, role_relevance_score, score_tool_search_match,
         sanitize_generated_code_name, select_delegate_roles, select_relevant_skills,
-        should_skip_memory_for_prompt, utf8_safe_preview,
+        should_force_current_research_synthesis, should_skip_memory_for_prompt,
+        tool_results_lack_current_research_grounding, utf8_safe_preview,
         validate_generated_code_execution_output, validate_generated_code_grounding, AgentRole,
         LlmConfig, AUTHENTICATED_BACKEND_PRIORITY_BOOST, MAX_OUTBOUND_DASHBOARD_MESSAGES,
     };
@@ -8713,6 +8981,11 @@ mod tests {
 
         assert_eq!(preview.chars().count(), 12);
         assert!(text.starts_with(preview));
+    }
+
+    #[test]
+    fn format_unix_timestamp_utc_formats_epoch_readably() {
+        assert_eq!(format_unix_timestamp_utc(0), "1970-01-01 00:00:00 UTC");
     }
 
     #[test]
@@ -8831,6 +9104,255 @@ mod tests {
         assert!(output_lacks_numeric_market_fact(
             "Research the current stock price of Apple (AAPL).",
             "Price: Current live price could not be reliably extracted."
+        ));
+    }
+
+    #[test]
+    fn invalid_file_management_targets_flags_current_research_with_month_only_dates() {
+        let dir = tempdir().unwrap();
+        let output = dir.path().join("events.md");
+        std::fs::write(
+            &output,
+            "# Upcoming Tech Conferences\n\n| Name | Date | Location | Website |\n|---|---|---|---|\n| CES 2026 | January 6-9, 2026 | Las Vegas, Nevada, USA | https://www.ces.tech/ |\n| SXSW 2026 | March 12-18, 2026 | Austin, Texas, USA | https://schedule.sxsw.com/?year=2026 |\n| Google Cloud Next 2026 | April 22-24, 2026 | Las Vegas, Nevada, USA | https://www.googlecloudevents.com/next-vegas |\n| Data + AI Summit 2026 | June 8-11, 2026 | San Francisco, California, USA | https://dataaisummit.databricks.com/flow/db/dais2026/landing/page/home |\n| WeAreDevelopers World Congress: North America 2026 | September 2026 | San Jose, California, USA | https://www.wearedevelopers.com/world-congress-north-america |\n",
+        )
+        .unwrap();
+
+        let invalid = invalid_file_management_targets(
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.",
+            dir.path(),
+            &[
+                LlmMessage::tool_result(
+                    "call_1",
+                    "web_search",
+                    json!({
+                        "status": "success",
+                        "query": "upcoming tech conferences 2026",
+                        "result": {
+                            "results": [
+                                {"title": "CES 2026 | January 6-9, 2026", "url": "https://www.ces.tech/", "snippet": ""},
+                                {"title": "SXSW Conferences & Festivals | March 12-18, 2026", "url": "https://schedule.sxsw.com/?year=2026", "snippet": ""},
+                                {"title": "Google Cloud Next 2026 | April 22-24, 2026", "url": "https://www.googlecloudevents.com/next-vegas", "snippet": ""},
+                                {"title": "Data + AI Summit 2026 | June 8-11, 2026", "url": "https://dataaisummit.databricks.com/flow/db/dais2026/landing/page/home", "snippet": ""},
+                                {"title": "WWDC 2026 | June 8-12, 2026", "url": "https://developer.apple.com/wwdc26/", "snippet": ""}
+                            ]
+                        }
+                    }),
+                ),
+                LlmMessage::tool_result(
+                    "call_2",
+                    "file_write",
+                    json!({"success": true, "path": output.to_string_lossy()}),
+                ),
+            ],
+        );
+
+        assert_eq!(invalid, vec!["events.md".to_string()]);
+        assert!(output_lacks_current_research_details(
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.",
+            &std::fs::read_to_string(&output).unwrap()
+        ));
+    }
+
+    #[test]
+    fn invalid_file_management_targets_flags_low_diversity_current_research_sources() {
+        let dir = tempdir().unwrap();
+        let output = dir.path().join("events.md");
+        std::fs::write(
+            &output,
+            "# Upcoming Tech Conferences\n\n1. Open Source in Finance Forum Toronto - https://events.linuxfoundation.org/open-source-finance-forum-toronto/\n2. OpenSearchCon Europe - https://events.linuxfoundation.org/opensearchcon-europe/\n3. MCP Dev Summit North America - https://events.linuxfoundation.org/mcp-dev-summit-north-america/\n4. Open Source Summit Europe - https://events.linuxfoundation.org/open-source-summit-europe/\n5. KubeCon + CloudNativeCon North America - https://events.linuxfoundation.org/kubecon-cloudnativecon-north-america/\n",
+        )
+        .unwrap();
+
+        let invalid = invalid_file_management_targets(
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.",
+            dir.path(),
+            &[
+                LlmMessage::tool_result(
+                    "call_1",
+                    "web_search",
+                    json!({
+                        "status": "success",
+                        "query": "upcoming tech conferences 2026",
+                        "result": {
+                            "results": [
+                                {"title": "Open Source in Finance Forum Toronto | April 14, 2026", "url": "https://events.linuxfoundation.org/open-source-finance-forum-toronto/", "snippet": ""},
+                                {"title": "OpenSearchCon Europe | April 16-17, 2026", "url": "https://events.linuxfoundation.org/opensearchcon-europe/", "snippet": ""},
+                                {"title": "MCP Dev Summit North America | April 2-3, 2026", "url": "https://events.linuxfoundation.org/mcp-dev-summit-north-america/", "snippet": ""},
+                                {"title": "Open Source Summit Europe | October 7-9, 2026", "url": "https://events.linuxfoundation.org/open-source-summit-europe/", "snippet": ""},
+                                {"title": "KubeCon + CloudNativeCon North America | November 9-12, 2026", "url": "https://events.linuxfoundation.org/kubecon-cloudnativecon-north-america/", "snippet": ""}
+                            ]
+                        }
+                    }),
+                ),
+                LlmMessage::tool_result(
+                    "call_2",
+                    "file_write",
+                    json!({"success": true, "path": output.to_string_lossy()}),
+                ),
+            ],
+        );
+
+        assert_eq!(invalid, vec!["events.md".to_string()]);
+        assert!(output_lacks_current_research_details(
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.",
+            &std::fs::read_to_string(&output).unwrap()
+        ));
+    }
+
+    #[test]
+    fn invalid_file_management_targets_accepts_current_research_with_specific_dates() {
+        let dir = tempdir().unwrap();
+        let output = dir.path().join("events.md");
+        std::fs::write(
+            &output,
+            "# Upcoming Tech Conferences\n\n| Name | Date | Location | Website |\n|---|---|---|---|\n| CES 2026 | January 6-9, 2026 | Las Vegas, Nevada, USA | https://www.ces.tech/ |\n| SXSW 2026 | March 12-18, 2026 | Austin, Texas, USA | https://schedule.sxsw.com/?year=2026 |\n| Google Cloud Next 2026 | April 22-24, 2026 | Las Vegas, Nevada, USA | https://www.googlecloudevents.com/next-vegas |\n| Data + AI Summit 2026 | June 8-11, 2026 | San Francisco, California, USA | https://dataaisummit.databricks.com/flow/db/dais2026/landing/page/home |\n| WWDC 2026 | June 8-12, 2026 | Cupertino, California, USA | https://developer.apple.com/wwdc26/ |\n",
+        )
+        .unwrap();
+
+        let invalid = invalid_file_management_targets(
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.",
+            dir.path(),
+            &[
+                LlmMessage::tool_result(
+                    "call_1",
+                    "web_search",
+                    json!({
+                        "status": "success",
+                        "query": "upcoming tech conferences 2026",
+                        "result": {
+                            "results": [
+                                {"title": "CES 2026 | January 6-9, 2026", "url": "https://www.ces.tech/", "snippet": ""},
+                                {"title": "SXSW Conferences & Festivals | March 12-18, 2026", "url": "https://schedule.sxsw.com/?year=2026", "snippet": ""},
+                                {"title": "Google Cloud Next 2026 | April 22-24, 2026", "url": "https://www.googlecloudevents.com/next-vegas", "snippet": ""},
+                                {"title": "Data + AI Summit 2026 | June 8-11, 2026", "url": "https://dataaisummit.databricks.com/flow/db/dais2026/landing/page/home", "snippet": ""},
+                                {"title": "WWDC 2026 | June 8-12, 2026", "url": "https://developer.apple.com/wwdc26/", "snippet": ""}
+                            ]
+                        }
+                    }),
+                ),
+                LlmMessage::tool_result(
+                    "call_2",
+                    "file_write",
+                    json!({"success": true, "path": output.to_string_lossy()}),
+                ),
+            ],
+        );
+
+        assert!(invalid.is_empty());
+        assert!(!output_lacks_current_research_details(
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.",
+            &std::fs::read_to_string(&output).unwrap()
+        ));
+    }
+
+    #[test]
+    fn tool_results_lack_current_research_grounding_flags_ungrounded_dates() {
+        let prompt =
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.";
+        let messages = vec![LlmMessage::tool_result(
+            "call_1",
+            "web_search",
+            json!({
+                "status": "success",
+                "query": "upcoming tech conferences 2026",
+                "result": {
+                    "results": [
+                        {"title": "CES - The Most Powerful Tech Event in the World", "url": "https://www.ces.tech/", "snippet": ""},
+                        {"title": "MWC Barcelona | MWC Barcelona", "url": "https://www.mwcbarcelona.com/mymwc/schedule/", "snippet": ""},
+                        {"title": "Google Cloud Next 2026 - Las Vegas Conference", "url": "https://www.googlecloudevents.com/next-vegas", "snippet": ""},
+                        {"title": "Best of NVIDIA GTC: AI Breakthroughs and Recommended Sessions", "url": "https://www.nvidia.com/gtc/", "snippet": ""},
+                        {"title": "SXSW Conferences & Festivals | March 12-18, 2026", "url": "https://www.sxsw.com/", "snippet": ""}
+                    ]
+                }
+            }),
+        )];
+
+        assert!(tool_results_lack_current_research_grounding(prompt, &messages));
+    }
+
+    #[test]
+    fn tool_results_lack_current_research_grounding_accepts_grounded_dates() {
+        let prompt =
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.";
+        let messages = vec![LlmMessage::tool_result(
+            "call_1",
+            "web_search",
+            json!({
+                "status": "success",
+                "query": "upcoming tech conferences 2026",
+                "result": {
+                    "results": [
+                        {"title": "CES 2026 | January 6-9, 2026", "url": "https://www.ces.tech/", "snippet": ""},
+                        {"title": "MWC Barcelona | March 2-5, 2026", "url": "https://www.mwcbarcelona.com/mymwc/schedule/", "snippet": ""},
+                        {"title": "SXSW Conferences & Festivals | March 12-18, 2026", "url": "https://www.sxsw.com/", "snippet": ""},
+                        {"title": "NVIDIA GTC 2026 | March 16-19, 2026", "url": "https://www.nvidia.com/gtc/", "snippet": ""},
+                        {"title": "Google Cloud Next 2026 | April 22-24, 2026", "url": "https://www.googlecloudevents.com/next-vegas", "snippet": ""}
+                    ]
+                }
+            }),
+        )];
+
+        assert!(!tool_results_lack_current_research_grounding(prompt, &messages));
+    }
+
+    #[test]
+    fn should_force_current_research_synthesis_when_grounding_is_sufficient() {
+        let prompt =
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.";
+        let messages = vec![LlmMessage::tool_result(
+            "call_1",
+            "web_search",
+            json!({
+                "status": "success",
+                "query": "upcoming tech conferences 2026",
+                "result": {
+                    "results": [
+                        {"title": "CES 2026 | January 6-9, 2026", "url": "https://www.ces.tech/", "snippet": ""},
+                        {"title": "MWC Barcelona | March 2-5, 2026", "url": "https://www.mwcbarcelona.com/mymwc/schedule/", "snippet": ""},
+                        {"title": "SXSW Conferences & Festivals | March 12-18, 2026", "url": "https://www.sxsw.com/", "snippet": ""},
+                        {"title": "NVIDIA GTC 2026 | March 16-19, 2026", "url": "https://www.nvidia.com/gtc/", "snippet": ""},
+                        {"title": "Google Cloud Next 2026 | April 22-24, 2026", "url": "https://www.googlecloudevents.com/next-vegas", "snippet": ""}
+                    ]
+                }
+            }),
+        )];
+
+        assert!(should_force_current_research_synthesis(
+            prompt, &messages, true, false, 2, 5
+        ));
+    }
+
+    #[test]
+    fn should_not_force_current_research_synthesis_after_file_write() {
+        let prompt =
+            "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.";
+        let messages = vec![
+            LlmMessage::tool_result(
+                "call_1",
+                "web_search",
+                json!({
+                    "status": "success",
+                    "query": "upcoming tech conferences 2026",
+                    "result": {
+                        "results": [
+                            {"title": "CES 2026 | January 6-9, 2026", "url": "https://www.ces.tech/", "snippet": ""},
+                            {"title": "MWC Barcelona | March 2-5, 2026", "url": "https://www.mwcbarcelona.com/mymwc/schedule/", "snippet": ""},
+                            {"title": "SXSW Conferences & Festivals | March 12-18, 2026", "url": "https://www.sxsw.com/", "snippet": ""},
+                            {"title": "NVIDIA GTC 2026 | March 16-19, 2026", "url": "https://www.nvidia.com/gtc/", "snippet": ""},
+                            {"title": "Google Cloud Next 2026 | April 22-24, 2026", "url": "https://www.googlecloudevents.com/next-vegas", "snippet": ""}
+                        ]
+                    }
+                }),
+            ),
+            LlmMessage::tool_result(
+                "call_2",
+                "file_write",
+                json!({"success": true, "path": "events.md"}),
+            ),
+        ];
+
+        assert!(!should_force_current_research_synthesis(
+            prompt, &messages, true, false, 3, 6
         ));
     }
 

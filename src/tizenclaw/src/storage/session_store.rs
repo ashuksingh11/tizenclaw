@@ -681,6 +681,19 @@ impl SessionStore {
             .unwrap_or(0);
 
         let transcript_exists = transcript_path.exists();
+        let transcript_messages = if transcript_exists {
+            self.load_transcript_messages(session_id)
+        } else {
+            Vec::new()
+        };
+        let assistant_message_count = transcript_messages
+            .iter()
+            .filter(|message| message.role == "assistant" && !message.text.trim().is_empty())
+            .count();
+        let tool_result_count = transcript_messages
+            .iter()
+            .filter(|message| message.role == "tool")
+            .count();
         let compacted_exists = compacted_path.exists();
         let compacted_structured_exists = compacted_structured_path.exists();
         let resume_ready = compacted_exists
@@ -700,6 +713,9 @@ impl SessionStore {
             "compacted_snapshot_exists": compacted_exists,
             "structured_compaction_exists": compacted_structured_exists,
             "transcript_exists": transcript_exists,
+            "transcript_message_count": transcript_messages.len(),
+            "assistant_message_count": assistant_message_count,
+            "tool_result_count": tool_result_count,
             "resume_ready": resume_ready,
         })
     }

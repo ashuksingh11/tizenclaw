@@ -200,6 +200,7 @@ impl SystemPromptBuilder {
         lines.push("8. **No Fake Outputs**: If a task asks for a real image, document extraction, or current research, use the corresponding native tool (`generate_image`, `extract_document_text`, `web_search`) instead of fabricating placeholder files or unsupported claims.".into());
         lines.push("9. **Completion Check**: For file-output tasks, inspect inputs first, create the requested artifact, and verify the saved file is non-empty and matches the requested file type before declaring success.".into());
         lines.push("10. **Answer File Quality**: When saving an answer or report file, write a direct sentence or short structured report that restates the requested fact. Do not save only a bare value, and do not write uncertainty placeholders when the task explicitly asks for a current numeric fact such as a quote or price.".into());
+        lines.push("11. **Research Artifact Completeness**: For current web research files, do not finalize with vague placeholders, month-only dates, missing URLs, or stale past-year items when the prompt asks for current, upcoming, or this-year facts. If one candidate lacks a verifiable required field, research a different candidate instead of guessing. For general multi-item roundups, prefer diverse organizers or ecosystems instead of filling the list from one event family unless the user explicitly asked for that source.".into());
         lines.push("".into());
 
         if self.prompt_mode == PromptMode::Full {

@@ -824,11 +824,30 @@ impl OpenAiBackend {
         )
     }
 
+    fn looks_like_strict_json_request(messages: &[LlmMessage], system_prompt: &str) -> bool {
+        let system_lower = system_prompt.to_ascii_lowercase();
+        if system_lower.contains("return only the requested json object")
+            || system_lower.contains("return only the requested json")
+        {
+            return true;
+        }
+
+        messages.iter().any(|message| {
+            let text = message.text.to_ascii_lowercase();
+            text.contains("respond with only this json")
+                || text.contains("respond with only a json object")
+                || text.contains("output a single json object")
+                || text.contains("respond with only this json structure")
+                || text.contains("no markdown, no code fences, no extra text")
+        })
+    }
+
     fn build_codex_responses_request(
         &self,
         messages: &[LlmMessage],
         tools: &[LlmToolDecl],
         system_prompt: &str,
+        stream: bool,
     ) -> Value {
         let (input, instructions) =
             self.build_codex_input_and_instructions(messages, tools, system_prompt);
@@ -836,9 +855,13 @@ impl OpenAiBackend {
             "model": self.model,
             "instructions": instructions,
             "store": false,
-            "stream": true,
+            "stream": stream,
             "input": input
         });
+        if tools.is_empty() && Self::looks_like_strict_json_request(messages, system_prompt) {
+            req["reasoning"] = json!({ "effort": "none" });
+            req["text"] = json!({ "verbosity": "low" });
+        }
         if !tools.is_empty() {
             req["tools"] = Value::Array(
                 tools
@@ -947,9 +970,9 @@ impl OpenAiBackend {
         response: &mut LlmResponse,
         event_type: &str,
         data: &str,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if data.trim().is_empty() || data.trim() == "[DONE]" {
-            return Ok(());
+            return Ok(false);
         }
         let json = serde_json::from_str::<Value>(data)
             .map_err(|err| format!("Failed to parse Codex SSE event '{}': {}", event_type, err))?;
@@ -970,6 +993,7 @@ impl OpenAiBackend {
                     Self::apply_responses_usage(response, usage);
                 }
                 response.success = true;
+                return Ok(true);
             }
             "response.failed" => {
                 if let Some(message) = json
@@ -980,11 +1004,12 @@ impl OpenAiBackend {
                 {
                     response.error_message = message.to_string();
                 }
+                return Ok(true);
             }
             _ => {}
         }
 
-        Ok(())
+        Ok(false)
     }
 
     async fn chat_codex_responses(
@@ -992,6 +1017,7 @@ impl OpenAiBackend {
         messages: &[LlmMessage],
         tools: &[LlmToolDecl],
         system_prompt: &str,
+        _max_tokens: Option<u32>,
     ) -> LlmResponse {
         let url = format!("{}{}", self.endpoint.trim_end_matches('/'), self.api_path);
         let auth_headers = match self.auth_headers().await {
@@ -1002,7 +1028,7 @@ impl OpenAiBackend {
                 return response;
             }
         };
-        let request = self.build_codex_responses_request(messages, tools, system_prompt);
+        let request = self.build_codex_responses_request(messages, tools, system_prompt, true);
 
         let client = http_client::default_client();
         let mut req = client
@@ -1075,11 +1101,13 @@ impl OpenAiBackend {
                 if line.is_empty() {
                     let joined = data_lines.join("\n");
                     if !event_type.is_empty() || !joined.is_empty() {
-                        if let Err(err) =
-                            Self::apply_codex_stream_event(&mut response, &event_type, &joined)
-                        {
-                            response.error_message = err;
-                            return response;
+                        match Self::apply_codex_stream_event(&mut response, &event_type, &joined) {
+                            Ok(true) => return response,
+                            Ok(false) => {}
+                            Err(err) => {
+                                response.error_message = err;
+                                return response;
+                            }
                         }
                     }
                     event_type.clear();
@@ -1102,9 +1130,13 @@ impl OpenAiBackend {
         }
         if !event_type.is_empty() || !data_lines.is_empty() {
             let joined = data_lines.join("\n");
-            if let Err(err) = Self::apply_codex_stream_event(&mut response, &event_type, &joined) {
-                response.error_message = err;
-                return response;
+            match Self::apply_codex_stream_event(&mut response, &event_type, &joined) {
+                Ok(true) => return response,
+                Ok(false) => {}
+                Err(err) => {
+                    response.error_message = err;
+                    return response;
+                }
             }
         }
 
@@ -1230,6 +1262,7 @@ impl OpenAiBackend {
         response.success = true;
         response
     }
+
 }
 
 #[async_trait::async_trait]
@@ -1337,7 +1370,7 @@ impl LlmBackend for OpenAiBackend {
             && matches!(self.transport, OpenAiTransport::Responses)
         {
             return self
-                .chat_codex_responses(messages, tools, system_prompt)
+                .chat_codex_responses(messages, tools, system_prompt, max_tokens)
                 .await;
         }
 
@@ -1718,7 +1751,12 @@ mod tests {
     #[test]
     fn openai_codex_request_matches_codex_route_contract() {
         let backend = OpenAiBackend::new("openai-codex");
-        let request = backend.build_codex_responses_request(&[LlmMessage::user("안녕")], &[], "");
+        let request = backend.build_codex_responses_request(
+            &[LlmMessage::user("안녕")],
+            &[],
+            "",
+            true,
+        );
 
         assert_eq!(
             request["instructions"],
@@ -1744,6 +1782,7 @@ mod tests {
             ],
             &[],
             "기본 시스템 프롬프트",
+            true,
         );
 
         assert_eq!(
@@ -1753,6 +1792,36 @@ mod tests {
         let input = request["input"].as_array().unwrap();
         assert_eq!(input.len(), 1);
         assert_eq!(input[0]["role"], json!("user"));
+    }
+
+    #[test]
+    fn openai_codex_request_keeps_stream_enabled_for_codex_backend() {
+        let backend = OpenAiBackend::new("openai-codex");
+        let request = backend.build_codex_responses_request(
+            &[LlmMessage::user("Return compact JSON.")],
+            &[],
+            "Return JSON only.",
+            true,
+        );
+
+        assert_eq!(request["stream"], json!(true));
+        assert!(request.get("max_output_tokens").is_none());
+    }
+
+    #[test]
+    fn openai_codex_request_disables_reasoning_for_strict_json_prompts() {
+        let backend = OpenAiBackend::new("openai-codex");
+        let request = backend.build_codex_responses_request(
+            &[LlmMessage::user(
+                "Respond with only this JSON structure: {\"total\":0.0}. No markdown, no code fences, no extra text.",
+            )],
+            &[],
+            "Return only the requested JSON object.",
+            true,
+        );
+
+        assert_eq!(request["reasoning"], json!({ "effort": "none" }));
+        assert_eq!(request["text"], json!({ "verbosity": "low" }));
     }
 
     #[test]
