@@ -1,4 +1,0 @@
-Record dashboard workflow completion
-
-Update the cycle dashboard after the delivery commit so the
-repository workflow log reflects the completed Stage 6 result.
