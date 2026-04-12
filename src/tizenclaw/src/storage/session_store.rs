@@ -313,7 +313,7 @@ impl SessionStore {
     pub fn ensure_session(&self, session_id: &str) {
         let dir = self.session_dir(session_id);
         let _ = fs::create_dir_all(&dir);
-        let _ = fs::create_dir_all(self.base_dir.join("workdirs").join(session_id));
+        let _ = fs::create_dir_all(self.session_workdir(session_id));
 
         let path = self.session_file_today(session_id);
         if !path.exists() {

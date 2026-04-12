@@ -46,6 +46,12 @@ static CSV_FILE_NAME_RE: LazyLock<regex::Regex> =
 static RELATIVE_FILE_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r"\b((?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\.[A-Za-z0-9_-]+)\b").unwrap()
 });
+const COMMON_FILE_EXTENSIONS: &[&str] = &[
+    "c", "cc", "cfg", "conf", "cpp", "css", "csv", "doc", "docx", "env", "gif", "h", "hpp",
+    "htm", "html", "ics", "ini", "java", "jpeg", "jpg", "js", "json", "lock", "log", "md",
+    "pdf", "png", "py", "pyi", "rb", "rs", "scss", "sh", "sql", "svg", "toml", "ts", "tsx",
+    "txt", "xml", "yaml", "yml",
+];
 
 use crate::core::agent_loop_state::{
     AgentLoopState, AgentPhase, EvalVerdict, LoopTransitionReason,
@@ -76,6 +82,9 @@ const MAX_PREFETCHED_SKILLS: usize = 3;
 const MAX_OUTBOUND_DASHBOARD_MESSAGES: usize = 200;
 const MAX_TELEGRAM_OUTBOUND_CHARS: usize = 4000;
 const AUTHENTICATED_BACKEND_PRIORITY_BOOST: i64 = 10_000;
+const DEFAULT_FILE_READ_MAX_CHARS: usize = 12_000;
+const DEFAULT_FILE_READ_MATCH_WINDOW_CHARS: usize = 240;
+const DEFAULT_FILE_READ_MAX_MATCHES: usize = 5;
 
 #[derive(Clone, Debug, Default)]
 struct SessionPromptProfile {
@@ -128,6 +137,199 @@ fn utf8_safe_preview(text: &str, max_chars: usize) -> &str {
         Some((idx, _)) => &text[..idx],
         None => text,
     }
+}
+
+fn truncate_text_with_head_tail(text: &str, max_chars: usize) -> (String, bool) {
+    let total_chars = text.chars().count();
+    if total_chars <= max_chars {
+        return (text.to_string(), false);
+    }
+    if max_chars <= 32 {
+        return (utf8_safe_preview(text, max_chars).to_string(), true);
+    }
+
+    let head_chars = max_chars * 2 / 3;
+    let tail_chars = max_chars.saturating_sub(head_chars + 17);
+    let head = utf8_safe_preview(text, head_chars);
+    let tail_start = text
+        .char_indices()
+        .rev()
+        .nth(tail_chars)
+        .map(|(idx, _)| idx)
+        .unwrap_or(0);
+    let tail = &text[tail_start..];
+
+    (format!("{}\n... [truncated] ...\n{}", head, tail), true)
+}
+
+fn extract_text_match_snippets(
+    text: &str,
+    pattern: &str,
+    window_chars: usize,
+    max_matches: usize,
+) -> Vec<String> {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return Vec::new();
+    }
+
+    let mut snippets = Vec::new();
+
+    if looks_like_regex_pattern(pattern) {
+        if let Ok(regex) = regex::RegexBuilder::new(pattern)
+            .case_insensitive(true)
+            .dot_matches_new_line(true)
+            .build()
+        {
+            for matched in regex.find_iter(text).take(max_matches) {
+                append_text_match_snippet(
+                    &mut snippets,
+                    text,
+                    matched.start(),
+                    matched.end(),
+                    window_chars,
+                );
+                if snippets.len() >= max_matches {
+                    break;
+                }
+            }
+            if !snippets.is_empty() {
+                return snippets;
+            }
+        }
+    }
+
+    let haystack = text.to_ascii_lowercase();
+    let needle = pattern.to_ascii_lowercase();
+    let mut search_from = 0usize;
+    while snippets.len() < max_matches {
+        let Some(relative_idx) = haystack[search_from..].find(&needle) else {
+            break;
+        };
+        let match_start = search_from + relative_idx;
+        let match_end = match_start + needle.len();
+        append_text_match_snippet(
+            &mut snippets,
+            text,
+            match_start,
+            match_end,
+            window_chars,
+        );
+        search_from = match_end;
+    }
+
+    snippets
+}
+
+fn looks_like_regex_pattern(pattern: &str) -> bool {
+    pattern.contains('\\')
+        || pattern.contains('[')
+        || pattern.contains(']')
+        || pattern.contains('(')
+        || pattern.contains(')')
+        || pattern.contains('{')
+        || pattern.contains('}')
+        || pattern.contains('+')
+        || pattern.contains('?')
+        || pattern.contains(".*")
+}
+
+fn append_text_match_snippet(
+    snippets: &mut Vec<String>,
+    text: &str,
+    match_start: usize,
+    match_end: usize,
+    window_chars: usize,
+) {
+    let start_char = text[..match_start].chars().count();
+    let end_char = text[..match_end].chars().count();
+    let snippet_start_char = start_char.saturating_sub(window_chars / 2);
+    let snippet_end_char = end_char.saturating_add(window_chars / 2);
+
+    let snippet_start = text
+        .char_indices()
+        .nth(snippet_start_char)
+        .map(|(idx, _)| idx)
+        .unwrap_or(0);
+    let snippet_end = text
+        .char_indices()
+        .nth(snippet_end_char)
+        .map(|(idx, _)| idx)
+        .unwrap_or(text.len());
+    let snippet = text[snippet_start..snippet_end].trim().to_string();
+    if !snippets.iter().any(|existing| existing == &snippet) {
+        snippets.push(snippet);
+    }
+}
+
+fn split_match_patterns(pattern: &str) -> Vec<String> {
+    let trimmed = pattern.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    let parts: Vec<String> = trimmed
+        .split('|')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+    if parts.len() <= 1 {
+        return parts;
+    }
+
+    let mut deduped = Vec::new();
+    for part in parts {
+        if !deduped
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(&part))
+        {
+            deduped.push(part);
+        }
+    }
+    deduped
+}
+
+fn build_text_read_payload(content: &str, pattern: Option<&str>, max_chars: usize) -> Value {
+    let total_chars = content.chars().count();
+    let pattern = pattern.map(str::trim).filter(|value| !value.is_empty());
+    let snippets = pattern.map(|value| {
+        let mut collected = Vec::new();
+        for part in split_match_patterns(value) {
+            for snippet in extract_text_match_snippets(
+                content,
+                &part,
+                DEFAULT_FILE_READ_MATCH_WINDOW_CHARS,
+                DEFAULT_FILE_READ_MAX_MATCHES,
+            ) {
+                if collected.len() >= DEFAULT_FILE_READ_MAX_MATCHES {
+                    break;
+                }
+                if !collected.iter().any(|existing: &String| existing == &snippet) {
+                    collected.push(snippet);
+                }
+            }
+            if collected.len() >= DEFAULT_FILE_READ_MAX_MATCHES {
+                break;
+            }
+        }
+        collected
+    });
+
+    let combined = snippets
+        .as_ref()
+        .filter(|items| !items.is_empty())
+        .map(|items| items.join("\n\n"))
+        .unwrap_or_else(|| content.to_string());
+    let (truncated_content, truncated) = truncate_text_with_head_tail(&combined, max_chars);
+
+    json!({
+        "content": truncated_content,
+        "truncated": truncated || total_chars > max_chars,
+        "total_chars": total_chars,
+        "pattern": pattern,
+        "match_count": snippets.as_ref().map(|items| items.len()).unwrap_or(0),
+    })
 }
 
 fn normalize_conversation_log_text(text: &str) -> Option<String> {
@@ -977,17 +1179,24 @@ fn extract_relative_file_paths(text: &str) -> Vec<String> {
     let mut paths = Vec::new();
 
     for captures in RELATIVE_FILE_RE.captures_iter(text) {
-        let Some(matched) = captures.get(1).map(|value| {
-            value.as_str().trim_matches(|ch| {
-                matches!(ch, '`' | '"' | '\'' | ',' | '.' | ':' | ';' | ')' | '(')
-            })
-        }) else {
+        let Some(path_match) = captures.get(1) else {
             continue;
         };
+        let Some(matched) = Some(path_match.as_str().trim_matches(|ch| {
+            matches!(ch, '`' | '"' | '\'' | ',' | '.' | ':' | ';' | ')' | '(')
+        })) else {
+            continue;
+        };
+        let preceding_char = text[..path_match.start()].chars().next_back();
+        let following_char = text[path_match.end()..].chars().next();
+        let matched = matched.trim();
         if matched.is_empty()
             || matched.starts_with('/')
             || matched.contains("://")
             || matched.starts_with("www.")
+            || preceding_char == Some('@')
+            || following_char == Some('@')
+            || !looks_like_file_artifact_candidate(matched)
         {
             continue;
         }
@@ -1008,10 +1217,32 @@ fn extract_relative_file_paths(text: &str) -> Vec<String> {
     paths
 }
 
+fn looks_like_file_artifact_candidate(path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+
+    if path.contains('/') || path.starts_with('.') {
+        return true;
+    }
+
+    Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|ext| COMMON_FILE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
 fn prompt_mentions_readme(text: &str) -> bool {
     normalize_prompt_intent_text(text)
         .to_ascii_lowercase()
         .contains("readme")
+}
+
+fn prompt_mentions_gitignore(text: &str) -> bool {
+    normalize_prompt_intent_text(text)
+        .to_ascii_lowercase()
+        .contains(".gitignore")
 }
 
 fn expected_file_management_targets(prompt: &str) -> Vec<Vec<String>> {
@@ -1029,6 +1260,15 @@ fn expected_file_management_targets(prompt: &str) -> Vec<Vec<String>> {
         })
     {
         groups.push(vec!["README".to_string(), "README.md".to_string()]);
+    }
+
+    if prompt_mentions_gitignore(intent_prompt)
+        && !groups.iter().any(|group| {
+            group.iter()
+                .any(|path| path.eq_ignore_ascii_case(".gitignore"))
+        })
+    {
+        groups.push(vec![".gitignore".to_string()]);
     }
 
     groups
@@ -1187,6 +1427,123 @@ fn prompt_requests_current_web_research(prompt: &str) -> bool {
     wants_freshness && research_domain
 }
 
+fn prompt_requests_numeric_market_fact(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let wants_freshness = ["current", "latest", "today"]
+        .iter()
+        .any(|needle| prompt_lower.contains(needle));
+    let market_fact = ["stock", "share price", "stock price", "quote", "ticker", "market price"]
+        .iter()
+        .any(|needle| prompt_lower.contains(needle));
+
+    wants_freshness && market_fact
+}
+
+fn prompt_requests_descriptive_answer_file(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let asks_question = ["what", "when", "why", "how", "which", "who"]
+        .iter()
+        .any(|needle| prompt_lower.contains(needle));
+    let expects_answer_file = ["answer.txt", "save your answer", "write the answer", "save it to"]
+        .iter()
+        .any(|needle| prompt_lower.contains(needle));
+
+    asks_question && expects_answer_file
+}
+
+fn prompt_keyword_overlap(prompt: &str, content: &str) -> usize {
+    const STOPWORDS: &[&str] = &[
+        "what", "when", "where", "which", "who", "your", "with", "save", "write", "answer",
+        "report", "file", "current", "latest", "brief", "market", "summary", "notes", "read",
+        "from", "into", "this", "that", "have", "will", "would", "should", "could", "about",
+        "after", "before", "using", "please",
+    ];
+
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let content_lower = content.to_ascii_lowercase();
+    let mut seen = HashSet::new();
+    prompt_lower
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| token.len() >= 4)
+        .filter(|token| !STOPWORDS.contains(token))
+        .filter(|token| seen.insert((*token).to_string()))
+        .filter(|token| content_lower.contains(*token))
+        .count()
+}
+
+fn output_lacks_descriptive_answer(prompt: &str, content: &str) -> bool {
+    if !prompt_requests_descriptive_answer_file(prompt) {
+        return false;
+    }
+
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    trimmed.len() < 24 && prompt_keyword_overlap(prompt, trimmed) == 0
+}
+
+fn output_lacks_numeric_market_fact(prompt: &str, content: &str) -> bool {
+    if !prompt_requests_numeric_market_fact(prompt) {
+        return false;
+    }
+
+    let content_lower = content.to_ascii_lowercase();
+    let has_placeholder = [
+        "could not",
+        "not available",
+        "not reliably extracted",
+        "not provided in the snippets",
+        "unknown",
+    ]
+    .iter()
+    .any(|needle| content_lower.contains(needle));
+    let has_numeric_price =
+        regex::Regex::new(r"(?i)(\\$ ?\\d+(?:\\.\\d+)?|\\b\\d+\\.\\d{1,2}\\b)")
+        .map(|re| re.is_match(content))
+        .unwrap_or(false);
+
+    has_placeholder || !has_numeric_price
+}
+
+fn prompt_requests_gitignore_file(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    prompt_lower.contains(".gitignore")
+        || (prompt_lower.contains("gitignore") && prompt_lower.contains("ignore"))
+}
+
+fn output_lacks_expected_ignore_patterns(prompt: &str, content: &str) -> bool {
+    if !prompt_requests_gitignore_file(prompt) {
+        return false;
+    }
+
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let content_lower = content.to_ascii_lowercase();
+
+    let mut required_patterns = Vec::new();
+    if prompt_lower.contains("__pycache__") || prompt_lower.contains("pycache") {
+        required_patterns.push("__pycache__");
+    }
+    if prompt_lower.contains("node_modules") {
+        required_patterns.push("node_modules");
+    }
+    if prompt_lower.contains(".env") {
+        required_patterns.push(".env");
+    }
+    if prompt_lower.contains(".ds_store") {
+        required_patterns.push(".ds_store");
+    }
+    if prompt_lower.contains("thumbs.db") {
+        required_patterns.push("thumbs.db");
+    }
+
+    !required_patterns.is_empty()
+        && required_patterns
+            .into_iter()
+            .any(|pattern| !content_lower.contains(pattern))
+}
+
 fn prompt_requests_document_extraction(prompt: &str) -> bool {
     let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
     let mentions_document = [
@@ -1256,9 +1613,33 @@ fn invalid_file_management_targets(
                     .and_then(|value| value.to_str())
                     .unwrap_or("")
                     .to_ascii_lowercase();
+                let file_name = absolute
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
 
                 if matches!(ext.as_str(), "txt" | "md" | "json" | "csv" | "yaml" | "yml")
                     && is_effectively_empty_text_file(&absolute)
+                {
+                    return Some(candidate.clone());
+                }
+
+                if matches!(ext.as_str(), "txt" | "md")
+                    && std::fs::read_to_string(&absolute)
+                        .map(|content| {
+                            output_lacks_descriptive_answer(prompt, &content)
+                                || output_lacks_numeric_market_fact(prompt, &content)
+                        })
+                        .unwrap_or(false)
+                {
+                    return Some(candidate.clone());
+                }
+
+                if file_name == ".gitignore"
+                    && std::fs::read_to_string(&absolute)
+                        .map(|content| output_lacks_expected_ignore_patterns(prompt, &content))
+                        .unwrap_or(false)
                 {
                     return Some(candidate.clone());
                 }
@@ -2217,6 +2598,13 @@ async fn file_manager_tool(tc_args: &Value, session_workdir: &Path) -> Value {
                 .get("path")
                 .and_then(|value| value.as_str())
                 .unwrap_or("");
+            let pattern = tc_args.get("pattern").and_then(|value| value.as_str());
+            let max_chars = tc_args
+                .get("max_chars")
+                .and_then(|value| value.as_u64())
+                .map(|value| value as usize)
+                .filter(|value| *value > 0)
+                .unwrap_or(DEFAULT_FILE_READ_MAX_CHARS);
             let path = match resolve_workspace_path(session_workdir, path_str) {
                 Ok(path) => path,
                 Err(error) => return json!({"error": error}),
@@ -2260,12 +2648,22 @@ async fn file_manager_tool(tc_args: &Value, session_workdir: &Path) -> Value {
             if !force_rust_fallback {
                 match runtime_capabilities::read_file_via_system(&path).await {
                     Ok(content) => {
+                        let mut payload = build_text_read_payload(&content, pattern, max_chars);
+                        let object = payload.as_object_mut().expect("read payload object");
+                        object.insert("success".into(), json!(true));
+                        object.insert("operation".into(), json!(operation));
+                        object.insert("path".into(), json!(path.to_string_lossy()));
+                        object.insert("backend".into(), json!("linux_utility"));
                         return json!({
-                            "success": true,
-                            "operation": operation,
-                            "path": path.to_string_lossy(),
-                            "content": content,
-                            "backend": "linux_utility",
+                            "success": object.get("success").cloned().unwrap(),
+                            "operation": object.get("operation").cloned().unwrap(),
+                            "path": object.get("path").cloned().unwrap(),
+                            "content": object.get("content").cloned().unwrap(),
+                            "truncated": object.get("truncated").cloned().unwrap(),
+                            "total_chars": object.get("total_chars").cloned().unwrap(),
+                            "pattern": object.get("pattern").cloned().unwrap(),
+                            "match_count": object.get("match_count").cloned().unwrap(),
+                            "backend": object.get("backend").cloned().unwrap(),
                         });
                     }
                     Err(system_error) => {
@@ -2278,13 +2676,15 @@ async fn file_manager_tool(tc_args: &Value, session_workdir: &Path) -> Value {
                 }
             }
             match std::fs::read_to_string(&path) {
-                Ok(content) => json!({
-                    "success": true,
-                    "operation": operation,
-                    "path": path.to_string_lossy(),
-                    "content": content,
-                    "backend": "rust_fallback",
-                }),
+                Ok(content) => {
+                    let mut payload = build_text_read_payload(&content, pattern, max_chars);
+                    let object = payload.as_object_mut().expect("read payload object");
+                    object.insert("success".into(), json!(true));
+                    object.insert("operation".into(), json!(operation));
+                    object.insert("path".into(), json!(path.to_string_lossy()));
+                    object.insert("backend".into(), json!("rust_fallback"));
+                    payload
+                }
                 Err(error) => {
                     json!({"error": format!("Failed to read file '{}': {}", path.display(), error)})
                 }
@@ -5380,6 +5780,7 @@ impl AgentCore {
         let is_dashboard_web_app_request = Self::is_web_dashboard_app_request(session_id, prompt);
         let is_file_management_request = is_simple_file_management_request(prompt)
             && !prompt_prefers_direct_specialized_tools(prompt);
+        let has_expected_file_targets = !expected_file_management_targets(prompt).is_empty();
         let mut session_profile = self.resolve_session_profile(session_id);
         if session_profile.is_none() && is_dashboard_web_app_request {
             session_profile = Some(SessionPromptProfile {
@@ -5451,8 +5852,9 @@ impl AgentCore {
             .get_tool_declarations_filtered(&intent_keywords);
         let tools_forbidden = prompt_explicitly_forbids_tools(prompt);
         if !tools_forbidden {
-            crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_all_builtin_tools(
+            crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_builtin_tools(
                 &mut tools,
+                prompt,
             );
         } else {
             tools.clear();
@@ -5699,6 +6101,14 @@ impl AgentCore {
             inject_context_message(
                 &mut messages,
                 "## Direct Tool Hint\nThis request depends on current external information. Call `web_search` directly with focused queries before drafting the answer, instead of starting with generic tool discovery.".to_string(),
+            );
+        }
+        if tools.iter().any(|tool| tool.name == "web_search")
+            && prompt_requests_numeric_market_fact(prompt)
+        {
+            inject_context_message(
+                &mut messages,
+                "## Current Fact Hint\nIf the task asks for a current stock or market price, the saved report must include a concrete numeric quote. If the first search only returns source links or vague snippets, download one cited source page into the workspace and read it with a narrow file_manager pattern plus a small max_chars budget before writing the report. For large HTML or escaped JSON pages, prefer a combined entity-plus-field pattern such as the ticker together with the target field name, and if broad keyword snippets look unrelated, switch to a regex-style pattern that pairs the entity identifier with the numeric field. Once you have one concrete numeric quote and date from a grounded source, write the report immediately instead of continuing to browse. Do not save placeholder text saying the number could not be extracted.".to_string(),
             );
         }
 
@@ -7106,7 +7516,7 @@ impl AgentCore {
                     continue; // Immediately start next round to pick up next workflow step
                 }
             } else {
-                if is_file_management_request
+                if has_expected_file_targets
                     && collect_successful_file_management_actions(&messages) == 0
                 {
                     loop_state.mark_follow_up(
@@ -7127,7 +7537,7 @@ impl AgentCore {
                     loop_state.transition(AgentPhase::RePlanning);
                     continue;
                 }
-                if is_file_management_request {
+                if has_expected_file_targets {
                     let missing_targets =
                         missing_file_management_targets(prompt, &session_workdir, &messages);
                     if !missing_targets.is_empty() {
@@ -8197,10 +8607,14 @@ mod tests {
         generated_code_script_path, invalid_file_management_targets,
         is_simple_file_management_request, manage_generated_code_tool,
         missing_file_management_targets, normalize_conversation_log_text,
+        output_lacks_descriptive_answer, output_lacks_expected_ignore_patterns,
+        output_lacks_numeric_market_fact,
         parse_shell_like_args, parse_tool_uri, persist_generated_code_copy,
         prompt_explicitly_forbids_tools, prompt_mode_from_doc,
         prompt_prefers_direct_specialized_tools,
-        prompt_requests_current_web_research, prompt_requests_document_extraction,
+        prompt_requests_current_web_research, prompt_requests_descriptive_answer_file,
+        prompt_requests_document_extraction, prompt_requests_gitignore_file,
+        prompt_requests_numeric_market_fact,
         prompt_requests_image_generation, prompt_requires_literal_json_output,
         reasoning_policy_from_doc, role_relevance_score, score_tool_search_match,
         sanitize_generated_code_name, select_delegate_roles, select_relevant_skills,
@@ -8264,6 +8678,19 @@ mod tests {
     }
 
     #[test]
+    fn prompt_requests_numeric_market_fact_detects_stock_quote_request() {
+        let prompt = "Research the current stock price of Apple (AAPL) and save it to stock_report.txt.";
+        assert!(prompt_requests_numeric_market_fact(prompt));
+    }
+
+    #[test]
+    fn prompt_requests_descriptive_answer_file_detects_answer_txt_question() {
+        let prompt =
+            "Read notes.md and answer: What is the deadline for the beta release? Save your answer to answer.txt.";
+        assert!(prompt_requests_descriptive_answer_file(prompt));
+    }
+
+    #[test]
     fn prompt_prefers_direct_specialized_tools_detects_pdf_flow() {
         let prompt = "Read openclaw_report.pdf and write the extracted answers to answer.txt.";
         assert!(prompt_prefers_direct_specialized_tools(prompt));
@@ -8286,6 +8713,85 @@ mod tests {
         );
 
         assert_eq!(invalid, vec!["answer.txt".to_string()]);
+    }
+
+    #[test]
+    fn invalid_file_management_targets_flags_bare_answer_values() {
+        let dir = tempdir().unwrap();
+        let output = dir.path().join("answer.txt");
+        std::fs::write(&output, "June 1, 2024\n").unwrap();
+
+        let invalid = invalid_file_management_targets(
+            "Read notes.md and answer: What is the deadline for the beta release? Save your answer to answer.txt.",
+            dir.path(),
+            &[LlmMessage::tool_result(
+                "call_1",
+                "file_write",
+                json!({"success": true, "path": output.to_string_lossy()}),
+            )],
+        );
+
+        assert_eq!(invalid, vec!["answer.txt".to_string()]);
+        assert!(output_lacks_descriptive_answer(
+            "What is the deadline for the beta release? Save your answer to answer.txt.",
+            "June 1, 2024"
+        ));
+    }
+
+    #[test]
+    fn invalid_file_management_targets_flags_stock_price_placeholders() {
+        let dir = tempdir().unwrap();
+        let output = dir.path().join("stock_report.txt");
+        std::fs::write(
+            &output,
+            "Stock Report: Apple Inc. (AAPL)\nPrice: Current live price could not be reliably extracted.\nDate: 2026-04-12\nMarket Summary: Source links were found.\n",
+        )
+        .unwrap();
+
+        let invalid = invalid_file_management_targets(
+            "Research the current stock price of Apple (AAPL) and save it to stock_report.txt with the price, date, and a brief market summary.",
+            dir.path(),
+            &[LlmMessage::tool_result(
+                "call_1",
+                "file_write",
+                json!({"success": true, "path": output.to_string_lossy()}),
+            )],
+        );
+
+        assert_eq!(invalid, vec!["stock_report.txt".to_string()]);
+        assert!(output_lacks_numeric_market_fact(
+            "Research the current stock price of Apple (AAPL).",
+            "Price: Current live price could not be reliably extracted."
+        ));
+    }
+
+    #[test]
+    fn prompt_requests_gitignore_file_detects_ignore_request() {
+        let prompt = "Create a .gitignore ignoring pycache and temp files.";
+        assert!(prompt_requests_gitignore_file(prompt));
+    }
+
+    #[test]
+    fn invalid_file_management_targets_flags_literal_markdown_pycache() {
+        let dir = tempdir().unwrap();
+        let output = dir.path().join(".gitignore");
+        std::fs::write(&output, "**pycache**\n").unwrap();
+
+        let invalid = invalid_file_management_targets(
+            "Create a project structure with .gitignore ignoring **pycache**.",
+            dir.path(),
+            &[LlmMessage::tool_result(
+                "call_1",
+                "file_write",
+                json!({"success": true, "path": output.to_string_lossy()}),
+            )],
+        );
+
+        assert_eq!(invalid, vec![".gitignore".to_string()]);
+        assert!(output_lacks_expected_ignore_patterns(
+            "Create a .gitignore ignoring **pycache**.",
+            "**pycache**"
+        ));
     }
 
     #[test]
@@ -9243,6 +9749,116 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn file_manager_tool_read_truncates_large_text_files() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("large.txt");
+        let content = "alpha ".repeat(5000);
+        std::fs::write(&file_path, &content).unwrap();
+
+        let result = file_manager_tool(
+            &json!({
+                "operation": "read",
+                "path": "large.txt",
+                "backend_preference": "rust_fallback",
+                "max_chars": 200
+            }),
+            dir.path(),
+        )
+        .await;
+
+        assert_eq!(result["success"], json!(true));
+        assert_eq!(result["truncated"], json!(true));
+        assert_eq!(result["total_chars"], json!(content.chars().count()));
+        assert!(result["content"].as_str().unwrap_or("").chars().count() <= 240);
+    }
+
+    #[tokio::test]
+    async fn file_manager_tool_read_can_return_pattern_snippets() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("quote.html");
+        std::fs::write(
+            &file_path,
+            "<html><body>noise<data-symbol=\"AAPL\" data-field=\"regularMarketPrice\" data-value=\"260.48\">AAPL 260.48</data></body></html>",
+        )
+        .unwrap();
+
+        let result = file_manager_tool(
+            &json!({
+                "operation": "read",
+                "path": "quote.html",
+                "backend_preference": "rust_fallback",
+                "pattern": "regularMarketPrice",
+                "max_chars": 200
+            }),
+            dir.path(),
+        )
+        .await;
+
+        assert_eq!(result["success"], json!(true));
+        assert_eq!(result["match_count"], json!(1));
+        assert!(result["content"]
+            .as_str()
+            .unwrap_or("")
+            .contains("260.48"));
+    }
+
+    #[tokio::test]
+    async fn file_manager_tool_read_supports_alternative_patterns() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("quote.txt");
+        std::fs::write(
+            &file_path,
+            "Ticker: AAPL\nExchange: NASDAQ\nCurrent price: 260.48 USD\n",
+        )
+        .unwrap();
+
+        let result = file_manager_tool(
+            &json!({
+                "operation": "read",
+                "path": "quote.txt",
+                "backend_preference": "rust_fallback",
+                "pattern": "MSFT|NASDAQ|price",
+                "max_chars": 200
+            }),
+            dir.path(),
+        )
+        .await;
+
+        assert_eq!(result["success"], json!(true));
+        assert!(result["match_count"].as_u64().unwrap_or(0) >= 1);
+        let content = result["content"].as_str().unwrap_or("");
+        assert!(content.contains("NASDAQ"));
+        assert!(content.contains("Current price"));
+    }
+
+    #[tokio::test]
+    async fn file_manager_tool_read_supports_regex_patterns() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("quote.json");
+        std::fs::write(
+            &file_path,
+            r#"{"symbol":"AAPL","price":{"regularMarketPrice":{"raw":260.48}}}"#,
+        )
+        .unwrap();
+
+        let result = file_manager_tool(
+            &json!({
+                "operation": "read",
+                "path": "quote.json",
+                "backend_preference": "rust_fallback",
+                "pattern": "\"symbol\":\"AAPL\".{0,80}regularMarketPrice\"?:\\{\"raw\":?[0-9.]+",
+                "max_chars": 200
+            }),
+            dir.path(),
+        )
+        .await;
+
+        assert_eq!(result["success"], json!(true));
+        assert!(result["match_count"].as_u64().unwrap_or(0) >= 1);
+        assert!(result["content"].as_str().unwrap_or("").contains("260.48"));
+    }
+
+    #[tokio::test]
     async fn file_manager_tool_redirects_pdf_reads_to_document_extractor() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("paper.pdf");
@@ -9389,6 +10005,50 @@ startxref
         assert!(targets
             .iter()
             .any(|group| group.iter().any(|path| path == "README.md")));
+    }
+
+    #[test]
+    fn expected_file_management_targets_tracks_dot_gitignore() {
+        let targets =
+            expected_file_management_targets("Create .gitignore and src/main.py for this project.");
+
+        assert!(targets
+            .iter()
+            .any(|group| group.iter().any(|path| path == ".gitignore")));
+    }
+
+    #[test]
+    fn expected_file_management_targets_track_report_outputs_for_research_prompts() {
+        let targets = expected_file_management_targets(
+            "Research the current stock price of Apple (AAPL) and save it to stock_report.txt.",
+        );
+
+        assert!(targets
+            .iter()
+            .any(|group| group.iter().any(|path| path == "stock_report.txt")));
+    }
+
+    #[test]
+    fn expected_file_management_targets_ignore_email_domains_and_hosts() {
+        let calendar_targets = expected_file_management_targets(
+            "Schedule a meeting for next Tuesday at 3pm with john@example.com. Title it \"Project Sync\" and save it as project_sync_next_tuesday.ics.",
+        );
+        let weather_targets = expected_file_management_targets(
+            "Create a Python script called weather.py that fetches weather data for San Francisco using the wttr.in API and prints a summary.",
+        );
+
+        assert!(calendar_targets
+            .iter()
+            .any(|group| group.iter().any(|path| path == "project_sync_next_tuesday.ics")));
+        assert!(!calendar_targets
+            .iter()
+            .any(|group| group.iter().any(|path| path == "example.com")));
+        assert!(weather_targets
+            .iter()
+            .any(|group| group.iter().any(|path| path == "weather.py")));
+        assert!(!weather_targets
+            .iter()
+            .any(|group| group.iter().any(|path| path == "wttr.in")));
     }
 
     #[test]
