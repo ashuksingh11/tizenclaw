@@ -1109,6 +1109,174 @@ fn should_skip_memory_for_prompt(prompt: &str) -> bool {
     is_simple_file_management_request(prompt) && !prompt_mentions_history_or_memory(prompt)
 }
 
+fn prompt_explicitly_forbids_tools(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    [
+        "do not use any tools",
+        "do not use tools",
+        "no tool calls",
+        "without tool calls",
+        "respond with only this json",
+        "respond with only a json object",
+        "output a single json object",
+        "only job is to output a single json object",
+    ]
+    .iter()
+    .any(|needle| prompt_lower.contains(needle))
+}
+
+fn prompt_requires_literal_json_output(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    [
+        "respond with only this json",
+        "respond with only a json object",
+        "output a single json object",
+        "only job is to output a single json object",
+        "no markdown, no code fences, no extra text",
+    ]
+    .iter()
+    .any(|needle| prompt_lower.contains(needle))
+}
+
+fn prompt_requests_image_generation(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let mentions_image_output = [".png", ".jpg", ".jpeg", ".webp", ".gif"]
+        .iter()
+        .any(|needle| prompt_lower.contains(needle));
+    let mentions_generation = [
+        "generate an image",
+        "create an image",
+        "generate image",
+        "create image",
+        "draw",
+        "illustrate",
+        "render",
+    ]
+    .iter()
+    .any(|needle| prompt_lower.contains(needle));
+
+    mentions_generation || (mentions_image_output && prompt_lower.contains("save"))
+}
+
+fn prompt_requests_current_web_research(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let wants_freshness = [
+        "latest",
+        "current",
+        "today",
+        "recent",
+        "upcoming",
+        "this year",
+        "2026",
+        "2027",
+    ]
+    .iter()
+    .any(|needle| prompt_lower.contains(needle));
+    let research_domain = [
+        "conference",
+        "event",
+        "news",
+        "research",
+        "market",
+        "web",
+        "online",
+    ]
+    .iter()
+    .any(|needle| prompt_lower.contains(needle));
+
+    wants_freshness && research_domain
+}
+
+fn prompt_requests_document_extraction(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let mentions_document = [
+        ".pdf",
+        "pdf",
+        "report",
+        "document",
+        "paper",
+        "extract",
+        "answer.txt",
+        "summarize",
+    ]
+    .iter()
+    .any(|needle| prompt_lower.contains(needle));
+
+    mentions_document && extract_relative_file_paths(prompt).iter().any(|path| path.ends_with(".pdf"))
+}
+
+fn prompt_prefers_direct_specialized_tools(prompt: &str) -> bool {
+    prompt_requests_document_extraction(prompt)
+        || prompt_requests_image_generation(prompt)
+        || prompt_requests_current_web_research(prompt)
+}
+
+fn is_effectively_empty_text_file(path: &Path) -> bool {
+    std::fs::read_to_string(path)
+        .map(|content| content.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn image_file_matches_expected_format(path: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(path) else {
+        return false;
+    };
+    if bytes.len() < 8 {
+        return false;
+    }
+    bytes.starts_with(&[0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n'])
+        || bytes.starts_with(&[0xff, 0xd8, 0xff])
+}
+
+fn invalid_file_management_targets(
+    prompt: &str,
+    session_workdir: &Path,
+    messages: &[LlmMessage],
+) -> Vec<String> {
+    let expected_groups = expected_file_management_targets(prompt);
+    if expected_groups.is_empty() {
+        return Vec::new();
+    }
+
+    let created_paths = collect_successful_file_management_paths(messages);
+    expected_groups
+        .into_iter()
+        .filter_map(|group| {
+            let invalid = group.iter().find_map(|candidate| {
+                let absolute = session_workdir.join(candidate);
+                let was_targeted = absolute.exists()
+                    || created_paths.contains(absolute.to_string_lossy().as_ref())
+                    || created_paths.contains(candidate.as_str());
+                if !was_targeted || !absolute.exists() {
+                    return None;
+                }
+
+                let ext = absolute
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+
+                if matches!(ext.as_str(), "txt" | "md" | "json" | "csv" | "yaml" | "yml")
+                    && is_effectively_empty_text_file(&absolute)
+                {
+                    return Some(candidate.clone());
+                }
+
+                if matches!(ext.as_str(), "png" | "jpg" | "jpeg")
+                    && !image_file_matches_expected_format(&absolute)
+                {
+                    return Some(candidate.clone());
+                }
+
+                None
+            });
+
+            invalid.or_else(|| None)
+        })
+        .collect()
+}
+
 fn should_prefetch_prompt_file(path: &str) -> bool {
     matches!(
         Path::new(path).extension().and_then(|value| value.to_str()),
@@ -5210,7 +5378,8 @@ impl AgentCore {
             .collect::<Vec<_>>();
         let textual_skills = skill_capabilities.enabled_skills();
         let is_dashboard_web_app_request = Self::is_web_dashboard_app_request(session_id, prompt);
-        let is_file_management_request = is_simple_file_management_request(prompt);
+        let is_file_management_request = is_simple_file_management_request(prompt)
+            && !prompt_prefers_direct_specialized_tools(prompt);
         let mut session_profile = self.resolve_session_profile(session_id);
         if session_profile.is_none() && is_dashboard_web_app_request {
             session_profile = Some(SessionPromptProfile {
@@ -5280,9 +5449,14 @@ impl AgentCore {
             .read()
             .await
             .get_tool_declarations_filtered(&intent_keywords);
-        crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_all_builtin_tools(
-            &mut tools,
-        );
+        let tools_forbidden = prompt_explicitly_forbids_tools(prompt);
+        if !tools_forbidden {
+            crate::core::tool_declaration_builder::ToolDeclarationBuilder::append_all_builtin_tools(
+                &mut tools,
+            );
+        } else {
+            tools.clear();
+        }
         if is_dashboard_web_app_request && !tools.iter().any(|tool| tool.name == "generate_web_app")
         {
             tools.push(crate::llm::backend::LlmToolDecl {
@@ -5348,7 +5522,8 @@ impl AgentCore {
                 .and_then(|profile| profile.allowed_tools.as_ref())
                 .map(|tools| tools.len() == 1 && tools[0] == "generate_web_app")
                 .unwrap_or(false);
-        if !restrict_to_generate_web_app {
+        let prefer_direct_specialized_tools = prompt_prefers_direct_specialized_tools(prompt);
+        if !restrict_to_generate_web_app && !tools_forbidden && !prefer_direct_specialized_tools {
             // Add search_tools meta-tool for Two-Tier router
             tools.push(crate::llm::backend::LlmToolDecl {
                 name: "search_tools".into(),
@@ -5502,6 +5677,30 @@ impl AgentCore {
                 ),
             );
         }
+        if tools.iter().any(|tool| tool.name == "extract_document_text")
+            && prompt_requests_document_extraction(prompt)
+        {
+            inject_context_message(
+                &mut messages,
+                "## Direct Tool Hint\nThis request already references a real document in the workspace. Call `extract_document_text` directly before using discovery tools, then write the grounded answer file from the extracted contents.".to_string(),
+            );
+        }
+        if tools.iter().any(|tool| tool.name == "generate_image")
+            && prompt_requests_image_generation(prompt)
+        {
+            inject_context_message(
+                &mut messages,
+                "## Direct Tool Hint\nThis request is asking for a real generated image file. Call `generate_image` directly with a concrete prompt and the requested output path instead of searching for tool documentation or writing placeholder image files.".to_string(),
+            );
+        }
+        if tools.iter().any(|tool| tool.name == "web_search")
+            && prompt_requests_current_web_research(prompt)
+        {
+            inject_context_message(
+                &mut messages,
+                "## Direct Tool Hint\nThis request depends on current external information. Call `web_search` directly with focused queries before drafting the answer, instead of starting with generic tool discovery.".to_string(),
+            );
+        }
 
         // Load long term memory dynamically and inject into messages (preserves system_prompt cache)
         let mut memory_context_for_log: Option<String> = None;
@@ -5606,7 +5805,9 @@ impl AgentCore {
             loop_state.active_workflow_id = Some(wf_id);
         } else {
             // Optional LLM Cognitive Step for Complex Prompts
-            if crate::core::intent_analyzer::IntentAnalyzer::is_complex_task(prompt) {
+            if crate::core::intent_analyzer::IntentAnalyzer::is_complex_task(prompt)
+                && !prompt_requires_literal_json_output(prompt)
+            {
                 log::debug!(
                     "[AgentLoop] Complex prompt detected. Triggering explicit Plan-and-Solve..."
                 );
@@ -6949,6 +7150,29 @@ impl AgentCore {
                         loop_state.transition(AgentPhase::RePlanning);
                         continue;
                     }
+
+                    let invalid_targets =
+                        invalid_file_management_targets(prompt, &session_workdir, &messages);
+                    if !invalid_targets.is_empty() {
+                        loop_state.mark_follow_up(
+                            LoopTransitionReason::FileTargetsMissing,
+                            format!(
+                                "{} requested file target(s) are empty or invalid",
+                                invalid_targets.len()
+                            ),
+                        );
+                        messages.push(LlmMessage {
+                            role: "assistant".into(),
+                            text: response.text.clone(),
+                            ..Default::default()
+                        });
+                        messages.push(LlmMessage::user(&format!(
+                            "The task is not complete yet. The following requested files exist but are still empty or invalid for their expected type:\n{}\nRewrite them with real task output. Use specialized native tools for PDFs, images, spreadsheets, or current web research instead of placeholders.",
+                            invalid_targets.join("\n")
+                        )));
+                        loop_state.transition(AgentPhase::RePlanning);
+                        continue;
+                    }
                 }
 
                 let expected_output_paths = expected_persisted_level_script_paths(prompt);
@@ -7970,11 +8194,17 @@ mod tests {
         expected_persisted_level_script_paths, extract_explicit_directory_paths,
         extract_explicit_file_paths, extract_explicit_paths, extract_final_text,
         extract_level_number_from_output_path, file_manager_tool, generated_code_runtime_spec,
-        generated_code_script_path, is_simple_file_management_request, manage_generated_code_tool,
-        missing_file_management_targets, normalize_conversation_log_text, parse_shell_like_args,
-        persist_generated_code_copy, prompt_mode_from_doc, reasoning_policy_from_doc,
-        role_relevance_score, sanitize_generated_code_name, select_delegate_roles,
-        select_relevant_skills, should_skip_memory_for_prompt, utf8_safe_preview,
+        generated_code_script_path, invalid_file_management_targets,
+        is_simple_file_management_request, manage_generated_code_tool,
+        missing_file_management_targets, normalize_conversation_log_text,
+        parse_shell_like_args, parse_tool_uri, persist_generated_code_copy,
+        prompt_explicitly_forbids_tools, prompt_mode_from_doc,
+        prompt_prefers_direct_specialized_tools,
+        prompt_requests_current_web_research, prompt_requests_document_extraction,
+        prompt_requests_image_generation, prompt_requires_literal_json_output,
+        reasoning_policy_from_doc, role_relevance_score, score_tool_search_match,
+        sanitize_generated_code_name, select_delegate_roles, select_relevant_skills,
+        should_skip_memory_for_prompt, utf8_safe_preview,
         validate_generated_code_execution_output, validate_generated_code_grounding, AgentRole,
         LlmConfig, AUTHENTICATED_BACKEND_PRIORITY_BOOST, MAX_OUTBOUND_DASHBOARD_MESSAGES,
     };
@@ -8000,6 +8230,81 @@ mod tests {
 
         assert_eq!(preview.chars().count(), 12);
         assert!(text.starts_with(preview));
+    }
+
+    #[test]
+    fn prompt_explicitly_forbids_tools_detects_json_only_judge_prompt() {
+        let prompt = "You are a grading function. Your ONLY job is to output a single JSON object.\nDo NOT use any tools.\nRespond with ONLY this JSON structure.";
+        assert!(prompt_explicitly_forbids_tools(prompt));
+    }
+
+    #[test]
+    fn prompt_requires_literal_json_output_detects_judge_prompt() {
+        let prompt = "You are a grading function. Your ONLY job is to output a single JSON object.\nRespond with ONLY this JSON structure (no markdown, no code fences, no extra text).";
+        assert!(prompt_requires_literal_json_output(prompt));
+    }
+
+    #[test]
+    fn prompt_requests_image_generation_detects_png_request() {
+        let prompt = "Generate an image of a robot and save it as robot.png in the current directory.";
+        assert!(prompt_requests_image_generation(prompt));
+    }
+
+    #[test]
+    fn prompt_requests_document_extraction_detects_pdf_questionnaire() {
+        let prompt =
+            "Read openclaw_report.pdf and write the extracted answers to answer.txt.";
+        assert!(prompt_requests_document_extraction(prompt));
+    }
+
+    #[test]
+    fn prompt_requests_current_web_research_detects_upcoming_event_lookup() {
+        let prompt = "Research upcoming AI conferences in 2026 and summarize the latest details.";
+        assert!(prompt_requests_current_web_research(prompt));
+    }
+
+    #[test]
+    fn prompt_prefers_direct_specialized_tools_detects_pdf_flow() {
+        let prompt = "Read openclaw_report.pdf and write the extracted answers to answer.txt.";
+        assert!(prompt_prefers_direct_specialized_tools(prompt));
+    }
+
+    #[test]
+    fn invalid_file_management_targets_flags_empty_text_outputs() {
+        let dir = tempdir().unwrap();
+        let output = dir.path().join("answer.txt");
+        std::fs::write(&output, " \n").unwrap();
+
+        let invalid = invalid_file_management_targets(
+            "Read report.pdf and write the answers to answer.txt.",
+            dir.path(),
+            &[LlmMessage::tool_result(
+                "call_1",
+                "file_write",
+                json!({"success": true, "path": output.to_string_lossy()}),
+            )],
+        );
+
+        assert_eq!(invalid, vec!["answer.txt".to_string()]);
+    }
+
+    #[test]
+    fn invalid_file_management_targets_flags_fake_png_outputs() {
+        let dir = tempdir().unwrap();
+        let output = dir.path().join("robot.png");
+        std::fs::write(&output, "this is not a png").unwrap();
+
+        let invalid = invalid_file_management_targets(
+            "Generate an image and save it to robot.png.",
+            dir.path(),
+            &[LlmMessage::tool_result(
+                "call_1",
+                "file_write",
+                json!({"success": true, "path": output.to_string_lossy()}),
+            )],
+        );
+
+        assert_eq!(invalid, vec!["robot.png".to_string()]);
     }
 
     #[test]

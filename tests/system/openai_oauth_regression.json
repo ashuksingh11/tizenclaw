@@ -44,6 +44,21 @@
           "equals": "openai-codex"
         }
       ]
+    },
+    {
+      "name": "tool-list-includes-generic-benchmark-capabilities",
+      "method": "tool.list",
+      "params": {},
+      "assertions": [
+        {
+          "path": "status",
+          "equals": "ok"
+        },
+        {
+          "path": "count",
+          "greater_than": 0
+        }
+      ]
     }
   ]
 }

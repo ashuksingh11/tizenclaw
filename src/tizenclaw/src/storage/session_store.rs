@@ -175,6 +175,66 @@ fn normalize_markdown_block(content: &str) -> Option<String> {
     }
 }
 
+fn utf8_prefix(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    text.chars().take(max_chars).collect()
+}
+
+fn summarize_large_argument_fields(value: &Value) -> Value {
+    const MAX_INLINE_ARG_CHARS: usize = 400;
+
+    match value {
+        Value::Object(map) => {
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (key, entry) in map {
+                let summarized = match entry {
+                    Value::String(text)
+                        if matches!(key.as_str(), "content" | "code" | "text")
+                            && text.chars().count() > MAX_INLINE_ARG_CHARS =>
+                    {
+                        json!({
+                            "preview": utf8_prefix(text, MAX_INLINE_ARG_CHARS),
+                            "char_count": text.chars().count(),
+                            "truncated": true
+                        })
+                    }
+                    _ => summarize_large_argument_fields(entry),
+                };
+                out.insert(key.clone(), summarized);
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => {
+            Value::Array(items.iter().map(summarize_large_argument_fields).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+fn summarize_structured_tool_call_items(content: &[Value]) -> Vec<Value> {
+    content
+        .iter()
+        .map(|item| {
+            let Some(object) = item.as_object() else {
+                return item.clone();
+            };
+            let mut normalized = object.clone();
+            if let Some(arguments) = normalized.get("arguments").cloned() {
+                normalized.insert(
+                    "arguments".to_string(),
+                    summarize_large_argument_fields(&arguments),
+                );
+            }
+            if let Some(params) = normalized.get("params").cloned() {
+                normalized.insert("params".to_string(), summarize_large_argument_fields(&params));
+            }
+            Value::Object(normalized)
+        })
+        .collect()
+}
+
 impl SessionStore {
     pub fn new(base_dir: &Path, db_path: &str) -> Result<Self, String> {
         let base_dir = base_dir.to_path_buf();
@@ -359,13 +419,14 @@ impl SessionStore {
         if content.is_empty() {
             return;
         }
+        let summarized_content = summarize_structured_tool_call_items(&content);
         self.append_structured_event(
             session_id,
             &json!({
                 "type": "message",
                 "message": {
                     "role": "assistant",
-                    "content": content
+                    "content": summarized_content
                 }
             }),
         );
@@ -850,6 +911,8 @@ impl SessionStore {
         if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
             let _ = file.write_all(event.to_string().as_bytes());
             let _ = file.write_all(b"\n");
+            let _ = file.flush();
+            let _ = file.sync_all();
         }
     }
 
@@ -1654,6 +1717,44 @@ mod tests {
         assert!(lines[1].contains("\"role\":\"assistant\""));
         assert!(lines[2].contains("\"toolCall\""));
         assert!(lines[3].contains("\"role\":\"toolResult\""));
+    }
+
+    #[test]
+    fn test_structured_transcript_summarizes_large_tool_call_content() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+
+        store.add_structured_tool_call_message(
+            "bench_s3",
+            vec![json!({
+                "type": "toolCall",
+                "name": "file_write",
+                "actual_tool_name": "file_write",
+                "tool_call_id": "call_big",
+                "arguments": {
+                    "path": "daily_briefing.md",
+                    "content": "A".repeat(1200)
+                }
+            })],
+        );
+
+        let transcript = tmp
+            .path()
+            .join("sessions")
+            .join("bench_s3")
+            .join("transcript.jsonl");
+        let transcript_text = std::fs::read_to_string(transcript).unwrap();
+        let event: Value = serde_json::from_str(transcript_text.lines().next().unwrap()).unwrap();
+        let content = event["message"]["content"].as_array().unwrap();
+
+        assert_eq!(content[0]["arguments"]["path"], json!("daily_briefing.md"));
+        assert_eq!(content[0]["arguments"]["content"]["truncated"], json!(true));
+        assert_eq!(content[0]["arguments"]["content"]["char_count"], json!(1200));
+        assert!(content[0]["arguments"]["content"]["preview"]
+            .as_str()
+            .unwrap()
+            .len()
+            < 1200);
     }
 
     #[test]

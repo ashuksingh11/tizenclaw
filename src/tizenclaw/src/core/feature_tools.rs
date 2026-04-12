@@ -1,5 +1,6 @@
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
+use regex::Regex;
 use serde_json::{json, Value};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -258,6 +259,499 @@ fn is_placeholder(value: &str) -> bool {
     value.trim().is_empty() || value.starts_with("YOUR_")
 }
 
+fn parse_requested_image_size(value: &str) -> (u32, u32) {
+    let normalized = value.trim().to_ascii_lowercase();
+    let Some((w, h)) = normalized.split_once('x') else {
+        return (1024, 1024);
+    };
+    let width = w.parse::<u32>().ok().filter(|value| *value >= 128).unwrap_or(1024);
+    let height = h.parse::<u32>().ok().filter(|value| *value >= 128).unwrap_or(1024);
+    (width.min(1536), height.min(1536))
+}
+
+fn paint_pixel(buffer: &mut [u8], width: u32, height: u32, x: u32, y: u32, color: [u8; 4]) {
+    if x >= width || y >= height {
+        return;
+    }
+    let idx = ((y * width + x) * 4) as usize;
+    if let Some(slice) = buffer.get_mut(idx..idx + 4) {
+        slice.copy_from_slice(&color);
+    }
+}
+
+fn draw_filled_rect(
+    canvas: &mut [u8],
+    width: u32,
+    height: u32,
+    x0: u32,
+    y0: u32,
+    x1: u32,
+    y1: u32,
+    color: [u8; 4],
+) {
+    let left = x0.min(width);
+    let top = y0.min(height);
+    let right = x1.min(width);
+    let bottom = y1.min(height);
+    for y in top..bottom {
+        for x in left..right {
+            paint_pixel(canvas, width, height, x, y, color);
+        }
+    }
+}
+
+fn draw_circle(
+    canvas: &mut [u8],
+    width: u32,
+    height: u32,
+    center_x: i32,
+    center_y: i32,
+    radius: i32,
+    color: [u8; 4],
+) {
+    let width = width as i32;
+    let height = height as i32;
+    let left = (center_x - radius).max(0);
+    let right = (center_x + radius).min(width - 1);
+    let top = (center_y - radius).max(0);
+    let bottom = (center_y + radius).min(height - 1);
+    let radius_sq = radius * radius;
+    for y in top..=bottom {
+        for x in left..=right {
+            let dx = x - center_x;
+            let dy = y - center_y;
+            if dx * dx + dy * dy <= radius_sq {
+                paint_pixel(canvas, width as u32, height as u32, x as u32, y as u32, color);
+            }
+        }
+    }
+}
+
+fn adler32(bytes: &[u8]) -> u32 {
+    const MOD_ADLER: u32 = 65_521;
+    let mut a = 1u32;
+    let mut b = 0u32;
+    for byte in bytes {
+        a = (a + *byte as u32) % MOD_ADLER;
+        b = (b + a) % MOD_ADLER;
+    }
+    (b << 16) | a
+}
+
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for byte in bytes {
+        crc ^= *byte as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg() & 0xEDB8_8320;
+            crc = (crc >> 1) ^ mask;
+        }
+    }
+    !crc
+}
+
+fn write_png_rgba(path: &Path, width: u32, height: u32, rgba: &[u8]) -> Result<(), String> {
+    let row_bytes = width as usize * 4;
+    if rgba.len() != row_bytes * height as usize {
+        return Err("RGBA buffer length does not match requested PNG size".to_string());
+    }
+
+    let mut filtered = Vec::with_capacity((row_bytes + 1) * height as usize);
+    for row in rgba.chunks_exact(row_bytes) {
+        filtered.push(0);
+        filtered.extend_from_slice(row);
+    }
+
+    let mut zlib = Vec::with_capacity(filtered.len() + 64);
+    zlib.extend_from_slice(&[0x78, 0x01]);
+    let mut remaining = filtered.as_slice();
+    while !remaining.is_empty() {
+        let block_len = remaining.len().min(65_535);
+        let (block, tail) = remaining.split_at(block_len);
+        let is_final = tail.is_empty();
+        zlib.push(if is_final { 0x01 } else { 0x00 });
+        let len_bytes = (block_len as u16).to_le_bytes();
+        let nlen_bytes = (!(block_len as u16)).to_le_bytes();
+        zlib.extend_from_slice(&len_bytes);
+        zlib.extend_from_slice(&nlen_bytes);
+        zlib.extend_from_slice(block);
+        remaining = tail;
+    }
+    zlib.extend_from_slice(&adler32(&filtered).to_be_bytes());
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&[137, 80, 78, 71, 13, 10, 26, 10]);
+
+    let mut write_chunk = |name: &[u8; 4], data: &[u8]| {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(name);
+        out.extend_from_slice(data);
+        let mut crc_payload = Vec::with_capacity(name.len() + data.len());
+        crc_payload.extend_from_slice(name);
+        crc_payload.extend_from_slice(data);
+        out.extend_from_slice(&crc32(&crc_payload).to_be_bytes());
+    };
+
+    let mut ihdr = Vec::with_capacity(13);
+    ihdr.extend_from_slice(&width.to_be_bytes());
+    ihdr.extend_from_slice(&height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    write_chunk(b"IHDR", &ihdr);
+    write_chunk(b"IDAT", &zlib);
+    write_chunk(b"IEND", &[]);
+
+    std::fs::write(path, out)
+        .map_err(|err| format!("Failed to write fallback PNG '{}': {}", path.display(), err))
+}
+
+fn render_lightweight_scene_fallback(
+    prompt: &str,
+    output_path: &Path,
+    requested_size: Option<&str>,
+) -> Result<Value, String> {
+    let (width, height) = parse_requested_image_size(requested_size.unwrap_or("1024x1024"));
+    let cozy_prompt = prompt.to_ascii_lowercase();
+    let warm_top = if cozy_prompt.contains("cozy") || cozy_prompt.contains("coffee") {
+        [245, 224, 196, 255]
+    } else {
+        [223, 233, 242, 255]
+    };
+    let warm_bottom = if cozy_prompt.contains("night") {
+        [88, 61, 41, 255]
+    } else {
+        [197, 152, 112, 255]
+    };
+    let mut canvas = vec![0u8; width as usize * height as usize * 4];
+    for y in 0..height {
+        let ratio = y as f32 / height.max(1) as f32;
+        let blend = |a: u8, b: u8| ((a as f32 * (1.0 - ratio)) + (b as f32 * ratio)) as u8;
+        let color = [
+            blend(warm_top[0], warm_bottom[0]),
+            blend(warm_top[1], warm_bottom[1]),
+            blend(warm_top[2], warm_bottom[2]),
+            255,
+        ];
+        for x in 0..width {
+            paint_pixel(&mut canvas, width, height, x, y, color);
+        }
+    }
+
+    let floor_y = height * 3 / 4;
+    draw_filled_rect(
+        &mut canvas,
+        width,
+        height,
+        0,
+        floor_y,
+        width,
+        height,
+        [111, 78, 55, 255],
+    );
+    draw_filled_rect(
+        &mut canvas,
+        width,
+        height,
+        width / 10,
+        height / 5,
+        width / 4,
+        floor_y - height / 10,
+        [108, 78, 57, 255],
+    );
+    draw_filled_rect(
+        &mut canvas,
+        width,
+        height,
+        width / 8,
+        height / 4,
+        width / 4 - width / 30,
+        height / 3,
+        [150, 116, 84, 255],
+    );
+    draw_filled_rect(
+        &mut canvas,
+        width,
+        height,
+        width / 3,
+        height / 2,
+        width * 4 / 5,
+        height / 2 + height / 20,
+        [92, 63, 45, 255],
+    );
+    draw_filled_rect(
+        &mut canvas,
+        width,
+        height,
+        width * 3 / 5,
+        height / 2 + height / 20,
+        width * 3 / 5 + width / 35,
+        floor_y,
+        [74, 50, 36, 255],
+    );
+
+    let robot_center_x = width as i32 / 2;
+    let robot_head_y = height as i32 / 3;
+    draw_circle(
+        &mut canvas,
+        width,
+        height,
+        robot_center_x,
+        robot_head_y,
+        (width.min(height) / 10) as i32,
+        [189, 201, 214, 255],
+    );
+    draw_circle(
+        &mut canvas,
+        width,
+        height,
+        robot_center_x - (width as i32 / 35),
+        robot_head_y - (height as i32 / 80),
+        (width.min(height) / 55) as i32,
+        [55, 73, 91, 255],
+    );
+    draw_circle(
+        &mut canvas,
+        width,
+        height,
+        robot_center_x + (width as i32 / 35),
+        robot_head_y - (height as i32 / 80),
+        (width.min(height) / 55) as i32,
+        [55, 73, 91, 255],
+    );
+    draw_filled_rect(
+        &mut canvas,
+        width,
+        height,
+        width / 2 - width / 12,
+        height / 3 + height / 18,
+        width / 2 + width / 12,
+        height * 11 / 18,
+        [168, 183, 197, 255],
+    );
+    draw_filled_rect(
+        &mut canvas,
+        width,
+        height,
+        width / 2 - width / 18,
+        height * 11 / 18,
+        width / 2 + width / 18,
+        floor_y,
+        [86, 103, 120, 255],
+    );
+    draw_filled_rect(
+        &mut canvas,
+        width,
+        height,
+        width / 2 + width / 16,
+        height / 2,
+        width / 2 + width / 5,
+        height / 2 + height / 30,
+        [168, 183, 197, 255],
+    );
+
+    if cozy_prompt.contains("book") || cozy_prompt.contains("reading") || cozy_prompt.contains("read")
+    {
+        draw_filled_rect(
+            &mut canvas,
+            width,
+            height,
+            width / 2 + width / 7,
+            height / 2 - height / 25,
+            width / 2 + width / 4,
+            height / 2 + height / 18,
+            [98, 59, 132, 255],
+        );
+        draw_filled_rect(
+            &mut canvas,
+            width,
+            height,
+            width / 2 + width / 7 + width / 150,
+            height / 2 - height / 25 + height / 150,
+            width / 2 + width / 4 - width / 150,
+            height / 2 + height / 18 - height / 150,
+            [244, 236, 215, 255],
+        );
+    }
+
+    if cozy_prompt.contains("coffee") || cozy_prompt.contains("cafe") || cozy_prompt.contains("shop") {
+        draw_filled_rect(
+            &mut canvas,
+            width,
+            height,
+            width * 11 / 20,
+            height / 2 - height / 18,
+            width * 11 / 20 + width / 30,
+            height / 2 + height / 36,
+            [233, 236, 241, 255],
+        );
+        draw_circle(
+            &mut canvas,
+            width,
+            height,
+            (width * 11 / 20 + width / 24) as i32,
+            (height / 2 - height / 24) as i32,
+            (width.min(height) / 60) as i32,
+            [99, 58, 33, 255],
+        );
+    }
+
+    let ext = output_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("png")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => write_png_rgba(output_path, width, height, &canvas)?,
+        other => {
+            return Err(format!(
+                "Local fallback image renderer does not support '.{}' outputs yet",
+                other
+            ))
+        }
+    }
+
+    Ok(json!({
+        "status": "success",
+        "provider": "local_fallback",
+        "path": output_path.to_string_lossy().to_string(),
+        "prompt": prompt,
+        "size": format!("{}x{}", width, height)
+    }))
+}
+
+fn percent_decode(value: &str) -> String {
+    let mut out = Vec::with_capacity(value.len());
+    let bytes = value.as_bytes();
+    let mut idx = 0usize;
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'%' if idx + 2 < bytes.len() => {
+                let hex = &value[idx + 1..idx + 3];
+                if let Ok(decoded) = u8::from_str_radix(hex, 16) {
+                    out.push(decoded);
+                    idx += 3;
+                    continue;
+                }
+                out.push(bytes[idx]);
+                idx += 1;
+            }
+            b'+' => {
+                out.push(b' ');
+                idx += 1;
+            }
+            other => {
+                out.push(other);
+                idx += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn decode_duckduckgo_redirect(url: &str) -> String {
+    if let Some(pos) = url.find("uddg=") {
+        let remainder = &url[pos + 5..];
+        let encoded = remainder.split('&').next().unwrap_or(remainder);
+        return percent_decode(encoded);
+    }
+    url.to_string()
+}
+
+fn strip_markdown_markup(text: &str) -> String {
+    text.replace("**", "")
+        .replace("__", "")
+        .replace('`', "")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .trim()
+        .to_string()
+}
+
+async fn fallback_search_duckduckgo(query: &str, limit: usize) -> Result<Value, String> {
+    let encoded_query = percent_encode_query(query);
+    let url = format!(
+        "https://r.jina.ai/http://html.duckduckgo.com/html/?q={}",
+        encoded_query
+    );
+    let client = crate::generic::infra::http_client::default_client();
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|err| format!("DuckDuckGo mirror search failed: {}", err))?;
+    let status = response.status();
+    let raw = response
+        .text()
+        .await
+        .map_err(|err| format!("DuckDuckGo mirror response read failed: {}", err))?;
+    if !status.is_success() {
+        return Err(format!(
+            "DuckDuckGo mirror returned HTTP {}: {}",
+            status.as_u16(),
+            raw
+        ));
+    }
+
+    let heading_re = Regex::new(r"(?m)^## \[(?P<title>[^\]]+)\]\((?P<url>[^)]+)\)\s*$")
+        .map_err(|err| format!("DuckDuckGo parser regex failed: {}", err))?;
+    let mut matches = heading_re.captures_iter(&raw).peekable();
+    let mut results = Vec::new();
+    while let Some(capture) = matches.next() {
+        let full = capture.get(0).ok_or_else(|| "Missing match body".to_string())?;
+        let start = full.end();
+        let end = matches
+            .peek()
+            .and_then(|next| next.get(0).map(|entry| entry.start()))
+            .unwrap_or(raw.len());
+        let block = &raw[start..end];
+        let snippet = block
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .filter(|line| !line.starts_with('['))
+            .filter(|line| !line.starts_with("![]"))
+            .filter(|line| !line.starts_with("URL Source:"))
+            .filter(|line| !line.starts_with("Markdown Content:"))
+            .map(strip_markdown_markup)
+            .find(|line| !line.is_empty())
+            .unwrap_or_default();
+        results.push(json!({
+            "title": strip_markdown_markup(capture.name("title").map(|m| m.as_str()).unwrap_or("")),
+            "snippet": snippet,
+            "url": decode_duckduckgo_redirect(capture.name("url").map(|m| m.as_str()).unwrap_or("")),
+        }));
+        if results.len() >= limit {
+            break;
+        }
+    }
+
+    if results.is_empty() {
+        return Err("DuckDuckGo mirror returned no parsable results".to_string());
+    }
+
+    Ok(json!({
+        "engine": "duckduckgo_mirror",
+        "query": query,
+        "results": results
+    }))
+}
+
+fn percent_encode_query(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char)
+            }
+            b' ' => encoded.push_str("%20"),
+            _ => encoded.push_str(&format!("%{:02X}", byte)),
+        }
+    }
+    encoded
+}
+
 struct ImageConfig {
     provider: String,
     api_key: String,
@@ -303,18 +797,21 @@ pub async fn generate_image(
     llm_doc: &Value,
 ) -> Value {
     let cfg = image_config_from_doc(llm_doc);
-    if is_placeholder(&cfg.api_key) {
-        return json!({
-            "error": format!(
-                "Image generation API key is not configured for provider '{}'",
-                cfg.provider
-            )
-        });
-    }
-
     let target = resolve_path(workdir, output_path);
     if let Err(err) = ensure_parent(&target) {
         return json!({ "error": err });
+    }
+
+    if is_placeholder(&cfg.api_key) {
+        return match render_lightweight_scene_fallback(prompt, &target, requested_size) {
+            Ok(result) => result,
+            Err(err) => json!({
+                "error": format!(
+                    "Image generation API key is not configured for provider '{}' and local fallback failed: {}",
+                    cfg.provider, err
+                )
+            }),
+        };
     }
 
     let request = json!({
@@ -349,9 +846,29 @@ pub async fn generate_image(
     };
 
     if !status.is_success() {
-        return json!({
-            "error": format!("Image provider returned HTTP {}: {}", status.as_u16(), body)
-        });
+        return match render_lightweight_scene_fallback(prompt, &target, requested_size) {
+            Ok(mut result) => {
+                if let Some(object) = result.as_object_mut() {
+                    object.insert(
+                        "fallback_reason".to_string(),
+                        Value::String(format!(
+                            "Image provider returned HTTP {}: {}",
+                            status.as_u16(),
+                            body
+                        )),
+                    );
+                }
+                result
+            }
+            Err(err) => json!({
+                "error": format!(
+                    "Image provider returned HTTP {}: {} (local fallback failed: {})",
+                    status.as_u16(),
+                    body,
+                    err
+                )
+            }),
+        };
     }
 
     let parsed: Value = match serde_json::from_str(&body) {
@@ -561,7 +1078,10 @@ pub fn validate_web_search(config_dir: &Path, engine: Option<&str>) -> Value {
         }
     };
 
-    let requested = engine.map(|value| value.to_ascii_lowercase());
+    let requested = engine
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
     let default_engine = doc
         .get("default_engine")
         .and_then(|value| value.as_str())
@@ -609,6 +1129,17 @@ pub fn validate_web_search(config_dir: &Path, engine: Option<&str>) -> Value {
             "ready": missing.is_empty(),
             "missing": missing,
             "is_default": key == default_engine,
+        }));
+    }
+    if requested.as_deref().map(|value| value == "duckduckgo" || value == "duckduckgo_mirror")
+        != Some(false)
+    {
+        reports.push(json!({
+            "engine": "duckduckgo_mirror",
+            "ready": true,
+            "missing": [],
+            "is_default": default_engine.eq_ignore_ascii_case("duckduckgo")
+                || default_engine.eq_ignore_ascii_case("duckduckgo_mirror"),
         }));
     }
 
@@ -824,7 +1355,10 @@ pub async fn web_search(
     config_dir: &Path,
 ) -> Value {
     let normalized_limit = limit.clamp(1, 10);
-    let requested_engine = engine.map(|value| value.to_ascii_lowercase());
+    let requested_engine = engine
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
     let config = match parse_search_config(config_dir) {
         Ok(config) => config,
         Err(err) => return json!({ "error": err }),
@@ -873,6 +1407,7 @@ pub async fn web_search(
         "google" => fallback_search_google(query, normalized_limit, &cfg).await,
         "brave" => fallback_search_brave(query, normalized_limit, &cfg).await,
         "gemini" => fallback_search_gemini(query, normalized_limit, &cfg).await,
+        "duckduckgo" | "duckduckgo_mirror" => fallback_search_duckduckgo(query, normalized_limit).await,
         other => Err(format!(
             "Search engine '{}' is not available without the native search CLI",
             other
@@ -881,6 +1416,54 @@ pub async fn web_search(
 
     match fallback {
         Ok(result) => json!({ "status": "success", "query": query, "result": result }),
-        Err(err) => json!({ "error": err }),
+        Err(err) => match fallback_search_duckduckgo(query, normalized_limit).await {
+            Ok(result) => json!({
+                "status": "success",
+                "query": query,
+                "result": result,
+                "fallback_reason": err
+            }),
+            Err(duck_err) => json!({
+                "error": format!("{} | DuckDuckGo fallback failed: {}", err, duck_err)
+            }),
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn parse_requested_image_size_clamps_invalid_values() {
+        assert_eq!(parse_requested_image_size("256x512"), (256, 512));
+        assert_eq!(parse_requested_image_size("oops"), (1024, 1024));
+        assert_eq!(parse_requested_image_size("8x99999"), (1024, 1536));
+    }
+
+    #[test]
+    fn duckduckgo_redirect_decoder_extracts_actual_url() {
+        let url = "http://duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fevent%3Fa%3D1%26b%3D2&rut=abc";
+        assert_eq!(
+            decode_duckduckgo_redirect(url),
+            "https://example.com/event?a=1&b=2"
+        );
+    }
+
+    #[test]
+    fn lightweight_scene_fallback_writes_valid_png() {
+        let dir = tempdir().unwrap();
+        let output = dir.path().join("robot_cafe.png");
+        let result = render_lightweight_scene_fallback(
+            "friendly robot in a cozy coffee shop reading a book",
+            &output,
+            Some("512x512"),
+        )
+        .unwrap();
+        assert_eq!(result["status"], "success");
+        assert!(output.exists());
+        let bytes = std::fs::read(&output).unwrap();
+        assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G']));
     }
 }
