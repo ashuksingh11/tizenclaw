@@ -31,7 +31,23 @@ pub fn default_client() -> Client {
 
 /// Build a properly configured reqwest client with CA certificates.
 fn build_agent(timeout_secs: u64) -> Client {
-    let mut builder = ClientBuilder::new().timeout(std::time::Duration::from_secs(timeout_secs));
+    let mut builder = ClientBuilder::new()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .user_agent("TizenClaw/1.0 (+https://github.com/hjhun/tizenclaw)")
+        .default_headers({
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(
+                reqwest::header::ACCEPT,
+                reqwest::header::HeaderValue::from_static(
+                    "application/json,text/plain;q=0.9,*/*;q=0.8",
+                ),
+            );
+            headers.insert(
+                reqwest::header::ACCEPT_LANGUAGE,
+                reqwest::header::HeaderValue::from_static("en-US,en;q=0.9"),
+            );
+            headers
+        });
 
     // Probe for CA certificate file (matching C++ tizenclaw_curl behavior)
     for path in CA_CERT_PATHS {

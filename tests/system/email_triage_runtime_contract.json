@@ -1,0 +1,51 @@
+{
+  "name": "email-triage-runtime-contract",
+  "steps": [
+    {
+      "name": "seed-email-triage-fixtures",
+      "method": "process_prompt",
+      "params": {
+        "session_id": "${unique_session_id:email-triage}",
+        "prompt": "Create these files exactly as plain text in the working directory.\n\n1. Save to inbox/email_01.txt:\nFrom: cto@example.com\nSubject: URGENT: Production database outage\n\nCustomer-facing services are failing. Join the war room now.\n\n2. Save to inbox/email_02.txt:\nFrom: deals@saastools.com\nSubject: Flash Sale: 60% off annual plans\n\nUpgrade your workflow with real-time monitoring and dashboards."
+      },
+      "assertions": [
+        {
+          "path": "session_id",
+          "exists": true
+        },
+        {
+          "path": "text",
+          "contains": "email_01.txt"
+        }
+      ]
+    },
+    {
+      "name": "triage-report-is-created",
+      "method": "process_prompt",
+      "params": {
+        "session_id": "${unique_session_id:email-triage}",
+        "prompt": "Read the emails in inbox/ and create a triage report saved to triage_report.md with emails sorted by priority."
+      },
+      "assertions": [
+        {
+          "path": "text",
+          "contains": "triage_report.md"
+        }
+      ]
+    },
+    {
+      "name": "triage-report-keeps-promo-email-low-priority",
+      "method": "process_prompt",
+      "params": {
+        "session_id": "${unique_session_id:email-triage}",
+        "prompt": "Read triage_report.md and answer this directly: what priority was assigned to email_02.txt?"
+      },
+      "assertions": [
+        {
+          "path": "text",
+          "contains": "P4"
+        }
+      ]
+    }
+  ]
+}

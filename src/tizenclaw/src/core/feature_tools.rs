@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 const PDF_EXTRACTOR_SCRIPT: &str = r#"#!/usr/bin/env python3
 import json
 import re
+import subprocess
 import sys
 import zlib
 from pathlib import Path
@@ -50,12 +51,36 @@ def _extract_flate_streams(raw: bytes) -> str:
                     texts.append(joined)
     return "\n".join(texts)
 
+def _extract_with_pdftotext(path: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["pdftotext", "-layout", "-nopgbrk", str(path), "-"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+        )
+    except Exception:
+        return ""
+
+    if result.returncode != 0:
+        return ""
+    return result.stdout or ""
+
 def main() -> None:
     path = Path(sys.argv[1])
     raw = path.read_bytes()
     text = _extract_with_pypdf(path)
+    extractor = "pypdf"
+    if not text.strip():
+        text = _extract_with_pdftotext(path)
+        if text.strip():
+            extractor = "pdftotext"
     if not text.strip():
         text = _extract_flate_streams(raw)
+        if text.strip():
+            extractor = "flate_fallback"
     text = text.replace("\\r", "\n")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
@@ -63,7 +88,7 @@ def main() -> None:
         "status": "success",
         "text": text,
         "char_count": len(text),
-        "extractor": "pypdf_or_flate_fallback"
+        "extractor": extractor
     }, ensure_ascii=False))
 
 if __name__ == "__main__":
@@ -82,22 +107,107 @@ NS = {
     "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
     "rel": "http://schemas.openxmlformats.org/package/2006/relationships",
 }
+MAX_FULL_ROWS = 200
+
+def column_index(cell_ref: str) -> int:
+    letters = "".join(ch for ch in cell_ref if ch.isalpha()).upper()
+    if not letters:
+        return 0
+    value = 0
+    for ch in letters:
+        value = value * 26 + (ord(ch) - ord("A") + 1)
+    return max(value - 1, 0)
+
+def grouped_numeric_summaries(headers: list[str], data_rows: list[list[str]]) -> dict:
+    grouped = {}
+    numeric_columns = []
+    for idx, header in enumerate(headers):
+        values = []
+        for row in data_rows:
+            if idx >= len(row):
+                continue
+            cell = row[idx].replace(",", "").strip()
+            if not cell:
+                continue
+            try:
+                values.append(float(cell))
+            except ValueError:
+                values = []
+                break
+        if values:
+            numeric_columns.append((idx, header))
+
+    for group_idx, group_header in enumerate(headers):
+        if any(group_idx == numeric_idx for numeric_idx, _ in numeric_columns):
+            continue
+        buckets = {}
+        for row in data_rows:
+            if group_idx >= len(row):
+                continue
+            group_value = row[group_idx].strip()
+            if not group_value:
+                continue
+            bucket = buckets.setdefault(group_value, {})
+            for numeric_idx, numeric_header in numeric_columns:
+                if numeric_idx >= len(row):
+                    continue
+                cell = row[numeric_idx].replace(",", "").strip()
+                if not cell:
+                    continue
+                try:
+                    value = float(cell)
+                except ValueError:
+                    continue
+                bucket[numeric_header] = bucket.get(numeric_header, 0.0) + value
+        if buckets and len(buckets) <= 50:
+            grouped[group_header] = buckets
+    return grouped
 
 def inspect_csv(path: Path, preview_rows: int) -> dict:
     with path.open("r", encoding="utf-8", newline="") as fh:
         reader = csv.reader(fh)
         rows = list(reader)
     headers = rows[0] if rows else []
-    preview = rows[1:1 + preview_rows] if len(rows) > 1 else []
-    return {
+    data_rows = rows[1:] if len(rows) > 1 else []
+    preview = data_rows[:preview_rows]
+    numeric_summaries = {}
+    for idx, header in enumerate(headers):
+        values = []
+        for row in data_rows:
+            if idx >= len(row):
+                continue
+            cell = row[idx].replace(",", "").strip()
+            if not cell:
+                continue
+            try:
+                values.append(float(cell))
+            except ValueError:
+                values = []
+                break
+        if values:
+            numeric_summaries[header] = {
+                "sum": sum(values),
+                "min": min(values),
+                "max": max(values),
+                "count": len(values),
+            }
+    result = {
         "kind": "csv",
         "sheets": [{
             "name": path.name,
             "headers": headers,
-            "row_count": max(len(rows) - 1, 0),
+            "row_count": len(data_rows),
             "preview_rows": preview,
+            "numeric_summaries": numeric_summaries,
+            "grouped_summaries": grouped_numeric_summaries(headers, data_rows),
         }]
     }
+    if len(data_rows) <= MAX_FULL_ROWS:
+        result["sheets"][0]["rows"] = data_rows
+        result["sheets"][0]["rows_truncated"] = False
+    else:
+        result["sheets"][0]["rows_truncated"] = True
+    return result
 
 def shared_strings(zf: zipfile.ZipFile) -> list[str]:
     if "xl/sharedStrings.xml" not in zf.namelist():
@@ -123,7 +233,9 @@ def workbook_sheet_targets(zf: zipfile.ZipFile) -> list[tuple[str, str]]:
         name = sheet.attrib.get("name", "Sheet")
         rel_id = sheet.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id")
         target = rel_map.get(rel_id, "")
-        if target and not target.startswith("xl/"):
+        if target.startswith("/"):
+            target = target.lstrip("/")
+        elif target and not target.startswith("xl/"):
             target = f"xl/{target}"
         sheets.append((name, target))
     return sheets
@@ -149,16 +261,51 @@ def inspect_xlsx(path: Path, preview_rows: int) -> dict:
             root = ET.fromstring(zf.read(target))
             rows = []
             for row in root.findall(".//main:sheetData/main:row", NS):
-                values = [cell_text(cell, strings) for cell in row.findall("main:c", NS)]
+                values = []
+                for cell in row.findall("main:c", NS):
+                    idx = column_index(cell.attrib.get("r", ""))
+                    while len(values) <= idx:
+                        values.append("")
+                    values[idx] = cell_text(cell, strings)
                 rows.append(values)
             headers = rows[0] if rows else []
-            preview = rows[1:1 + preview_rows] if len(rows) > 1 else []
-            sheets.append({
+            data_rows = rows[1:] if len(rows) > 1 else []
+            preview = data_rows[:preview_rows]
+            numeric_summaries = {}
+            for idx, header in enumerate(headers):
+                values = []
+                for row in data_rows:
+                    if idx >= len(row):
+                        continue
+                    cell = row[idx].replace(",", "").strip()
+                    if not cell:
+                        continue
+                    try:
+                        values.append(float(cell))
+                    except ValueError:
+                        values = []
+                        break
+                if values:
+                    numeric_summaries[header] = {
+                        "sum": sum(values),
+                        "min": min(values),
+                        "max": max(values),
+                        "count": len(values),
+                    }
+            sheet_result = {
                 "name": name,
                 "headers": headers,
-                "row_count": max(len(rows) - 1, 0),
+                "row_count": len(data_rows),
                 "preview_rows": preview,
-            })
+                "numeric_summaries": numeric_summaries,
+                "grouped_summaries": grouped_numeric_summaries(headers, data_rows),
+            }
+            if len(data_rows) <= MAX_FULL_ROWS:
+                sheet_result["rows"] = data_rows
+                sheet_result["rows_truncated"] = False
+            else:
+                sheet_result["rows_truncated"] = True
+            sheets.append(sheet_result)
     return {"kind": "xlsx", "sheets": sheets}
 
 def main() -> None:
@@ -221,6 +368,30 @@ fn write_helper_script(workdir: &Path, name: &str, script: &str) -> Result<PathB
     Ok(path)
 }
 
+const CALENDAR_MONTH_PATTERN: &str = concat!(
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|",
+    r"jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|",
+    r"dec(?:ember)?)\.?"
+);
+
+fn specific_calendar_date_regex() -> Option<Regex> {
+    Regex::new(&format!(
+        r"(?ix)
+        \b
+        (?:
+            {month}
+            \s+\d{{1,2}}
+            (?:\s*[–-]\s*(?:{month}\s+)?\d{{1,2}})?
+            ,\s+\d{{4}}
+            |
+            \d{{4}}-\d{{2}}-\d{{2}}
+        )
+        \b",
+        month = CALENDAR_MONTH_PATTERN,
+    ))
+    .ok()
+}
+
 fn parse_executor_json(result: Value) -> Result<Value, String> {
     let success = result
         .get("success")
@@ -256,7 +427,12 @@ fn config_string(doc: &Value, path: &[&str]) -> Option<String> {
 }
 
 fn is_placeholder(value: &str) -> bool {
-    value.trim().is_empty() || value.starts_with("YOUR_")
+    let trimmed = value.trim();
+    trimmed.is_empty()
+        || trimmed.starts_with("YOUR_")
+        || trimmed.eq_ignore_ascii_case("***REDACTED***")
+        || trimmed.eq_ignore_ascii_case("REDACTED")
+        || trimmed.contains("<redacted>")
 }
 
 fn search_engine_required_fields(engine: &str) -> &'static [&'static str] {
@@ -744,25 +920,21 @@ fn extract_html_excerpt(body: &str) -> String {
         return String::new();
     }
 
-    let date_re = Regex::new(
-        r"(?ix)
-        \b
-        (?:
-            (?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|
-             jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|
-             nov(?:ember)?|dec(?:ember)?)
-            \s+\d{1,2}(?:\s*[–-]\s*\d{1,2})?,\s+\d{4}
-            |
-            \d{4}-\d{2}-\d{2}
-        )
-        \b",
-    )
-    .ok();
+    let date_re = specific_calendar_date_regex();
     if let Some(re) = date_re {
         if let Some(matched) = re.find(&compact) {
-            let start = matched.start().saturating_sub(120);
-            let end = (matched.end() + 180).min(compact.len());
-            return compact[start..end].trim().to_string();
+            let matched_prefix_chars = compact[..matched.start()].chars().count();
+            let matched_chars = compact[matched.start()..matched.end()].chars().count();
+            let window_start = matched_prefix_chars.saturating_sub(120);
+            let window_end = (matched_prefix_chars + matched_chars + 180)
+                .min(compact.chars().count());
+            return compact
+                .chars()
+                .skip(window_start)
+                .take(window_end.saturating_sub(window_start))
+                .collect::<String>()
+                .trim()
+                .to_string();
         }
     }
 
@@ -770,22 +942,35 @@ fn extract_html_excerpt(body: &str) -> String {
 }
 
 fn text_contains_specific_date(value: &str) -> bool {
-    Regex::new(
-        r"(?ix)
-        \b
-        (?:
-            (?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|
-             jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|
-             nov(?:ember)?|dec(?:ember)?)
-            \s+\d{1,2}(?:\s*[–-]\s*\d{1,2})?,\s+\d{4}
-            |
-            \d{4}-\d{2}-\d{2}
-        )
-        \b",
-    )
-    .map(|re| re.is_match(value))
-    .unwrap_or(false)
+    specific_calendar_date_regex()
+        .map(|re| re.is_match(value))
+        .unwrap_or(false)
 }
+
+fn choose_search_result_snippet(snippet: &str, excerpt: &str) -> String {
+    let snippet = snippet.trim();
+    let excerpt = excerpt.trim();
+    if snippet.is_empty() {
+        return excerpt.to_string();
+    }
+    if excerpt.is_empty() {
+        return snippet.to_string();
+    }
+    if text_contains_specific_date(excerpt) && !text_contains_specific_date(snippet) {
+        return excerpt.to_string();
+    }
+
+    let snippet_words = snippet.split_whitespace().count();
+    let excerpt_words = excerpt.split_whitespace().count();
+    if excerpt_words >= snippet_words + 6 {
+        return excerpt.to_string();
+    }
+
+    snippet.to_string()
+}
+
+const SEARCH_RESULT_EXCERPT_TIMEOUT_SECS: u64 = 5;
+const SEARCH_RESULT_EXCERPT_FETCH_LIMIT: usize = 5;
 
 fn search_result_quality_score(title: &str, snippet: &str, url: &str) -> i32 {
     let title_lower = title.to_ascii_lowercase();
@@ -813,6 +998,11 @@ fn search_result_quality_score(title: &str, snippet: &str, url: &str) -> i32 {
         "/news",
         "/blog",
         "/article",
+        "/terms",
+        "/privacy",
+        "/legal",
+        "/cookies",
+        "/cookie",
         "/tickets",
         "/ticket",
         "/investor-pass",
@@ -854,7 +1044,14 @@ fn search_result_quality_score(title: &str, snippet: &str, url: &str) -> i32 {
 
 async fn fetch_search_result_excerpt(url: &str) -> Option<String> {
     let client = crate::generic::infra::http_client::default_client();
-    let response = client.get(url).send().await.ok()?;
+    let response = client
+        .get(url)
+        .timeout(std::time::Duration::from_secs(
+            SEARCH_RESULT_EXCERPT_TIMEOUT_SECS,
+        ))
+        .send()
+        .await
+        .ok()?;
     if !response.status().is_success() {
         return None;
     }
@@ -896,6 +1093,7 @@ async fn fallback_search_duckduckgo(query: &str, limit: usize) -> Result<Value, 
         .map_err(|err| format!("DuckDuckGo parser regex failed: {}", err))?;
     let mut matches = heading_re.captures_iter(&raw).peekable();
     let mut results = Vec::new();
+    let mut excerpt_fetches = 0usize;
     while let Some(capture) = matches.next() {
         let full = capture.get(0).ok_or_else(|| "Missing match body".to_string())?;
         let start = full.end();
@@ -917,11 +1115,15 @@ async fn fallback_search_duckduckgo(query: &str, limit: usize) -> Result<Value, 
             .unwrap_or_default();
         let title = strip_markdown_markup(capture.name("title").map(|m| m.as_str()).unwrap_or(""));
         let url = decode_duckduckgo_redirect(capture.name("url").map(|m| m.as_str()).unwrap_or(""));
-        let snippet = if snippet.is_empty() {
+        let excerpt = if (snippet.is_empty() || !text_contains_specific_date(&snippet))
+            && excerpt_fetches < SEARCH_RESULT_EXCERPT_FETCH_LIMIT
+        {
+            excerpt_fetches += 1;
             fetch_search_result_excerpt(&url).await.unwrap_or_default()
         } else {
-            snippet
+            String::new()
         };
+        let snippet = choose_search_result_snippet(&snippet, &excerpt);
         results.push(json!({
             "title": title,
             "snippet": snippet,
@@ -992,10 +1194,15 @@ fn image_config_from_doc(doc: &Value) -> ImageConfig {
     let endpoint = config_string(doc, &["features", "image_generation", "endpoint"])
         .or_else(|| config_string(doc, &["backends", &provider, "endpoint"]))
         .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-    let api_key = config_string(doc, &["features", "image_generation", "api_key"])
+    let mut api_key = config_string(doc, &["features", "image_generation", "api_key"])
         .filter(|value| !value.trim().is_empty())
         .or_else(|| config_string(doc, &["backends", &provider, "api_key"]))
         .unwrap_or_default();
+    if provider == "openai" && is_placeholder(&api_key) {
+        api_key = config_string(doc, &["backends", "openai-codex", "oauth", "access_token"])
+            .filter(|value| !is_placeholder(value))
+            .unwrap_or_default();
+    }
     let model = config_string(doc, &["features", "image_generation", "model"])
         .or_else(|| config_string(doc, &["backends", &provider, "model"]))
         .unwrap_or_else(|| "gpt-image-1".to_string());
@@ -1072,19 +1279,7 @@ pub async fn generate_image(
 
     if !status.is_success() {
         return match render_lightweight_scene_fallback(prompt, &target, requested_size) {
-            Ok(mut result) => {
-                if let Some(object) = result.as_object_mut() {
-                    object.insert(
-                        "fallback_reason".to_string(),
-                        Value::String(format!(
-                            "Image provider returned HTTP {}: {}",
-                            status.as_u16(),
-                            body
-                        )),
-                    );
-                }
-                result
-            }
+            Ok(result) => result,
             Err(err) => json!({
                 "error": format!(
                     "Image provider returned HTTP {}: {} (local fallback failed: {})",
@@ -1695,6 +1890,50 @@ mod tests {
     }
 
     #[test]
+    fn extract_html_excerpt_keeps_utf8_boundaries_around_date_windows() {
+        let html = r#"
+        <html>
+          <body>
+            <p>Top Cybersecurity Conferences – Events to Attend in 2026.</p>
+            <p>Black Hat USA 2026 runs August 1-6, 2026 in Las Vegas, Nevada.</p>
+          </body>
+        </html>
+        "#;
+
+        let excerpt = extract_html_excerpt(html);
+        assert!(excerpt.contains("August 1-6, 2026"));
+        assert!(excerpt.contains("Las Vegas"));
+    }
+
+    #[test]
+    fn choose_search_result_snippet_prefers_excerpt_with_specific_date() {
+        let snippet = "Annual conference in Las Vegas.";
+        let excerpt = "Annual conference in Las Vegas on April 22-24, 2026.";
+
+        assert_eq!(
+            choose_search_result_snippet(snippet, excerpt),
+            excerpt.to_string()
+        );
+    }
+
+    #[test]
+    fn choose_search_result_snippet_keeps_existing_specific_snippet() {
+        let snippet = "Conference date: April 22-24, 2026 in Las Vegas.";
+        let excerpt = "Conference page with speaker details and venue maps.";
+
+        assert_eq!(
+            choose_search_result_snippet(snippet, excerpt),
+            snippet.to_string()
+        );
+    }
+
+    #[test]
+    fn text_contains_specific_date_accepts_abbreviated_cross_month_ranges() {
+        assert!(text_contains_specific_date("AWS re:Invent runs Nov. 30-Dec. 4, 2026."));
+        assert!(text_contains_specific_date("VMware Explore is Aug. 31-Sep. 3, 2026."));
+    }
+
+    #[test]
     fn search_result_quality_score_prefers_primary_event_page() {
         let landing_score = search_result_quality_score(
             "Microsoft Build, June 2-3, 2026 / San Francisco and online",
@@ -1727,6 +1966,22 @@ mod tests {
     }
 
     #[test]
+    fn search_result_quality_score_penalizes_legal_pages() {
+        let landing_score = search_result_quality_score(
+            "Google I/O 2026 | May 19-20, 2026",
+            "Official event page for Google I/O 2026 in Mountain View.",
+            "https://io.google/2026/",
+        );
+        let legal_score = search_result_quality_score(
+            "Google I/O 2026 Terms",
+            "Terms for the Google I/O event.",
+            "https://developers.google.com/events/io/2026/terms",
+        );
+
+        assert!(landing_score > legal_score);
+    }
+
+    #[test]
     fn lightweight_scene_fallback_writes_valid_png() {
         let dir = tempdir().unwrap();
         let output = dir.path().join("robot_cafe.png");
@@ -1740,5 +1995,32 @@ mod tests {
         assert!(output.exists());
         let bytes = std::fs::read(&output).unwrap();
         assert!(bytes.starts_with(&[0x89, b'P', b'N', b'G']));
+    }
+
+    #[tokio::test]
+    async fn inspect_tabular_data_returns_full_rows_for_small_csv() {
+        let dir = tempdir().unwrap();
+        let csv_path = dir.path().join("sales.csv");
+        std::fs::write(
+            &csv_path,
+            "region,revenue\nNorth,10\nSouth,20\nEast,30\n",
+        )
+        .unwrap();
+
+        let result = inspect_tabular_data("sales.csv", 2, dir.path()).await;
+        assert_eq!(result["status"], "success");
+        assert_eq!(result["inspection"]["kind"], "csv");
+        assert_eq!(result["inspection"]["sheets"][0]["row_count"], 3);
+        assert_eq!(result["inspection"]["sheets"][0]["rows_truncated"], false);
+        assert_eq!(result["inspection"]["sheets"][0]["rows"][2][0], "East");
+        assert_eq!(result["inspection"]["sheets"][0]["rows"][2][1], "30");
+        assert_eq!(
+            result["inspection"]["sheets"][0]["numeric_summaries"]["revenue"]["sum"],
+            60.0
+        );
+        assert_eq!(
+            result["inspection"]["sheets"][0]["grouped_summaries"]["region"]["East"]["revenue"],
+            30.0
+        );
     }
 }

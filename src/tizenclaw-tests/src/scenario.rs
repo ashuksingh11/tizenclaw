@@ -49,7 +49,12 @@ pub fn load_scenario(path: &str) -> Result<ScenarioFile, String> {
 pub fn unique_session_id(prefix: &str) -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{}_{}", prefix, n)
+    let pid = std::process::id();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    format!("{}_{}_{}_{}", prefix, pid, now, n)
 }
 
 pub fn openai_oauth_regression_scenario() -> ScenarioFile {
@@ -476,6 +481,8 @@ mod tests {
         let first = unique_session_id("scenario");
         let second = unique_session_id("scenario");
         assert_ne!(first, second);
+        assert!(first.starts_with("scenario_"));
+        assert!(second.starts_with("scenario_"));
     }
 
     #[test]

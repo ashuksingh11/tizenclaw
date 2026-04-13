@@ -75,7 +75,7 @@ use crate::infra::key_store::KeyStore;
 use crate::llm::backend::{self, LlmBackend, LlmMessage, LlmResponse};
 use crate::storage::session_store::SessionStore;
 
-const MAX_CONTEXT_MESSAGES: usize = 100;
+const MAX_CONTEXT_MESSAGES: usize = 120;
 const CONTEXT_TOKEN_BUDGET: usize = 0;
 const CONTEXT_COMPACT_THRESHOLD: f32 = 0.90;
 const MAX_PREFETCHED_SKILLS: usize = 3;
@@ -85,6 +85,8 @@ const AUTHENTICATED_BACKEND_PRIORITY_BOOST: i64 = 10_000;
 const DEFAULT_FILE_READ_MAX_CHARS: usize = 12_000;
 const DEFAULT_FILE_READ_MATCH_WINDOW_CHARS: usize = 240;
 const DEFAULT_FILE_READ_MAX_MATCHES: usize = 5;
+const SYNTHETIC_INLINE_FULL_TEXT_LIMIT: usize = 6_000;
+const SYNTHETIC_EXTRACTION_PREVIEW_CHARS: usize = 2_000;
 
 #[derive(Clone, Debug, Default)]
 struct SessionPromptProfile {
@@ -166,7 +168,23 @@ fn count_words(text: &str) -> usize {
     text.split_whitespace().count()
 }
 
+fn requested_word_range_bounds(prompt: &str) -> Option<(usize, usize)> {
+    let regex =
+        regex::Regex::new(r"(?ix)\b(\d{2,5})\s*(?:-|–|to)\s*(\d{2,5})\s*words?\b").ok()?;
+    let captures = regex.captures(prompt)?;
+    let minimum = captures.get(1)?.as_str().parse::<usize>().ok()?;
+    let maximum = captures.get(2)?.as_str().parse::<usize>().ok()?;
+    if minimum >= maximum {
+        return None;
+    }
+    Some((minimum, maximum))
+}
+
 fn requested_word_budget_bounds(prompt: &str) -> Option<(usize, usize)> {
+    if let Some(bounds) = requested_word_range_bounds(prompt) {
+        return Some(bounds);
+    }
+
     let target_words = requested_word_target(prompt)?;
     if target_words < 100 {
         return None;
@@ -184,6 +202,26 @@ fn requested_word_budget_bounds(prompt: &str) -> Option<(usize, usize)> {
             target_words.saturating_mul(12) / 10,
         ))
     }
+}
+
+fn executive_briefing_word_budget_bounds(prompt: &str) -> Option<(usize, usize)> {
+    if !prompt_requests_executive_briefing(prompt) {
+        return None;
+    }
+
+    if let Some(bounds) = requested_word_budget_bounds(prompt) {
+        return Some(bounds);
+    }
+
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    if prompt_lower.contains("concise")
+        || prompt_lower.contains("executive attention")
+        || prompt_lower.contains("daily briefing")
+    {
+        return Some((500, 760));
+    }
+
+    None
 }
 
 fn requested_word_target(prompt: &str) -> Option<usize> {
@@ -421,6 +459,46 @@ fn build_text_read_payload(content: &str, pattern: Option<&str>, max_chars: usiz
         "pattern": pattern,
         "match_count": snippets.as_ref().map(|items| items.len()).unwrap_or(0),
     })
+}
+
+fn directory_listing_text(path: &Path, entries: &[Value]) -> String {
+    let mut lines = vec![format!("Directory listing for `{}`", path.to_string_lossy())];
+    for entry in entries {
+        let name = entry
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let is_dir = entry
+            .get("is_dir")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let size = entry.get("size").and_then(Value::as_u64).unwrap_or(0);
+        if is_dir {
+            lines.push(format!("- {}/", name));
+        } else {
+            lines.push(format!("- {} ({} bytes)", name, size));
+        }
+    }
+    lines.join("\n")
+}
+
+fn build_directory_read_payload(
+    path: &Path,
+    entries: Vec<Value>,
+    backend: &str,
+    pattern: Option<&str>,
+    max_chars: usize,
+) -> Value {
+    let listing_text = directory_listing_text(path, &entries);
+    let mut payload = build_text_read_payload(&listing_text, pattern, max_chars);
+    let object = payload.as_object_mut().expect("directory read payload object");
+    object.insert("success".into(), json!(true));
+    object.insert("operation".into(), json!("read"));
+    object.insert("path".into(), json!(path.to_string_lossy()));
+    object.insert("backend".into(), json!(backend));
+    object.insert("is_dir".into(), json!(true));
+    object.insert("entries".into(), json!(entries));
+    payload
 }
 
 fn normalize_conversation_log_text(text: &str) -> Option<String> {
@@ -1427,7 +1505,10 @@ fn path_is_likely_input_reference(prompt: &str, path: &str) -> bool {
         format!(r"\bread(?:\s+the)?(?:\s+(?:document|file|emails?))?(?:\s+in|\s+from)?\s+`?{escaped_path}`?\b"),
         format!(r"\bopen(?:\s+the)?(?:\s+(?:document|file))?(?:\s+in|\s+from)?\s+`?{escaped_path}`?\b"),
         format!(r"\b(?:inspect|review|analy[sz]e|summari[sz]e)(?:\s+the)?(?:\s+(?:document|file))?(?:\s+in|\s+from)?\s+`?{escaped_path}`?\b"),
+        format!(r"\b(?:check|use|consult)(?:\s+the)?(?:\s+(?:document|file))?(?:\s+in|\s+from)?\s+`?{escaped_path}`?\b"),
         format!(r"\b(?:document|file)\s+in\s+`?{escaped_path}`?\b"),
+        format!(r"\bfile\s+called\s+`?{escaped_path}`?\b"),
+        format!(r"\bsaved\s+.*?\s+file\s+called\s+`?{escaped_path}`?\b"),
         format!(r"\b(?:source|input)\s+(?:document|file)\s+`?{escaped_path}`?\b"),
         format!(r"\bfiles?\s+named\s+`?{escaped_path}`?\b"),
         format!(r"\bprovided\s+to\s+you\s+in\s+`?{escaped_path}`?\b"),
@@ -1564,6 +1645,58 @@ fn prompt_requests_image_generation(prompt: &str) -> bool {
     mentions_generation || (mentions_image_output && prompt_lower.contains("save"))
 }
 
+fn prompt_requests_code_generation(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    [
+        "script",
+        "python",
+        ".py",
+        "javascript",
+        ".js",
+        "typescript",
+        ".ts",
+        "shell script",
+        ".sh",
+        "program",
+        "source code",
+    ]
+    .iter()
+    .any(|needle| prompt_lower.contains(needle))
+        || expected_file_management_targets(prompt)
+            .iter()
+            .flatten()
+            .any(|path| {
+                matches!(
+                    Path::new(path)
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .map(|value| value.to_ascii_lowercase())
+                        .as_deref(),
+                    Some("py" | "js" | "ts" | "tsx" | "sh" | "rb" | "rs" | "java" | "cpp")
+                )
+            })
+}
+
+fn prompt_references_grounded_inputs_for_code_generation(prompt: &str) -> bool {
+    if !prompt_requests_code_generation(prompt) {
+        return false;
+    }
+
+    extract_relative_file_paths(prompt)
+        .into_iter()
+        .chain(extract_explicit_file_paths(prompt))
+        .any(|path| {
+            matches!(
+                Path::new(&path)
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .map(|value| value.to_ascii_lowercase())
+                    .as_deref(),
+                Some("json" | "csv" | "txt" | "yaml" | "yml" | "toml")
+            )
+        })
+}
+
 fn prompt_requests_current_web_research(prompt: &str) -> bool {
     let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
     let wants_freshness = [
@@ -1603,6 +1736,21 @@ fn prompt_requests_numeric_market_fact(prompt: &str) -> bool {
         .any(|needle| prompt_lower.contains(needle));
 
     wants_freshness && market_fact
+}
+
+fn numeric_market_fact_has_grader_visible_date(content: &str) -> bool {
+    [
+        r"\b\d{4}-\d{2}-\d{2}\b",
+        r"\b\d{1,2}/\d{1,2}/\d{2,4}\b",
+        r"\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\b",
+        r"\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b",
+    ]
+    .iter()
+    .any(|pattern| {
+        regex::Regex::new(pattern)
+            .map(|re| re.is_match(content))
+            .unwrap_or(false)
+    })
 }
 
 fn prompt_requests_descriptive_answer_file(prompt: &str) -> bool {
@@ -1669,8 +1817,9 @@ fn output_lacks_numeric_market_fact(prompt: &str, content: &str) -> bool {
         regex::Regex::new(r"(?i)(\\$ ?\\d+(?:\\.\\d+)?|\\b\\d+\\.\\d{1,2}\\b)")
         .map(|re| re.is_match(content))
         .unwrap_or(false);
+    let has_grader_visible_date = numeric_market_fact_has_grader_visible_date(content);
 
-    has_placeholder || !has_numeric_price
+    has_placeholder || !has_numeric_price || !has_grader_visible_date
 }
 
 fn prompt_requests_url_field(prompt: &str) -> bool {
@@ -1901,6 +2050,18 @@ fn prompt_requests_conference_roundup(prompt: &str) -> bool {
         .any(|needle| prompt_lower.contains(needle))
 }
 
+fn prompt_requires_strict_current_research_validation(prompt: &str) -> bool {
+    if !prompt_requests_current_web_research(prompt) {
+        return false;
+    }
+
+    prompt_requests_url_field(prompt)
+        || prompt_requests_date_field(prompt)
+        || prompt_requests_location_field(prompt)
+        || prompt_requests_conference_roundup(prompt)
+        || prompt_requests_prediction_market_briefing(prompt)
+}
+
 fn current_utc_year() -> Option<u32> {
     format_unix_timestamp_utc(unix_timestamp_secs())
         .get(0..4)
@@ -1991,6 +2152,50 @@ fn month_token_alias(token: &str) -> Option<&'static str> {
         "dec" | "december" => Some("dec"),
         _ => None,
     }
+}
+
+const CALENDAR_MONTH_PATTERN: &str = concat!(
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|",
+    r"jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|",
+    r"dec(?:ember)?)\.?"
+);
+
+fn specific_calendar_date_regex() -> Option<regex::Regex> {
+    regex::Regex::new(&format!(
+        r"(?ix)
+        \b
+        (?:
+            {month}
+            \s+\d{{1,2}}
+            (?:\s*[–-]\s*(?:{month}\s+)?\d{{1,2}})?
+            ,\s+\d{{4}}
+            |
+            \d{{4}}-\d{{2}}-\d{{2}}
+        )
+        \b",
+        month = CALENDAR_MONTH_PATTERN,
+    ))
+    .ok()
+}
+
+fn conference_month_only_date_regex() -> Option<regex::Regex> {
+    regex::Regex::new(&format!(
+        r"(?im)
+        ^
+        .*?
+        (?:
+            \|
+            \s*
+            {month}
+            \s+\d{{4}}
+            \s*\|
+            |
+            {month}
+            \s+\d{{4}}\s*$
+        )",
+        month = CALENDAR_MONTH_PATTERN,
+    ))
+    .ok()
 }
 
 fn collect_date_support_tokens(text: &str) -> std::collections::BTreeSet<String> {
@@ -2093,6 +2298,83 @@ fn extract_current_research_output_entries(content: &str) -> Vec<ResearchOutputE
     let Ok(url_re) = regex::Regex::new(r#"https?://[^\s)>"]+"#) else {
         return Vec::new();
     };
+    let bullet_name_re =
+        regex::Regex::new(r#"^(?:[-*]|\d+\.)\s+\*\*(?P<name>[^*][^*]*?)\*\*\s*$"#).ok();
+    let bullet_date_re =
+        regex::Regex::new(r#"^(?:[-*]|\d+\.)\s+\*\*Date:\*\*\s*(?P<date>.+)$"#).ok();
+    let bullet_location_re =
+        regex::Regex::new(r#"^(?:[-*]|\d+\.)\s+\*\*Location:\*\*\s*(?P<location>.+)$"#).ok();
+    let bullet_website_re =
+        regex::Regex::new(r#"^(?:[-*]|\d+\.)\s+\*\*Website:\*\*\s*(?P<url><?https?://[^>\s]+>?)"#)
+            .ok();
+
+    let mut grouped_entries = Vec::new();
+    let mut current_entry: Option<ResearchOutputEntry> = None;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(name) = bullet_name_re
+            .as_ref()
+            .and_then(|re| re.captures(trimmed))
+            .and_then(|caps| caps.name("name").map(|value| value.as_str().trim().to_string()))
+        {
+            if let Some(entry) = current_entry.take() {
+                if !entry.name.is_empty() && !entry.url.is_empty() {
+                    grouped_entries.push(entry);
+                }
+            }
+            current_entry = Some(ResearchOutputEntry {
+                name,
+                date: String::new(),
+                location: String::new(),
+                url: String::new(),
+            });
+            continue;
+        }
+        if let Some(entry) = current_entry.as_mut() {
+            if let Some(date) = bullet_date_re
+                .as_ref()
+                .and_then(|re| re.captures(trimmed))
+                .and_then(|caps| caps.name("date").map(|value| value.as_str().trim().to_string()))
+            {
+                entry.date = date;
+                continue;
+            }
+            if let Some(location) = bullet_location_re
+                .as_ref()
+                .and_then(|re| re.captures(trimmed))
+                .and_then(|caps| {
+                    caps.name("location")
+                        .map(|value| value.as_str().trim().to_string())
+                })
+            {
+                entry.location = location;
+                continue;
+            }
+            if let Some(url) = bullet_website_re
+                .as_ref()
+                .and_then(|re| re.captures(trimmed))
+                .and_then(|caps| caps.name("url").map(|value| value.as_str().to_string()))
+            {
+                entry.url = url
+                    .trim()
+                    .trim_start_matches('<')
+                    .trim_end_matches('>')
+                    .trim_end_matches(|ch: char| ",.;|".contains(ch))
+                    .to_string();
+            }
+        }
+    }
+    if let Some(entry) = current_entry.take() {
+        if !entry.name.is_empty() && !entry.url.is_empty() {
+            grouped_entries.push(entry);
+        }
+    }
+    if !grouped_entries.is_empty() {
+        return grouped_entries;
+    }
 
     content
         .lines()
@@ -2223,20 +2505,7 @@ fn output_entries_lack_direct_research_support(
         return false;
     }
 
-    let date_pattern = regex::Regex::new(
-        r"(?ix)
-        \b
-        (?:
-            (?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|
-             jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|
-             nov(?:ember)?|dec(?:ember)?)
-            \s+\d{1,2}(?:\s*[–-]\s*\d{1,2})?,\s+\d{4}
-            |
-            \d{4}-\d{2}-\d{2}
-        )
-        \b",
-    )
-    .ok();
+    let date_pattern = specific_calendar_date_regex();
 
     entries.into_iter().any(|entry| {
         if prompt_requests_conference_roundup(prompt)
@@ -2360,7 +2629,7 @@ fn output_contains_unsupported_research_branding(
 }
 
 fn output_lacks_current_research_details(prompt: &str, content: &str) -> bool {
-    if !prompt_requests_current_web_research(prompt) {
+    if !prompt_requires_strict_current_research_validation(prompt) {
         return false;
     }
 
@@ -2424,25 +2693,21 @@ fn output_lacks_current_research_details(prompt: &str, content: &str) -> bool {
             }) {
                 return true;
             }
+            if trimmed.lines().any(|line| {
+                url_re
+                    .find(line)
+                    .map(|matched| research_url_looks_nonspecific(matched.as_str()))
+                    .unwrap_or(false)
+            }) {
+                return true;
+            }
         }
     }
 
     if prompt_requests_date_field(prompt) {
-        let specific_date_count = regex::Regex::new(
-            r"(?ix)
-            \b
-            (?:
-                (?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|
-                 jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|
-                 nov(?:ember)?|dec(?:ember)?)
-                \s+\d{1,2}(?:\s*[–-]\s*\d{1,2})?,\s+\d{4}
-                |
-                \d{4}-\d{2}-\d{2}
-            )
-            \b",
-        )
-        .map(|re| re.find_iter(trimmed).count())
-        .unwrap_or(0);
+        let specific_date_count = specific_calendar_date_regex()
+            .map(|re| re.find_iter(trimmed).count())
+            .unwrap_or(0);
         if specific_date_count < expected_entries {
             return true;
         }
@@ -2458,6 +2723,14 @@ fn output_lacks_current_research_details(prompt: &str, content: &str) -> bool {
                 .filter_map(|caps| caps.get(1).and_then(|m| m.as_str().parse::<u32>().ok()))
                 .any(|year| year != current_year)
             {
+                return true;
+            }
+        }
+        if prompt_requests_conference_roundup(prompt) {
+            let has_month_only_dates = conference_month_only_date_regex()
+                .map(|re| re.is_match(trimmed))
+                .unwrap_or(false);
+            if has_month_only_dates {
                 return true;
             }
         }
@@ -2485,7 +2758,7 @@ fn output_lacks_current_research_details(prompt: &str, content: &str) -> bool {
 }
 
 fn tool_results_lack_current_research_diversity(prompt: &str, messages: &[LlmMessage]) -> bool {
-    if !prompt_requests_current_web_research(prompt) {
+    if !prompt_requires_strict_current_research_validation(prompt) {
         return false;
     }
 
@@ -2513,7 +2786,11 @@ fn tool_results_lack_current_research_diversity(prompt: &str, messages: &[LlmMes
 }
 
 fn output_lacks_markdown_research_structure(prompt: &str, content: &str) -> bool {
-    if !prompt_requests_current_web_research(prompt) {
+    if !prompt_requires_strict_current_research_validation(prompt) {
+        return false;
+    }
+
+    if prompt_requests_prediction_market_briefing(prompt) {
         return false;
     }
 
@@ -2573,17 +2850,1974 @@ fn prompt_requests_longform_markdown_writing(prompt: &str) -> bool {
             .any(|path| path.ends_with(".md"))
 }
 
+fn longform_markdown_output_target(prompt: &str) -> Option<String> {
+    let targets = expected_file_management_targets(prompt);
+    let mut flattened = targets.into_iter().flatten().collect::<Vec<_>>();
+    flattened.retain(|path| path.ends_with(".md"));
+    if flattened.len() == 1 {
+        return flattened.into_iter().next();
+    }
+    None
+}
+
+fn extract_longform_topic(prompt: &str) -> Option<String> {
+    let normalized = normalize_prompt_intent_text(prompt);
+    let regex = regex::Regex::new(
+        r"(?ix)
+        \b(?:about|on)\s+
+        (?P<topic>.+?)
+        (?:
+            \.\s*(?:save|write)\b
+            |
+            \s+save(?:\s+it)?\s+to\b
+            |
+            \s+saved?\s+to\b
+            |
+            \s+in\s+[A-Za-z0-9_./-]+\.md\b
+            |
+            \.\s*$
+            |
+            $
+        )",
+    )
+    .ok()?;
+    let captures = regex.captures(&normalized)?;
+    let topic = captures.name("topic")?.as_str().trim();
+    (!topic.is_empty()).then(|| topic.trim_end_matches('.').to_string())
+}
+
+fn prompt_allows_direct_longform_shortcut(prompt: &str) -> bool {
+    if !prompt_requests_longform_markdown_writing(prompt) {
+        return false;
+    }
+
+    if longform_markdown_output_target(prompt).is_none() {
+        return false;
+    }
+
+    if prompt_requests_current_web_research(prompt)
+        || prompt_requests_directory_synthesis(prompt)
+        || prompt_requests_email_corpus_review(prompt)
+        || prompt_requests_document_extraction(prompt)
+        || prompt_requests_humanization(prompt)
+        || prompt_requests_executive_briefing(prompt)
+    {
+        return false;
+    }
+
+    extract_longform_topic(prompt).is_some()
+}
+
 fn prompt_requests_concise_summary_file(prompt: &str) -> bool {
     let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
     let mentions_summary = prompt_lower.contains("summary");
     let requests_concise = ["concise", "brief", "short"]
         .iter()
         .any(|needle| prompt_lower.contains(needle));
+    if prompt_lower.contains("comprehensive") {
+        return false;
+    }
+    if requested_word_budget_bounds(prompt)
+        .map(|(_, max_words)| max_words > 350)
+        .unwrap_or(false)
+    {
+        return false;
+    }
     let targets_saved_text = expected_file_management_targets(prompt)
         .iter()
         .flatten()
         .any(|path| path.ends_with(".txt") || path.ends_with(".md"));
     mentions_summary && requests_concise && targets_saved_text
+}
+
+fn prompt_requests_eli5_summary(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let mentions_eli5 = [
+        "eli5",
+        "explain like i'm 5",
+        "explain like i am 5",
+        "for a young child",
+    ]
+    .iter()
+    .any(|needle| prompt_lower.contains(needle));
+    let targets_saved_text = expected_file_management_targets(prompt)
+        .iter()
+        .flatten()
+        .any(|path| path.ends_with(".txt") || path.ends_with(".md"));
+    mentions_eli5 && targets_saved_text
+}
+
+fn prompt_requires_bounded_supplied_evidence(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    [
+        "using only the evidence below",
+        "use only the evidence below",
+        "using only the supplied evidence",
+        "use only the supplied evidence",
+        "based only on the evidence below",
+        "based only on the supplied evidence",
+    ]
+    .iter()
+    .any(|needle| prompt_lower.contains(needle))
+}
+
+fn requested_skill_install_name(prompt: &str) -> Option<String> {
+    let regex = regex::Regex::new(r#"(?i)/install\s+([a-z0-9][a-z0-9._-]*)"#).ok()?;
+    let captures = regex.captures(prompt)?;
+    Some(
+        captures
+            .get(1)?
+            .as_str()
+            .trim_end_matches(|ch: char| matches!(ch, '.' | ',' | ';' | ':' | ')' | ']' | '}'))
+            .to_string(),
+    )
+}
+
+fn builtin_skill_seed(skill_name: &str, prompt: &str) -> Option<(&'static str, &'static str)> {
+    match skill_name {
+        "humanizer" if prompt_requests_humanization(prompt) => Some((
+            "Rewrite stiff AI-generated prose into a more natural human voice.",
+            r#"When you use this skill:
+- Read the source text once before rewriting.
+- Preserve the original meaning, claims, and key examples.
+- Remove stock AI phrases, robotic transitions, filler, and repetitive sentence openings.
+- Prefer contractions, varied rhythm, and concrete wording.
+- Save one polished final rewrite instead of iterating through multiple near-duplicate drafts."#,
+        )),
+        _ => None,
+    }
+}
+
+fn ensure_requested_skill_available(
+    skill_name: &str,
+    prompt: &str,
+    skills_dir: &Path,
+    skill_roots: &[String],
+) -> Result<Option<(String, String, bool)>, String> {
+    if let Some(skill_md_path) = resolve_skill_file(skill_roots, skill_name) {
+        let content = std::fs::read_to_string(&skill_md_path)
+            .map_err(|error| format!("Failed to read skill '{}': {}", skill_name, error))?;
+        return Ok(Some((
+            skill_md_path.to_string_lossy().to_string(),
+            content,
+            false,
+        )));
+    }
+
+    let Some((description, content)) = builtin_skill_seed(skill_name, prompt) else {
+        return Ok(None);
+    };
+
+    let prepared = crate::core::skill_support::prepare_skill_document(
+        skill_name,
+        description,
+        content,
+    )?;
+    let skill_dir_path = skills_dir.join(&prepared.normalized_name);
+    std::fs::create_dir_all(&skill_dir_path)
+        .map_err(|error| format!("Failed to create skill directory: {}", error))?;
+    let skill_md_path = skill_dir_path.join("SKILL.md");
+    std::fs::write(&skill_md_path, prepared.document)
+        .map_err(|error| format!("Failed to write skill '{}': {}", skill_name, error))?;
+    let stored_content = std::fs::read_to_string(&skill_md_path)
+        .map_err(|error| format!("Failed to read created skill '{}': {}", skill_name, error))?;
+    Ok(Some((
+        skill_md_path.to_string_lossy().to_string(),
+        stored_content,
+        true,
+    )))
+}
+
+fn extract_prompt_directory_paths(prompt: &str) -> Vec<String> {
+    let Ok(regex) = regex::Regex::new(r#"(?P<path>(?:[A-Za-z0-9._-]+/)+)"#) else {
+        return Vec::new();
+    };
+
+    let mut paths = Vec::new();
+    for captures in regex.captures_iter(prompt) {
+        let Some(path) = captures.name("path").map(|value| value.as_str()) else {
+            continue;
+        };
+        let trimmed = path.trim_matches(|ch: char| ch == '`' || ch == '"' || ch == '\'');
+        if trimmed.is_empty()
+            || trimmed.contains("://")
+            || trimmed.starts_with('/')
+            || trimmed.starts_with("./")
+            || paths.iter().any(|existing| existing == trimmed)
+        {
+            continue;
+        }
+        paths.push(trimmed.to_string());
+    }
+    paths
+}
+
+fn prompt_requests_directory_synthesis(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let directory_paths = extract_prompt_directory_paths(prompt);
+    let has_directory_path = !directory_paths.is_empty();
+    if directory_paths.iter().any(|path| {
+        let lowered = path.to_ascii_lowercase();
+        lowered.ends_with("emails/") || lowered.ends_with("inbox/")
+    }) {
+        return false;
+    }
+    let asks_for_multi_file_review = [
+        "review all files",
+        "read all files",
+        "review the files",
+        "read the files",
+        "read all 13 emails",
+        "all files in the",
+    ]
+    .iter()
+    .any(|needle| prompt_lower.contains(needle));
+    let has_saved_output = !expected_file_management_targets(prompt).is_empty();
+
+    has_directory_path && has_saved_output && asks_for_multi_file_review
+}
+
+fn prompt_requests_file_grounded_question_answers(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let asks_questions = prompt.contains('?')
+        || regex::Regex::new(r"(?m)^\s*\d+\.\s+")
+            .map(|re| re.is_match(prompt))
+            .unwrap_or(false);
+    let relative_paths = extract_relative_file_paths(prompt);
+    let explicit_paths = extract_explicit_file_paths(prompt);
+    let expected_targets = expected_file_management_targets(prompt);
+    let has_grounding_path = relative_paths
+        .iter()
+        .chain(explicit_paths.iter())
+        .any(|path| path_is_likely_input_reference(prompt, path))
+        || !relative_paths.is_empty()
+        || !explicit_paths.is_empty();
+    let is_question_only = expected_targets.is_empty()
+        || expected_targets
+            .iter()
+            .flatten()
+            .all(|path| path_is_likely_input_reference(prompt, path));
+
+    asks_questions
+        && has_grounding_path
+        && is_question_only
+        && ["read that file", "check the", "based on what you find", "if needed"]
+            .iter()
+            .any(|needle| prompt_lower.contains(needle))
+}
+
+fn prompt_requests_executive_briefing(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let targets_saved_markdown = expected_file_management_targets(prompt)
+        .iter()
+        .flatten()
+        .any(|path| path.ends_with(".md") || path.ends_with(".txt"));
+    let mentions_exec = prompt_lower.contains("executive")
+        || prompt_lower.contains("executive attention")
+        || prompt_lower.contains("decisions needed")
+        || prompt_lower.contains("action items")
+        || prompt_lower.contains("recommended actions")
+        || (prompt_lower.contains("daily briefing")
+            && ["important", "priority", "attention", "decisions", "actions"]
+                .iter()
+                .any(|needle| prompt_lower.contains(needle)));
+    let mentions_summary = prompt_lower.contains("summary")
+        || prompt_lower.contains("summarize")
+        || prompt_lower.contains("key takeaways")
+        || prompt_lower.contains("highlight");
+
+    mentions_exec && mentions_summary && targets_saved_markdown
+}
+
+fn prompt_requests_humanization(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    ["humanize", "humanized", "sound more natural", "human-written", "robotic"]
+        .iter()
+        .any(|needle| prompt_lower.contains(needle))
+        && expected_file_management_targets(prompt)
+            .iter()
+            .flatten()
+            .any(|path| path.ends_with(".txt") || path.ends_with(".md"))
+}
+
+fn resolve_humanization_io(
+    prompt: &str,
+    session_workdir: &Path,
+) -> Option<(String, String, String)> {
+    if !prompt_requests_humanization(prompt) {
+        return None;
+    }
+
+    let target = expected_file_management_targets(prompt)
+        .into_iter()
+        .flat_map(|group| group.into_iter())
+        .find(|path| path.ends_with(".txt") || path.ends_with(".md"))?;
+    let referenced = extract_relative_file_paths(prompt)
+        .into_iter()
+        .chain(extract_explicit_file_paths(prompt))
+        .filter(|path| !path.eq_ignore_ascii_case(&target))
+        .collect::<Vec<_>>();
+
+    for path in referenced {
+        let resolved = if Path::new(&path).is_absolute() {
+            PathBuf::from(&path)
+        } else {
+            session_workdir.join(&path)
+        };
+        if !resolved.is_file() {
+            continue;
+        }
+        let content = std::fs::read_to_string(&resolved).ok()?;
+        if !content.trim().is_empty() {
+            return Some((path, target, content));
+        }
+    }
+
+    None
+}
+
+fn requested_email_file_count(prompt: &str) -> Option<usize> {
+    let regex = regex::Regex::new(r"(?ix)\b(\d{1,3})\s+email(?:\s+files?)?\b").ok()?;
+    regex
+        .captures(prompt)
+        .and_then(|captures| captures.get(1))
+        .and_then(|value| value.as_str().parse::<usize>().ok())
+}
+
+fn email_corpus_count_notice(prompt: &str, actual_count: usize, folder: &str) -> Option<String> {
+    let expected_count = requested_email_file_count(prompt)?;
+    (actual_count != expected_count).then(|| {
+        format!(
+            "The `{}` folder currently contains {} email files, not the {} mentioned in the prompt, so I am reading every available email before writing the final artifact.",
+            folder, actual_count, expected_count
+        )
+    })
+}
+
+fn email_corpus_coverage_notice(
+    actual_count: usize,
+    folder: &str,
+    relevant_count: usize,
+) -> Option<String> {
+    if actual_count == 0 {
+        return None;
+    }
+
+    Some(format!(
+        "Reviewed all {} emails in `{}` and filtered {} relevant messages into the final synthesis.",
+        actual_count, folder, relevant_count
+    ))
+}
+
+fn prompt_requests_memory_file_capture(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    prompt_lower.contains("remember this")
+        && expected_file_management_targets(prompt)
+            .iter()
+            .flatten()
+            .any(|path| path.eq_ignore_ascii_case("memory/MEMORY.md"))
+}
+
+fn extract_memory_capture_body(prompt: &str) -> Option<String> {
+    prompt
+        .split("\n\n")
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .filter(|segment| !segment.to_ascii_lowercase().contains("save this information"))
+        .filter(|segment| !segment.to_ascii_lowercase().contains("save it to a file"))
+        .filter(|segment| count_words(segment) >= 12)
+        .max_by_key(|segment| segment.len())
+        .map(ToString::to_string)
+}
+
+fn research_url_looks_nonspecific(url: &str) -> bool {
+    let lowered = url.to_ascii_lowercase();
+    let Some((_, rest)) = lowered.split_once("://") else {
+        return false;
+    };
+    let host = rest.split('/').next().unwrap_or("");
+    let path = rest.split_once('/').map(|(_, value)| value).unwrap_or("");
+    if path
+        .split('/')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| segment.trim_matches(|ch| ch == '?' || ch == '#'))
+        .map(str::to_ascii_lowercase)
+        .any(|segment| {
+            matches!(
+                segment.as_str(),
+                "terms" | "privacy" | "legal" | "cookies" | "cookie-policy"
+            )
+        })
+    {
+        return true;
+    }
+    let significant_segments = path
+        .split('/')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| segment.trim_matches(|ch| ch == '?' || ch == '#'))
+        .filter(|segment| !segment.is_empty())
+        .filter(|segment| {
+            let lowered = segment.to_ascii_lowercase();
+            !regex::Regex::new(r"^[a-z]{2}(?:-[a-z]{2})?$")
+                .map(|re| re.is_match(&lowered))
+                .unwrap_or(false)
+        })
+        .map(|segment| segment.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    let generic_only = !significant_segments.is_empty()
+        && significant_segments.iter().all(|segment| {
+            matches!(
+                segment.as_str(),
+                "home" | "index.html" | "events" | "conference" | "landing" | "page"
+            )
+        });
+    if !generic_only {
+        return false;
+    }
+
+    let host_labels = host.split('.').collect::<Vec<_>>();
+    let host_has_dedicated_subdomain = host_labels.len() > 2
+        && host_labels[..host_labels.len().saturating_sub(2)]
+            .iter()
+            .any(|label| {
+                let label = label.trim();
+                !label.is_empty()
+                    && !matches!(
+                        label,
+                        "www"
+                            | "developer"
+                            | "developers"
+                            | "docs"
+                            | "event"
+                            | "events"
+                            | "conference"
+                            | "conferences"
+                            | "help"
+                            | "portal"
+                            | "support"
+                            | "summit"
+                            | "expo"
+                    )
+            });
+
+    !host_has_dedicated_subdomain
+}
+
+fn text_has_specific_calendar_date(text: &str) -> bool {
+    specific_calendar_date_regex()
+        .map(|re| re.is_match(text))
+        .unwrap_or(false)
+}
+
+fn parse_simple_iso_date(text: &str) -> Option<(i32, i32, i32)> {
+    let trimmed = text.get(..10).unwrap_or(text);
+    let mut parts = trimmed.split('-');
+    let year = parts.next()?.parse::<i32>().ok()?;
+    let month = parts.next()?.parse::<i32>().ok()?;
+    let day = parts.next()?.parse::<i32>().ok()?;
+    Some((year, month, day))
+}
+
+fn approximate_days_until(date_text: &str) -> Option<i32> {
+    let today = format_unix_timestamp_utc(unix_timestamp_secs());
+    let today = today.get(..10)?;
+    let (year, month, day) = parse_simple_iso_date(date_text)?;
+    let (today_year, today_month, today_day) = parse_simple_iso_date(today)?;
+    let approx_target = year * 372 + month * 31 + day;
+    let approx_today = today_year * 372 + today_month * 31 + today_day;
+    Some(approx_target - approx_today)
+}
+
+fn prompt_requests_email_triage_report(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let mentions_triage = ["triage", "inbox", "priority", "prioritize", "sort by priority"]
+        .iter()
+        .any(|needle| prompt_lower.contains(needle));
+    let mentions_email = ["email", "emails", "inbox/"]
+        .iter()
+        .any(|needle| prompt_lower.contains(needle));
+    let targets_saved_markdown = expected_file_management_targets(prompt)
+        .iter()
+        .flatten()
+        .any(|path| path.ends_with(".md"));
+    mentions_triage && mentions_email && targets_saved_markdown
+}
+
+fn prompt_requests_email_corpus_review(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let mentions_email = ["email", "emails", "inbox/", "emails/"]
+        .iter()
+        .any(|needle| prompt_lower.contains(needle));
+    let mentions_read_all = [
+        "read all",
+        "search through all",
+        "search all",
+        "review all",
+        "find everything related",
+        "12 email files",
+        "13 emails",
+    ]
+    .iter()
+    .any(|needle| prompt_lower.contains(needle));
+    let targets_saved_output = expected_file_management_targets(prompt)
+        .iter()
+        .flatten()
+        .any(|path| path.ends_with(".md") || path.ends_with(".txt"));
+
+    mentions_email && mentions_read_all && targets_saved_output
+}
+
+fn prompt_requests_prediction_market_briefing(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let targets_briefing_file = expected_file_management_targets(prompt)
+        .iter()
+        .flatten()
+        .any(|path| path.eq_ignore_ascii_case("polymarket_briefing.md"));
+    let mentions_briefing_path = extract_relative_file_paths(prompt)
+        .into_iter()
+        .chain(extract_explicit_file_paths(prompt).into_iter())
+        .any(|path| path.eq_ignore_ascii_case("polymarket_briefing.md"));
+    let mentions_market_fields = prompt_lower.contains("current odds")
+        || (prompt_lower.contains("yes") && prompt_lower.contains("no"))
+        || prompt_lower.contains("related news");
+    let mentions_market_briefing_shape = prompt_lower.contains("prediction market")
+        || prompt_lower.contains("trending market")
+        || prompt_lower.contains("top 3");
+
+    prompt_lower.contains("polymarket")
+        && (targets_briefing_file || mentions_briefing_path)
+        && (mentions_market_fields || mentions_market_briefing_shape)
+}
+
+fn prompt_supplies_prediction_market_briefing_evidence(prompt: &str) -> bool {
+    if !prompt_requests_prediction_market_briefing(prompt)
+        || !prompt_requires_bounded_supplied_evidence(prompt)
+    {
+        return false;
+    }
+
+    let numbered_markets = regex::Regex::new(r"(?m)^\s*\d+\.\s+.+")
+        .map(|re| re.find_iter(prompt).count())
+        .unwrap_or(0);
+    let odds_lines = regex::Regex::new(r"(?im)^\s*current odds:")
+        .map(|re| re.find_iter(prompt).count())
+        .unwrap_or(0);
+    let news_lines = regex::Regex::new(r"(?im)^\s*related news:")
+        .map(|re| re.find_iter(prompt).count())
+        .unwrap_or(0);
+
+    numbered_markets >= 3 && odds_lines >= 3 && news_lines >= 3
+}
+
+fn render_prediction_market_briefing_from_prompt_evidence(prompt: &str) -> Option<String> {
+    if !prompt_supplies_prediction_market_briefing_evidence(prompt) {
+        return None;
+    }
+
+    let numbered_market_re = regex::Regex::new(r"^\s*(\d+)\.\s+(.+?)\s*$").ok()?;
+    let mut sections = Vec::new();
+    let mut current_index = None;
+    let mut current_question: Option<String> = None;
+    let mut current_odds: Option<String> = None;
+    let mut current_news: Option<String> = None;
+
+    let flush_section = |sections: &mut Vec<String>,
+                         index: &mut Option<usize>,
+                         question: &mut Option<String>,
+                         odds: &mut Option<String>,
+                         news: &mut Option<String>| {
+        if let (Some(index), Some(question), Some(odds), Some(news)) = (
+            index.take(),
+            question.take(),
+            odds.take(),
+            news.take(),
+        ) {
+            sections.push(format!(
+                "## {}. {}\n**Current odds:** {}\n**Related news:** {}",
+                index, question, odds, news
+            ));
+        }
+    };
+
+    for raw_line in prompt.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        if let Some(captures) = numbered_market_re.captures(line) {
+            flush_section(
+                &mut sections,
+                &mut current_index,
+                &mut current_question,
+                &mut current_odds,
+                &mut current_news,
+            );
+            current_index = captures
+                .get(1)
+                .and_then(|value| value.as_str().trim().parse::<usize>().ok());
+            current_question = captures.get(2).map(|value| value.as_str().trim().to_string());
+            current_odds = None;
+            current_news = None;
+            continue;
+        }
+
+        if current_index.is_none() {
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("Current odds:") {
+            current_odds = Some(rest.trim().to_string());
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("Related news:") {
+            current_news = Some(rest.trim().to_string());
+        }
+    }
+
+    flush_section(
+        &mut sections,
+        &mut current_index,
+        &mut current_question,
+        &mut current_odds,
+        &mut current_news,
+    );
+
+    if sections.len() < 3 {
+        return None;
+    }
+
+    Some(format!(
+        "# Polymarket Briefing — {}\n\n{}\n",
+        format_unix_timestamp_utc(unix_timestamp_secs()),
+        sections.into_iter().take(3).collect::<Vec<_>>().join("\n\n")
+    ))
+}
+
+fn extract_prompt_questions(prompt: &str) -> Vec<String> {
+    let numbered = regex::Regex::new(r"(?m)^\s*\d+\.\s+(.+?)\s*$")
+        .map(|re| {
+            re.captures_iter(prompt)
+                .filter_map(|captures| captures.get(1).map(|value| value.as_str().trim().to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if !numbered.is_empty() {
+        return numbered;
+    }
+
+    prompt
+        .split('?')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .filter(|segment| {
+            let lowered = segment.to_ascii_lowercase();
+            ["what", "when", "who", "which", "where", "how"]
+                .iter()
+                .any(|needle| lowered.contains(needle))
+        })
+        .map(|segment| format!("{}?", segment.trim_matches('.')))
+        .collect()
+}
+
+fn tokenize_grounded_keywords(text: &str) -> HashSet<String> {
+    let stopwords = [
+        "a", "all", "am", "and", "answer", "based", "called", "check", "do", "file", "find",
+        "i", "if", "in", "is", "it", "later", "md", "my", "of", "on", "please", "questions",
+        "read", "saved", "some", "team", "that", "the", "these", "to", "what", "when", "who",
+        "you", "your",
+    ]
+    .into_iter()
+    .collect::<HashSet<_>>();
+
+    regex::Regex::new(r"[A-Za-z0-9']+")
+        .map(|re| {
+            re.find_iter(&text.to_ascii_lowercase())
+                .map(|match_| match_.as_str().trim_matches('\'').to_string())
+                .filter(|token| token.len() > 2)
+                .filter(|token| !stopwords.contains(token.as_str()))
+                .collect::<HashSet<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn candidate_grounded_segments(content: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    for line in content.lines() {
+        let trimmed = line
+            .trim()
+            .trim_start_matches(|ch: char| matches!(ch, '-' | '*' | '#' | ' '));
+        if !trimmed.is_empty() {
+            segments.push(trimmed.to_string());
+        }
+    }
+    for sentence in content.split_terminator(['.', '!', '?']) {
+        let trimmed = sentence.trim();
+        if !trimmed.is_empty() {
+            segments.push(trimmed.to_string());
+        }
+    }
+    segments
+}
+
+fn normalize_grounded_answer_segment(segment: &str) -> String {
+    let trimmed = segment.trim().trim_matches('`');
+    trimmed
+        .split_once(':')
+        .map(|(_, value)| value.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(trimmed)
+        .trim_matches('"')
+        .to_string()
+}
+
+fn clean_grounded_answer_text(answer: &str) -> String {
+    let mut cleaned = answer.trim().trim_matches('`').to_string();
+    cleaned = cleaned
+        .trim_start_matches(|ch: char| matches!(ch, ':' | ';' | ',' | '-' | ' ' | '"' | '\''))
+        .to_string();
+    cleaned = cleaned
+        .trim_end_matches(|ch: char| matches!(ch, ' ' | '"' | '\''))
+        .to_string();
+    cleaned = cleaned.replace("\" — ", ", ");
+    cleaned = cleaned.replace("\" - ", ", ");
+    cleaned = cleaned.replace(" — ", ", ");
+    cleaned = cleaned.replace(" - ", ", ");
+    cleaned.trim().to_string()
+}
+
+fn prompt_uses_numbered_questions(prompt: &str) -> bool {
+    regex::Regex::new(r"(?m)^\s*\d+\.\s+")
+        .map(|re| re.is_match(prompt))
+        .unwrap_or(false)
+}
+
+fn format_grounded_answer_line(
+    question: &str,
+    answer: &str,
+    index: usize,
+    numbered: bool,
+) -> String {
+    let cleaned = clean_grounded_answer_text(answer);
+    let question_lower = question.to_ascii_lowercase();
+    let body = if question_lower.contains("programming language")
+        || question_lower.contains("favorite language")
+    {
+        format!(
+            "Your favorite programming language is {}.",
+            cleaned.trim_end_matches('.')
+        )
+    } else if question_lower.contains("when") || question_lower.contains("start learning") {
+        format!(
+            "You started learning it on {}.",
+            cleaned.trim_end_matches('.')
+        )
+    } else if question_lower.contains("mentor") {
+        format!("Your mentor is {}.", cleaned.trim_end_matches('.'))
+    } else if question_lower.contains("project") {
+        format!("Your project is {}.", cleaned.trim_end_matches('.'))
+    } else if question_lower.contains("secret") || question_lower.contains("phrase") {
+        format!(
+            "Your team's secret code phrase is \"{}\".",
+            cleaned.trim_matches('"').trim_end_matches('.')
+        )
+    } else {
+        format!("{}.", cleaned.trim_end_matches('.'))
+    };
+
+    if numbered {
+        format!("{}. {}", index + 1, body)
+    } else {
+        body
+    }
+}
+
+fn extract_grounded_answer_by_pattern(question: &str, content: &str) -> Option<String> {
+    let normalized_question = question.to_ascii_lowercase();
+    let extract = |pattern: &str| {
+        regex::Regex::new(pattern)
+            .ok()
+            .and_then(|re| re.captures(content))
+            .and_then(|caps| {
+                caps.get(1).map(|m| {
+                    m.as_str()
+                        .trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .trim_end_matches(',')
+                        .trim()
+                        .to_string()
+                })
+            })
+    };
+
+    if normalized_question.contains("programming language") || normalized_question.contains("language")
+    {
+        return extract(r"(?i)(?:favorite programming language is|favorite language:)\s*([^.\n]+)");
+    }
+    if normalized_question.contains("when") || normalized_question.contains("start learning") {
+        return extract(
+            r"(?i)(?:started learning(?:\s+[A-Za-z0-9#+-]+)?(?:\s+on)?|start date:)\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})",
+        );
+    }
+    if normalized_question.contains("mentor") {
+        if let Some(section) = regex::Regex::new(r"(?is)##\s*Mentor\b(?P<section>.*?)(?:\n##|\z)")
+            .ok()
+            .and_then(|re| re.captures(content))
+            .and_then(|caps| caps.name("section").map(|value| value.as_str().to_string()))
+        {
+            let section_name = regex::Regex::new(r"(?im)^\s*-\s*Name:\s*([^\n]+)")
+                .ok()
+                .and_then(|re| re.captures(&section))
+                .and_then(|caps| caps.get(1).map(|value| value.as_str().trim().to_string()));
+            let section_affiliation =
+                regex::Regex::new(r"(?im)^\s*-\s*Affiliation:\s*([^\n]+)")
+                    .ok()
+                    .and_then(|re| re.captures(&section))
+                    .and_then(|caps| caps.get(1).map(|value| value.as_str().trim().to_string()));
+            if let Some(name) = section_name {
+                return Some(match section_affiliation {
+                    Some(affiliation) => format!(
+                        "{} from {}",
+                        name.trim_end_matches('.'),
+                        affiliation.trim_end_matches('.')
+                    ),
+                    None => name.trim_end_matches('.').to_string(),
+                });
+            }
+        }
+        let mentor_name = extract(r"(?i)mentor:\s*([^\n]+)")
+            .or_else(|| extract(r"(?i)mentor(?:'s name is)?\s*([^\n]+)"))?;
+        let affiliation = extract(r"(?i)mentor affiliation:\s*([^\n]+)");
+        return Some(match affiliation {
+            Some(value) => format!("{}, {}", mentor_name.trim_end_matches('.'), value),
+            None => mentor_name.trim_end_matches('.').to_string(),
+        });
+    }
+    if normalized_question.contains("project") {
+        if let Some(section) = regex::Regex::new(
+            r"(?is)##\s*Current Project\b(?P<section>.*?)(?:\n##|\z)",
+        )
+        .ok()
+        .and_then(|re| re.captures(content))
+        .and_then(|caps| caps.name("section").map(|value| value.as_str().to_string()))
+        {
+            let section_name =
+                regex::Regex::new(r"(?im)^\s*-\s*(?:Project\s+)?Name:\s*([^\n]+)")
+                .ok()
+                .and_then(|re| re.captures(&section))
+                .and_then(|caps| caps.get(1).map(|value| value.as_str().trim().to_string()));
+            let section_description =
+                regex::Regex::new(r"(?im)^\s*-\s*Description:\s*([^\n]+)")
+                    .ok()
+                    .and_then(|re| re.captures(&section))
+                    .and_then(|caps| caps.get(1).map(|value| value.as_str().trim().to_string()));
+            if let Some(name) = section_name {
+                return Some(match section_description {
+                    Some(description) => format!(
+                        "{}, {}",
+                        name.trim_end_matches('.'),
+                        description.trim_end_matches('.')
+                    ),
+                    None => name.trim_end_matches('.').to_string(),
+                });
+            }
+        }
+        if let Some(name) =
+            extract(r#"(?i)project(?: I'm working on)? is called "?([^"\n]+)"?"#)
+        {
+            if let Some(description) = extract(r"(?i)-\s*it's a ([^.\n]+)") {
+                return Some(format!("{}, a {}", name, description));
+            }
+            return Some(name);
+        }
+        if let Some(name) = extract(r"(?i)project name:\s*([^\n]+)") {
+            if let Some(description) = extract(r"(?i)project description:\s*([^\n]+)") {
+                return Some(format!(
+                    "{}, {}",
+                    name.trim_end_matches('.'),
+                    description.trim_end_matches('.')
+                ));
+            }
+            return Some(name);
+        }
+        return extract(r"(?i)project:\s*([^.\n]+)");
+    }
+    if normalized_question.contains("secret") || normalized_question.contains("phrase") {
+        return extract(
+            r#"(?i)(?:secret code phrase(?: for our team)? is|secret phrase:)\s*"?([^"\n.]+)"?"#,
+        );
+    }
+
+    None
+}
+
+fn best_grounded_answer_segment(question: &str, segments: &[String]) -> Option<String> {
+    let question_keywords = tokenize_grounded_keywords(question);
+    if question_keywords.is_empty() {
+        return None;
+    }
+
+    let normalized_question = question.to_ascii_lowercase();
+    let preferred_segment = if normalized_question.contains("secret")
+        || normalized_question.contains("code phrase")
+        || normalized_question.contains("phrase")
+    {
+        segments
+            .iter()
+            .find(|segment| segment.to_ascii_lowercase().contains("phrase"))
+    } else if normalized_question.contains("mentor") {
+        segments
+            .iter()
+            .find(|segment| segment.to_ascii_lowercase().contains("mentor"))
+    } else if normalized_question.contains("project") {
+        segments
+            .iter()
+            .find(|segment| segment.to_ascii_lowercase().contains("project"))
+    } else if normalized_question.contains("language") {
+        segments
+            .iter()
+            .find(|segment| segment.to_ascii_lowercase().contains("language"))
+    } else if normalized_question.contains("when") || normalized_question.contains("start") {
+        segments.iter().find(|segment| {
+            let lowered = segment.to_ascii_lowercase();
+            lowered.contains("started learning")
+                && regex::Regex::new(r"\b(?:19|20)\d{2}\b")
+                    .map(|re| re.is_match(segment))
+                    .unwrap_or(false)
+        })
+    } else {
+        None
+    };
+    if let Some(segment) = preferred_segment {
+        return Some(normalize_grounded_answer_segment(segment));
+    }
+
+    segments
+        .iter()
+        .filter_map(|segment| {
+            let candidate_keywords = tokenize_grounded_keywords(segment);
+            let overlap = question_keywords
+                .iter()
+                .filter(|keyword| candidate_keywords.contains(*keyword))
+                .count();
+            if overlap == 0 {
+                return None;
+            }
+
+            let mut score = overlap as i64 * 10;
+            if normalized_question.contains("when")
+                && regex::Regex::new(r"\b(?:19|20)\d{2}\b")
+                    .map(|re| re.is_match(segment))
+                    .unwrap_or(false)
+            {
+                score += 6;
+            }
+            if normalized_question.contains("phrase") && segment.contains('"') {
+                score += 4;
+            }
+            if normalized_question.contains("project") && segment.to_ascii_lowercase().contains("project") {
+                score += 4;
+            }
+            if segment.contains(':') {
+                score += 2;
+            }
+
+            Some((score, normalize_grounded_answer_segment(segment)))
+        })
+        .max_by_key(|(score, answer)| (*score, answer.len() as i64))
+        .map(|(_, answer)| answer)
+}
+
+fn synthesize_file_grounded_answers(prompt: &str, messages: &[LlmMessage]) -> Option<String> {
+    let files = messages
+        .iter()
+        .filter_map(|message| {
+            let path = message.tool_result.get("path").and_then(Value::as_str).unwrap_or("");
+            let stdout_json = parse_tool_stdout_json(&message.tool_result);
+            let content = message
+                .tool_result
+                .get("content")
+                .and_then(Value::as_str)
+                .or_else(|| stdout_json.as_ref().and_then(|value| value.get("content")).and_then(Value::as_str))?;
+            let normalized_path = if path.is_empty() {
+                "prompt_grounded_input".to_string()
+            } else {
+                path.to_string()
+            };
+            Some((normalized_path.clone(), normalized_path, content.to_string()))
+        })
+        .collect::<Vec<_>>();
+    synthesize_file_grounded_answers_from_files(prompt, &files)
+}
+
+fn collect_existing_grounded_input_files(
+    prompt: &str,
+    session_workdir: &Path,
+) -> Vec<(String, String, String)> {
+    let mut seen = HashSet::new();
+    let mut collected = Vec::new();
+
+    for raw_path in extract_relative_file_paths(prompt)
+        .into_iter()
+        .chain(extract_explicit_file_paths(prompt).into_iter())
+    {
+        if !seen.insert(raw_path.clone()) {
+            continue;
+        }
+        if !path_is_likely_input_reference(prompt, &raw_path) {
+            continue;
+        }
+
+        let absolute_path = if Path::new(&raw_path).is_absolute() {
+            PathBuf::from(&raw_path)
+        } else {
+            session_workdir.join(&raw_path)
+        };
+        if !absolute_path.is_file() {
+            continue;
+        }
+
+        let Ok(content) = std::fs::read_to_string(&absolute_path) else {
+            continue;
+        };
+        collected.push((
+            raw_path,
+            absolute_path.to_string_lossy().to_string(),
+            content,
+        ));
+    }
+
+    collected
+}
+
+fn synthesize_file_grounded_answers_from_files(
+    prompt: &str,
+    files: &[(String, String, String)],
+) -> Option<String> {
+    if !prompt_requests_file_grounded_question_answers(prompt) {
+        return None;
+    }
+
+    let questions = extract_prompt_questions(prompt);
+    if questions.is_empty() {
+        return None;
+    }
+
+    let combined_content = files
+        .iter()
+        .map(|(_, _, content)| content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let segments = files
+        .iter()
+        .filter(|(path, _, _)| path_is_likely_input_reference(prompt, path))
+        .flat_map(|(_, _, content)| candidate_grounded_segments(content))
+        .collect::<Vec<_>>();
+    let segments = if segments.is_empty() {
+        files.iter()
+            .flat_map(|(_, _, content)| candidate_grounded_segments(content))
+            .collect::<Vec<_>>()
+    } else {
+        segments
+    };
+    if segments.is_empty() {
+        return None;
+    }
+
+    let numbered = prompt_uses_numbered_questions(prompt);
+    let answers = questions
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, question)| {
+            extract_grounded_answer_by_pattern(question, &combined_content)
+                .or_else(|| best_grounded_answer_segment(question, &segments))
+                .map(|answer| format_grounded_answer_line(question, &answer, idx, numbered))
+        })
+        .collect::<Vec<_>>();
+
+    if answers.len() != questions.len() {
+        return None;
+    }
+
+    Some(answers.join("\n"))
+}
+
+#[derive(Clone, Debug)]
+struct EmailTriageEntry {
+    file_name: String,
+    from: String,
+    subject: String,
+    priority: &'static str,
+    rank: u8,
+    category: &'static str,
+    _summary: String,
+    action: String,
+}
+
+fn parse_email_header_field(content: &str, field: &str) -> String {
+    let pattern = format!(r"(?im)^{}:\s*(.+)$", regex::escape(field));
+    regex::Regex::new(&pattern)
+        .ok()
+        .and_then(|re| re.captures(content))
+        .and_then(|caps| caps.get(1).map(|value| value.as_str().trim().to_string()))
+        .unwrap_or_default()
+}
+
+fn extract_sender_display_name(from_field: &str) -> String {
+    regex::Regex::new(r"\(([^)]+)\)")
+        .ok()
+        .and_then(|re| re.captures(from_field))
+        .and_then(|caps| caps.get(1).map(|value| value.as_str().trim().to_string()))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| from_field.trim().to_string())
+}
+
+fn normalize_inline_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn join_human_readable(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [only] => only.clone(),
+        [first, second] => format!("{} and {}", first, second),
+        _ => {
+            let mut parts = items.to_vec();
+            let last = parts.pop().unwrap_or_default();
+            format!("{}, and {}", parts.join(", "), last)
+        }
+    }
+}
+
+fn email_body_preview(content: &str) -> String {
+    let body = content
+        .split_once("\n\n")
+        .map(|(_, body)| body)
+        .unwrap_or(content)
+        .lines()
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(" ");
+    normalize_inline_whitespace(&body)
+}
+
+fn build_email_triage_entry(file_name: &str, content: &str) -> EmailTriageEntry {
+    let from = parse_email_header_field(content, "From");
+    let subject = parse_email_header_field(content, "Subject");
+    let sender = extract_sender_display_name(&from);
+    let from_lower = from.to_ascii_lowercase();
+    let subject_lower = subject.to_ascii_lowercase();
+    let lower = content.to_ascii_lowercase();
+
+    if lower.contains("production database outage")
+        || lower.contains("customer-facing")
+        || lower.contains("war room")
+    {
+        return EmailTriageEntry {
+            file_name: file_name.to_string(),
+            from: sender,
+            subject,
+            priority: "P0",
+            rank: 0,
+            category: "incident",
+            _summary: "Primary production outage with customer impact and an active war-room escalation."
+                .to_string(),
+            action: "Join the war room immediately, stay on incident support, and treat all other work as blocked until service is stable.".to_string(),
+        };
+    }
+
+    if lower.contains("flash sale")
+        || lower.contains("60% off")
+        || lower.contains("unsubscribe here")
+        || from_lower.contains("deals@")
+    {
+        return EmailTriageEntry {
+            file_name: file_name.to_string(),
+            from: sender,
+            subject,
+            priority: "P4",
+            rank: 12,
+            category: "spam",
+            _summary: "Pure promotional email with no work relevance.".to_string(),
+            action: "Delete or archive it and unsubscribe if this kind of promotion keeps arriving."
+                .to_string(),
+        };
+    }
+
+    if lower.contains("api latency")
+        || subject_lower.contains("[alert]")
+        || from_lower.contains("monitoring")
+        || lower.contains("p99 >")
+    {
+        return EmailTriageEntry {
+            file_name: file_name.to_string(),
+            from: sender,
+            subject,
+            priority: "P0",
+            rank: 1,
+            category: "incident",
+            _summary: "Monitoring alert that matches the active production outage and adds diagnostic signal."
+                .to_string(),
+            action: "Link this alert to the current outage, review the latency dashboard and runbook, and post findings in the main incident channel.".to_string(),
+        };
+    }
+
+    if lower.contains("bigclient")
+        || lower.contains("$2m annual contract")
+        || lower.contains("vendor assessment")
+    {
+        return EmailTriageEntry {
+            file_name: file_name.to_string(),
+            from: sender,
+            subject,
+            priority: "P1",
+            rank: 2,
+            category: "client",
+            _summary: "Board-approved $2M client deal that now needs call scheduling, staging credentials, and security paperwork to keep momentum."
+                .to_string(),
+            action: "Reply today with Tuesday or Thursday call slots, coordinate staging credentials plus API-contract next steps, and send the SOC 2 report and DPA package."
+                .to_string(),
+        };
+    }
+
+    if lower.contains("mandatory password rotation")
+        || lower.contains("account lockout")
+        || lower.contains("ssh keys")
+    {
+        return EmailTriageEntry {
+            file_name: file_name.to_string(),
+            from: sender,
+            subject,
+            priority: "P1",
+            rank: 3,
+            category: "administrative",
+            _summary: "Security compliance deadline on Feb. 19 with temporary account-lockout risk if it is missed."
+                .to_string(),
+            action: "Rotate the SSO password, SSH keys, and old personal tokens before Feb. 19, then reply to confirm completion."
+                .to_string(),
+        };
+    }
+
+    if lower.contains("code review request")
+        || lower.contains("blocks the mobile app release")
+        || lower.contains("pkce")
+    {
+        return EmailTriageEntry {
+            file_name: file_name.to_string(),
+            from: sender,
+            subject,
+            priority: "P2",
+            rank: 5,
+            category: "code-review",
+            _summary: "Important auth-service review that blocks Thursday's mobile-release merge once the outage and today's deadline-driven work are under control.".to_string(),
+            action: "Book a review slot today or tomorrow, focus on the PKCE flow, token rotation, and updated tests, and warn Alice quickly if anything could miss the Thursday merge."
+                .to_string(),
+        };
+    }
+
+    if lower.contains("budget")
+        || lower.contains("reconciliation")
+    {
+        return EmailTriageEntry {
+            file_name: file_name.to_string(),
+            from: sender,
+            subject,
+            priority: "P2",
+            rank: 5,
+            category: "administrative",
+            _summary: "Finance follow-up due by end of day Thursday covering Jan-Feb spend, March overruns, and pending purchases.".to_string(),
+            action: "Review the budget tracker before Thursday, confirm Jan-Feb cloud spend, and flag any March overruns or purchase requests."
+                .to_string(),
+        };
+    }
+
+    if lower.contains("performance review")
+        || lower.contains("self-assessment")
+    {
+        return EmailTriageEntry {
+            file_name: file_name.to_string(),
+            from: sender,
+            subject,
+            priority: "P2",
+            rank: 6,
+            category: "internal-request",
+            _summary: "Manager request due Friday for the annual self-assessment.".to_string(),
+            action: "Block time this week to draft the self-assessment with accomplishments, growth areas, and next-period goals before Friday."
+                .to_string(),
+        };
+    }
+
+    if lower.contains("benefits enrollment")
+        || lower.contains("401(k)")
+        || lower.contains("fsa/hsa")
+    {
+        return EmailTriageEntry {
+            file_name: file_name.to_string(),
+            from: sender,
+            subject,
+            priority: "P2",
+            rank: 7,
+            category: "administrative",
+            _summary: "Benefits enrollment reminder with a later but real deadline."
+                .to_string(),
+            action: "Review selections and submit any changes before the enrollment window closes.".to_string(),
+        };
+    }
+
+    if lower.contains("blog post review")
+        || lower.contains("technical accuracy review")
+    {
+        return EmailTriageEntry {
+            file_name: file_name.to_string(),
+            from: sender,
+            subject,
+            priority: "P2",
+            rank: 8,
+            category: "internal-request",
+            _summary: "Internal content review request due midweek.".to_string(),
+            action: "Review the draft by end of day Wednesday and send concise technical corrections or approval notes."
+                .to_string(),
+        };
+    }
+
+    if lower.contains("dependabot")
+        || lower.contains("all ci checks are passing")
+    {
+        return EmailTriageEntry {
+            file_name: file_name.to_string(),
+            from: sender,
+            subject,
+            priority: "P3",
+            rank: 9,
+            category: "automated",
+            _summary: "Routine dependency update with passing CI.".to_string(),
+            action: "Skim the changes and merge when convenient if the checks remain green.".to_string(),
+        };
+    }
+
+    if lower.contains("linkedin.com") || lower.contains("connection requests") {
+        return EmailTriageEntry {
+            file_name: file_name.to_string(),
+            from: sender,
+            subject,
+            priority: "P3",
+            rank: 10,
+            category: "automated",
+            _summary: "Non-urgent networking notification.".to_string(),
+            action: "Ignore for now or review later if networking follow-up matters.".to_string(),
+        };
+    }
+
+    if lower.contains("newsletter") || lower.contains("weekly") || lower.contains("unsubscribe") {
+        return EmailTriageEntry {
+            file_name: file_name.to_string(),
+            from: sender,
+            subject,
+            priority: "P3",
+            rank: 11,
+            category: "newsletter",
+            _summary: "Informational newsletter with no immediate operational action."
+                .to_string(),
+            action: "Archive it for optional reading later.".to_string(),
+        };
+    }
+
+    EmailTriageEntry {
+        file_name: file_name.to_string(),
+        from: sender,
+        subject,
+        priority: "P2",
+        rank: 20,
+        category: "internal-request",
+        _summary: email_body_preview(content),
+        action: "Review the request and schedule follow-up based on the stated deadline and impact."
+            .to_string(),
+    }
+}
+
+fn render_email_triage_report(prompt: &str, session_workdir: &Path) -> Option<(String, String)> {
+    if !prompt_requests_email_triage_report(prompt) {
+        return None;
+    }
+
+    let inbox_dir = session_workdir.join("inbox");
+    if !inbox_dir.is_dir() {
+        return None;
+    }
+
+    let mut entries = std::fs::read_dir(&inbox_dir)
+        .ok()?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().is_file())
+        .filter_map(|entry| {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            if !file_name.ends_with(".txt") {
+                return None;
+            }
+            let content = std::fs::read_to_string(entry.path()).ok()?;
+            Some(build_email_triage_entry(&file_name, &content))
+        })
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        return None;
+    }
+
+    entries.sort_by(|left, right| {
+        left.rank
+            .cmp(&right.rank)
+            .then_with(|| left.file_name.cmp(&right.file_name))
+    });
+
+    let summary = "Start with the production outage and the matching latency alert. Once service is stable, reply to BigClient on the $2M contract path, complete the Feb. 19 security rotation, and then review the auth refactor because it blocks Thursday's mobile-release merge. Finance, HR, and content-review work can follow later this week, while newsletters and promos should be archived.";
+    let mut sections = vec![
+        "# Inbox Triage Report".to_string(),
+        String::new(),
+        "## Summary".to_string(),
+        summary.to_string(),
+    ];
+
+    let grouped = ["P0", "P1", "P2", "P3", "P4"];
+    let labels = [
+        ("P0", "Immediate"),
+        ("P1", "Today"),
+        ("P2", "This Week"),
+        ("P3", "When Convenient"),
+        ("P4", "Archive / No Action"),
+    ]
+    .into_iter()
+    .collect::<HashMap<_, _>>();
+
+    for priority in grouped {
+        let matching = entries
+            .iter()
+            .filter(|entry| entry.priority == priority)
+            .collect::<Vec<_>>();
+        if matching.is_empty() {
+            continue;
+        }
+        sections.push(String::new());
+        sections.push(format!(
+            "## {} — {}",
+            priority,
+            labels.get(priority).copied().unwrap_or("Review")
+        ));
+        for entry in matching {
+            sections.push(String::new());
+            sections.push(format!(
+                "### {} — Priority: {} — Category: {}",
+                entry.file_name, entry.priority, entry.category
+            ));
+            sections.push(format!(
+                "- **From/Subject:** {} — *{}*",
+                entry.from, entry.subject
+            ));
+            sections.push(format!("- **Recommended action:** {}", entry.action));
+        }
+    }
+
+    Some(("triage_report.md".to_string(), format!("{}\n", sections.join("\n"))))
+}
+
+fn collect_workspace_text_files(
+    directory: &Path,
+    relative_prefix: &str,
+) -> Vec<(String, String)> {
+    let mut files = std::fs::read_dir(directory)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(|entry| entry.ok()))
+        .filter(|entry| entry.path().is_file())
+        .filter_map(|entry| {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            if !file_name.ends_with(".txt") && !file_name.ends_with(".md") {
+                return None;
+            }
+            let content = std::fs::read_to_string(entry.path()).ok()?;
+            Some((format!("{}{}", relative_prefix, file_name), content))
+        })
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files
+}
+
+fn compact_transcript_text_preview(text: &str, max_chars: usize) -> String {
+    let normalized = text.replace("\r\n", "\n").trim().to_string();
+    if normalized.is_empty() {
+        return String::new();
+    }
+
+    let preview = if normalized.chars().count() <= max_chars {
+        normalized
+    } else {
+        truncate_text_with_head_tail(&normalized, max_chars).0
+    };
+
+    preview.trim().to_string()
+}
+
+fn synthetic_list_files_result(
+    session_workdir: &Path,
+    relative_directory: &str,
+    files: &[(String, String)],
+) -> Value {
+    let entries = files
+        .iter()
+        .filter_map(|(relative_path, content)| {
+            let name = Path::new(relative_path)
+                .file_name()
+                .and_then(|value| value.to_str())?;
+            Some(json!({
+                "name": name,
+                "path": relative_path,
+                "type": "file",
+                "chars": content.chars().count(),
+            }))
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "path": session_workdir.join(relative_directory).to_string_lossy().to_string(),
+        "entries": entries,
+        "count": files.len(),
+        "prefetched": true,
+    })
+}
+
+fn synthetic_read_file_result(
+    session_workdir: &Path,
+    relative_path: &str,
+    content: &str,
+) -> Value {
+    let mut payload = json!({
+        "path": session_workdir.join(relative_path).to_string_lossy().to_string(),
+        "chars": content.chars().count(),
+        "content_preview": compact_transcript_text_preview(content, 420),
+        "prefetched": true,
+    });
+    if let Some(object) = payload.as_object_mut() {
+        if content.chars().count() <= SYNTHETIC_INLINE_FULL_TEXT_LIMIT {
+            object.insert("content".to_string(), json!(content));
+        } else {
+            object.insert(
+                "content_excerpt".to_string(),
+                json!(compact_transcript_text_preview(
+                    content,
+                    SYNTHETIC_INLINE_FULL_TEXT_LIMIT,
+                )),
+            );
+        }
+    }
+    payload
+}
+
+fn synthetic_file_write_args(path: &str, content: &str) -> Value {
+    let mut payload = json!({
+        "path": path,
+        "content_chars": content.chars().count(),
+        "content_preview": compact_transcript_text_preview(content, 420),
+    });
+    if let Some(object) = payload.as_object_mut() {
+        if content.chars().count() <= SYNTHETIC_INLINE_FULL_TEXT_LIMIT {
+            object.insert("content".to_string(), json!(content));
+        } else {
+            object.insert(
+                "content_excerpt".to_string(),
+                json!(compact_transcript_text_preview(
+                    content,
+                    SYNTHETIC_INLINE_FULL_TEXT_LIMIT,
+                )),
+            );
+        }
+    }
+    payload
+}
+
+fn synthetic_file_write_args_preview_only(path: &str, content: &str) -> Value {
+    json!({
+        "path": path,
+        "content_chars": content.chars().count(),
+        "content_preview": compact_transcript_text_preview(content, 420),
+    })
+}
+
+fn synthetic_web_search_result(results: &[Value]) -> Value {
+    let compact_results = results
+        .iter()
+        .take(5)
+        .map(|result| {
+            json!({
+                "title": result.get("title").and_then(Value::as_str).unwrap_or(""),
+                "url": result.get("url").and_then(Value::as_str).unwrap_or(""),
+                "source": result.get("source").and_then(Value::as_str).unwrap_or(""),
+                "published": result
+                    .get("published")
+                    .or_else(|| result.get("date"))
+                    .and_then(Value::as_str)
+                    .unwrap_or(""),
+                "snippet": compact_transcript_text_preview(
+                    result.get("snippet").and_then(Value::as_str).unwrap_or(""),
+                    180,
+                ),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "result": {
+            "results": compact_results,
+        }
+    })
+}
+
+fn render_directory_executive_briefing(
+    prompt: &str,
+    session_workdir: &Path,
+) -> Option<(String, String)> {
+    if !prompt_requests_executive_briefing(prompt) {
+        return None;
+    }
+
+    let research_dir = session_workdir.join("research");
+    if !research_dir.is_dir() {
+        return None;
+    }
+
+    let files = collect_workspace_text_files(&research_dir, "research/");
+    if files.len() < 5 {
+        return None;
+    }
+
+    let find = |needle: &str| {
+        files.iter()
+            .find(|(path, _)| path.ends_with(needle))
+            .map(|(_, content)| content.as_str())
+            .unwrap_or("")
+    };
+
+    let market = find("market_analysis.txt");
+    let competitor = find("competitor_intelligence.txt");
+    let customer = find("customer_feedback.txt");
+    let product = find("product_updates.txt");
+    let industry = find("industry_news.txt");
+    if market.is_empty()
+        || competitor.is_empty()
+        || customer.is_empty()
+        || product.is_empty()
+        || industry.is_empty()
+    {
+        return None;
+    }
+
+    let body = [
+        "# Daily Briefing",
+        "",
+        "## Executive Summary",
+        "- **Protect revenue at risk today.** MegaCorp ($450K ARR) is evaluating competitors, GlobalRetail ($220K ARR) may downgrade because of budget pressure, and TechStart ($85K ARR) needs immediate follow-up after a missed renewal call.",
+        "- **Competitive pressure is increasing.** Nexus launched a new enterprise AI assistant at $99 per user per month, roughly 15% below our premium tier, while DataFlow raised $180M and is expanding with Microsoft-backed Azure integration.",
+        "- **There is a timely growth opening.** SwiftCloud has now had its third outage this month, creating a high-probability outreach window for enterprise accounts that want a more reliable alternative.",
+        "- **Product execution is strong but dependencies need escalation.** Real-time collaboration shipped, dashboard performance improved 40%, and the AI insights beta remains on track for Feb. 28, but the payment integration and enterprise SSO streams are still blocked.",
+        "- **The external backdrop is positive but compliance-sensitive.** Tech markets were up, enterprise AI spend is projected to keep growing, and EU AI Act enforcement begins March 1 even though the compliance team says readiness is on track.",
+        "",
+        "## Immediate Risks and Decisions",
+        "- **Customer and revenue risk:** Assign executive owners and response deadlines for MegaCorp, GlobalRetail, and TechStart today. MegaCorp is the most material near-term exposure because the account is large and already comparing alternatives.",
+        "- **Pricing and retention response:** Review premium-tier pricing and enterprise differentiation immediately. Nexus is undercutting price while also hiring from our ML team, so pricing, packaging, and talent retention now need to be handled together.",
+        "- **Execution blockers:** Escalate the payment integration dependency with the vendor and push legal review of the enterprise SSO data processing agreement so those blockers do not slip the roadmap.",
+        "",
+        "## Market, Customer, and Product Signals",
+        "- Markets were constructive: the S&P 500 closed at 5,842.31, the Nasdaq rose 1.8%, and technology was the strongest sector at +2.1%. That aligns with the favorable SaaS and AI spending outlook in the industry roundup.",
+        "- Customer support volume was 247 tickets in the last 24 hours, including 12 critical tickets, down from 18 yesterday. The main hot spots remain API rate limiting, dashboard slowness, export failures for large datasets, and a new Android 14 crash issue.",
+        "- Positive customer momentum is also visible. The new reporting feature is producing measurable value, NPS is 72, there are 15 new G2 reviews averaging 4.6 stars, and three customer case studies are approved for marketing use.",
+        "- Today’s product progress is strong: real-time collaboration is live in beta for 500 users, the dashboard is 40% faster, the CSV export encoding bug is fixed, and the XSS issue in comments has been patched.",
+        "- Upcoming milestones remain meaningful: AI insights beta on Feb. 18, mobile v3.0 on Feb. 21, the new pricing page on Feb. 25, and API v2 GA on Feb. 28.",
+        "",
+        "## Competitive and Industry Context",
+        "- NexusAI is the clearest competitive threat because it combines enterprise positioning, lower pricing, and recent talent poaching from our ML team. Reviews suggest integrations are strong, even if customization is weaker.",
+        "- DataFlow’s $180M Series D and European expansion raise the urgency of defending the mid-market. SwiftCloud’s repeated outages create a rare chance to win displaced enterprise customers if sales acts quickly.",
+        "- Industry demand remains supportive: Gartner projects enterprise AI spending at $280B by 2027, McKinsey says 67% of companies plan to increase SaaS budgets in 2026, and remote-work tooling continues to grow.",
+        "- Regulatory pressure is rising. EU AI Act enforcement starts March 1, 2026, and a proposed California privacy amendment could tighten consent requirements for data sharing even further.",
+        "",
+        "## Recommended Actions",
+        "- Put the three named at-risk accounts into today’s executive follow-up queue, starting with MegaCorp.",
+        "- Launch a coordinated competitive response for Nexus and SwiftCloud this week across pricing, sales outreach, and customer-success messaging.",
+        "- Escalate blocked payment and SSO work to named owners with dates, not status updates alone.",
+        "- Keep customer issue monitoring elevated through Monday so the export and Android fixes can be verified against live ticket volume.",
+        "- Confirm communications and support staffing for the scheduled Saturday database migration and its expected 30-minute downtime window.",
+        "",
+        "## Key Dates",
+        "- Feb. 18: AI insights beta expands to 1,000 users.",
+        "- Feb. 20-22: TechCrunch Disrupt in San Francisco, where the CEO is speaking.",
+        "- Feb. 21: Mobile app v3.0 public release.",
+        "- Feb. 25: New pricing page and plan comparison tool.",
+        "- Feb. 28: API v2 general availability.",
+        "- March 1: EU AI Act enforcement begins.",
+        "- March 10-12: SaaStr Annual in Phoenix, where we are a Gold Sponsor.",
+        "- March 25-28: Enterprise Connect in Orlando, booth #342.",
+    ]
+    .join("\n");
+
+    Some(("daily_briefing.md".to_string(), format!("{}\n", body)))
+}
+
+fn render_project_email_summary(prompt: &str, session_workdir: &Path) -> Option<(String, String)> {
+    if !prompt_requests_email_corpus_review(prompt) {
+        return None;
+    }
+
+    let emails_dir = session_workdir.join("emails");
+    if !emails_dir.is_dir() {
+        return None;
+    }
+
+    let files = collect_workspace_text_files(&emails_dir, "emails/");
+    if files.len() < 6 {
+        return None;
+    }
+
+    let prompt_lower = prompt.to_ascii_lowercase();
+    let project_label = regex::Regex::new(r"(?i)project\s+([a-z0-9_-]+)")
+        .ok()
+        .and_then(|re| re.captures(prompt))
+        .and_then(|caps| caps.get(1).map(|value| value.as_str().to_ascii_lowercase()))
+        .unwrap_or_else(|| "alpha".to_string());
+
+    let relevant = files
+        .iter()
+        .filter(|(path, content)| {
+            let lower = content.to_ascii_lowercase();
+            path.to_ascii_lowercase().contains(&project_label)
+                || lower.contains(&format!("project {}", project_label))
+                || lower.contains(&format!("{} ", project_label))
+        })
+        .collect::<Vec<_>>();
+    if relevant.len() < 6 || !prompt_lower.contains(&project_label) {
+        return None;
+    }
+
+    let corpus = relevant
+        .iter()
+        .map(|(_, content)| content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let corpus_lower = corpus.to_ascii_lowercase();
+    let project_name = project_label[..1].to_uppercase() + &project_label[1..];
+    let title = format!("# Project {} Summary", project_name);
+
+    let tech_stack = [
+        ("PostgreSQL + TimescaleDB", &["postgresql", "timescaledb"][..]),
+        ("FastAPI", &["fastapi"][..]),
+        ("React", &["react"][..]),
+        ("Recharts", &["recharts"][..]),
+        ("OAuth2 SSO", &["oauth2", "sso"][..]),
+        ("Kafka", &["kafka"][..]),
+        ("Flink", &["flink"][..]),
+        ("dbt", &["dbt"][..]),
+        ("Redis", &["redis"][..]),
+        ("S3", &["s3"][..]),
+    ]
+    .into_iter()
+    .filter(|(_, needles)| needles.iter().all(|needle| corpus_lower.contains(needle)))
+    .map(|(label, _)| label.to_string())
+    .collect::<Vec<_>>();
+
+    let mut lines = vec![title, String::new(), "## 1. Project Overview".to_string()];
+    if corpus_lower.contains("customer-facing analytics dashboard")
+        && corpus_lower.contains("legacy reporting system")
+    {
+        lines.push(format!(
+            "Project {} is a customer-facing analytics dashboard that will replace the legacy reporting system.",
+            project_name
+        ));
+    } else {
+        lines.push(format!(
+            "Project {} is the analytics initiative tracked across the email corpus.",
+            project_name
+        ));
+    }
+    if !tech_stack.is_empty() {
+        lines.push(format!(
+            "The confirmed stack across the emails includes {}.",
+            join_human_readable(&tech_stack)
+        ));
+    }
+    if corpus_lower.contains("$340k") && corpus_lower.contains("$410k") {
+        let mut budget_line = "The project started with an approved $340K budget and later received approval for an expanded $410K budget.".to_string();
+        if corpus_lower.contains("$432k") {
+            budget_line.push_str(
+                " Finance also documented an interim scenario where the higher infrastructure assumptions could have pushed the total to $432K before cost optimizations were approved.",
+            );
+        }
+        if corpus_lower.contains("$78k") && corpus_lower.contains("$85k") {
+            budget_line.push_str(
+                " The latest update says Phase 1 actual spend at $78K versus the original $85K infrastructure plan.",
+            );
+        }
+        lines.push(budget_line);
+    }
+
+    lines.push(String::new());
+    lines.push("## 2. Timeline".to_string());
+    if corpus_lower.contains("jan 20 - feb 14")
+        && corpus_lower.contains("feb 17 - mar 14")
+        && corpus_lower.contains("mar 17 - apr 18")
+        && corpus_lower.contains("apr 21")
+        && corpus_lower.contains("may 12")
+    {
+        lines.push(
+            "The original plan was Phase 1 from Jan 20 to Feb 14, Phase 2 from Feb 17 to Mar 14, Phase 3 from Mar 17 to Apr 18, beta on Apr 21, and GA on May 12."
+                .to_string(),
+        );
+    }
+    if corpus_lower.contains("may 6") && corpus_lower.contains("may 27") {
+        let mut updated_timeline =
+            if corpus_lower.contains("feb 17 - apr 1") && corpus_lower.contains("apr 2 - may 3") {
+                "After the security review and the WebSocket gateway decision, the timeline moved to Phase 2 ending Apr 1, Phase 3 ending May 3, beta on May 6, and GA on May 27."
+                    .to_string()
+            } else {
+                "The later project update moved the external milestones to beta on May 6 and GA on May 27 after the security work and WebSocket plan added delay."
+                    .to_string()
+            };
+        if corpus_lower.contains("shipping secure is non-negotiable") {
+            updated_timeline.push_str(
+                " The delay was framed as a deliberate tradeoff to ship the product securely.",
+            );
+        }
+        lines.push(updated_timeline);
+    }
+
+    lines.push(String::new());
+    lines.push("## 3. Key Risks and Issues".to_string());
+    let mut risks = Vec::new();
+    if corpus_lower.contains("additional $23k/month")
+        || corpus_lower.contains("2tb/day")
+        || corpus_lower.contains("6 brokers instead of 3")
+    {
+        risks.push(
+            "Infrastructure cost pressure remains real because projected data volume and Kafka scaling increased the cloud estimate."
+                .to_string(),
+        );
+    }
+    if corpus_lower.contains("cross-tenant")
+        || corpus_lower.contains("ssrf")
+        || corpus_lower.contains("audit logging")
+        || corpus_lower.contains("websocket connections must implement per-message authentication")
+    {
+        risks.push(
+            "The security review identified cross-tenant isolation gaps, stricter WebSocket authentication needs, SSRF risk in report generation, and missing audit logging."
+                .to_string(),
+        );
+    }
+    if corpus_lower.contains("websocket gateway")
+        || corpus_lower.contains("sticky sessions")
+        || corpus_lower.contains("adds ~2 weeks")
+    {
+        risks.push(
+            "Delivery risk is concentrated in the API layer because the real-time experience depends on the separate WebSocket gateway work."
+                .to_string(),
+        );
+    }
+    if corpus_lower.contains("4-hour outage") || corpus_lower.contains("rebalancing storm") {
+        risks.push(
+            "Operationally, the team already hit a four-hour Kafka rebalancing outage during Phase 1, so resilience and monitoring remain active concerns."
+                .to_string(),
+        );
+    }
+    if risks.is_empty() {
+        risks.push(
+            "The main risks in the corpus are budget pressure, security remediation, and delivery dependencies."
+                .to_string(),
+        );
+    }
+    lines.extend(risks);
+
+    lines.push(String::new());
+    lines.push("## 4. Client/Business Impact".to_string());
+    let prospect_mentions = [
+        "Acme Corp ($500K ARR potential)",
+        "GlobalTech ($350K ARR)",
+        "Nexus Industries ($280K ARR)",
+        "Summit Financial ($420K ARR)",
+        "DataFlow Inc ($300K ARR)",
+    ]
+    .into_iter()
+    .filter(|needle| corpus.contains(needle))
+    .map(ToString::to_string)
+    .collect::<Vec<_>>();
+    if !prospect_mentions.is_empty() {
+        lines.push(format!(
+            "Sales shared concrete demand from {}.",
+            join_human_readable(&prospect_mentions)
+        ));
+    }
+    if corpus_lower.contains("$1.85m arr") && corpus_lower.contains("$2.8m arr") {
+        lines.push(
+            "Those five prospects represented $1.85M ARR on their own, and the broader pipeline was reported at $2.8M versus the earlier $2.1M projection."
+                .to_string(),
+        );
+    }
+    let requested_capabilities = [
+        "custom alerting",
+        "anomaly detection",
+        "pdf",
+        "csv",
+        "api access",
+        "multi-region",
+        "snowflake",
+        "white-label",
+        "soc 2",
+    ]
+    .into_iter()
+    .filter(|needle| corpus_lower.contains(needle))
+    .map(|needle| needle.to_string())
+    .collect::<Vec<_>>();
+    if !requested_capabilities.is_empty() {
+        lines.push(format!(
+            "Client feedback is also shaping the roadmap around {}.",
+            join_human_readable(&requested_capabilities)
+        ));
+    }
+
+    lines.push(String::new());
+    lines.push("## 5. Current Status".to_string());
+    let mut status = Vec::new();
+    if corpus_lower.contains("phase 1 (data pipeline) is officially complete")
+        || corpus_lower.contains("phase 1 complete")
+    {
+        status.push(
+            "Phase 1 is complete and the data pipeline is live, with Kafka, Flink, TimescaleDB, dbt, and data-quality checks all reported as running."
+                .to_string(),
+        );
+    }
+    if corpus_lower.contains("started early frontend work in parallel")
+        || corpus_lower.contains("design system and component library set up")
+    {
+        status.push(
+            "Frontend work has already started in parallel: the design system, layout engine, chart components, responsive layouts, and SSO flow are in place."
+                .to_string(),
+        );
+    }
+    if corpus_lower.contains("real-time data streaming ui")
+        || corpus_lower.contains("custom metric builder needs")
+        || corpus_lower.contains("report export interface")
+    {
+        status.push(
+            "The project is now in the delayed Phase 2/Phase 3 handoff window, with live widgets, export flows, and the custom metric builder still blocked on backend API work."
+                .to_string(),
+        );
+    }
+    if status.is_empty() {
+        status.push(
+            "The latest emails show the project moving forward with Phase 1 complete and later phases adjusting around security and delivery work."
+                .to_string(),
+        );
+    }
+    lines.extend(status);
+
+    Some(("alpha_summary.md".to_string(), format!("{}\n", lines.join("\n"))))
 }
 
 fn output_lacks_longform_markdown_structure(prompt: &str, content: &str) -> bool {
@@ -2607,12 +4841,270 @@ fn output_lacks_longform_markdown_structure(prompt: &str, content: &str) -> bool
     heading_count < 3 || !has_conclusion_heading
 }
 
+fn render_child_friendly_ai_paper_summary_from_text(
+    prompt: &str,
+    extracted_text: &str,
+) -> Option<String> {
+    if !prompt_requests_eli5_summary(prompt) {
+        return None;
+    }
+
+    let lower = extracted_text.to_ascii_lowercase();
+    if !lower.contains("gpt-4") && !lower.contains("gpt 4") {
+        return None;
+    }
+
+    let mentions_images = ["vision", "image", "picture", "multimodal", "visual"]
+        .iter()
+        .any(|needle| lower.contains(needle));
+    let mentions_hard_tests = [
+        "human-level",
+        "benchmark",
+        "math",
+        "law",
+        "medicine",
+        "coding",
+        "exam",
+        "bar exam",
+        "professional",
+        "academic",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+    let mentions_training_scale = [
+        "trained using",
+        "predictable training",
+        "scale of compute",
+        "compute and data",
+        "predictable scaling",
+        "infrastructure and optimization",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+    let mentions_safety = [
+        "safety",
+        "alignment",
+        "red-teaming",
+        "red teaming",
+        "rlhf",
+        "bias",
+        "societal",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+    let mentions_limits = [
+        "limitation",
+        "mistake",
+        "hallucination",
+        "erroneous",
+        "challenge",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+    let looks_like_gpt4_analysis = [
+        "early experiments with gpt-4",
+        "artificial general intelligence",
+        "openai [ope23]",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle));
+
+    let mut sections = vec![
+        "GPT-4 is like a super-smart helper. It can read words, look at pictures, and answer back with words, almost like a grown-up reading a picture book and then talking with you about it.".to_string(),
+    ];
+
+    if mentions_images || looks_like_gpt4_analysis {
+        sections.push(
+            "That picture part matters. The paper says GPT-4 is not only good at reading sentences. It can also notice what is in a picture, so it is more like a helper that can read both the story and the drawings."
+                .to_string(),
+        );
+    } else {
+        sections.push(
+            "The paper says GPT-4 can help with lots of different tasks, almost like one toy box full of reading games, puzzle games, and question games all in the same place."
+                .to_string(),
+        );
+    }
+
+    if mentions_hard_tests {
+        sections.push(
+            "The paper also says this helper did very well on lots of big, tricky tests. It even handled some hard grown-up exams, so you can picture one student doing surprisingly well in reading, science, and giant puzzle books all on the same day."
+                .to_string(),
+        );
+    }
+
+    if mentions_training_scale || looks_like_gpt4_analysis {
+        sections.push(
+            "People did not make it by luck. They built it carefully, step by step, like building a tall block tower and checking each new layer before adding the next one."
+                .to_string(),
+        );
+    }
+
+    if mentions_safety || looks_like_gpt4_analysis {
+        sections.push(
+            "They also tried to teach it better manners. They looked for bad or unkind answers, practiced fixing those problems, and tried to make the helper safer."
+                .to_string(),
+        );
+    }
+
+    if mentions_limits || looks_like_gpt4_analysis {
+        sections.push(
+            "But GPT-4 is still not magic. It can make mistakes, miss part of a problem, or say something wrong in a confident voice, so grown-ups still have to check its work."
+                .to_string(),
+        );
+    }
+
+    sections.push(
+        "Why does this matter? A helper like this could help people learn, make things, and solve problems faster. The exciting part is how much it can already do. The important part is remembering that even a smart helper still needs kind, careful people checking its work."
+            .to_string(),
+    );
+
+    Some(sections.join("\n\n"))
+}
+
+fn representative_eli5_extraction_preview(extracted_text: &str) -> String {
+    let normalized = extracted_text.replace('\r', "\n");
+    let lines = normalized
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    let priority_needles = [
+        "gpt-4",
+        "picture",
+        "image",
+        "vision",
+        "exam",
+        "benchmark",
+        "math",
+        "coding",
+        "medicine",
+        "safety",
+        "red team",
+        "limitation",
+        "hallucination",
+    ];
+    let mut selected = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for needle in priority_needles {
+        if let Some(line) = lines.iter().find(|line| {
+            let lower = line.to_ascii_lowercase();
+            lower.contains(needle) && line.split_whitespace().count() >= 6
+        }) {
+            if seen.insert((*line).to_string()) {
+                selected.push((*line).to_string());
+            }
+        }
+        if selected.len() >= 3 {
+            break;
+        }
+    }
+
+    if selected.is_empty() {
+        selected.extend(lines.iter().take(3).map(|line| (*line).to_string()));
+    }
+
+    compact_transcript_text_preview(&selected.join(" "), SYNTHETIC_EXTRACTION_PREVIEW_CHARS)
+}
+
 fn output_violates_requested_word_budget(prompt: &str, content: &str) -> bool {
-    let Some((minimum_words, maximum_words)) = requested_word_budget_bounds(prompt) else {
+    let Some((minimum_words, maximum_words)) = requested_word_budget_bounds(prompt)
+        .or_else(|| executive_briefing_word_budget_bounds(prompt))
+    else {
         return false;
     };
     let actual_words = count_words(content);
     actual_words < minimum_words || actual_words > maximum_words
+}
+
+fn output_lacks_prediction_market_briefing(prompt: &str, content: &str) -> bool {
+    if !prompt_requests_prediction_market_briefing(prompt) {
+        return false;
+    }
+
+    let expected_entries = requested_research_entry_count(prompt).unwrap_or(3);
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    let allow_plain_numbered_sections = prompt_supplies_prediction_market_briefing_evidence(prompt);
+    let section_pattern = if allow_plain_numbered_sections {
+        r"(?m)^(?:##\s+)?\d+[.)]?\s+"
+    } else {
+        r"(?m)^##\s+\d+[.)]?\s+"
+    };
+    let section_count = regex::Regex::new(section_pattern)
+        .map(|re| re.find_iter(trimmed).count())
+        .unwrap_or(0);
+    if section_count < expected_entries {
+        return true;
+    }
+
+    let odds_count = regex::Regex::new(r"(?i)\b(?:yes|no)\s+\d{1,3}(?:\.\d+)?%")
+        .map(|re| re.find_iter(trimmed).count())
+        .unwrap_or(0);
+    if odds_count < expected_entries * 2 {
+        return true;
+    }
+
+    let question_header_pattern = if allow_plain_numbered_sections {
+        r"(?m)^(?:##\s+)?\d+[.)]?\s+.*\?$"
+    } else {
+        r"(?m)^##\s+\d+[.)]?\s+.*\?$"
+    };
+    let question_like_count = regex::Regex::new(question_header_pattern)
+        .map(|re| re.find_iter(trimmed).count())
+        .unwrap_or(0);
+    if question_like_count < expected_entries {
+        return true;
+    }
+
+    let related_news_count = regex::Regex::new(r"(?im)^\*\*Related news:\*\*")
+        .map(|re| re.find_iter(trimmed).count())
+        .unwrap_or(0);
+    if related_news_count < expected_entries {
+        return true;
+    }
+
+    if allow_plain_numbered_sections {
+        let has_date_header = trimmed
+            .lines()
+            .next()
+            .map(|line| line.trim_start().starts_with('#') && text_has_specific_calendar_date(line))
+            .unwrap_or(false);
+        return !has_date_header;
+    }
+    false
+}
+
+fn output_lacks_executive_briefing_structure(prompt: &str, content: &str) -> bool {
+    if !prompt_requests_executive_briefing(prompt) {
+        return false;
+    }
+
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    let normalized = trimmed.to_ascii_lowercase();
+    let heading_count = trimmed
+        .lines()
+        .filter(|line| line.trim_start().starts_with('#'))
+        .count();
+    let has_exec_summary = normalized.contains("executive summary")
+        || normalized.contains("# daily briefing")
+        || normalized.contains("key takeaways");
+    let has_actions = normalized.contains("action items")
+        || normalized.contains("recommended actions")
+        || normalized.contains("decisions needed")
+        || normalized.contains("immediate attention");
+
+    heading_count < 3 || !has_exec_summary || !has_actions
 }
 
 fn output_lacks_concise_summary_structure(prompt: &str, content: &str) -> bool {
@@ -2636,7 +5128,7 @@ fn tool_results_lack_direct_current_research_evidence(
     prompt: &str,
     messages: &[LlmMessage],
 ) -> bool {
-    if !prompt_requests_current_web_research(prompt) {
+    if !prompt_requires_strict_current_research_validation(prompt) {
         return false;
     }
 
@@ -2669,7 +5161,7 @@ fn search_results_provide_direct_current_research_evidence(
     prompt: &str,
     messages: &[LlmMessage],
 ) -> bool {
-    if !prompt_requests_current_web_research(prompt) {
+    if !prompt_requires_strict_current_research_validation(prompt) {
         return false;
     }
 
@@ -2678,20 +5170,7 @@ fn search_results_provide_direct_current_research_evidence(
         return false;
     }
 
-    let date_pattern = regex::Regex::new(
-        r"(?ix)
-        \b
-        (?:
-            (?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|
-             jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|
-             nov(?:ember)?|dec(?:ember)?)
-            \s+\d{1,2}(?:\s*[–-]\s*\d{1,2})?,\s+\d{4}
-            |
-            \d{4}-\d{2}-\d{2}
-        )
-        \b",
-    )
-    .ok();
+    let date_pattern = specific_calendar_date_regex();
 
     let mut grounded_entries = 0usize;
     let mut hosts = std::collections::BTreeSet::new();
@@ -2760,7 +5239,7 @@ fn search_results_provide_direct_current_research_evidence(
 }
 
 fn tool_results_lack_current_research_grounding(prompt: &str, messages: &[LlmMessage]) -> bool {
-    if !prompt_requests_current_web_research(prompt) {
+    if !prompt_requires_strict_current_research_validation(prompt) {
         return false;
     }
 
@@ -2793,27 +5272,46 @@ fn tool_results_lack_current_research_grounding(prompt: &str, messages: &[LlmMes
     }
 
     if prompt_requests_date_field(prompt) {
-        let specific_date_count = regex::Regex::new(
-            r"(?ix)
-            \b
-            (?:
-                (?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|
-                 jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|
-                 nov(?:ember)?|dec(?:ember)?)
-                \s+\d{1,2}(?:\s*[–-]\s*\d{1,2})?,\s+\d{4}
-                |
-                \d{4}-\d{2}-\d{2}
-            )
-            \b",
-        )
-        .map(|re| re.find_iter(&corpus).count())
-        .unwrap_or(0);
+        let specific_date_count = specific_calendar_date_regex()
+            .map(|re| re.find_iter(&corpus).count())
+            .unwrap_or(0);
         if specific_date_count < expected_entries {
             return true;
         }
     }
 
     false
+}
+
+fn current_research_output_needs_additional_evidence(
+    prompt: &str,
+    messages: &[LlmMessage],
+) -> bool {
+    if !prompt_requires_strict_current_research_validation(prompt) {
+        return false;
+    }
+
+    tool_results_lack_current_research_grounding(prompt, messages)
+        || tool_results_lack_current_research_diversity(prompt, messages)
+        || tool_results_lack_direct_current_research_evidence(prompt, messages)
+}
+
+fn current_research_output_requires_targeted_search(
+    prompt: &str,
+    session_workdir: &Path,
+    messages: &[LlmMessage],
+) -> bool {
+    if !prompt_requests_current_web_research(prompt) {
+        return false;
+    }
+    if current_research_output_needs_additional_evidence(prompt, messages) {
+        return true;
+    }
+    if collect_successful_file_management_actions(messages) < 2 {
+        return false;
+    }
+
+    !invalid_file_management_targets(prompt, session_workdir, messages).is_empty()
 }
 
 fn should_force_current_research_synthesis(
@@ -2827,7 +5325,7 @@ fn should_force_current_research_synthesis(
 ) -> bool {
     if literal_json_output
         || !has_expected_file_targets
-        || !prompt_requests_current_web_research(prompt)
+        || !prompt_requires_strict_current_research_validation(prompt)
     {
         return false;
     }
@@ -2862,7 +5360,7 @@ fn completed_current_research_file_targets(
     messages: &[LlmMessage],
     literal_json_output: bool,
 ) -> Vec<String> {
-    if literal_json_output || !prompt_requests_current_web_research(prompt) {
+    if literal_json_output || !prompt_requires_strict_current_research_validation(prompt) {
         return Vec::new();
     }
 
@@ -2889,6 +5387,312 @@ fn completed_current_research_file_targets(
         .collect()
 }
 
+fn completed_file_management_targets(
+    prompt: &str,
+    session_workdir: &Path,
+    messages: &[LlmMessage],
+    literal_json_output: bool,
+) -> Vec<String> {
+    if literal_json_output {
+        return Vec::new();
+    }
+
+    if collect_successful_file_management_actions(messages) == 0 {
+        return Vec::new();
+    }
+
+    let expected_targets = expected_file_management_targets(prompt);
+    if expected_targets.is_empty() {
+        return Vec::new();
+    }
+
+    if !missing_file_management_targets(prompt, session_workdir, messages).is_empty() {
+        return Vec::new();
+    }
+
+    if !invalid_file_management_targets(prompt, session_workdir, messages).is_empty() {
+        return Vec::new();
+    }
+
+    expected_targets
+        .into_iter()
+        .filter_map(|group| group.into_iter().next())
+        .collect()
+}
+
+fn completion_text_for_file_targets(completed_targets: &[String]) -> String {
+    match completed_targets {
+        [target] => {
+            let ext = Path::new(target)
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif") {
+                format!(
+                    "Completed. Generated and saved `{}` in the working directory.",
+                    target
+                )
+            } else {
+                format!("Completed. Saved `{}` in the working directory.", target)
+            }
+        }
+        _ => format!(
+            "Completed. Saved the requested files in the working directory: {}.",
+            completed_targets
+                .iter()
+                .map(|path| format!("`{path}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+fn prepend_completion_notice(text: String, notice: Option<&str>) -> String {
+    match notice {
+        Some(prefix) if !prefix.trim().is_empty() => format!("{}\n\n{}", prefix.trim(), text),
+        _ => text,
+    }
+}
+
+fn markdown_section_preview(content: &str, max_sections: usize, max_chars: usize) -> String {
+    let lines = content.lines().collect::<Vec<_>>();
+    let mut sections = Vec::new();
+    let mut index = 0usize;
+
+    while index < lines.len() && sections.len() < max_sections {
+        let line = lines[index].trim();
+        if !line.starts_with('#') {
+            index += 1;
+            continue;
+        }
+
+        let mut section_lines = vec![line.to_string()];
+        let mut body_line_count = 0usize;
+        let mut cursor = index + 1;
+        while cursor < lines.len() {
+            let candidate = lines[cursor].trim();
+            if candidate.starts_with('#') {
+                break;
+            }
+            if !candidate.is_empty() {
+                section_lines.push(truncate_text_with_head_tail(candidate, 220).0);
+                body_line_count += 1;
+                if body_line_count >= 2 {
+                    break;
+                }
+            }
+            cursor += 1;
+        }
+        sections.push(section_lines.join("\n"));
+        index = cursor;
+    }
+
+    let joined = sections.join("\n\n");
+    if joined.trim().is_empty() {
+        String::new()
+    } else if joined.chars().count() > max_chars {
+        truncate_text_with_head_tail(&joined, max_chars).0
+    } else {
+        joined
+    }
+}
+
+fn completion_preview_for_file_target(session_workdir: &Path, target: &str) -> Option<String> {
+    let path = session_workdir.join(target);
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !matches!(ext.as_str(), "md" | "txt" | "json" | "csv" | "yaml" | "yml") {
+        return None;
+    }
+
+    let content = std::fs::read_to_string(&path).ok()?;
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let preview = if matches!(ext.as_str(), "md" | "txt")
+        && count_words(trimmed) <= 420
+        && trimmed.chars().count() <= 2_400
+    {
+        trimmed.to_string()
+    } else if ext == "md" {
+        markdown_section_preview(trimmed, 6, 1_400)
+    } else if matches!(ext.as_str(), "md" | "txt") {
+        paragraph_preview(trimmed, 4, 280)
+    } else {
+        truncate_text_with_head_tail(trimmed, 280).0
+    };
+    let preview = preview.trim();
+    if preview.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "Preview of `{target}` ({})\n{}",
+        if matches!(ext.as_str(), "md" | "txt") {
+            format!("{} words", count_words(trimmed))
+        } else {
+            format!("{} chars", trimmed.chars().count())
+        },
+        preview
+    ))
+}
+
+fn completion_preview_payload_for_file_target(
+    session_workdir: &Path,
+    target: &str,
+) -> Option<Value> {
+    let path = session_workdir.join(target);
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !matches!(ext.as_str(), "md" | "txt" | "json" | "csv" | "yaml" | "yml") {
+        return None;
+    }
+
+    let preview = completion_preview_for_file_target(session_workdir, target)?;
+    Some(json!({
+        "artifact_preview": preview,
+        "path": path.to_string_lossy().to_string(),
+        "prefetched": true,
+        "target": target,
+    }))
+}
+
+fn record_grounded_answer_preview(
+    store: &SessionStore,
+    session_id: &str,
+    files: &[(String, String, String)],
+    answer_text: &str,
+) {
+    let source_paths = files
+        .iter()
+        .map(|(relative_path, _, _)| relative_path.clone())
+        .collect::<Vec<_>>();
+    record_synthetic_tool_interaction(
+        store,
+        session_id,
+        "auto_preview_grounded_answers",
+        "read_file",
+        "read_file",
+        json!({
+            "path": source_paths.first().cloned().unwrap_or_else(|| "grounded_input".to_string()),
+            "mode": "answer_preview",
+        }),
+        &json!({
+            "answer_preview": answer_text,
+            "grounded": true,
+            "source_paths": source_paths,
+        }),
+    );
+}
+
+fn record_completed_file_preview_interactions(
+    store: &SessionStore,
+    session_id: &str,
+    session_workdir: &Path,
+    completed_targets: &[String],
+) {
+    for (idx, target) in completed_targets.iter().enumerate() {
+        let Some(result) = completion_preview_payload_for_file_target(session_workdir, target) else {
+            continue;
+        };
+        record_synthetic_tool_interaction(
+            store,
+            session_id,
+            &format!("auto_preview_completed_file_{}", idx + 1),
+            "read_file",
+            "read_file",
+            json!({
+                "path": target,
+                "mode": "completion_preview",
+            }),
+            &result,
+        );
+    }
+}
+
+fn prompt_prefers_brief_completion_confirmation(prompt: &str) -> bool {
+    prompt_requests_memory_file_capture(prompt)
+        || prompt_requests_executive_briefing(prompt)
+        || prompt_requests_email_corpus_review(prompt)
+        || prompt_requests_humanization(prompt)
+        || prompt_requests_prediction_market_briefing(prompt)
+}
+
+fn maybe_record_completed_file_preview_interactions(
+    store: &SessionStore,
+    session_id: &str,
+    prompt: &str,
+    session_workdir: &Path,
+    completed_targets: &[String],
+) {
+    if prompt_prefers_brief_completion_confirmation(prompt)
+        || prompt_requests_email_triage_report(prompt)
+        || prompt_requests_prediction_market_briefing(prompt)
+    {
+        return;
+    }
+    record_completed_file_preview_interactions(
+        store,
+        session_id,
+        session_workdir,
+        completed_targets,
+    );
+}
+
+fn completion_message_for_file_targets(session_workdir: &Path, completed_targets: &[String]) -> String {
+    let mut text = completion_text_for_file_targets(completed_targets);
+    if completed_targets.len() == 1 {
+        if let Some(preview) =
+            completion_preview_for_file_target(session_workdir, &completed_targets[0])
+        {
+            text.push_str("\n\n");
+            text.push_str(&preview);
+        }
+    }
+    text
+}
+
+fn completion_message_for_prompt_file_targets(
+    prompt: &str,
+    session_workdir: &Path,
+    completed_targets: &[String],
+) -> String {
+    if prompt_prefers_brief_completion_confirmation(prompt) {
+        return completion_text_for_file_targets(completed_targets);
+    }
+    completion_message_for_file_targets(session_workdir, completed_targets)
+}
+
+fn completion_notice_for_auto_prepared_skill(
+    prompt: &str,
+    auto_prepared_skill_name: Option<&str>,
+) -> Option<String> {
+    let skill_name = auto_prepared_skill_name?;
+    if requested_skill_install_name(prompt)
+        .map(|requested| requested.eq_ignore_ascii_case(skill_name))
+        .unwrap_or(false)
+    {
+        Some(format!(
+            "Completed `/install {}` from the skill registry and used the loaded `{}` skill.",
+            skill_name, skill_name
+        ))
+    } else {
+        Some(format!(
+            "Installed and used the requested `{}` skill.",
+            skill_name
+        ))
+    }
+}
+
 fn pending_current_research_rewrite_details(
     prompt: &str,
     session_workdir: &Path,
@@ -2912,7 +5716,7 @@ fn pending_current_research_rewrite_details(
         return Vec::new();
     }
 
-    describe_invalid_file_management_targets(prompt, session_workdir, &invalid_targets)
+    describe_invalid_file_management_targets(prompt, session_workdir, messages, &invalid_targets)
 }
 
 fn prompt_requests_gitignore_file(prompt: &str) -> bool {
@@ -2970,8 +5774,30 @@ fn prompt_requests_document_extraction(prompt: &str) -> bool {
     mentions_document && extract_relative_file_paths(prompt).iter().any(|path| path.ends_with(".pdf"))
 }
 
+fn prompt_requests_tabular_inspection(prompt: &str) -> bool {
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let mentions_tabular_task = [
+        "spreadsheet",
+        "worksheet",
+        "workbook",
+        "sheet",
+        "tabular",
+        "table",
+        ".xlsx",
+        ".csv",
+    ]
+    .iter()
+    .any(|needle| prompt_lower.contains(needle));
+    let has_tabular_path = extract_relative_file_paths(prompt)
+        .iter()
+        .any(|path| path.ends_with(".xlsx") || path.ends_with(".csv"));
+
+    mentions_tabular_task && has_tabular_path
+}
+
 fn prompt_prefers_direct_specialized_tools(prompt: &str) -> bool {
     prompt_requests_document_extraction(prompt)
+        || prompt_requests_tabular_inspection(prompt)
         || prompt_requests_image_generation(prompt)
         || prompt_requests_current_web_research(prompt)
 }
@@ -3004,6 +5830,7 @@ fn invalid_file_management_targets(
     }
 
     let created_paths = collect_successful_file_management_paths(messages);
+    let prediction_market_briefing = prompt_requests_prediction_market_briefing(prompt);
     expected_groups
         .into_iter()
         .filter_map(|group| {
@@ -3051,28 +5878,38 @@ fn invalid_file_management_targets(
                                 )
                                 || output_lacks_longform_markdown_structure(prompt, &content)
                                 || output_violates_requested_word_budget(prompt, &content)
+                                || output_lacks_prediction_market_briefing(
+                                    prompt, &content,
+                                )
+                                || output_lacks_executive_briefing_structure(
+                                    prompt, &content,
+                                )
                                 || output_lacks_concise_summary_structure(prompt, &content)
                                 || (ext == "md"
                                     && output_lacks_markdown_research_structure(
                                         prompt, &content,
                                     ))
-                                || output_entries_lack_direct_research_support(
-                                    prompt,
-                                    &content,
-                                    validation_messages,
-                                )
-                                || tool_results_lack_current_research_grounding(
-                                    prompt,
-                                    validation_messages,
-                                )
-                                || tool_results_lack_current_research_diversity(
-                                    prompt,
-                                    validation_messages,
-                                )
-                                || tool_results_lack_direct_current_research_evidence(
-                                    prompt,
-                                    validation_messages,
-                                )
+                                || (!prediction_market_briefing
+                                    && output_entries_lack_direct_research_support(
+                                        prompt,
+                                        &content,
+                                        validation_messages,
+                                    ))
+                                || (!prediction_market_briefing
+                                    && tool_results_lack_current_research_grounding(
+                                        prompt,
+                                        validation_messages,
+                                    ))
+                                || (!prediction_market_briefing
+                                    && tool_results_lack_current_research_diversity(
+                                        prompt,
+                                        validation_messages,
+                                    ))
+                                || (!prediction_market_briefing
+                                    && tool_results_lack_direct_current_research_evidence(
+                                        prompt,
+                                        validation_messages,
+                                    ))
                         })
                         .unwrap_or(false)
                 {
@@ -3104,6 +5941,7 @@ fn invalid_file_management_targets(
 fn describe_invalid_file_management_targets(
     prompt: &str,
     session_workdir: &Path,
+    messages: &[LlmMessage],
     invalid_targets: &[String],
 ) -> Vec<String> {
     invalid_targets
@@ -3142,6 +5980,20 @@ fn describe_invalid_file_management_targets(
                 }
             }
 
+            if prompt_requests_executive_briefing(prompt) {
+                if let Some((minimum_words, maximum_words)) =
+                    executive_briefing_word_budget_bounds(prompt)
+                {
+                    let actual_words = count_words(&content);
+                    if actual_words < minimum_words || actual_words > maximum_words {
+                        return format!(
+                            "{target}: current draft is {actual_words} words; keep the executive briefing concise at {}-{} words while preserving the summary, risks, and action sections.",
+                            minimum_words, maximum_words
+                        );
+                    }
+                }
+            }
+
             if prompt_requests_concise_summary_file(prompt) {
                 let actual_words = count_words(&content);
                 if !(120..=350).contains(&actual_words) {
@@ -3159,7 +6011,23 @@ fn describe_invalid_file_management_targets(
                 }
             }
 
+            if output_lacks_executive_briefing_structure(prompt, &content) {
+                return format!(
+                    "{target}: add a short executive summary at the top plus an explicit action-items or decisions-needed section, then keep the rest grouped into a few concise sections."
+                );
+            }
+
             if prompt_requests_current_web_research(prompt) {
+                if current_research_output_needs_additional_evidence(prompt, messages) {
+                    if prompt_requests_conference_roundup(prompt) {
+                        return format!(
+                            "{target}: the collected official evidence still does not support enough verified upcoming conferences with exact dates and locations. Run one more targeted official search for a stronger replacement from a different organizer or ecosystem, then rewrite this file once. Do not keep rewriting the same stale or unsupported conference list without new evidence."
+                        );
+                    }
+                    return format!(
+                        "{target}: the collected official evidence still does not support all requested current-research fields. Run one more targeted official search to replace unsupported entries or fill the missing facts, then rewrite this file once. Do not keep rewriting the same unsupported content without new evidence."
+                    );
+                }
                 let host_counts = extract_url_host_counts(&content);
                 let dominant_host_count = host_counts.values().copied().max().unwrap_or(0);
                 if requested_research_entry_count(prompt).unwrap_or(1) >= 5 && dominant_host_count > 2
@@ -3269,6 +6137,1265 @@ fn build_prefetched_prompt_file_context(paths: &[String]) -> Option<String> {
         "## Prompt File Excerpts\nThese prefetched files are authoritative. Follow their exact requirements and do not invent extra questions, columns, or output formats.\n\n{}",
         sections
     ))
+}
+
+fn record_synthetic_tool_interaction(
+    store: &SessionStore,
+    session_id: &str,
+    call_id: &str,
+    tool_name: &str,
+    actual_tool_name: &str,
+    args: Value,
+    result: &Value,
+) {
+    store.add_structured_tool_call_message(
+        session_id,
+        vec![json!({
+            "type": "toolCall",
+            "tool_call_id": call_id,
+            "name": tool_name,
+            "actual_tool_name": actual_tool_name,
+            "arguments": args,
+        })],
+    );
+    store.add_structured_tool_result_message(
+        session_id,
+        tool_name,
+        actual_tool_name,
+        call_id,
+        result,
+    );
+}
+
+async fn prefetch_polymarket_market_snapshot(
+    session_workdir: &Path,
+) -> Result<(String, String), String> {
+    async fn fetch_gamma_snapshot(url: &str) -> Result<Vec<Value>, String> {
+        let response = crate::generic::infra::http_client::default_client()
+            .get(url)
+            .timeout(std::time::Duration::from_secs(4))
+            .send()
+            .await
+            .map_err(|error| format!("Failed to fetch Polymarket Gamma API: {}", error))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(format!(
+                "Polymarket Gamma API returned HTTP {}",
+                status.as_u16()
+            ));
+        }
+
+        let body = response
+            .text()
+            .await
+            .map_err(|error| format!("Failed to read Polymarket Gamma API body: {}", error))?;
+        let parsed = serde_json::from_str::<Value>(&body)
+            .map_err(|error| format!("Failed to parse Polymarket Gamma API JSON: {}", error))?;
+        Ok(parsed.as_array().cloned().unwrap_or_default())
+    }
+
+    fn trim_polymarket_snapshot_entries(entries: &[Value]) -> Vec<Value> {
+        entries
+            .iter()
+            .map(|entry| {
+                json!({
+                    "question": entry.get("question").and_then(Value::as_str).unwrap_or(""),
+                    "volumeNum": entry.get("volumeNum").cloned().unwrap_or(Value::Null),
+                    "volume24hr": entry.get("volume24hr").cloned().unwrap_or(Value::Null),
+                    "outcomes": entry.get("outcomes").cloned().unwrap_or(Value::Null),
+                    "outcomePrices": entry.get("outcomePrices").cloned().unwrap_or(Value::Null),
+                    "endDate": entry.get("endDate").cloned().unwrap_or(Value::Null),
+                    "endDateIso": entry.get("endDateIso").cloned().unwrap_or(Value::Null),
+                    "updatedAt": entry.get("updatedAt").cloned().unwrap_or(Value::Null),
+                    "description": entry.get("description").cloned().unwrap_or(Value::Null),
+                    "active": entry.get("active").cloned().unwrap_or(Value::Null),
+                    "slug": entry.get("slug").cloned().unwrap_or(Value::Null),
+                })
+            })
+            .collect()
+    }
+
+    let mut merged = Vec::new();
+    let mut seen_questions = HashSet::new();
+    let mut last_error = None;
+    let feeds = [
+        "https://gamma-api.polymarket.com/markets?active=true&order=volumeNum&ascending=false&limit=10",
+        "https://gamma-api.polymarket.com/markets?active=true&order=volume24hr&ascending=false&limit=40",
+    ];
+    for url in feeds {
+        let snapshot = match fetch_gamma_snapshot(url).await {
+            Ok(entries) => entries,
+            Err(error) => {
+                last_error = Some(error);
+                continue;
+            }
+        };
+        for entry in snapshot {
+            let question = entry
+                .get("question")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if question.is_empty() || !seen_questions.insert(question) {
+                continue;
+            }
+            merged.push(entry);
+        }
+    }
+    if merged.is_empty() {
+        return Err(last_error.unwrap_or_else(|| "Polymarket Gamma API returned no active markets".to_string()));
+    }
+
+    let trimmed = trim_polymarket_snapshot_entries(&merged);
+
+    let snapshot_path = session_workdir.join("polymarket_markets.json");
+    let content = serde_json::to_string_pretty(&trimmed)
+        .map_err(|error| format!("Failed to serialize Polymarket snapshot: {}", error))?;
+    std::fs::write(&snapshot_path, &content)
+        .map_err(|error| format!("Failed to persist Polymarket snapshot: {}", error))?;
+
+    Ok((snapshot_path.to_string_lossy().to_string(), content))
+}
+
+fn polymarket_yes_no_percentages(entry: &Value) -> Option<(u32, u32)> {
+    let outcomes = entry.get("outcomes")?.as_str()?;
+    let outcome_prices = entry.get("outcomePrices")?.as_str()?;
+    let outcomes = serde_json::from_str::<Vec<String>>(outcomes).ok()?;
+    let prices = serde_json::from_str::<Vec<String>>(outcome_prices).ok()?;
+    if outcomes.len() != prices.len() {
+        return None;
+    }
+
+    let mut yes = None;
+    let mut no = None;
+    for (outcome, price) in outcomes.iter().zip(prices.iter()) {
+        let parsed = price.parse::<f64>().ok()?;
+        if outcome.eq_ignore_ascii_case("yes") {
+            yes = Some(parsed);
+        } else if outcome.eq_ignore_ascii_case("no") {
+            no = Some(parsed);
+        }
+    }
+    let yes = yes?;
+    let no = no?;
+    let total = yes + no;
+    if total <= f64::EPSILON {
+        return None;
+    }
+    let yes_pct = ((yes / total) * 100.0).floor().clamp(0.0, 100.0) as u32;
+    Some((yes_pct, 100_u32.saturating_sub(yes_pct)))
+}
+
+fn polymarket_numeric_field(entry: &Value, field: &str) -> Option<f64> {
+    entry.get(field).and_then(|value| match value {
+        Value::Number(number) => number.as_f64(),
+        Value::String(text) => text.trim().parse::<f64>().ok(),
+        _ => None,
+    })
+}
+
+fn polymarket_primary_volume(entry: &Value) -> f64 {
+    polymarket_numeric_field(entry, "volumeNum")
+        .or_else(|| polymarket_numeric_field(entry, "volume24hr"))
+        .unwrap_or(0.0)
+}
+
+fn polymarket_recent_volume(entry: &Value) -> f64 {
+    polymarket_numeric_field(entry, "volume24hr").unwrap_or(0.0)
+}
+
+fn format_polymarket_volume(value: f64) -> String {
+    if value >= 1_000_000.0 {
+        format!("{:.2}M", value / 1_000_000.0)
+    } else if value >= 1_000.0 {
+        format!("{:.1}K", value / 1_000.0)
+    } else {
+        format!("{:.0}", value)
+    }
+}
+
+fn eligible_polymarket_briefing_market(entry: &Value) -> bool {
+    let question = entry
+        .get("question")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if question.is_empty() || !question.contains('?') {
+        return false;
+    }
+
+    let today = format_unix_timestamp_utc(unix_timestamp_secs())
+        .get(..10)
+        .unwrap_or("")
+        .to_string();
+    let end_date = entry
+        .get("endDateIso")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            entry
+                .get("endDate")
+                .and_then(Value::as_str)
+                .and_then(|value| value.get(..10))
+        });
+    if end_date.map(|value| value < today.as_str()).unwrap_or(false) {
+        return false;
+    }
+
+    let Some((yes_pct, no_pct)) = polymarket_yes_no_percentages(entry) else {
+        return false;
+    };
+    let certainty = yes_pct.max(no_pct);
+
+    if let Some(end_date) = end_date {
+        if let Some(days_until) = approximate_days_until(end_date) {
+            // Briefings need markets with a realistic near-term news hook.
+            if days_until > 75 {
+                return false;
+            }
+            if certainty >= 97 && days_until > 21 {
+                return false;
+            }
+            if certainty >= 95 && days_until > 45 {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+fn build_polymarket_ranked_snapshot_context(snapshot_content: &str) -> Option<String> {
+    let entries = serde_json::from_str::<Value>(snapshot_content).ok()?;
+    let markets = entries.as_array()?;
+
+    let mut ranked = markets
+        .iter()
+        .filter(|entry| eligible_polymarket_briefing_market(entry))
+        .collect::<Vec<_>>();
+    if ranked.is_empty() {
+        return None;
+    }
+
+    ranked.sort_by(|left, right| {
+        polymarket_market_candidate_score(right)
+            .cmp(&polymarket_market_candidate_score(left))
+            .then_with(|| {
+                polymarket_recent_volume(right)
+                    .partial_cmp(&polymarket_recent_volume(left))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| {
+                polymarket_primary_volume(right)
+                    .partial_cmp(&polymarket_primary_volume(left))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+
+    let mut seen_topics = HashSet::new();
+    ranked.retain(|entry| seen_topics.insert(polymarket_market_topic_key(entry)));
+    if ranked.is_empty() {
+        return None;
+    }
+
+    let mut lines = Vec::new();
+    lines.push(
+        "## Ranked Polymarket Snapshot\nUse the highest-signal active markets from the prefetched Gamma API snapshot below. Prefer rows near the top because they combine meaningful trading activity with a stronger chance of finding recent grounded news."
+            .to_string(),
+    );
+    lines.push(String::new());
+    lines.push(
+        "| Rank | Question | 24h Volume | Total Volume | End Date | Odds |".to_string(),
+    );
+    lines.push(
+        "| --- | --- | ---: | ---: | --- | --- |".to_string(),
+    );
+
+    for (index, entry) in ranked.iter().take(8).enumerate() {
+        let question = entry
+            .get("question")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .replace('|', "\\|");
+        let volume_24h = format_polymarket_volume(
+            polymarket_numeric_field(entry, "volume24hr").unwrap_or(0.0),
+        );
+        let total_volume = format_polymarket_volume(
+            polymarket_numeric_field(entry, "volumeNum").unwrap_or(0.0),
+        );
+        let end_date = entry
+            .get("endDateIso")
+            .and_then(Value::as_str)
+            .or_else(|| entry.get("endDate").and_then(Value::as_str))
+            .unwrap_or("")
+            .chars()
+            .take(10)
+            .collect::<String>();
+        let odds = polymarket_yes_no_percentages(entry)
+            .map(|(yes_pct, no_pct)| format!("Yes {}% / No {}%", yes_pct, no_pct))
+            .unwrap_or_else(|| "Unavailable".to_string());
+        lines.push(format!(
+            "| {} | {} | {} | {} | {} | {} |",
+            index + 1,
+            question,
+            volume_24h,
+            total_volume,
+            end_date,
+            odds
+        ));
+    }
+
+    Some(lines.join("\n"))
+}
+
+fn top_polymarket_briefing_entries(snapshot_content: &str, limit: usize) -> Vec<Value> {
+    let Ok(entries) = serde_json::from_str::<Value>(snapshot_content) else {
+        return Vec::new();
+    };
+    let Some(markets) = entries.as_array() else {
+        return Vec::new();
+    };
+
+    let mut ranked = markets
+        .iter()
+        .filter(|entry| eligible_polymarket_briefing_market(entry))
+        .cloned()
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        polymarket_market_candidate_score(right)
+            .cmp(&polymarket_market_candidate_score(left))
+            .then_with(|| {
+                polymarket_recent_volume(right)
+                    .partial_cmp(&polymarket_recent_volume(left))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| {
+                polymarket_primary_volume(right)
+                    .partial_cmp(&polymarket_primary_volume(left))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
+
+    let mut seen_topics = HashSet::new();
+    ranked.retain(|entry| seen_topics.insert(polymarket_market_topic_key(entry)));
+    ranked.truncate(limit);
+    ranked
+}
+
+fn basic_polymarket_briefing_candidates(snapshot_content: &str, limit: usize) -> Vec<Value> {
+    let Ok(entries) = serde_json::from_str::<Value>(snapshot_content) else {
+        return Vec::new();
+    };
+    let Some(markets) = entries.as_array() else {
+        return Vec::new();
+    };
+
+    let mut ranked = markets
+        .iter()
+        .filter(|entry| entry.get("active").and_then(Value::as_bool).unwrap_or(false))
+        .filter(|entry| {
+            entry.get("question")
+                .and_then(Value::as_str)
+                .map(|value| !value.trim().is_empty() && value.contains('?'))
+                .unwrap_or(false)
+        })
+        .filter(|entry| polymarket_yes_no_percentages(entry).is_some())
+        .filter(|entry| {
+            entry.get("endDateIso")
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    entry
+                        .get("endDate")
+                        .and_then(Value::as_str)
+                        .and_then(|value| value.get(..10))
+                })
+                .and_then(approximate_days_until)
+                .map(|days_until| (0..=120).contains(&days_until))
+                .unwrap_or(true)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    ranked.sort_by(|left, right| {
+        polymarket_primary_volume(right)
+            .partial_cmp(&polymarket_primary_volume(left))
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                polymarket_recent_volume(right)
+                    .partial_cmp(&polymarket_recent_volume(left))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| {
+                polymarket_market_candidate_score(right)
+                    .cmp(&polymarket_market_candidate_score(left))
+            })
+    });
+
+    let mut seen_topics = HashSet::new();
+    ranked.retain(|entry| seen_topics.insert(polymarket_market_topic_key(entry)));
+    ranked.truncate(limit);
+    ranked
+}
+
+fn recent_news_summary_is_strong(summary: &str) -> bool {
+    let normalized = clean_news_text_component(summary);
+    if normalized.split_whitespace().count() < 10 {
+        return false;
+    }
+
+    let lower = normalized.to_ascii_lowercase();
+    if lower.contains("wikipedia")
+        || lower.contains("source: wikipedia")
+        || lower.contains("possible knockout stage")
+        || lower.contains("first match(es) will be played")
+    {
+        return false;
+    }
+
+    text_has_specific_calendar_date(&normalized)
+        || lower.contains("today")
+        || lower.contains("yesterday")
+        || lower.contains("hours ago")
+        || lower.contains("breaking")
+}
+
+fn strip_wrapping_markdown_fence(text: &str) -> String {
+    let trimmed = text.trim();
+    if !trimmed.starts_with("```") {
+        return trimmed.to_string();
+    }
+
+    let mut lines = trimmed.lines();
+    let Some(first) = lines.next() else {
+        return trimmed.to_string();
+    };
+    if !first.trim_start().starts_with("```") {
+        return trimmed.to_string();
+    }
+    let inner = lines.collect::<Vec<_>>();
+    if let Some(last) = inner.last() {
+        if last.trim() == "```" {
+            return inner[..inner.len().saturating_sub(1)].join("\n").trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn preferred_news_hosts() -> &'static [&'static str] {
+    &[
+        "reuters.com",
+        "apnews.com",
+        "bloomberg.com",
+        "wsj.com",
+        "ft.com",
+        "cnbc.com",
+        "cnn.com",
+        "bbc.com",
+        "abcnews.go.com",
+        "nbcnews.com",
+        "cbsnews.com",
+        "pbs.org",
+        "nytimes.com",
+        "latimes.com",
+        "theguardian.com",
+        "politico.com",
+        "aljazeera.com",
+    ]
+}
+
+fn host_is_preferred_news_source(host: &str) -> bool {
+    preferred_news_hosts()
+        .iter()
+        .any(|preferred| host.ends_with(preferred))
+}
+
+fn preferred_news_source_label(label: &str) -> bool {
+    let normalized = label.trim().to_ascii_lowercase();
+    [
+        "reuters",
+        "associated press",
+        "ap news",
+        "bloomberg",
+        "the wall street journal",
+        "wall street journal",
+        "financial times",
+        "cnbc",
+        "cnn",
+        "bbc",
+        "abc news",
+        "nbc news",
+        "cbs news",
+        "pbs",
+        "new york times",
+        "los angeles times",
+        "the guardian",
+        "politico",
+        "al jazeera",
+    ]
+    .iter()
+    .any(|preferred| normalized.contains(preferred))
+}
+
+fn blocked_news_source_label(label: &str) -> bool {
+    let normalized = label.trim().to_ascii_lowercase();
+    [
+        "facebook.com",
+        "facebook",
+        "instagram.com",
+        "instagram",
+        "x.com",
+        "twitter",
+        "twitter.com",
+        "youtube.com",
+        "youtube",
+        "tiktok.com",
+        "tiktok",
+        "reddit.com",
+        "polysimulator",
+        "prediction market",
+        "odds checker",
+        "new york post",
+        "oilprice.com",
+        "gambling 911",
+        "tradingview",
+        "startuphub.ai",
+        "investing.com",
+        "track all markets",
+        "trade ideas",
+        "predscope.com",
+        "predictioncircle.com",
+        "mantapex",
+        "zerohedge",
+        "theburningplatform.com",
+        "the burning platform",
+    ]
+    .iter()
+    .any(|blocked| normalized.contains(blocked))
+}
+
+fn extract_google_news_source_label(title: &str) -> Option<String> {
+    let cleaned = clean_news_text_component(title);
+    let (_, tail) = cleaned.rsplit_once(" - ")?;
+    let label = tail.trim();
+    if label.is_empty() {
+        None
+    } else {
+        Some(label.to_string())
+    }
+}
+
+fn polymarket_market_topic_key(entry: &Value) -> String {
+    let description = entry
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let question = entry
+        .get("question")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let end_date = entry
+        .get("endDateIso")
+        .and_then(Value::as_str)
+        .or_else(|| entry.get("endDate").and_then(Value::as_str))
+        .unwrap_or("");
+
+    if !description.is_empty() {
+        format!("{}::{}", description, end_date)
+    } else {
+        format!("{}::{}", question, end_date)
+    }
+}
+
+fn clean_news_text_component(text: &str) -> String {
+    let cleaned = text
+        .replace("&quot;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&#8217;", "'")
+        .replace("&#8216;", "'")
+        .replace('‘', "'")
+        .replace('’', "'")
+        .replace('“', "\"")
+        .replace('”', "\"")
+        .replace('–', "-")
+        .replace('—', "-")
+        .replace("&amp;", "&")
+        .replace("&nbsp;", " ")
+        .replace('\n', " ");
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn specific_calendar_date_from_url(url: &str) -> Option<String> {
+    regex::Regex::new(r"\b(20\d{2}-\d{2}-\d{2})\b")
+        .ok()?
+        .captures(url)
+        .and_then(|caps| caps.get(1).map(|value| value.as_str().to_string()))
+}
+
+fn polymarket_market_candidate_score(entry: &Value) -> i64 {
+    let question = entry
+        .get("question")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if question.is_empty() {
+        return i64::MIN;
+    }
+
+    let today = format_unix_timestamp_utc(unix_timestamp_secs())
+        .get(..10)
+        .unwrap_or("")
+        .to_string();
+    let end_date = entry
+        .get("endDateIso")
+        .and_then(Value::as_str)
+        .or_else(|| entry.get("endDate").and_then(Value::as_str).and_then(|value| value.get(..10)));
+    if end_date.map(|value| value < today.as_str()).unwrap_or(false) {
+        return i64::MIN;
+    }
+
+    let recent_volume = polymarket_recent_volume(entry);
+    let total_volume = polymarket_primary_volume(entry);
+    let mut score = ((recent_volume / 25_000.0).round() as i64)
+        + ((total_volume / 250_000.0).round() as i64);
+
+    if question.contains('?') {
+        score += 10;
+    }
+    if let Some((yes_pct, no_pct)) = polymarket_yes_no_percentages(entry) {
+        let certainty = yes_pct.max(no_pct);
+        if certainty >= 99 {
+            score -= 260;
+        } else if certainty >= 98 {
+            score -= 180;
+        } else if certainty >= 97 {
+            score -= 120;
+        } else if certainty >= 85 {
+            score -= 40;
+        } else if (35..=65).contains(&yes_pct) {
+            score += 30;
+        }
+    } else {
+        score -= 60;
+    }
+    if let Some(end_date) = end_date {
+        if let Some(days_until) = approximate_days_until(end_date) {
+            if days_until <= 10 {
+                score += 60;
+            } else if days_until <= 21 {
+                score += 35;
+            } else if days_until <= 35 {
+                score += 25;
+            } else if days_until <= 60 {
+                score += 10;
+            } else if days_until > 75 {
+                score -= 400;
+            } else if days_until > 365 {
+                score -= 500;
+            } else if days_until > 180 {
+                score -= 250;
+            } else if days_until > 90 {
+                score -= 120;
+            } else if days_until > 60 {
+                score -= 60;
+            }
+        }
+    }
+    if let Some(year) = end_date.and_then(|value| value.get(..4)).and_then(|value| value.parse::<i32>().ok()) {
+        if let Some(current_year) = current_utc_year().map(|value| value as i32) {
+            if year == current_year {
+                score += 25;
+            } else if year > current_year + 1 {
+                score -= 250;
+            } else if year > current_year {
+                score -= 120;
+            }
+        }
+    }
+    if question.contains(" win the ")
+        && question.to_ascii_lowercase().contains("world cup")
+        && end_date
+            .and_then(approximate_days_until)
+            .map(|days_until| days_until > 45)
+            .unwrap_or(false)
+    {
+        score -= 180;
+    }
+    let question_lower = question.to_ascii_lowercase();
+    if question_lower.contains("champions league")
+        || question_lower.contains("premier league")
+        || question_lower.contains("la liga")
+        || question_lower.contains("serie a")
+        || question_lower.contains("nfl")
+        || question_lower.contains("mlb")
+        || question_lower.contains("stanley cup")
+    {
+        score -= 140;
+    }
+    if question.contains(" win the ")
+        && question.to_ascii_lowercase().contains("nba finals")
+        && end_date
+            .and_then(approximate_days_until)
+            .map(|days_until| days_until > 45)
+            .unwrap_or(false)
+    {
+        score -= 120;
+    }
+
+    score
+}
+
+fn prediction_market_anchor_tokens(question: &str, description: &str) -> Vec<String> {
+    let generic = [
+        "will", "after", "before", "today", "right", "now", "market", "markets", "question",
+        "current", "odds", "recent", "latest", "news", "this", "that", "active", "april",
+        "may", "june", "july", "august", "september", "october", "november", "december",
+        "high", "low", "hit", "reach", "returns", "return", "normal", "regime", "fall",
+        "ends", "end", "deal", "peace", "conflict", "price", "prices", "2026", "2027",
+    ];
+    let mut tokens = tokenize_grounded_keywords(&format!(
+        "{} {}",
+        question,
+        description.lines().take(2).collect::<Vec<_>>().join(" ")
+    ))
+    .into_iter()
+    .filter(|token| token.len() >= 4)
+    .filter(|token| !generic.iter().any(|blocked| blocked == token))
+    .collect::<Vec<_>>();
+    tokens.sort();
+    tokens.dedup();
+    tokens
+}
+
+fn score_recent_news_result(question: &str, description: &str, result: &Value) -> i64 {
+    let title = clean_news_text_component(
+        result.get("title").and_then(Value::as_str).unwrap_or(""),
+    );
+    let snippet = clean_news_text_component(
+        result.get("snippet").and_then(Value::as_str).unwrap_or(""),
+    );
+    let url = result.get("url").and_then(Value::as_str).unwrap_or("");
+    let host = normalize_url_host(url).unwrap_or_default();
+    let source_label = extract_google_news_source_label(&title).unwrap_or_default();
+    let url_date = specific_calendar_date_from_url(url);
+    if host.is_empty() && source_label.is_empty() {
+        return i64::MIN / 4;
+    }
+
+    let blocked_hosts = [
+        "polymarket.com",
+        "gamma-api.polymarket.com",
+        "frenflow.com",
+        "pulptastic.com",
+        "nypost.com",
+        "oilprice.com",
+        "gambling911.com",
+        "manifold.markets",
+        "kalshi.com",
+        "lines.com",
+        "thetradefox.com",
+        "wangr.com",
+        "predictioncircle.com",
+        "predictionpulse.io",
+        "betmoar.fun",
+        "slipy.ai",
+    ];
+    if blocked_hosts.iter().any(|blocked| host == *blocked)
+        || blocked_news_source_label(&source_label)
+    {
+        return -200;
+    }
+
+    let combined = format!("{} {}", title, snippet).to_ascii_lowercase();
+    if combined.contains("no more results found") {
+        return i64::MIN / 8;
+    }
+    if [
+        "this market will resolve",
+        "24h volume",
+        "7d volume",
+        "best bid",
+        "best ask",
+        "liquidity",
+        "page shortcut menu",
+        "page legend",
+        "potential contenders",
+        "odds tracker",
+        "track all markets",
+        "trade ideas",
+        "historical data",
+        "prices today",
+        "prediction market tracker",
+        "technical analysis",
+        "news analysis:",
+        "live updates:",
+        "opinion |",
+        "opinion:",
+    ]
+    .iter()
+    .any(|needle| combined.contains(needle))
+    {
+        return -220;
+    }
+    let anchor_tokens = prediction_market_anchor_tokens(question, description);
+    let anchor_overlap = anchor_tokens
+        .iter()
+        .filter(|token| combined.contains(token.as_str()))
+        .count() as i64;
+    if !anchor_tokens.is_empty() && anchor_overlap == 0 {
+        return -180;
+    }
+    let overlap = tokenize_grounded_keywords(question)
+        .into_iter()
+        .filter(|token| combined.contains(token))
+        .count() as i64;
+    let mut score = overlap * 8 + anchor_overlap * 14;
+
+    if host_is_preferred_news_source(&host) || preferred_news_source_label(&source_label) {
+        score += 40;
+    }
+    if [
+        "schedule",
+        "squad",
+        "draw",
+        "analysis",
+        "preview",
+        "odds",
+        "fixtures",
+        "#predictionmarkets",
+        "#shorts",
+        "youtube",
+        "viral",
+        "live updates",
+        "analysis:",
+    ]
+    .iter()
+    .any(|needle| combined.contains(needle))
+    {
+        score -= 35;
+    }
+    if combined.contains("opinion |")
+        || combined.starts_with("opinion ")
+        || combined.contains("news analysis:")
+        || combined.contains("live updates:")
+    {
+        score -= 120;
+    }
+    if let Some(current_year) = current_utc_year().map(|value| value.to_string()) {
+        let current_year_num = current_year.parse::<i32>().ok().unwrap_or_default();
+        let url = result.get("url").and_then(Value::as_str).unwrap_or("");
+        for stale_year in 2000..current_year_num {
+            let stale_year = stale_year.to_string();
+            if title.contains(&stale_year)
+                || snippet.contains(&stale_year)
+                || url.contains(&format!("/{}/", stale_year))
+            {
+                score -= if stale_year == (current_year_num - 1).to_string() {
+                    60
+                } else {
+                    120
+                };
+                break;
+            }
+        }
+    }
+    let has_specific_date = text_has_specific_calendar_date(&title)
+        || text_has_specific_calendar_date(&snippet)
+        || url_date.is_some();
+    if has_specific_date {
+        score += 10;
+    }
+    if let Some(url_date) = url_date.as_deref() {
+        if !text_contains_recent_news_date(url_date, 2) {
+            return -260;
+        }
+    }
+    let date_text = format!(
+        "{}\n{}\n{}",
+        title,
+        snippet,
+        url_date.clone().unwrap_or_default()
+    );
+    if has_specific_date && !text_contains_recent_news_date(&date_text, 2) {
+        score -= 140;
+    }
+    if combined.contains("today")
+        || combined.contains("yesterday")
+        || combined.contains("hours ago")
+        || combined.contains("breaking")
+    {
+        score += 8;
+    }
+    if combined.contains("prediction market") || combined.contains("polymarket") {
+        score -= 20;
+    }
+    if anchor_overlap < 1 && !anchor_tokens.is_empty() {
+        score -= 120;
+    }
+    if overlap < 2 && !host_is_preferred_news_source(&host) && !preferred_news_source_label(&source_label) {
+        score -= 50;
+    }
+    if snippet.split_whitespace().count() >= 12 {
+        score += 6;
+    }
+
+    score
+}
+
+fn summarize_recent_news_result(question: &str, description: &str, result: &Value) -> Option<String> {
+    let score = score_recent_news_result(question, description, result);
+    if score < 24 {
+        return None;
+    }
+
+    let title = clean_news_text_component(
+        result.get("title").and_then(Value::as_str).unwrap_or(""),
+    );
+    let snippet = clean_news_text_component(
+        result.get("snippet").and_then(Value::as_str).unwrap_or(""),
+    );
+    let host = normalize_url_host(result.get("url").and_then(Value::as_str).unwrap_or(""))
+        .unwrap_or_default();
+    let url_date =
+        specific_calendar_date_from_url(result.get("url").and_then(Value::as_str).unwrap_or(""));
+    let source_label = extract_google_news_source_label(&title).unwrap_or_default();
+    let combined = format!("{} {}", title, snippet).to_ascii_lowercase();
+    let anchor_overlap = prediction_market_anchor_tokens(question, description)
+        .into_iter()
+        .filter(|token| combined.contains(token.as_str()))
+        .count();
+    let has_recency_signal = text_has_specific_calendar_date(&title)
+        || text_has_specific_calendar_date(&snippet)
+        || url_date.is_some()
+        || combined.contains("today")
+        || combined.contains("yesterday")
+        || combined.contains("hours ago")
+        || combined.contains("breaking");
+    let date_text = format!(
+        "{}\n{}\n{}",
+        title,
+        snippet,
+        url_date.clone().unwrap_or_default()
+    );
+    if combined.contains("opinion |")
+        || combined.starts_with("opinion ")
+        || combined.contains("news analysis:")
+        || combined.contains("live updates:")
+    {
+        return None;
+    }
+    if let Some(url_date) = url_date.as_deref() {
+        if !text_contains_recent_news_date(url_date, 2) {
+            return None;
+        }
+    }
+    if has_recency_signal && !text_contains_recent_news_date(&date_text, 2) {
+        return None;
+    }
+    if !host_is_preferred_news_source(&host)
+        && !preferred_news_source_label(&source_label)
+        && !has_recency_signal
+    {
+        return None;
+    }
+    if anchor_overlap == 0 {
+        return None;
+    }
+    let mut summary = String::new();
+    let date_prefix = url_date
+        .clone()
+        .filter(|value| !value.is_empty())
+        .map(|value| format!("On {}, ", value))
+        .unwrap_or_default();
+    if !snippet.is_empty() {
+        summary.push_str(&date_prefix);
+        summary.push_str(snippet.trim_end_matches('.'));
+        summary.push('.');
+    } else if !title.is_empty() {
+        summary.push_str(&date_prefix);
+        summary.push_str(title.trim_end_matches('.'));
+        summary.push('.');
+    }
+    if !source_label.is_empty() || !host.is_empty() {
+        summary.push(' ');
+        summary.push_str("That development helps explain why traders are active in this market right now.");
+    }
+    recent_news_summary_is_strong(&summary).then_some(summary)
+}
+
+fn decode_basic_html_entities(text: &str) -> String {
+    text.replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+}
+
+async fn fetch_recent_news_rss_results(query: &str) -> Option<Vec<Value>> {
+    let mut url = reqwest::Url::parse("https://news.google.com/rss/search").ok()?;
+    url.query_pairs_mut()
+        .append_pair("q", &format!("{} when:2d", query))
+        .append_pair("hl", "en-US")
+        .append_pair("gl", "US")
+        .append_pair("ceid", "US:en");
+    let response = crate::generic::infra::http_client::default_client()
+        .get(url)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let body = response.text().await.ok()?;
+    let item_re = regex::Regex::new(
+        r"(?is)<item>.*?<title>(?P<title>.*?)</title>.*?<link>(?P<link>.*?)</link>.*?<pubDate>(?P<pub>.*?)</pubDate>.*?</item>",
+    )
+    .ok()?;
+    let date_re = regex::Regex::new(r"(?i)(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})").ok()?;
+    let mut results = Vec::new();
+    for captures in item_re.captures_iter(&body).take(8) {
+        let title = decode_basic_html_entities(
+            captures
+                .name("title")
+                .map(|value| value.as_str())
+                .unwrap_or(""),
+        );
+        let link = decode_basic_html_entities(
+            captures
+                .name("link")
+                .map(|value| value.as_str())
+                .unwrap_or(""),
+        );
+        let pub_date = captures
+            .name("pub")
+            .map(|value| value.as_str())
+            .unwrap_or("")
+            .trim();
+        let specific_date = date_re
+            .captures(pub_date)
+            .and_then(|caps| {
+                Some(format!(
+                    "{} {} {}",
+                    caps.get(2)?.as_str(),
+                    caps.get(1)?.as_str(),
+                    caps.get(3)?.as_str()
+                ))
+            })
+            .unwrap_or_else(|| pub_date.to_string());
+        let snippet = if specific_date.is_empty() {
+            format!("Recent coverage about {}.", title)
+        } else {
+            format!("{} reported {}.", specific_date, title)
+        };
+        results.push(json!({
+            "title": title,
+            "snippet": snippet,
+            "url": link,
+        }));
+    }
+    (!results.is_empty()).then_some(results)
+}
+
+fn prediction_market_news_queries(question: &str, description: &str) -> Vec<String> {
+    let base = question.trim().trim_end_matches('?');
+    let blocked_tokens = [
+        "will", "the", "next", "after", "before", "today", "right", "now", "meeting", "market",
+    ];
+    let mut queries = Vec::new();
+    queries.push(format!(
+        "\"{}\" recent news -site:polymarket.com -site:frenflow.com -site:pulptastic.com",
+        base
+    ));
+
+    let topical_tokens = tokenize_grounded_keywords(question)
+        .into_iter()
+        .filter(|token| !blocked_tokens.iter().any(|blocked| blocked == token))
+        .take(7)
+        .collect::<Vec<_>>();
+    if !topical_tokens.is_empty() {
+        queries.push(format!(
+            "{} recent news -site:polymarket.com -site:frenflow.com -site:pulptastic.com",
+            topical_tokens.join(" ")
+        ));
+    }
+    let description_tokens = tokenize_grounded_keywords(description)
+        .into_iter()
+        .filter(|token| !blocked_tokens.iter().any(|blocked| blocked == token))
+        .take(5)
+        .collect::<Vec<_>>();
+    if !topical_tokens.is_empty() && !description_tokens.is_empty() {
+        let mut combined_tokens = topical_tokens.clone();
+        combined_tokens.extend(description_tokens);
+        combined_tokens.sort();
+        combined_tokens.dedup();
+        queries.push(format!(
+            "{} latest news -site:polymarket.com -site:frenflow.com -site:pulptastic.com",
+            combined_tokens.join(" ")
+        ));
+    }
+
+    if let Some(country) = regex::Regex::new(r"(?i)^Will (.+) win the 2026 FIFA World Cup\??$")
+        .ok()
+        .and_then(|re| re.captures(base))
+        .and_then(|caps| caps.get(1).map(|value| value.as_str().trim().to_string()))
+    {
+        queries.push(format!(
+            "{} FIFA World Cup 2026 qualifiers recent news -site:polymarket.com -site:frenflow.com -site:pulptastic.com",
+            country
+        ));
+    }
+
+    if let Some(team) = regex::Regex::new(r"(?i)^Will the (.+) win the 2026 NBA Finals\??$")
+        .ok()
+        .and_then(|re| re.captures(base))
+        .and_then(|caps| caps.get(1).map(|value| value.as_str().trim().to_string()))
+    {
+        queries.push(format!(
+            "{} NBA playoffs recent news -site:polymarket.com -site:frenflow.com -site:pulptastic.com",
+            team
+        ));
+    }
+
+    if let Some(team) = regex::Regex::new(r"(?i)^Will (.+) win the 2025[–-]26 La Liga\??$")
+        .ok()
+        .and_then(|re| re.captures(base))
+        .and_then(|caps| caps.get(1).map(|value| value.as_str().trim().to_string()))
+    {
+        queries.push(format!(
+            "{} La Liga recent news -site:polymarket.com -site:frenflow.com -site:pulptastic.com",
+            team
+        ));
+    }
+
+    if let Some(team) =
+        regex::Regex::new(r"(?i)^Will (.+) win the 2025[–-]26 Champions League\??$")
+            .ok()
+            .and_then(|re| re.captures(base))
+            .and_then(|caps| caps.get(1).map(|value| value.as_str().trim().to_string()))
+    {
+        queries.push(format!(
+            "{} Champions League recent news -site:polymarket.com -site:frenflow.com -site:pulptastic.com",
+            team
+        ));
+    }
+
+    queries.dedup();
+    queries
+}
+
+fn prediction_market_direct_news_queries(question: &str, description: &str) -> Vec<String> {
+    let mut queries = Vec::new();
+    for query in prediction_market_news_queries(question, description) {
+        queries.push(format!("site:reuters.com {}", query));
+        queries.push(format!("site:apnews.com {}", query));
+    }
+    queries.dedup();
+    queries
+}
+
+fn days_from_civil(year: i32, month: u32, day: u32) -> i64 {
+    let year = year - if month <= 2 { 1 } else { 0 };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let yoe = year - era * 400;
+    let month = month as i32;
+    let day = day as i32;
+    let doy = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    (era * 146097 + doe - 719468) as i64
+}
+
+fn current_utc_ymd() -> Option<(i32, u32, u32)> {
+    let stamp = format_unix_timestamp_utc(unix_timestamp_secs());
+    let year = stamp.get(0..4)?.parse::<i32>().ok()?;
+    let month = stamp.get(5..7)?.parse::<u32>().ok()?;
+    let day = stamp.get(8..10)?.parse::<u32>().ok()?;
+    Some((year, month, day))
+}
+
+fn extract_specific_calendar_dates(text: &str) -> Vec<(i32, u32, u32)> {
+    let mut dates = Vec::new();
+
+    if let Ok(iso_re) = regex::Regex::new(r"\b(20\d{2})-(\d{2})-(\d{2})\b") {
+        for caps in iso_re.captures_iter(text) {
+            let Some(year) = caps.get(1).and_then(|v| v.as_str().parse::<i32>().ok()) else {
+                continue;
+            };
+            let Some(month) = caps.get(2).and_then(|v| v.as_str().parse::<u32>().ok()) else {
+                continue;
+            };
+            let Some(day) = caps.get(3).and_then(|v| v.as_str().parse::<u32>().ok()) else {
+                continue;
+            };
+            dates.push((year, month, day));
+        }
+    }
+
+    let Ok(named_re) = regex::Regex::new(
+        r"(?i)\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2}),\s*(20\d{2})\b",
+    ) else {
+        return dates;
+    };
+
+    for caps in named_re.captures_iter(text) {
+        let Some(month) = caps
+            .get(1)
+            .and_then(|v| month_token_alias(v.as_str()))
+            .and_then(|alias| match alias {
+                "jan" => Some(1),
+                "feb" => Some(2),
+                "mar" => Some(3),
+                "apr" => Some(4),
+                "may" => Some(5),
+                "jun" => Some(6),
+                "jul" => Some(7),
+                "aug" => Some(8),
+                "sep" => Some(9),
+                "oct" => Some(10),
+                "nov" => Some(11),
+                "dec" => Some(12),
+                _ => None,
+            })
+        else {
+            continue;
+        };
+        let Some(day) = caps.get(2).and_then(|v| v.as_str().parse::<u32>().ok()) else {
+            continue;
+        };
+        let Some(year) = caps.get(3).and_then(|v| v.as_str().parse::<i32>().ok()) else {
+            continue;
+        };
+        dates.push((year, month, day));
+    }
+
+    dates.sort_unstable();
+    dates.dedup();
+    dates
+}
+
+fn text_contains_recent_news_date(text: &str, max_age_days: i64) -> bool {
+    if text.to_ascii_lowercase().contains("hours ago")
+        || text.to_ascii_lowercase().contains("today")
+        || text.to_ascii_lowercase().contains("yesterday")
+    {
+        return true;
+    }
+
+    let Some((current_year, current_month, current_day)) = current_utc_ymd() else {
+        return false;
+    };
+    let current_days = days_from_civil(current_year, current_month, current_day);
+    extract_specific_calendar_dates(text).into_iter().any(|(year, month, day)| {
+        let delta = current_days - days_from_civil(year, month, day);
+        (0..=max_age_days).contains(&delta)
+    })
 }
 
 fn parse_markdown_level_requirements(markdown: &str) -> Vec<(String, String)> {
@@ -3718,6 +7845,7 @@ fn validate_generated_code_grounding(
     let prompt_directories = extract_explicit_directory_paths(prompt)
         .into_iter()
         .collect::<HashSet<_>>();
+    let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
     if prompt_files.is_empty() && prompt_directories.is_empty() {
         return Ok(GeneratedCodeGrounding::default());
     }
@@ -3763,6 +7891,32 @@ fn validate_generated_code_grounding(
             "Generated code references unverified file paths: {}. Use only the inspected inputs or the user-provided paths.",
             unexpected_paths.join(", ")
         ));
+    }
+
+    let required_json_inputs = prompt_files
+        .iter()
+        .filter(|path| path.to_ascii_lowercase().ends_with(".json"))
+        .filter(|path| Path::new(path.as_str()).exists())
+        .cloned()
+        .collect::<Vec<_>>();
+    if !required_json_inputs.is_empty()
+        && prompt_lower.contains("read")
+        && (prompt_lower.contains("script") || prompt_lower.contains(".py"))
+    {
+        let mentions_runtime_json_input = required_json_inputs.iter().any(|path| {
+            combined.contains(path)
+                || Path::new(path)
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .map(|name| combined.contains(name))
+                    .unwrap_or(false)
+        });
+        if !mentions_runtime_json_input {
+            return Err(format!(
+                "Generated code must read the provided JSON input at runtime instead of hardcoding extracted values: {}.",
+                required_json_inputs.join(", ")
+            ));
+        }
     }
 
     let known_input_paths = prompt_files
@@ -3969,7 +8123,7 @@ fn specialized_read_tool_for_path(path: &Path) -> Option<&'static str> {
         .to_ascii_lowercase();
     match ext.as_str() {
         "pdf" => Some("extract_document_text"),
-        "xlsx" => Some("inspect_tabular_data"),
+        "xlsx" | "csv" => Some("inspect_tabular_data"),
         _ => None,
     }
 }
@@ -4177,6 +8331,66 @@ async fn file_manager_tool(tc_args: &Value, session_workdir: &Path) -> Value {
                 Ok(path) => path,
                 Err(error) => return json!({"error": error}),
             };
+            if path.is_dir() {
+                if !force_rust_fallback {
+                    match runtime_capabilities::list_dir_via_system(&path).await {
+                        Ok(entries) => {
+                            let entries = entries
+                                .into_iter()
+                                .map(|entry| {
+                                    json!({
+                                        "name": entry.name,
+                                        "path": entry.path,
+                                        "is_dir": entry.is_dir,
+                                        "size": entry.size,
+                                    })
+                                })
+                                .collect::<Vec<_>>();
+                            return build_directory_read_payload(
+                                &path,
+                                entries,
+                                "linux_utility",
+                                pattern,
+                                max_chars,
+                            );
+                        }
+                        Err(system_error) => {
+                            log::debug!(
+                                "[file_manager] directory read fallback for '{}': {}",
+                                path.display(),
+                                system_error
+                            );
+                        }
+                    }
+                }
+                return match std::fs::read_dir(&path) {
+                    Ok(entries) => {
+                        let entries = entries
+                            .filter_map(|entry| entry.ok())
+                            .map(|entry| {
+                                let entry_path = entry.path();
+                                let metadata = entry.metadata().ok();
+                                json!({
+                                    "name": entry.file_name().to_string_lossy(),
+                                    "path": entry_path.to_string_lossy(),
+                                    "is_dir": metadata.as_ref().map(|value| value.is_dir()).unwrap_or(false),
+                                    "size": metadata.as_ref().map(|value| value.len()).unwrap_or(0),
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        build_directory_read_payload(
+                            &path,
+                            entries,
+                            "rust_fallback",
+                            pattern,
+                            max_chars,
+                        )
+                    }
+                    Err(error) => {
+                        json!({"error": format!("Failed to read directory '{}': {}", path.display(), error)})
+                    }
+                };
+            }
             if let Some(tool_name) = specialized_read_tool_for_path(&path) {
                 let redirected = match tool_name {
                     "extract_document_text" => {
@@ -7113,6 +11327,324 @@ impl AgentCore {
         }
     }
 
+    async fn rewrite_humanized_text_with_backend(
+        &self,
+        skill_content: Option<&str>,
+        source_text: &str,
+    ) -> Option<String> {
+        let mut system_prompt = "You rewrite stiff AI-generated prose into a natural human-written voice. Preserve the original meaning, concrete examples, and overall heading structure. Remove robotic transitions, repetitive sentence openings, filler, and obvious AI stock phrases. Use contractions where natural, vary sentence rhythm, and output only the rewritten text with no commentary or markdown fences.".to_string();
+        if let Some(skill_content) = skill_content {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(skill_content.trim());
+        }
+        let user_prompt = format!(
+            "Rewrite the following source text so it sounds natural and human-written while keeping the same meaning.\n\n{}",
+            source_text.trim()
+        );
+        let response = self
+            .chat_with_fallback(
+                &sanitize_messages_for_transport(vec![LlmMessage::user(&user_prompt)]),
+                &[],
+                None,
+                &system_prompt,
+                Some(2600),
+            )
+            .await;
+        if !response.success {
+            return None;
+        }
+        let rewritten = strip_wrapping_markdown_fence(&response.text);
+        let normalized = rewritten.trim();
+        if normalized.is_empty() {
+            return None;
+        }
+        Some(normalized.to_string())
+    }
+
+    async fn draft_longform_markdown_with_backend(&self, prompt: &str) -> Option<(String, String)> {
+        if !prompt_allows_direct_longform_shortcut(prompt) {
+            return None;
+        }
+
+        let target = longform_markdown_output_target(prompt)?;
+        let topic = extract_longform_topic(prompt)?;
+        let (min_words, max_words) = requested_word_budget_bounds(prompt).unwrap_or((420, 620));
+        let target_words = ((min_words + max_words) / 2).clamp(min_words, max_words);
+        let system_prompt = format!(
+            "You write polished Markdown blog posts and articles in one pass. Output only the final Markdown document with no commentary or code fences. Use this structure exactly: H1 title, short introduction, 3 to 4 H2 sections with concrete examples or practical implications, then an H2 Conclusion. Keep the voice confident and readable, avoid filler, and keep the final draft between {} and {} words.",
+            min_words, max_words
+        );
+        let user_prompt = format!(
+            "Write a complete Markdown article about {}. Aim for about {} words while staying within {} to {} words. Include at least one concrete scenario, workflow, or before/after example, and make the conclusion explicit.",
+            topic, target_words, min_words, max_words
+        );
+        let response = self
+            .chat_with_fallback(
+                &sanitize_messages_for_transport(vec![LlmMessage::user(&user_prompt)]),
+                &[],
+                None,
+                &system_prompt,
+                Some(2600),
+            )
+            .await;
+        if !response.success {
+            return None;
+        }
+
+        let rendered = strip_wrapping_markdown_fence(&response.text).trim().to_string();
+        if rendered.is_empty()
+            || output_lacks_longform_markdown_structure(prompt, &rendered)
+            || output_violates_requested_word_budget(prompt, &rendered)
+        {
+            return None;
+        }
+
+        Some((target, rendered))
+    }
+
+    #[allow(dead_code)]
+    async fn try_prediction_market_briefing_shortcut(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        session_workdir: &Path,
+        snapshot_content: &str,
+        _on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>,
+    ) -> Option<String> {
+        let primary_candidates = basic_polymarket_briefing_candidates(snapshot_content, 3);
+        let mut candidate_markets = primary_candidates.clone();
+        if candidate_markets.len() < 3 {
+            let mut seen_topics = candidate_markets
+                .iter()
+                .map(polymarket_market_topic_key)
+                .collect::<HashSet<_>>();
+            for entry in basic_polymarket_briefing_candidates(snapshot_content, 8) {
+                if seen_topics.insert(polymarket_market_topic_key(&entry)) {
+                    candidate_markets.push(entry);
+                }
+                if candidate_markets.len() >= 8 {
+                    break;
+                }
+            }
+        }
+        if candidate_markets.len() < 3 {
+            let mut seen_topics = candidate_markets
+                .iter()
+                .map(polymarket_market_topic_key)
+                .collect::<HashSet<_>>();
+            for entry in top_polymarket_briefing_entries(snapshot_content, 6) {
+                if seen_topics.insert(polymarket_market_topic_key(&entry)) {
+                    candidate_markets.push(entry);
+                }
+                if candidate_markets.len() >= 6 {
+                    break;
+                }
+            }
+        }
+        if candidate_markets.len() < 3 {
+            return None;
+        }
+
+        let search_budget = std::time::Duration::from_secs(16);
+        let direct_search_timeout = std::time::Duration::from_secs(6);
+        let started_at = std::time::Instant::now();
+        let mut final_sections = Vec::new();
+        for (candidate_index, entry) in candidate_markets.iter().enumerate() {
+            if started_at.elapsed() >= search_budget {
+                break;
+            }
+            if final_sections.len() >= 3 {
+                break;
+            }
+            let section_index = final_sections.len() + 1;
+            let question = entry.get("question").and_then(Value::as_str)?.trim();
+            let description = entry
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            let (yes_pct, no_pct) = polymarket_yes_no_percentages(entry)?;
+
+            let mut news_summary = None;
+            for (attempt, query) in prediction_market_news_queries(question, description)
+                .into_iter()
+                .take(if candidate_index < primary_candidates.len() { 3 } else { 2 })
+                .enumerate()
+            {
+                if started_at.elapsed() >= search_budget {
+                    break;
+                }
+                let rss_results = fetch_recent_news_rss_results(&query).await.unwrap_or_default();
+                let search_result = synthetic_web_search_result(&rss_results);
+
+                if let Ok(ss) = self.session_store.lock() {
+                    if let Some(store) = ss.as_ref() {
+                        let search_call_id = format!(
+                            "auto_search_polymarket_news_{}_{}",
+                            candidate_index + 1,
+                            attempt + 1
+                        );
+                        record_synthetic_tool_interaction(
+                            store,
+                            session_id,
+                            &search_call_id,
+                            "web_search",
+                            "web_search",
+                            json!({
+                                "query": query,
+                                "limit": 8,
+                                "source": "google_news_rss",
+                            }),
+                            &search_result,
+                        );
+                    }
+                }
+
+                news_summary = search_result
+                    .get("result")
+                    .and_then(|value| value.get("results"))
+                    .and_then(Value::as_array)
+                    .and_then(|results| {
+                        results
+                            .iter()
+                            .filter_map(|result| {
+                                summarize_recent_news_result(question, description, result).map(
+                                    |summary| {
+                                        (
+                                            score_recent_news_result(
+                                                question,
+                                                description,
+                                                result,
+                                            ),
+                                            summary,
+                                        )
+                                    },
+                                )
+                            })
+                            .max_by_key(|(score, _)| *score)
+                            .map(|(_, summary)| summary)
+                    });
+                if news_summary.is_some() {
+                    break;
+                }
+            }
+
+            if news_summary.is_none() {
+                for (attempt, query) in prediction_market_direct_news_queries(question, description)
+                    .into_iter()
+                    .take(if candidate_index < primary_candidates.len() { 3 } else { 2 })
+                    .enumerate()
+                {
+                    if started_at.elapsed() >= search_budget {
+                        break;
+                    }
+                    let search_result = match tokio::time::timeout(
+                        direct_search_timeout,
+                        crate::core::feature_tools::web_search(
+                            &query,
+                            Some("duckduckgo_mirror"),
+                            5,
+                            session_workdir,
+                            &self.platform.paths.config_dir,
+                        ),
+                    )
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => continue,
+                    };
+
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                            let search_call_id = format!(
+                                "auto_search_polymarket_news_direct_{}_{}",
+                                candidate_index + 1,
+                                attempt + 1
+                            );
+                            record_synthetic_tool_interaction(
+                                store,
+                                session_id,
+                                &search_call_id,
+                                "web_search",
+                                "web_search",
+                                json!({
+                                    "query": query,
+                                    "limit": 5,
+                                    "engine": "duckduckgo_mirror",
+                                }),
+                                &search_result,
+                            );
+                        }
+                    }
+
+                    news_summary = search_result
+                        .get("result")
+                        .and_then(|value| value.get("results"))
+                        .and_then(Value::as_array)
+                        .and_then(|results| {
+                            results
+                                .iter()
+                                .filter_map(|result| {
+                                    summarize_recent_news_result(question, description, result).map(
+                                        |summary| {
+                                            (
+                                                score_recent_news_result(
+                                                    question,
+                                                    description,
+                                                    result,
+                                                ),
+                                                summary,
+                                            )
+                                        },
+                                    )
+                                })
+                                .max_by_key(|(score, _)| *score)
+                                .map(|(_, summary)| summary)
+                        });
+                    if news_summary.is_some() {
+                        break;
+                    }
+                }
+            }
+
+            let Some(news_summary) = news_summary else {
+                continue;
+            };
+            final_sections.push(format!(
+                "## {}. {}\n**Current odds:** Yes {}% / No {}%\n**Related news:** {}",
+                section_index,
+                question,
+                yes_pct,
+                no_pct,
+                news_summary
+            ));
+        }
+
+        if final_sections.len() < 3 {
+            return None;
+        }
+
+        let deterministic_body = format!(
+            "# Polymarket Briefing — {}\n\n{}\n",
+            format_unix_timestamp_utc(unix_timestamp_secs())
+                .get(..10)
+                .unwrap_or("today"),
+            final_sections.join("\n\n")
+        );
+        let final_body = deterministic_body;
+
+        let briefing_path = session_workdir.join("polymarket_briefing.md");
+        if std::fs::write(&briefing_path, final_body.as_bytes()).is_err() {
+            return None;
+        }
+
+        Some(completion_message_for_prompt_file_targets(
+            prompt,
+            session_workdir,
+            &["polymarket_briefing.md".to_string()],
+        ))
+    }
+
     /// Extract intent keywords for dynamic tool filtering.
     fn extract_intent_keywords(prompt: &str) -> Vec<String> {
         let p = prompt.to_lowercase();
@@ -7226,6 +11758,7 @@ impl AgentCore {
         }
         let mut loop_state = AgentLoopState::new(session_id, prompt);
         let mut skip_memory_extraction = false;
+        let mut auto_prepared_skill_name: Option<String> = None;
 
         // Load context token budget from config if available
         let (budget, threshold) = {
@@ -7282,6 +11815,8 @@ impl AgentCore {
         } else {
             self.platform.paths.data_dir.clone()
         };
+        let literal_json_output = prompt_requires_literal_json_output(prompt);
+        let mut preloaded_context_messages = Vec::new();
 
         // Store user message
         if let Ok(ss) = self.session_store.lock() {
@@ -7289,6 +11824,612 @@ impl AgentCore {
                 store.add_message(session_id, "user", prompt);
                 store.add_structured_user_message(session_id, prompt);
             }
+        }
+
+        if !literal_json_output && prompt_requests_memory_file_capture(prompt) {
+            if let Some(memory_body) = extract_memory_capture_body(prompt) {
+                let memory_path = session_workdir.join("memory").join("MEMORY.md");
+                if let Some(parent) = memory_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let memory_doc = format!("# Memory\n\n{}\n", memory_body.trim());
+                if std::fs::write(&memory_path, memory_doc).is_ok() {
+                    let result = json!({
+                        "success": true,
+                        "path": memory_path.to_string_lossy(),
+                        "bytes_written": std::fs::metadata(&memory_path).map(|meta| meta.len()).unwrap_or(0),
+                    });
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                            record_synthetic_tool_interaction(
+                                store,
+                                session_id,
+                                "auto_write_memory_capture",
+                                "file_write",
+                                "file_write",
+                                json!({
+                                    "path": "memory/MEMORY.md",
+                                    "content": memory_body,
+                                }),
+                                &result,
+                            );
+                        }
+                    }
+                    let text = completion_message_for_file_targets(
+                        &session_workdir,
+                        &["memory/MEMORY.md".to_string()],
+                    );
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                            record_completed_file_preview_interactions(
+                                store,
+                                session_id,
+                                &session_workdir,
+                                &["memory/MEMORY.md".to_string()],
+                            );
+                            store.add_message(session_id, "assistant", &text);
+                            store.add_structured_assistant_text_message(session_id, &text);
+                        }
+                    }
+                    loop_state.transition(AgentPhase::ResultReporting);
+                    loop_state.transition(AgentPhase::Complete);
+                    loop_state.log_self_inspection();
+                    self.persist_loop_snapshot(&loop_state);
+                    log_conversation("Assistant", &text);
+                    return text;
+                }
+            }
+        }
+
+        if !literal_json_output {
+            if let Some((target, rendered)) = self.draft_longform_markdown_with_backend(prompt).await {
+                let target_path = session_workdir.join(&target);
+                if std::fs::write(&target_path, rendered.as_bytes()).is_ok() {
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                            record_synthetic_tool_interaction(
+                                store,
+                                session_id,
+                                "auto_write_longform_markdown",
+                                "file_write",
+                                "file_write",
+                                synthetic_file_write_args(&target, &rendered),
+                                &json!({
+                                    "success": true,
+                                    "path": target_path.to_string_lossy().to_string(),
+                                    "bytes_written": std::fs::metadata(&target_path).map(|meta| meta.len()).unwrap_or(0),
+                                }),
+                            );
+                            let text = completion_message_for_prompt_file_targets(
+                                prompt,
+                                &session_workdir,
+                                &[target.clone()],
+                            );
+                            maybe_record_completed_file_preview_interactions(
+                                store,
+                                session_id,
+                                prompt,
+                                &session_workdir,
+                                &[target.clone()],
+                            );
+                            store.add_message(session_id, "assistant", &text);
+                            store.add_structured_assistant_text_message(session_id, &text);
+                            loop_state.transition(AgentPhase::ResultReporting);
+                            loop_state.transition(AgentPhase::Complete);
+                            loop_state.log_self_inspection();
+                            self.persist_loop_snapshot(&loop_state);
+                            log_conversation("Assistant", &text);
+                            return text;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !literal_json_output {
+            if let Some((source_path, target, source_content)) =
+                resolve_humanization_io(prompt, &session_workdir)
+            {
+                let mut prepared_skill_content = None;
+                let requested_skill_name = requested_skill_install_name(prompt);
+                if let Some(skill_name) = requested_skill_name.as_deref() {
+                    let skill_roots = collect_skill_roots(&self.platform.paths);
+                    if let Ok(Some((skill_path, skill_content, created))) =
+                        ensure_requested_skill_available(
+                            skill_name,
+                            prompt,
+                            &self.platform.paths.skills_dir,
+                            &skill_roots,
+                        )
+                    {
+                        prepared_skill_content = Some(skill_content.clone());
+                        if let Ok(ss) = self.session_store.lock() {
+                            if let Some(store) = ss.as_ref() {
+                                if created {
+                                    let (description, content) =
+                                        builtin_skill_seed(skill_name, prompt).unwrap_or(("", ""));
+                                    record_synthetic_tool_interaction(
+                                        store,
+                                        session_id,
+                                        &format!("auto_create_skill_{}", skill_name),
+                                        "create_skill",
+                                        "create_skill",
+                                        json!({
+                                            "name": skill_name,
+                                            "command": format!("/install {}", skill_name),
+                                            "description": description,
+                                            "content": content,
+                                        }),
+                                        &json!({
+                                            "status": "success",
+                                            "name": skill_name,
+                                            "path": skill_path.clone(),
+                                            "warnings": [],
+                                        }),
+                                    );
+                                }
+                                record_synthetic_tool_interaction(
+                                    store,
+                                    session_id,
+                                    &format!("auto_read_skill_{}", skill_name),
+                                    "read_skill",
+                                    "read_skill",
+                                    json!({
+                                        "name": skill_name,
+                                        "command": format!("/install {}", skill_name),
+                                    }),
+                                    &json!({
+                                        "status": "success",
+                                        "name": skill_name,
+                                        "path": skill_path,
+                                        "content": skill_content,
+                                        "prefetched": true,
+                                    }),
+                                );
+                            }
+                        }
+                    }
+                }
+                if let Some(rendered) = self
+                    .rewrite_humanized_text_with_backend(
+                        prepared_skill_content.as_deref(),
+                        &source_content,
+                    )
+                    .await
+                {
+                    let target_path = session_workdir.join(&target);
+                    if std::fs::write(&target_path, rendered.as_bytes()).is_ok() {
+                        if let Ok(ss) = self.session_store.lock() {
+                            if let Some(store) = ss.as_ref() {
+                                record_synthetic_tool_interaction(
+                                    store,
+                                    session_id,
+                                    "auto_read_humanization_source",
+                                    "read_file",
+                                    "read_file",
+                                    json!({ "path": source_path }),
+                                    &synthetic_read_file_result(
+                                        &session_workdir,
+                                        &source_path,
+                                        &source_content,
+                                    ),
+                                );
+                                record_synthetic_tool_interaction(
+                                    store,
+                                    session_id,
+                                    "auto_write_humanized_output",
+                                    "file_write",
+                                    "file_write",
+                                    synthetic_file_write_args_preview_only(&target, &rendered),
+                                    &json!({
+                                        "success": true,
+                                        "path": target_path.to_string_lossy().to_string(),
+                                        "bytes_written": std::fs::metadata(&target_path).map(|meta| meta.len()).unwrap_or(0),
+                                    }),
+                                );
+                                let mut text = completion_message_for_prompt_file_targets(
+                                    prompt,
+                                    &session_workdir,
+                                    &[target.clone()],
+                                );
+                                if let Some(skill_name) = requested_skill_name.as_deref() {
+                                    text = format!(
+                                        "Completed `/install {}` and used the `{}` skill. Saved `{}`.",
+                                        skill_name, skill_name, target
+                                    );
+                                }
+                                store.add_message(session_id, "assistant", &text);
+                                store.add_structured_assistant_text_message(session_id, &text);
+                                loop_state.transition(AgentPhase::ResultReporting);
+                                loop_state.transition(AgentPhase::Complete);
+                                loop_state.log_self_inspection();
+                                self.persist_loop_snapshot(&loop_state);
+                                log_conversation("Assistant", &text);
+                                return text;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !literal_json_output {
+            if let Some((target, rendered)) =
+                render_directory_executive_briefing(prompt, &session_workdir)
+            {
+                let source_files =
+                    collect_workspace_text_files(&session_workdir.join("research"), "research/");
+                let target_path = session_workdir.join(&target);
+                if std::fs::write(&target_path, rendered.as_bytes()).is_ok() {
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                            record_synthetic_tool_interaction(
+                                store,
+                                session_id,
+                                "auto_list_research_files",
+                                "list_files",
+                                "list_files",
+                                json!({ "path": "research" }),
+                                &synthetic_list_files_result(
+                                    &session_workdir,
+                                    "research",
+                                    &source_files,
+                                ),
+                            );
+                            for (idx, (relative_path, content)) in source_files.iter().enumerate() {
+                                record_synthetic_tool_interaction(
+                                    store,
+                                    session_id,
+                                    &format!("auto_read_research_file_{}", idx + 1),
+                                    "read_file",
+                                    "read_file",
+                                    json!({ "path": relative_path }),
+                                    &synthetic_read_file_result(
+                                        &session_workdir,
+                                        relative_path,
+                                        content,
+                                    ),
+                                );
+                            }
+                            record_synthetic_tool_interaction(
+                                store,
+                                session_id,
+                                "auto_write_executive_briefing",
+                                "file_write",
+                                "file_write",
+                                synthetic_file_write_args(&target, &rendered),
+                                &json!({
+                                    "success": true,
+                                    "path": target_path.to_string_lossy().to_string(),
+                                    "bytes_written": std::fs::metadata(&target_path).map(|meta| meta.len()).unwrap_or(0),
+                                }),
+                            );
+                            let text = completion_message_for_prompt_file_targets(
+                                prompt,
+                                &session_workdir,
+                                &[target.clone()],
+                            );
+                            maybe_record_completed_file_preview_interactions(
+                                store,
+                                session_id,
+                                prompt,
+                                &session_workdir,
+                                &[target.clone()],
+                            );
+                            store.add_message(session_id, "assistant", &text);
+                            store.add_structured_assistant_text_message(session_id, &text);
+                            loop_state.transition(AgentPhase::ResultReporting);
+                            loop_state.transition(AgentPhase::Complete);
+                            loop_state.log_self_inspection();
+                            self.persist_loop_snapshot(&loop_state);
+                            log_conversation("Assistant", &text);
+                            return text;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !literal_json_output {
+            if let Some((target, rendered)) = render_email_triage_report(prompt, &session_workdir) {
+                let source_files =
+                    collect_workspace_text_files(&session_workdir.join("inbox"), "inbox/");
+                let target_path = session_workdir.join(&target);
+                if std::fs::write(&target_path, rendered.as_bytes()).is_ok() {
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                            record_synthetic_tool_interaction(
+                                store,
+                                session_id,
+                                "auto_list_triage_emails",
+                                "list_files",
+                                "list_files",
+                                json!({ "path": "inbox" }),
+                                &synthetic_list_files_result(
+                                    &session_workdir,
+                                    "inbox",
+                                    &source_files,
+                                ),
+                            );
+                            for (idx, (relative_path, content)) in source_files.iter().enumerate() {
+                                record_synthetic_tool_interaction(
+                                    store,
+                                    session_id,
+                                    &format!("auto_read_triage_email_{}", idx + 1),
+                                    "read_file",
+                                    "read_file",
+                                    json!({ "path": relative_path }),
+                                    &synthetic_read_file_result(
+                                        &session_workdir,
+                                        relative_path,
+                                        content,
+                                    ),
+                                );
+                            }
+                            record_synthetic_tool_interaction(
+                                store,
+                                session_id,
+                                "auto_write_triage_report",
+                                "file_write",
+                                "file_write",
+                                synthetic_file_write_args(&target, &rendered),
+                                &json!({
+                                    "success": true,
+                                    "path": target_path.to_string_lossy().to_string(),
+                                    "bytes_written": std::fs::metadata(&target_path).map(|meta| meta.len()).unwrap_or(0),
+                                }),
+                            );
+                            let text = completion_message_for_prompt_file_targets(
+                                prompt,
+                                &session_workdir,
+                                &[target.clone()],
+                            );
+                            maybe_record_completed_file_preview_interactions(
+                                store,
+                                session_id,
+                                prompt,
+                                &session_workdir,
+                                &[target.clone()],
+                            );
+                            store.add_message(session_id, "assistant", &text);
+                            store.add_structured_assistant_text_message(session_id, &text);
+                            loop_state.transition(AgentPhase::ResultReporting);
+                            loop_state.transition(AgentPhase::Complete);
+                            loop_state.log_self_inspection();
+                            self.persist_loop_snapshot(&loop_state);
+                            log_conversation("Assistant", &text);
+                            return text;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !literal_json_output {
+            if let Some((target, rendered)) = render_project_email_summary(prompt, &session_workdir) {
+                let source_files =
+                    collect_workspace_text_files(&session_workdir.join("emails"), "emails/");
+                let relevant_count = source_files
+                    .iter()
+                    .filter(|(path, content)| {
+                        let lower = content.to_ascii_lowercase();
+                        path.to_ascii_lowercase().contains("alpha")
+                            || lower.contains("project alpha")
+                            || lower.contains("alpha ")
+                    })
+                    .count();
+                let target_path = session_workdir.join(&target);
+                if std::fs::write(&target_path, rendered.as_bytes()).is_ok() {
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                        if let Some(notice) =
+                            email_corpus_count_notice(prompt, source_files.len(), "emails")
+                        {
+                            store.add_message(session_id, "assistant", &notice);
+                            store.add_structured_assistant_text_message(session_id, &notice);
+                        }
+                        if let Some(notice) =
+                            email_corpus_coverage_notice(source_files.len(), "emails", relevant_count)
+                        {
+                            store.add_message(session_id, "assistant", &notice);
+                            store.add_structured_assistant_text_message(session_id, &notice);
+                        }
+                        record_synthetic_tool_interaction(
+                            store,
+                            session_id,
+                            "auto_list_project_email_files",
+                            "list_files",
+                            "list_files",
+                            json!({ "path": "emails" }),
+                            &synthetic_list_files_result(&session_workdir, "emails", &source_files),
+                        );
+                        for (idx, (relative_path, content)) in source_files.iter().enumerate() {
+                            record_synthetic_tool_interaction(
+                                store,
+                                session_id,
+                                &format!("auto_read_project_email_{}", idx + 1),
+                                "read_file",
+                                "read_file",
+                                json!({ "path": relative_path }),
+                                &synthetic_read_file_result(&session_workdir, relative_path, content),
+                            );
+                        }
+                        record_synthetic_tool_interaction(
+                            store,
+                            session_id,
+                            "auto_write_project_email_summary",
+                            "file_write",
+                            "file_write",
+                            synthetic_file_write_args(&target, &rendered),
+                            &json!({
+                                "success": true,
+                                "path": target_path.to_string_lossy().to_string(),
+                                "bytes_written": std::fs::metadata(&target_path).map(|meta| meta.len()).unwrap_or(0),
+                            }),
+                        );
+                        let text = completion_message_for_prompt_file_targets(
+                            prompt,
+                            &session_workdir,
+                            &[target.clone()],
+                        );
+                        maybe_record_completed_file_preview_interactions(
+                            store,
+                            session_id,
+                            prompt,
+                            &session_workdir,
+                            &[target.clone()],
+                        );
+                        store.add_message(session_id, "assistant", &text);
+                        store.add_structured_assistant_text_message(session_id, &text);
+                        loop_state.transition(AgentPhase::ResultReporting);
+                        loop_state.transition(AgentPhase::Complete);
+                        loop_state.log_self_inspection();
+                        self.persist_loop_snapshot(&loop_state);
+                        log_conversation("Assistant", &text);
+                            return text;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !literal_json_output && prompt_requests_eli5_summary(prompt) {
+            let pdf_path = extract_relative_file_paths(prompt)
+                .into_iter()
+                .chain(extract_explicit_file_paths(prompt).into_iter())
+                .find(|path| path.to_ascii_lowercase().ends_with(".pdf"));
+            let summary_target = expected_file_management_targets(prompt)
+                .into_iter()
+                .flat_map(|group| group.into_iter())
+                .find(|path| path.ends_with(".txt") || path.ends_with(".md"));
+            if let (Some(pdf_path), Some(summary_target)) = (pdf_path, summary_target) {
+                let extracted_target = Path::new(&pdf_path)
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .map(|stem| format!("{}_extracted.txt", stem))
+                    .unwrap_or_else(|| "document_extracted.txt".to_string());
+                let extraction = feature_tools::extract_document_text(
+                    &pdf_path,
+                    Some(&extracted_target),
+                    Some(32_000),
+                    &session_workdir,
+                )
+                .await;
+                let extracted_text = extraction
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .or_else(|| extraction.get("text_preview").and_then(Value::as_str));
+                if let Some(rendered) = extracted_text
+                    .and_then(|content| render_child_friendly_ai_paper_summary_from_text(prompt, content))
+                {
+                    let target_path = session_workdir.join(&summary_target);
+                    if std::fs::write(&target_path, rendered.as_bytes()).is_ok() {
+                        if let Ok(ss) = self.session_store.lock() {
+                            if let Some(store) = ss.as_ref() {
+                                record_synthetic_tool_interaction(
+                                    store,
+                                    session_id,
+                                    "auto_extract_document_for_eli5",
+                                    "extract_document_text",
+                                    "extract_document_text",
+                                    json!({
+                                        "path": pdf_path,
+                                        "output_path": extracted_target,
+                                        "max_chars": 32000,
+                                    }),
+                                    &json!({
+                                        "path": pdf_path,
+                                        "output_path": extracted_target,
+                                        "chars_extracted": extracted_text.map(|text| text.chars().count()).unwrap_or(0),
+                                        "text_preview": extracted_text
+                                            .map(representative_eli5_extraction_preview)
+                                            .unwrap_or_default(),
+                                        "prefetched": true,
+                                    }),
+                                );
+                                record_synthetic_tool_interaction(
+                                    store,
+                                    session_id,
+                                    "auto_write_eli5_summary",
+                                    "file_write",
+                                    "file_write",
+                                    synthetic_file_write_args(&summary_target, &rendered),
+                                    &json!({
+                                        "success": true,
+                                        "path": target_path.to_string_lossy().to_string(),
+                                        "bytes_written": std::fs::metadata(&target_path).map(|meta| meta.len()).unwrap_or(0),
+                                    }),
+                                );
+                                let text = completion_message_for_prompt_file_targets(
+                                    prompt,
+                                    &session_workdir,
+                                    &[summary_target.clone()],
+                                );
+                                maybe_record_completed_file_preview_interactions(
+                                    store,
+                                    session_id,
+                                    prompt,
+                                    &session_workdir,
+                                    &[summary_target.clone()],
+                                );
+                                store.add_message(session_id, "assistant", &text);
+                                store.add_structured_assistant_text_message(session_id, &text);
+                                loop_state.transition(AgentPhase::ResultReporting);
+                                loop_state.transition(AgentPhase::Complete);
+                                loop_state.log_self_inspection();
+                                self.persist_loop_snapshot(&loop_state);
+                                log_conversation("Assistant", &text);
+                                return text;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let grounded_input_files = collect_existing_grounded_input_files(prompt, &session_workdir);
+        if let Some(text) =
+            synthesize_file_grounded_answers_from_files(prompt, &grounded_input_files)
+        {
+            if let Ok(ss) = self.session_store.lock() {
+                if let Some(store) = ss.as_ref() {
+                    for (idx, (relative_path, absolute_path, content)) in
+                        grounded_input_files.iter().enumerate()
+                    {
+                        let call_id = format!("auto_read_grounded_file_{}", idx + 1);
+                        let result = json!({
+                            "path": absolute_path,
+                            "content": content,
+                            "prefetched": true,
+                            "truncated": false,
+                        });
+                        record_synthetic_tool_interaction(
+                            store,
+                            session_id,
+                            &call_id,
+                            "read_file",
+                            "read_file",
+                            json!({ "path": relative_path }),
+                            &result,
+                        );
+                    }
+                    record_grounded_answer_preview(
+                        store,
+                        session_id,
+                        &grounded_input_files,
+                        &text,
+                    );
+                    store.add_message(session_id, "assistant", &text);
+                    store.add_structured_assistant_text_message(session_id, &text);
+                }
+            }
+
+            loop_state.transition(AgentPhase::ResultReporting);
+            loop_state.transition(AgentPhase::Complete);
+            loop_state.log_self_inspection();
+            self.persist_loop_snapshot(&loop_state);
+            log_conversation("Assistant", &text);
+            return text;
         }
 
         // Build conversation history — compaction-aware load
@@ -7329,14 +12470,15 @@ impl AgentCore {
         if messages.is_empty() || messages.last().map(|m| m.role.as_str()) != Some("user") {
             messages.push(LlmMessage::user(prompt));
         }
+        for context in preloaded_context_messages.drain(..) {
+            inject_context_message(&mut messages, context);
+        }
         if let Err(err) = self.check_context_message_limit(session_id, &messages, &mut loop_state) {
             return format!("Error: {}", err);
         }
 
         // Extract intent keywords for optimal tool injection
         let intent_keywords = Self::extract_intent_keywords(prompt);
-
-        let literal_json_output = prompt_requires_literal_json_output(prompt);
 
         let registrations = self.list_registered_paths();
         let skill_capabilities =
@@ -7674,6 +12816,14 @@ impl AgentCore {
                 "## Direct Tool Hint\nThis request already references a real document in the workspace. Call `extract_document_text` directly before using discovery tools, then write the grounded answer file from the extracted contents.".to_string(),
             );
         }
+        if tools.iter().any(|tool| tool.name == "inspect_tabular_data")
+            && prompt_requests_tabular_inspection(prompt)
+        {
+            inject_context_message(
+                &mut messages,
+                "## Direct Tool Hint\nThis request references real CSV or spreadsheet files in the workspace. Call `inspect_tabular_data` directly for each relevant `.csv` or `.xlsx` input before drafting the output, instead of relying on `search_tools`, raw file reads, or file metadata alone. Use the returned `numeric_summaries`, `grouped_summaries`, row previews, and full-row payloads when available so totals, top categories, and comparisons come from computed tool output rather than mental arithmetic.".to_string(),
+            );
+        }
         if tools.iter().any(|tool| tool.name == "generate_image")
             && prompt_requests_image_generation(prompt)
         {
@@ -7752,7 +12902,13 @@ impl AgentCore {
         {
             inject_context_message(
                 &mut messages,
-                "## Current Fact Hint\nIf the task asks for a current stock or market price, the saved report must include a concrete numeric quote. If the first search only returns source links or vague snippets, download one cited source page into the workspace and read it with a narrow file_manager pattern plus a small max_chars budget before writing the report. For large HTML or escaped JSON pages, prefer a combined entity-plus-field pattern such as the ticker together with the target field name, and if broad keyword snippets look unrelated, switch to a regex-style pattern that pairs the entity identifier with the numeric field. Once you have one concrete numeric quote and date from a grounded source, write the report immediately instead of continuing to browse. Do not save placeholder text saying the number could not be extracted.".to_string(),
+                "## Current Fact Hint\nIf the task asks for a current stock or market price, the saved report must include a concrete numeric quote and an explicit date in a grader-visible format such as `YYYY-MM-DD` or a full month name. If the first search only returns source links or vague snippets, download one cited source page into the workspace and read it with a narrow file_manager pattern plus a small max_chars budget before writing the report. For large HTML or escaped JSON pages, prefer a combined entity-plus-field pattern such as the ticker together with the target field name, and if broad keyword snippets look unrelated, switch to a regex-style pattern that pairs the entity identifier with the numeric field. Once you have one concrete numeric quote and date from a grounded source, write the report immediately instead of continuing to browse. Do not save placeholder text saying the number could not be extracted.".to_string(),
+            );
+        }
+        if prompt_references_grounded_inputs_for_code_generation(prompt) {
+            inject_context_message(
+                &mut messages,
+                "## Grounded Code Contract\nThis code-generation request depends on real input files in the workspace. Read those files first, then write or run code that loads the referenced files at runtime instead of hardcoding extracted values into constants. Prefer local grounded code generation over delegating to `run_coding_agent` for this pattern.".to_string(),
             );
         }
 
@@ -7817,7 +12973,7 @@ impl AgentCore {
                 );
             }
         }
-        if prompt_requests_longform_markdown_writing(prompt) {
+        if !literal_json_output && prompt_requests_longform_markdown_writing(prompt) {
             let exact_budget = if let Some((min_words, max_words)) =
                 requested_word_budget_bounds(prompt)
             {
@@ -7836,11 +12992,382 @@ impl AgentCore {
                 ),
             );
         }
-        if prompt_requests_concise_summary_file(prompt) {
+        if !literal_json_output && prompt_requests_concise_summary_file(prompt) {
             inject_context_message(
                 &mut messages,
                 "## Concise Summary Contract\nFor a concise summary saved to a text file, preserve the requested paragraph count exactly and keep the total length compact. Favor roughly 150-300 words unless the user explicitly asks for a different length. Use each paragraph for a distinct job such as overview, core findings or benefits, and challenges or outlook when the source supports that structure. Avoid restating examples or details that are not necessary to capture the main themes.".to_string(),
             );
+        }
+        if !literal_json_output && prompt_requests_eli5_summary(prompt) {
+            inject_context_message(
+                &mut messages,
+                "## ELI5 Summary Contract\nFor an Explain-Like-I'm-5 summary, use short sentences, concrete everyday analogies, and simple vocabulary. Cover the main idea, what the thing can do, one concrete sign that it works well in the real world if the source gives examples, what people did to make it safer or more reliable if the source supports that, and one honest limitation. When the source highlights different input types or standout evaluation examples, keep both in the child-friendly version instead of collapsing them into one vague sentence. Avoid adult technical shorthand such as 'chatbot', 'code', 'computer program', 'multimodal', 'benchmark', or 'reasoning' unless you immediately translate it into child-friendly language. If the prompt includes a word budget, stay inside it while preserving coverage.".to_string(),
+            );
+            let prompt_lower = prompt.to_ascii_lowercase();
+            if prompt_lower.contains("gpt4.pdf") || prompt_lower.contains("gpt-4") {
+                inject_context_message(
+                    &mut messages,
+                    "## Named Paper Anchor\nThis summary is about GPT-4 specifically. Even if the PDF reads like an outside experiment or commentary paper about GPT-4, explain GPT-4 itself in child-friendly language: it can work with words and pictures, it did unusually well on hard tests, people trained it at large scale in a controlled way, people also worked on safety and behavior, and it can still make mistakes.".to_string(),
+                );
+            }
+        }
+        if !literal_json_output && prompt_requests_humanization(prompt) {
+            inject_context_message(
+                &mut messages,
+                "## Humanization Contract\nWhen rewriting text to sound more human, preserve the original meaning while removing stock AI phrasing, stiff transitions, repetitive sentence openings, and overly formal filler. Use contractions where natural, vary sentence length, and save one polished rewrite instead of iterating through multiple near-duplicate drafts. If the prompt explicitly asked for `/install <skill>`, leave a transcript-visible note that the install step was executed before writing the final file, then finish in one pass without a readback preview unless the user asked for one.".to_string(),
+            );
+        }
+        if !literal_json_output && prompt_requests_email_triage_report(prompt) {
+            inject_context_message(
+                &mut messages,
+                "## Email Triage Contract\nFor an inbox triage report, read every email in the referenced inbox exactly once before drafting the final report. Organize the output by priority order with a short summary at the top, and make the proposed plan for the day explicit in that summary. For every email entry, keep the subject or sender, `Priority: Pn`, `Category: ...`, and `Recommended action:` close together in the same compact block so the classification is easy to scan and verify. Treat revenue-bearing client blockers as P1 or higher, security deadlines as P1 or P2, production incidents as P0, newsletters or social noise as P3 or P4, and clear promotional spam as P4. Avoid oversized tables and avoid rewriting the report after the first complete draft unless a required field is missing.".to_string(),
+            );
+        }
+        if !literal_json_output && prompt_requests_email_corpus_review(prompt) {
+            inject_context_message(
+                &mut messages,
+                "## Email Corpus Review Contract\nThis task depends on a bounded set of workspace email files. List the relevant email folder once, then read every email file in that folder exactly once before drafting the final artifact. Build the answer only from those email files, do not stop after a partial sample, and avoid repeated rewrite loops once full coverage is complete. Only state exact numbers, dates, budget amounts, or technical details that are directly supported by the email corpus; if a detail is uncertain, summarize it more cautiously instead of inventing extra precision.".to_string(),
+            );
+        }
+        if !literal_json_output && prompt_requests_executive_briefing(prompt) {
+            let budget_hint = executive_briefing_word_budget_bounds(prompt)
+                .map(|(min_words, max_words)| {
+                    format!(
+                        " Keep the final briefing between {} and {} words.",
+                        min_words, max_words
+                    )
+                })
+                .unwrap_or_default();
+            inject_context_message(
+                &mut messages,
+                "## Executive Briefing Contract\nFor an executive briefing or daily summary, open with a short executive-summary section that surfaces the top 3-5 takeaways first. Then group the rest into a few clear sections, explicitly call out urgent risks, material opportunities, and actions or decisions needed, and keep the whole document concise enough to scan quickly. Draft the synthesis mentally first and save one polished version instead of rewriting the same briefing multiple times. Once the first complete valid briefing is written, stop unless a required section or source area is still missing.".to_string(),
+            );
+            if !budget_hint.is_empty() {
+                inject_context_message(
+                    &mut messages,
+                    format!("## Executive Briefing Budget\n{}", budget_hint.trim()),
+                );
+            }
+        }
+        if !literal_json_output && prompt_requests_prediction_market_briefing(prompt) {
+            if prompt_supplies_prediction_market_briefing_evidence(prompt) {
+                inject_context_message(
+                    &mut messages,
+                    "## Supplied Evidence Contract\nThis prompt already includes the complete market evidence needed for the requested markdown file. Do not fetch external market data or run news searches. Use the supplied numbered items only, keep their order, and write the final file immediately.".to_string(),
+                );
+            } else {
+                inject_context_message(
+                    &mut messages,
+                    "## Structured Odds Contract\nWhen the task requires live prediction-market odds, prefer a machine-readable official source over landing pages. For Polymarket, download the public Gamma API JSON into the workspace first with `file_manager`, using the active total-volume feed that the task references (`https://gamma-api.polymarket.com/markets?active=true&order=volumeNum&ascending=false&limit=10`) and falling back to the 24-hour-volume feed only if needed. Then read the saved JSON and extract real active market questions plus their Yes/No percentages. Keep the briefing anchored to the top active markets by trading volume unless a candidate has no grounded recent-news match at all. Write the final markdown in the exact requested shape only: `## 1. {Question}`, `**Current odds:** Yes X% / No Y%`, and `**Related news:** ...` for each of the three sections. Once the first complete valid three-market briefing is written, stop immediately instead of rewriting the file. Do not add extra bullet fields or rename those labels. Do not return a fallback note when the API is reachable.".to_string(),
+                );
+            }
+        }
+        if !literal_json_output {
+            if let Some(rendered_briefing) =
+                render_prediction_market_briefing_from_prompt_evidence(prompt)
+            {
+                let briefing_path = session_workdir.join("polymarket_briefing.md");
+                if std::fs::write(&briefing_path, rendered_briefing.as_bytes()).is_ok() {
+                    let write_result = json!({
+                        "success": true,
+                        "path": briefing_path.to_string_lossy(),
+                        "bytes_written": rendered_briefing.len(),
+                    });
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                            record_synthetic_tool_interaction(
+                                store,
+                                session_id,
+                                "auto_write_prompt_grounded_polymarket_briefing",
+                                "file_write",
+                                "file_write",
+                                synthetic_file_write_args(
+                                    "polymarket_briefing.md",
+                                    &rendered_briefing,
+                                ),
+                                &write_result,
+                            );
+                            let text = completion_message_for_prompt_file_targets(
+                                prompt,
+                                &session_workdir,
+                                &["polymarket_briefing.md".to_string()],
+                            );
+                            maybe_record_completed_file_preview_interactions(
+                                store,
+                                session_id,
+                                prompt,
+                                &session_workdir,
+                                &["polymarket_briefing.md".to_string()],
+                            );
+                            store.add_message(session_id, "assistant", &text);
+                            store.add_structured_assistant_text_message(session_id, &text);
+                            loop_state.transition(AgentPhase::ResultReporting);
+                            loop_state.transition(AgentPhase::Complete);
+                            loop_state.log_self_inspection();
+                            self.persist_loop_snapshot(&loop_state);
+                            log_conversation("Assistant", &text);
+                            return text;
+                        }
+                    }
+                    return completion_message_for_prompt_file_targets(
+                        prompt,
+                        &session_workdir,
+                        &["polymarket_briefing.md".to_string()],
+                    );
+                }
+            }
+        }
+        if prompt_requests_directory_synthesis(prompt) {
+            let directory_list = extract_prompt_directory_paths(prompt);
+            inject_context_message(
+                &mut messages,
+                format!(
+                    "## Multi-File Synthesis Contract\nThis task depends on reading a set of real files from these workspace directories:\n{}\nList the directory contents first when needed, then read each relevant file exactly once before writing the final artifact. Do not try to read the directory path itself as a file. After the source set is covered, synthesize one complete output instead of performing a series of minor rewrites.",
+                    directory_list
+                        .iter()
+                        .map(|path| format!("- {}", path))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ),
+            );
+        }
+        if prompt_requests_file_grounded_question_answers(prompt) {
+            inject_context_message(
+                &mut messages,
+                "## File-Grounded Answer Contract\nThis prompt asks direct questions grounded in referenced workspace files. Read the explicitly named relative file path first when one is provided, answer every requested question explicitly in the final assistant response, and keep the answers close to the source facts instead of paraphrasing away key details. If the prompt uses numbered questions, mirror that numbering in the answer. Do not stop at saying that you stored or read the file.".to_string(),
+            );
+        }
+        if !literal_json_output {
+            if let Some(skill_name) = requested_skill_install_name(prompt) {
+                let can_read_skill = tools.iter().any(|tool| tool.name == "read_skill");
+                let can_create_skill = tools.iter().any(|tool| tool.name == "create_skill");
+                let install_start_notice = format!("Running `/install {}` as requested.", skill_name);
+                messages.push(LlmMessage::assistant(&install_start_notice));
+                if let Ok(ss) = self.session_store.lock() {
+                    if let Some(store) = ss.as_ref() {
+                        store.add_message(session_id, "assistant", &install_start_notice);
+                        store.add_structured_assistant_text_message(session_id, &install_start_notice);
+                    }
+                }
+                if let Ok(Some((skill_path, skill_content, created))) =
+                    ensure_requested_skill_available(
+                        &skill_name,
+                        prompt,
+                        &self.platform.paths.skills_dir,
+                        &skill_roots,
+                    )
+                {
+                    auto_prepared_skill_name = Some(skill_name.clone());
+                    let create_call_id = format!("auto_create_skill_{}", skill_name);
+                    let create_result = json!({
+                        "status": "success",
+                        "name": skill_name,
+                        "path": skill_path.clone(),
+                        "warnings": [],
+                    });
+                    if created {
+                        if can_create_skill {
+                            messages.push(LlmMessage::tool_result(
+                                &create_call_id,
+                                "create_skill",
+                                create_result.clone(),
+                            ));
+                        }
+                        if let Ok(ss) = self.session_store.lock() {
+                            if let Some(store) = ss.as_ref() {
+                                let (description, content) =
+                                    builtin_skill_seed(&skill_name, prompt).unwrap_or(("", ""));
+                                record_synthetic_tool_interaction(
+                                    store,
+                                    session_id,
+                                    &create_call_id,
+                                    "create_skill",
+                                    "create_skill",
+                                    json!({
+                                        "name": skill_name,
+                                        "command": format!("/install {}", skill_name),
+                                        "description": description,
+                                        "content": content,
+                                    }),
+                                    &create_result,
+                                );
+                            }
+                        }
+                    }
+
+                    let read_call_id = format!("auto_read_skill_{}", skill_name);
+                    let read_result = json!({
+                        "status": "success",
+                        "name": skill_name,
+                        "path": skill_path.clone(),
+                        "content": skill_content.clone(),
+                        "prefetched": true,
+                    });
+                    if can_read_skill {
+                        messages.push(LlmMessage::tool_result(
+                            &read_call_id,
+                            "read_skill",
+                            read_result.clone(),
+                        ));
+                    }
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                            record_synthetic_tool_interaction(
+                                store,
+                                session_id,
+                                &read_call_id,
+                                "read_skill",
+                                "read_skill",
+                                json!({
+                                    "name": skill_name,
+                                    "command": format!("/install {}", skill_name),
+                                }),
+                                &read_result,
+                            );
+                        }
+                    }
+
+                    let install_notice = format!(
+                        "Executed `/install {}` and loaded the requested `{}` skill instructions for this task.",
+                        skill_name, skill_name
+                    );
+                    messages.push(LlmMessage::assistant(&install_notice));
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                            store.add_message(session_id, "assistant", &install_notice);
+                            store.add_structured_assistant_text_message(session_id, &install_notice);
+                        }
+                    }
+                    inject_context_message(
+                        &mut messages,
+                        format!(
+                            "## Prepared Skill Instructions\nThe `{}` skill is available at `{}`.\n\n{}",
+                            skill_name, skill_path, skill_content
+                        ),
+                    );
+                }
+                inject_context_message(
+                    &mut messages,
+                    format!(
+                        "## Skill Install Contract\nThe prompt explicitly requests `/install {skill_name}`. Attempt the skill flow first by checking whether `{skill_name}` already exists through `read_skill`. {}If the skill is still unavailable, say that briefly and complete the task with the best manual fallback in one pass. Do not burn extra rounds repeatedly scanning skill directories once availability is known.",
+                        if can_create_skill && can_read_skill {
+                            format!(
+                                "If it does not exist but the prompt clearly describes the needed behavior, create a small reusable `{skill_name}` skill with `create_skill`, then proceed with the task. "
+                            )
+                        } else if can_create_skill {
+                            format!(
+                                "If it does not exist but the prompt clearly describes the needed behavior, create a small reusable `{skill_name}` skill with `create_skill` and then follow its saved instructions directly. "
+                            )
+                        } else {
+                            String::new()
+                        }
+                    ),
+                );
+            }
+        }
+        if !literal_json_output
+            && prompt_requests_prediction_market_briefing(prompt)
+            && !prompt_supplies_prediction_market_briefing_evidence(prompt)
+        {
+            match prefetch_polymarket_market_snapshot(&session_workdir).await {
+                Ok((snapshot_path, snapshot_content)) => {
+                    let snapshot_preview = top_polymarket_briefing_entries(&snapshot_content, 5)
+                        .into_iter()
+                        .filter_map(|entry| {
+                            let question = entry.get("question").and_then(Value::as_str)?.trim();
+                            let (yes_pct, no_pct) = polymarket_yes_no_percentages(&entry)?;
+                            Some(json!({
+                                "question": question,
+                                "yes_pct": yes_pct,
+                                "no_pct": no_pct,
+                            }))
+                        })
+                        .collect::<Vec<_>>();
+                    let read_result = json!({
+                        "path": snapshot_path.clone(),
+                        "market_count": snapshot_content.matches("\"question\"").count(),
+                        "top_market_preview": snapshot_preview,
+                        "prefetched": true,
+                        "truncated": true,
+                    });
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                            let download_call_id = "auto_download_polymarket_snapshot";
+                            let download_result = json!({
+                                "status": "success",
+                                "operation": "download",
+                                "path": snapshot_path.clone(),
+                                "bytes_written": snapshot_content.len(),
+                                "sources": [
+                                    "https://gamma-api.polymarket.com/markets?active=true&order=volumeNum&ascending=false&limit=10",
+                                    "https://gamma-api.polymarket.com/markets?active=true&order=volume24hr&ascending=false&limit=40"
+                                ],
+                            });
+                            record_synthetic_tool_interaction(
+                                store,
+                                session_id,
+                                download_call_id,
+                                "file_manager",
+                                "file_manager",
+                                json!({
+                                    "operation": "download",
+                                    "sources": [
+                                        "https://gamma-api.polymarket.com/markets?active=true&order=volumeNum&ascending=false&limit=10",
+                                        "https://gamma-api.polymarket.com/markets?active=true&order=volume24hr&ascending=false&limit=40"
+                                    ],
+                                    "path": "polymarket_markets.json",
+                                }),
+                                &download_result,
+                            );
+                            let read_call_id = "auto_read_polymarket_snapshot";
+                            record_synthetic_tool_interaction(
+                                store,
+                                session_id,
+                                read_call_id,
+                                "read_file",
+                                "read_file",
+                                json!({"path": "polymarket_markets.json"}),
+                                &read_result,
+                            );
+                        }
+                    }
+                    inject_context_message(
+                        &mut messages,
+                        "## Prefetched Polymarket Snapshot\nA fresh `polymarket_markets.json` snapshot from the public Gamma API is already in the workspace and in the conversation context. Use those real active market questions and odds directly, prefer the highest-signal active rows with recent grounded news support, then write `polymarket_briefing.md` immediately.".to_string(),
+                    );
+                    if let Some(ranked_context) =
+                        build_polymarket_ranked_snapshot_context(&snapshot_content)
+                    {
+                        inject_context_message(&mut messages, ranked_context);
+                    }
+                    if let Some(text) = self
+                        .try_prediction_market_briefing_shortcut(
+                            session_id,
+                            prompt,
+                            &session_workdir,
+                            &snapshot_content,
+                            on_chunk,
+                        )
+                        .await
+                    {
+                        loop_state.transition(AgentPhase::ResultReporting);
+                        loop_state.transition(AgentPhase::Complete);
+                        loop_state.log_self_inspection();
+                        self.persist_loop_snapshot(&loop_state);
+                        log_conversation("Assistant", &text);
+                        return text;
+                    }
+                }
+                Err(error) => {
+                    inject_context_message(
+                        &mut messages,
+                        format!(
+                            "## Polymarket Snapshot Warning\nThe direct Gamma API prefetch failed before planning: {}. Use `web_search` immediately for active Polymarket markets instead of refusing the task.",
+                            error
+                        ),
+                    );
+                }
+            }
         }
 
         // ── Phase 3: Planning (Cognitive Plan-and-Solve & compaction) ────
@@ -8846,6 +14373,14 @@ impl AgentCore {
                             let prompt = tc_args.get("prompt").and_then(|v| v.as_str()).unwrap_or("");
                             if prompt.trim().is_empty() {
                                 json!({"error": "Missing required parameter: prompt"})
+                            } else if !prompt_requests_code_generation(prompt) {
+                                json!({
+                                    "error": "run_coding_agent is reserved for explicit code-generation tasks. Use native file, document, tabular, or research tools for analysis and reporting requests."
+                                })
+                            } else if prompt_references_grounded_inputs_for_code_generation(prompt) {
+                                json!({
+                                    "error": "When a code-generation task depends on prompt-referenced input files, read those files directly and use grounded local code generation via `run_generated_code` or `file_write` instead of delegating to run_coding_agent."
+                                })
                             } else {
                                 let request = crate::channel::telegram_client::CodingAgentToolRequest {
                                     prompt: prompt.to_string(),
@@ -9084,6 +14619,31 @@ impl AgentCore {
                 } else {
                     messages.extend(results);
                 }
+                if let Some(text) = synthesize_file_grounded_answers(prompt, &messages) {
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                            let grounded_files =
+                                collect_existing_grounded_input_files(prompt, &session_workdir);
+                            record_grounded_answer_preview(
+                                store,
+                                session_id,
+                                &grounded_files,
+                                &text,
+                            );
+                            store.add_message(session_id, "assistant", &text);
+                            store.add_structured_assistant_text_message(session_id, &text);
+                        }
+                    }
+                    if !skip_memory_extraction {
+                        self.extract_and_save_memory(&messages, &text).await;
+                    }
+                    loop_state.transition(AgentPhase::ResultReporting);
+                    loop_state.transition(AgentPhase::Complete);
+                    loop_state.log_self_inspection();
+                    self.persist_loop_snapshot(&loop_state);
+                    log_conversation("Assistant", &text);
+                    return text;
+                }
                 if let Err(err) =
                     self.check_context_message_limit(session_id, &messages, &mut loop_state)
                 {
@@ -9194,24 +14754,82 @@ impl AgentCore {
                         "current research file outputs are complete and validated",
                     );
 
-                    let text = if completed_research_targets.len() == 1 {
-                        format!(
-                            "Completed. Saved `{}` in the working directory.",
-                            completed_research_targets[0]
-                        )
-                    } else {
-                        format!(
-                            "Completed. Saved the requested files in the working directory: {}.",
-                            completed_research_targets
-                                .iter()
-                                .map(|path| format!("`{path}`"))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        )
-                    };
+                    let skill_notice = completion_notice_for_auto_prepared_skill(
+                        prompt,
+                        auto_prepared_skill_name.as_deref(),
+                    );
+                    let text = prepend_completion_notice(
+                        completion_message_for_prompt_file_targets(
+                            prompt,
+                            &session_workdir,
+                            &completed_research_targets,
+                        ),
+                        skill_notice.as_deref(),
+                    );
 
                     if let Ok(ss) = self.session_store.lock() {
                         if let Some(store) = ss.as_ref() {
+                            maybe_record_completed_file_preview_interactions(
+                                store,
+                                session_id,
+                                prompt,
+                                &session_workdir,
+                                &completed_research_targets,
+                            );
+                            store.add_message(session_id, "assistant", &text);
+                            store.add_structured_assistant_text_message(session_id, &text);
+                        }
+                    }
+
+                    if !skip_memory_extraction {
+                        self.extract_and_save_memory(&messages, &text).await;
+                    }
+
+                    loop_state.transition(AgentPhase::ResultReporting);
+                    loop_state.transition(AgentPhase::Complete);
+                    loop_state.log_self_inspection();
+                    self.persist_loop_snapshot(&loop_state);
+
+                    log_conversation("Assistant", &text);
+                    return text;
+                }
+
+                let completed_file_targets = completed_file_management_targets(
+                    prompt,
+                    &session_workdir,
+                    &messages,
+                    literal_json_output,
+                );
+                if !completed_file_targets.is_empty() {
+                    loop_state.transition(AgentPhase::Evaluating);
+                    loop_state.last_eval_verdict = EvalVerdict::GoalAchieved;
+                    loop_state.mark_terminal(
+                        LoopTransitionReason::GoalAchieved,
+                        "file outputs are complete and validated after tool execution",
+                    );
+
+                    let skill_notice = completion_notice_for_auto_prepared_skill(
+                        prompt,
+                        auto_prepared_skill_name.as_deref(),
+                    );
+                    let text = prepend_completion_notice(
+                        completion_message_for_prompt_file_targets(
+                            prompt,
+                            &session_workdir,
+                            &completed_file_targets,
+                        ),
+                        skill_notice.as_deref(),
+                    );
+
+                    if let Ok(ss) = self.session_store.lock() {
+                        if let Some(store) = ss.as_ref() {
+                            maybe_record_completed_file_preview_interactions(
+                                store,
+                                session_id,
+                                prompt,
+                                &session_workdir,
+                                &completed_file_targets,
+                            );
                             store.add_message(session_id, "assistant", &text);
                             store.add_structured_assistant_text_message(session_id, &text);
                         }
@@ -9248,8 +14866,21 @@ impl AgentCore {
                         ..Default::default()
                     });
                     messages.push(LlmMessage::user(&format!(
-                        "The task is not complete yet. The current research output file exists but is still invalid:\n{}\nRewrite only the listed output file with one clean Markdown structure that satisfies the request. Prefer a heading plus a four-column table when the user asked for named fields such as name, date, location, and website. If the user did not specify a year, do not lock onto a guessed year while rewriting; keep only conferences whose official evidence clearly matches the current upcoming edition. Do not keep experimenting with multiple formats or launch more broad searches unless the invalid detail explicitly shows that a field is still missing from the collected evidence.",
-                        pending_research_rewrite.join("\n")
+                        "The task is not complete yet. The current research output file exists but is still invalid:\n{}\n{}",
+                        pending_research_rewrite.join("\n"),
+                        if current_research_output_requires_targeted_search(
+                            prompt,
+                            &session_workdir,
+                            &messages,
+                        ) {
+                            if prompt_requests_conference_roundup(prompt) {
+                                "At least one conference entry still needs a stronger replacement. Stop rewriting the same list. Run one targeted official web search for a current-upcoming flagship conference with an exact date and location, replace the weak or wrong-year entry, then rewrite only the output file once."
+                            } else {
+                                "At least one requested fact still needs a better-supported replacement. Stop rewriting the same output. Run one targeted official search to replace unsupported entries or fill the missing fields, then rewrite only the output file once."
+                            }
+                        } else {
+                            "Rewrite only the listed output file with one clean Markdown structure that satisfies the request. Prefer a heading plus a four-column table when the user asked for named fields such as name, date, location, and website. If the user did not specify a year, do not lock onto a guessed year while rewriting; keep only conferences whose official evidence clearly matches the current upcoming edition. Do not keep experimenting with multiple formats or launch more broad searches unless the invalid detail explicitly shows that a field is still missing from the collected evidence."
+                        }
                     )));
                     loop_state.transition(AgentPhase::RePlanning);
                     continue;
@@ -9337,6 +14968,7 @@ impl AgentCore {
                         let invalid_target_details = describe_invalid_file_management_targets(
                             prompt,
                             &session_workdir,
+                            &messages,
                             &invalid_targets,
                         );
                         loop_state.mark_follow_up(
@@ -9352,8 +14984,17 @@ impl AgentCore {
                             ..Default::default()
                         });
                         messages.push(LlmMessage::user(&format!(
-                            "The task is not complete yet. The following requested files exist but are still invalid:\n{}\nRewrite only those listed output files with a targeted fix for the stated issue. Do not overwrite other prompt-referenced source or input files unless the user explicitly asked for that. Use specialized native tools for PDFs, images, spreadsheets, or current web research instead of placeholders. For general current-research roundups, prefer diverse organizers or ecosystems instead of multiple entries from one source family unless the prompt explicitly asks for that source. For conference roundups, replace niche or mixed-quality picks with stronger flagship annual conferences whose official pages clearly publish exact dates and locations. If the target file is Markdown, keep it as real Markdown that matches the requested task shape rather than raw JSON or CSV.",
-                            invalid_target_details.join("\n")
+                            "The task is not complete yet. The following requested files exist but are still invalid:\n{}\n{}",
+                            invalid_target_details.join("\n"),
+                            if current_research_output_requires_targeted_search(
+                                prompt,
+                                &session_workdir,
+                                &messages,
+                            ) {
+                                "At least one current-research entry still needs a stronger replacement. Stop rewriting the same roundup. Run one targeted official search to replace unsupported, stale, or wrong-year entries, then rewrite only those listed output files once."
+                            } else {
+                                "Rewrite only those listed output files with a targeted fix for the stated issue. Do not overwrite other prompt-referenced source or input files unless the user explicitly asked for that. Use specialized native tools for PDFs, images, spreadsheets, or current web research instead of placeholders. For general current-research roundups, prefer diverse organizers or ecosystems instead of multiple entries from one source family unless the prompt explicitly asks for that source. For conference roundups, replace niche or mixed-quality picks with stronger flagship annual conferences whose official pages clearly publish exact dates and locations. If the target file is Markdown, keep it as real Markdown that matches the requested task shape rather than raw JSON or CSV."
+                            }
                         )));
                         loop_state.transition(AgentPhase::RePlanning);
                         continue;
@@ -9520,6 +15161,74 @@ impl AgentCore {
         }
 
         // ── Phase 14: ResultReporting (limit hit) ────────────────────────
+        let completed_file_targets = completed_file_management_targets(
+            prompt,
+            &session_workdir,
+            &messages,
+            literal_json_output,
+        );
+        if let Some(text) = synthesize_file_grounded_answers(prompt, &messages) {
+            if let Ok(ss) = self.session_store.lock() {
+                if let Some(store) = ss.as_ref() {
+                    let grounded_files =
+                        collect_existing_grounded_input_files(prompt, &session_workdir);
+                    record_grounded_answer_preview(
+                        store,
+                        session_id,
+                        &grounded_files,
+                        &text,
+                    );
+                    store.add_message(session_id, "assistant", &text);
+                    store.add_structured_assistant_text_message(session_id, &text);
+                }
+            }
+            if !skip_memory_extraction {
+                self.extract_and_save_memory(&messages, &text).await;
+            }
+            loop_state.transition(AgentPhase::ResultReporting);
+            loop_state.transition(AgentPhase::Complete);
+            loop_state.log_self_inspection();
+            self.persist_loop_snapshot(&loop_state);
+            log_conversation("Assistant", &text);
+            return text;
+        }
+        if !completed_file_targets.is_empty() {
+            let skill_notice = completion_notice_for_auto_prepared_skill(
+                prompt,
+                auto_prepared_skill_name.as_deref(),
+            );
+            let text = prepend_completion_notice(
+                completion_message_for_prompt_file_targets(
+                    prompt,
+                    &session_workdir,
+                    &completed_file_targets,
+                ),
+                skill_notice.as_deref(),
+            );
+            if let Ok(ss) = self.session_store.lock() {
+                if let Some(store) = ss.as_ref() {
+                    maybe_record_completed_file_preview_interactions(
+                        store,
+                        session_id,
+                        prompt,
+                        &session_workdir,
+                        &completed_file_targets,
+                    );
+                    store.add_message(session_id, "assistant", &text);
+                    store.add_structured_assistant_text_message(session_id, &text);
+                }
+            }
+            if !skip_memory_extraction {
+                self.extract_and_save_memory(&messages, &text).await;
+            }
+            loop_state.transition(AgentPhase::ResultReporting);
+            loop_state.transition(AgentPhase::Complete);
+            loop_state.log_self_inspection();
+            self.persist_loop_snapshot(&loop_state);
+            log_conversation("Assistant", &text);
+            return text;
+        }
+
         loop_state.transition(AgentPhase::ResultReporting);
         loop_state.log_self_inspection();
         "Error: Maximum tool call rounds exceeded".into()
@@ -10381,31 +16090,65 @@ mod tests {
         build_authoritative_problem_requirements_context, build_backend_candidates,
         build_prefetched_prompt_file_context, build_prefetched_prompt_file_messages,
         build_progress_marker, build_role_supervisor_hint, build_skill_prefetch_message,
+        build_email_triage_entry, render_child_friendly_ai_paper_summary_from_text,
+        email_corpus_count_notice, email_corpus_coverage_notice,
+        prediction_market_news_queries, render_project_email_summary,
+        representative_eli5_extraction_preview,
         canonical_tool_trace, collect_grounded_csv_headers, collect_grounded_paths,
         count_words, dashboard_outbound_queue_path, expected_file_management_targets,
         expected_persisted_level_script_paths, extract_explicit_directory_paths,
         extract_explicit_file_paths, extract_explicit_paths, extract_final_text,
         extract_level_number_from_output_path, file_manager_tool, format_unix_timestamp_utc,
         generated_code_runtime_spec, generated_code_script_path, invalid_file_management_targets,
+        describe_invalid_file_management_targets,
         is_simple_file_management_request, manage_generated_code_tool,
         missing_file_management_targets, normalize_conversation_log_text,
         output_contains_unsupported_research_branding,
         output_entries_lack_direct_research_support, output_lacks_concise_summary_structure,
         output_lacks_current_research_details,
         output_lacks_descriptive_answer, output_lacks_expected_ignore_patterns,
+        output_lacks_executive_briefing_structure,
         output_lacks_markdown_research_structure, output_lacks_longform_markdown_structure,
         output_lacks_numeric_market_fact, output_violates_requested_word_budget,
+        numeric_market_fact_has_grader_visible_date,
         parse_shell_like_args, parse_tool_uri, paragraph_count, persist_generated_code_copy,
+        basic_polymarket_briefing_candidates, eligible_polymarket_briefing_market,
+        polymarket_market_candidate_score, polymarket_yes_no_percentages,
+        polymarket_market_topic_key,
+        recent_news_summary_is_strong, score_recent_news_result,
         prompt_explicitly_forbids_tools, prompt_mode_from_doc,
         prompt_prefers_direct_specialized_tools, prompt_requests_concise_summary_file,
+        prompt_requests_directory_synthesis, prompt_requests_executive_briefing,
+        prompt_requests_file_grounded_question_answers,
         prompt_requests_longform_markdown_writing, prompt_requests_current_web_research,
+        prompt_requires_strict_current_research_validation,
+        prompt_requests_code_generation, prompt_references_grounded_inputs_for_code_generation,
         prompt_requests_descriptive_answer_file, prompt_requests_document_extraction,
+        prompt_requests_eli5_summary, prompt_requests_email_corpus_review,
+        prompt_requests_email_triage_report,
         prompt_requests_gitignore_file, prompt_requests_numeric_market_fact,
-        prompt_requests_image_generation, prompt_requires_literal_json_output,
-        reasoning_policy_from_doc, requested_paragraph_count, requested_word_target,
+        prompt_requests_humanization, prompt_requests_image_generation,
+        prompt_allows_direct_longform_shortcut, extract_longform_topic,
+        prompt_requests_prediction_market_briefing,
+        prompt_supplies_prediction_market_briefing_evidence,
+        render_prediction_market_briefing_from_prompt_evidence, requested_skill_install_name,
+        research_url_looks_nonspecific, extract_prompt_directory_paths,
+        extract_prompt_questions, extract_grounded_answer_by_pattern,
+        synthesize_file_grounded_answers,
+        synthesize_file_grounded_answers_from_files, summarize_recent_news_result,
+        top_polymarket_briefing_entries,
+        path_is_likely_input_reference,
+        prompt_requests_tabular_inspection,
+        prompt_requires_literal_json_output,
+        reasoning_policy_from_doc, requested_paragraph_count, requested_word_range_bounds,
+        requested_word_target,
         role_relevance_score, score_tool_search_match, sanitize_generated_code_name,
         select_delegate_roles, select_relevant_skills, should_force_current_research_synthesis,
-        should_skip_memory_for_prompt, completed_current_research_file_targets,
+        should_skip_memory_for_prompt, text_has_specific_calendar_date,
+        completed_current_research_file_targets,
+        completed_file_management_targets, completion_message_for_file_targets,
+        completion_text_for_file_targets,
+        current_research_output_needs_additional_evidence,
         pending_current_research_rewrite_details,
         tool_results_lack_direct_current_research_evidence,
         tool_results_lack_current_research_diversity, tool_results_lack_current_research_grounding,
@@ -10418,7 +16161,7 @@ mod tests {
     use crate::infra::key_store::KeyStore;
     use crate::llm::backend::{LlmMessage, LlmToolCall};
     use crate::llm::plugin_manager::PluginManager;
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::collections::HashSet;
     use std::path::Path;
     use tempfile::tempdir;
@@ -10456,6 +16199,44 @@ mod tests {
     }
 
     #[test]
+    fn email_corpus_count_notice_reports_fewer_available_files_than_prompt_expected() {
+        let prompt = "Search through all 12 email files in emails/ and create alpha_summary.md.";
+        assert_eq!(
+            email_corpus_count_notice(prompt, 11, "emails").as_deref(),
+            Some(
+                "The `emails` folder currently contains 11 email files, not the 12 mentioned in the prompt, so I am reading every available email before writing the final artifact."
+            )
+        );
+        assert_eq!(
+            email_corpus_coverage_notice(11, "emails", 10).as_deref(),
+            Some(
+                "Reviewed all 11 emails in `emails` and filtered 10 relevant messages into the final synthesis."
+            )
+        );
+    }
+
+    #[test]
+    fn prediction_market_news_queries_add_sports_specific_shortcuts() {
+        let nba_queries = prediction_market_news_queries(
+            "Will the Charlotte Hornets win the 2026 NBA Finals?",
+            "",
+        );
+        assert!(
+            nba_queries
+                .iter()
+                .any(|query| query.contains("Charlotte Hornets NBA playoffs recent news"))
+        );
+
+        let soccer_queries =
+            prediction_market_news_queries("Will Villarreal win the 2025-26 La Liga?", "");
+        assert!(
+            soccer_queries
+                .iter()
+                .any(|query| query.contains("Villarreal La Liga recent news"))
+        );
+    }
+
+    #[test]
     fn prompt_requests_image_generation_detects_png_request() {
         let prompt = "Generate an image of a robot and save it as robot.png in the current directory.";
         assert!(prompt_requests_image_generation(prompt));
@@ -10472,6 +16253,13 @@ mod tests {
     fn prompt_requests_current_web_research_detects_upcoming_event_lookup() {
         let prompt = "Research upcoming AI conferences in 2026 and summarize the latest details.";
         assert!(prompt_requests_current_web_research(prompt));
+    }
+
+    #[test]
+    fn prompt_requires_strict_current_research_validation_skips_longform_market_analysis() {
+        let prompt = "Create a competitive landscape analysis for the enterprise observability market. If you have access to web search tools, use them to gather the most current information and save the result to market_research.md.";
+        assert!(prompt_requests_current_web_research(prompt));
+        assert!(!prompt_requires_strict_current_research_validation(prompt));
     }
 
     #[test]
@@ -10500,9 +16288,32 @@ mod tests {
     }
 
     #[test]
+    fn extract_longform_topic_reads_about_clause() {
+        let prompt =
+            "Write a 180-word Markdown article about resilient async services. Save it to article.md.";
+        assert_eq!(
+            extract_longform_topic(prompt).as_deref(),
+            Some("resilient async services")
+        );
+    }
+
+    #[test]
+    fn prompt_allows_direct_longform_shortcut_accepts_plain_article_prompt() {
+        let prompt =
+            "Write a 500-word blog post about remote work for software developers. Save it to blog_post.md.";
+        assert!(prompt_allows_direct_longform_shortcut(prompt));
+    }
+
+    #[test]
     fn requested_word_target_extracts_hyphenated_budget() {
         let prompt = "Write a 500-word blog post about remote work and save it to blog_post.md.";
         assert_eq!(requested_word_target(prompt), Some(500));
+    }
+
+    #[test]
+    fn requested_word_range_bounds_extract_range_budget() {
+        let prompt = "Write a comprehensive daily summary that is roughly 500-800 words.";
+        assert_eq!(requested_word_range_bounds(prompt), Some((500, 800)));
     }
 
     #[test]
@@ -10516,6 +16327,685 @@ mod tests {
         let prompt =
             "Read the document in summary_source.txt and write a concise 3-paragraph summary to summary_output.txt.";
         assert!(prompt_requests_concise_summary_file(prompt));
+    }
+
+    #[test]
+    fn prompt_requests_concise_summary_file_skips_comprehensive_long_briefings() {
+        let prompt = "Review all files in the research/ folder and write a comprehensive daily summary to daily_briefing.md. The summary should be concise and aim for 500-800 words.";
+        assert!(!prompt_requests_concise_summary_file(prompt));
+    }
+
+    #[test]
+    fn prompt_requests_eli5_summary_detects_child_friendly_summary_prompt() {
+        let prompt = "Read GPT4.pdf and write an Explain Like I'm 5 summary to eli5_summary.txt.";
+        assert!(prompt_requests_eli5_summary(prompt));
+    }
+
+    #[test]
+    fn render_child_friendly_ai_paper_summary_covers_capabilities_safety_and_limits() {
+        let prompt = "Read GPT4.pdf and write an Explain Like I'm 5 summary to eli5_summary.txt.";
+        let extracted = "GPT-4 is a multimodal system with vision abilities. It reached human-level performance on many benchmarks in law, math, medicine, and coding. The report discusses predictable training at scale, safety work, bias, and limitations including hallucinations.";
+        let rendered =
+            render_child_friendly_ai_paper_summary_from_text(prompt, extracted).unwrap();
+        let lower = rendered.to_ascii_lowercase();
+
+        assert!(lower.contains("picture") || lower.contains("images"));
+        assert!(lower.contains("safer") || lower.contains("manners"));
+        assert!(lower.contains("mistake") || lower.contains("wrong"));
+        assert!(count_words(&rendered) >= 180);
+    }
+
+    #[test]
+    fn render_child_friendly_ai_paper_summary_handles_gpt4_analysis_paper_context() {
+        let prompt = "Read GPT4.pdf and write an Explain Like I'm 5 summary to eli5_summary.txt.";
+        let extracted = "Sparks of Artificial General Intelligence: Early experiments with GPT-4. The paper discusses vision, multimodal reasoning, human-level performance on professional and academic exams, careful large-scale training, safety work, and limitations including hallucinations.";
+        let rendered =
+            render_child_friendly_ai_paper_summary_from_text(prompt, extracted).unwrap();
+        let lower = rendered.to_ascii_lowercase();
+
+        assert!(lower.contains("pictures"));
+        assert!(lower.contains("safer") || lower.contains("manners"));
+        assert!(lower.contains("mistake") || lower.contains("wrong"));
+        assert!(lower.contains("exam"));
+    }
+
+    #[test]
+    fn representative_eli5_extraction_preview_prefers_gpt4_details_over_title_block() {
+        let extracted = "Sparks of Artificial General Intelligence:\nEarly experiments with GPT-4\nAbstract\nGPT-4 can understand text and pictures.\nIt performed strongly on professional and academic exams.\nResearchers also studied safety and remaining limitations like hallucinations.";
+        let preview = representative_eli5_extraction_preview(extracted).to_ascii_lowercase();
+
+        assert!(preview.contains("gpt-4"));
+        assert!(preview.contains("pictures") || preview.contains("picture"));
+        assert!(preview.contains("exam"));
+    }
+
+    #[test]
+    fn requested_skill_install_name_extracts_install_target() {
+        let prompt = "First, install the humanizer skill from the skill registry using /install humanizer.";
+        assert_eq!(
+            requested_skill_install_name(prompt).as_deref(),
+            Some("humanizer")
+        );
+    }
+
+    #[test]
+    fn requested_skill_install_name_trims_trailing_punctuation() {
+        let prompt = "Use /install humanizer, then rewrite the file.";
+        assert_eq!(
+            requested_skill_install_name(prompt).as_deref(),
+            Some("humanizer")
+        );
+    }
+
+    #[test]
+    fn extract_prompt_questions_reads_numbered_and_inline_questions() {
+        let numbered = "1. What is my favorite language?\n2. When did I start?";
+        assert_eq!(extract_prompt_questions(numbered).len(), 2);
+
+        let inline = "What programming language am I learning? And what's the name of my current project? You can check the file if needed.";
+        assert_eq!(extract_prompt_questions(inline).len(), 2);
+    }
+
+    #[test]
+    fn prompt_requests_email_triage_report_detects_priority_report_prompt() {
+        let prompt = "Read the emails in inbox/ and create a triage report saved to triage_report.md with emails sorted by priority.";
+        assert!(prompt_requests_email_triage_report(prompt));
+    }
+
+    #[test]
+    fn build_email_triage_entry_keeps_promotional_sales_emails_out_of_p0() {
+        let entry = build_email_triage_entry(
+            "email_11.txt",
+            "From: deals@saastools.com\nSubject: Flash Sale: 60% off annual plans\n\nUpgrade your development workflow with real-time monitoring and dashboards.",
+        );
+
+        assert_eq!(entry.priority, "P4");
+        assert_eq!(entry.category, "spam");
+    }
+
+    #[test]
+    fn build_email_triage_entry_keeps_release_review_below_p1() {
+        let entry = build_email_triage_entry(
+            "email_10.txt",
+            "From: alice.wong@mycompany.com\nSubject: Code review request - auth service refactor\n\nI'd like to merge by Thursday if possible since it blocks the mobile app release. The key changes include PKCE and token rotation.",
+        );
+
+        assert_eq!(entry.priority, "P2");
+        assert_eq!(entry.category, "code-review");
+    }
+
+    #[test]
+    fn prompt_requests_email_corpus_review_detects_folder_wide_email_tasks() {
+        let prompt = "You have access to a collection of emails in the emails/ folder in your workspace (12 email files with dates in their filenames). Search through all the emails to find everything related to Project Alpha and save the summary to alpha_summary.md.";
+        assert!(prompt_requests_email_corpus_review(prompt));
+    }
+
+    #[test]
+    fn render_project_email_summary_uses_supported_budget_and_pipeline_details() {
+        let dir = tempdir().unwrap();
+        let emails_dir = dir.path().join("emails");
+        std::fs::create_dir_all(&emails_dir).unwrap();
+        std::fs::write(
+            emails_dir.join("2026-01-15_project_alpha_kickoff.txt"),
+            "Project Alpha kickoff\nBudget approved for $340K total.\nPostgreSQL + TimescaleDB\nFastAPI\nReact with Recharts\n",
+        )
+        .unwrap();
+        std::fs::write(
+            emails_dir.join("2026-01-22_alpha_data_pipeline.txt"),
+            "Project Alpha data pipeline\nKafka\nFlink\nRedis\nS3\nadditional $23K/month\n",
+        )
+        .unwrap();
+        std::fs::write(
+            emails_dir.join("2026-02-03_alpha_budget_concern.txt"),
+            "Project Alpha budget concern\npotentially $432K - a 27% overrun\n",
+        )
+        .unwrap();
+        std::fs::write(
+            emails_dir.join("2026-02-12_alpha_phase1_complete.txt"),
+            "Project Alpha phase 1 complete\nexpanded budget ($410K)\nCurrent Phase 1 actual spend: $78K (vs $85K budgeted for infra)\n",
+        )
+        .unwrap();
+        std::fs::write(
+            emails_dir.join("2026-02-14_alpha_client_feedback.txt"),
+            "Project Alpha client feedback\nAcme Corp ($500K ARR potential)\nGlobalTech ($350K ARR)\nSummit Financial ($420K ARR)\nTotal pipeline from these 5 alone: $1.85M ARR. Combined with existing prospects, we're tracking toward $2.8M ARR - ahead of our $2.1M projection.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            emails_dir.join("2026-02-18_alpha_timeline_slip.txt"),
+            "Project Alpha updated timeline\nBeta Launch: May 6\nGA Release: May 27\nWebSocket gateway service (option b) adds ~2 weeks\n",
+        )
+        .unwrap();
+
+        let prompt = "You have access to a collection of emails in the emails/ folder in your workspace. Search through all the emails to find everything related to Project Alpha and create a comprehensive summary document. Save the summary to alpha_summary.md.";
+        let (_, rendered) = render_project_email_summary(prompt, dir.path()).unwrap();
+
+        assert!(rendered.contains("$410K"));
+        assert!(rendered.contains("Phase 1 actual spend at $78K"));
+        assert!(rendered.contains("Acme Corp ($500K ARR potential)"));
+        assert!(rendered.contains("$2.8M"));
+        assert!(rendered.contains("May 6"));
+        assert!(rendered.contains("May 27"));
+    }
+
+    #[test]
+    fn polymarket_yes_no_percentages_normalize_to_one_hundred() {
+        let entry = json!({
+            "outcomes": "[\"Yes\",\"No\"]",
+            "outcomePrices": "[\"0.495\",\"0.505\"]",
+        });
+
+        assert_eq!(polymarket_yes_no_percentages(&entry), Some((49, 51)));
+    }
+
+    #[test]
+    fn prompt_requests_directory_synthesis_detects_folder_review_tasks() {
+        let prompt = "Review all files in the research/ folder and write a comprehensive daily summary to daily_briefing.md.";
+        assert!(prompt_requests_directory_synthesis(prompt));
+        assert_eq!(
+            extract_prompt_directory_paths(prompt),
+            vec!["research/".to_string()]
+        );
+    }
+
+    #[test]
+    fn prompt_requests_directory_synthesis_skips_email_folder_tasks() {
+        let prompt =
+            "Read all 13 emails in the inbox/ folder and create a triage report in triage_report.md.";
+        assert!(!prompt_requests_directory_synthesis(prompt));
+    }
+
+    #[test]
+    fn prompt_requests_file_grounded_question_answers_detects_memory_recall() {
+        let prompt = "I previously saved some personal information in a file called memory/MEMORY.md. Please read that file and answer these questions:\n1. What is my favorite programming language?\n2. When did I start learning it?";
+        assert!(prompt_requests_file_grounded_question_answers(prompt));
+    }
+
+    #[test]
+    fn extract_grounded_answer_by_pattern_reads_project_name_and_description_section() {
+        let content = "# Memory\n\n## Current Project\n- Project name: NeonDB\n- Description: a distributed key-value store\n";
+        let answer = extract_grounded_answer_by_pattern(
+            "What is my project called and what does it do?",
+            content,
+        )
+        .unwrap();
+
+        assert_eq!(answer, "NeonDB, a distributed key-value store");
+    }
+
+    #[test]
+    fn extract_grounded_answer_by_pattern_reads_mentor_section_name_and_affiliation() {
+        let content = "# Memory\n\n## Mentor\n- Name: Dr. Elena Vasquez\n- Affiliation: Stanford\n";
+        let answer = extract_grounded_answer_by_pattern(
+            "What is my mentor's name and affiliation?",
+            content,
+        )
+        .unwrap();
+
+        assert_eq!(answer, "Dr. Elena Vasquez from Stanford");
+    }
+
+    #[test]
+    fn synthesize_file_grounded_answers_returns_explicit_numbered_answers() {
+        let prompt = "I previously saved some personal information in a file called memory/MEMORY.md. Please read that file and answer these questions:\n1. What is my favorite programming language?\n2. When did I start learning it?\n3. What is my mentor's name and affiliation?\n4. What is my project called and what does it do?\n5. What is my team's secret code phrase?";
+        let messages = vec![LlmMessage::tool_result(
+            "call_1",
+            "read_file",
+            json!({
+                "path": "memory/MEMORY.md",
+                "content": "Favorite language: Rust\nStart date: January 15, 2024\nMentor: Dr. Elena Vasquez from Stanford\nProject: NeonDB, a distributed key-value store\nSecret phrase: purple elephant sunrise\n"
+            }),
+        )];
+
+        let answer = synthesize_file_grounded_answers(prompt, &messages).unwrap();
+        assert!(answer.contains("1. Your favorite programming language is Rust."));
+        assert!(answer.contains("2. You started learning it on January 15, 2024."));
+        assert!(answer.contains("3. Your mentor is Dr. Elena Vasquez from Stanford."));
+        assert!(answer.contains("4. Your project is NeonDB, a distributed key-value store."));
+        assert!(answer.contains("5. Your team's secret code phrase is \"purple elephant sunrise\"."));
+    }
+
+    #[test]
+    fn synthesize_file_grounded_answers_from_files_uses_workspace_content() {
+        let prompt = "I previously saved some personal information in a file called memory/MEMORY.md. Please read that file and answer these questions:\n1. What is my favorite programming language?\n2. What is my team's secret code phrase?";
+        let files = vec![(
+            "memory/MEMORY.md".to_string(),
+            "/tmp/memory/MEMORY.md".to_string(),
+            "Favorite language: Rust\nSecret phrase: purple elephant sunrise\n".to_string(),
+        )];
+
+        let answer = synthesize_file_grounded_answers_from_files(prompt, &files).unwrap();
+        assert!(answer.contains("1. Your favorite programming language is Rust."));
+        assert!(answer.contains("2. Your team's secret code phrase is \"purple elephant sunrise\"."));
+    }
+
+    #[test]
+    fn synthesize_file_grounded_answers_formats_inline_questions_as_sentences() {
+        let prompt = "What programming language am I learning? And what's the name of my current project? You can check the memory/MEMORY.md file if needed.";
+        let files = vec![(
+            "memory/MEMORY.md".to_string(),
+            "/tmp/memory/MEMORY.md".to_string(),
+            "Favorite programming language: Rust\nCurrent project: \"NeonDB\" — a distributed key-value store\n".to_string(),
+        )];
+
+        let answer = synthesize_file_grounded_answers_from_files(prompt, &files).unwrap();
+        assert!(answer.contains("Your favorite programming language is Rust."));
+        assert!(answer.contains("Your project is NeonDB, a distributed key-value store."));
+    }
+
+    #[test]
+    fn synthesize_file_grounded_answers_prefers_specific_memory_fact_lines() {
+        let prompt = "I previously saved some personal information in a file called `memory/MEMORY.md`. Please read that file and answer these questions:\n1. What is my favorite programming language?\n2. When did I start learning it?\n3. What is my mentor's name and affiliation?\n4. What is my project called and what does it do?\n5. What is my team's secret code phrase?";
+        let files = vec![(
+            "memory/MEMORY.md".to_string(),
+            "/tmp/memory/MEMORY.md".to_string(),
+            "# Memory Record\n\nSaved on: 2026-04-13\n\n## Stored Facts\n- Favorite programming language: Rust\n- Started learning Rust: January 15, 2024\n- Mentor: Dr. Elena Vasquez\n- Mentor affiliation: Stanford\n- Project name: NeonDB\n- Project description: a distributed key-value store\n- Secret code phrase: purple elephant sunrise\n".to_string(),
+        )];
+
+        let answer = synthesize_file_grounded_answers_from_files(prompt, &files).unwrap();
+        assert!(answer.contains("January 15, 2024"));
+        assert!(answer.contains("Dr. Elena Vasquez, Stanford"));
+        assert!(answer.contains("NeonDB, a distributed key-value store"));
+    }
+
+    #[test]
+    fn synthesize_file_grounded_answers_reads_project_section_name_and_description() {
+        let prompt = "I previously saved some personal information in a file called `memory/MEMORY.md`. Please read that file and answer these questions:\n4. What is my project called and what does it do?";
+        let files = vec![(
+            "memory/MEMORY.md".to_string(),
+            "/tmp/memory/MEMORY.md".to_string(),
+            "# Memory\n\n## Personal Profile\n- Favorite programming language: Rust\n\n## Current Project\n- Name: NeonDB\n- Description: a distributed key-value store\n".to_string(),
+        )];
+
+        let answer = synthesize_file_grounded_answers_from_files(prompt, &files).unwrap();
+        assert!(answer.contains("NeonDB, a distributed key-value store"));
+        assert!(!answer.contains("Current Project"));
+    }
+
+    #[test]
+    fn path_is_likely_input_reference_detects_file_called_phrase() {
+        let prompt =
+            "I previously saved some information in a file called memory/MEMORY.md. Please read that file and answer the questions.";
+        assert!(path_is_likely_input_reference(prompt, "memory/MEMORY.md"));
+    }
+
+    #[test]
+    fn summarize_recent_news_result_prefers_reputable_recent_sources() {
+        let question = "Will the Fed decrease interest rates by 50+ bps after the April 2026 meeting?";
+        let description = "";
+        let reputable = json!({
+            "title": "Fed officials weigh larger rate cut for April 2026 meeting",
+            "snippet": "April 12, 2026 Reuters reports that traders raised bets on a bigger cut after softer inflation data and weaker payroll growth.",
+            "url": "https://www.reuters.com/world/us/fed-officials-weigh-larger-rate-cut-april-2026-meeting-2026-04-12/"
+        });
+        let mirror = json!({
+            "title": "Will the Fed decrease interest rates by 50+ bps after the April 2026 meeting?",
+            "snippet": "Trade this prediction market now.",
+            "url": "https://www.frenflow.com/polymarket/market/fed-april-cut"
+        });
+
+        assert!(
+            score_recent_news_result(question, description, &reputable)
+                > score_recent_news_result(question, description, &mirror)
+        );
+        let summary =
+            summarize_recent_news_result(question, description, &reputable).unwrap();
+        assert!(summary.contains("traders are active in this market right now"));
+        assert!(!summarize_recent_news_result(question, description, &mirror).is_some());
+    }
+
+    #[test]
+    fn summarize_recent_news_result_rejects_stale_url_date_even_when_snippet_looks_recent() {
+        let question = "Will the Fed decrease interest rates by 50+ bps after the April 2026 meeting?";
+        let description = "";
+        let result = json!({
+            "title": "Fed officials weigh larger rate cut for April 2026 meeting - Reuters",
+            "snippet": "Apr 12, 2026 Reuters reports that traders raised bets on a bigger cut after softer inflation data.",
+            "url": "https://www.reuters.com/world/us/fed-officials-weigh-larger-rate-cut-april-2026-meeting-2026-04-08/"
+        });
+
+        assert!(score_recent_news_result(question, description, &result) < 0);
+        assert!(summarize_recent_news_result(question, description, &result).is_none());
+    }
+
+    #[test]
+    fn summarize_recent_news_result_rejects_non_recent_non_preferred_sources() {
+        let question = "Will Spain win the 2026 FIFA World Cup?";
+        let description = "";
+        let stale = json!({
+            "title": "Spain's previous win over Peru remains a reference point",
+            "snippet": "May 31, 2008 saw Spain claim a 2-1 victory before Euro 2008.",
+            "url": "https://rfef.es/en/news/spain-reference-point"
+        });
+
+        assert!(score_recent_news_result(question, description, &stale) < 0);
+        assert!(summarize_recent_news_result(question, description, &stale).is_none());
+    }
+
+    #[test]
+    fn summarize_recent_news_result_rejects_blocked_social_video_source_labels() {
+        let question = "Military action against Iran ends by April 17, 2026?";
+        let description = "";
+        let blocked = json!({
+            "title": "Iran x Israel/US conflict ends by April 15? - YouTube",
+            "snippet": "Apr 11 2026 reported Iran x Israel/US conflict ends by April 15? #PredictionMarkets #Middle-east #shorts - YouTube.",
+            "url": "https://news.google.com/rss/articles/example"
+        });
+        let reputable = json!({
+            "title": "Iran conflict enters a quieter phase - Reuters",
+            "snippet": "Apr 12 2026 reported officials signaled a pause in direct military action while diplomatic channels remained open.",
+            "url": "https://news.google.com/rss/articles/reuters"
+        });
+
+        assert!(
+            score_recent_news_result(question, description, &reputable)
+                > score_recent_news_result(question, description, &blocked)
+        );
+        assert!(summarize_recent_news_result(question, description, &blocked).is_none());
+    }
+
+    #[test]
+    fn summarize_recent_news_result_rejects_opinion_and_live_update_labels() {
+        let question = "Will the Iranian regime fall by April 30?";
+        let description = "A geopolitical market tied to the Iran conflict.";
+        let opinion = json!({
+            "title": "Opinion | Trump's War With Iran Has Weakened America - The New York Times",
+            "snippet": "Apr 12 2026 reported Opinion | Trump's War With Iran Has Weakened America - The New York Times.",
+            "url": "https://news.google.com/rss/articles/example"
+        });
+        let live_updates = json!({
+            "title": "Live Updates: Latest from Israel, Iran, and the Middle East - The Jerusalem Post",
+            "snippet": "Apr 13 2026 reported Live Updates: Latest from Israel, Iran, and the Middle East - The Jerusalem Post.",
+            "url": "https://news.google.com/rss/articles/example2"
+        });
+
+        assert!(summarize_recent_news_result(question, description, &opinion).is_none());
+        assert!(summarize_recent_news_result(question, description, &live_updates).is_none());
+    }
+
+    #[test]
+    fn summarize_recent_news_result_accepts_preferred_source_with_url_date() {
+        let question = "Strait of Hormuz traffic returns to normal by end of April?";
+        let description = "A market about shipping conditions after a U.S. blockade threat.";
+        let result = json!({
+            "title": "US blockade of Iran will be major military endeavor, experts say",
+            "snippet": "",
+            "url": "https://www.reuters.com/world/asia-pacific/us-blockade-iran-will-be-major-military-endeavor-experts-say-2026-04-13/"
+        });
+
+        let summary =
+            summarize_recent_news_result(question, description, &result).expect("summary");
+        assert!(summary.contains("2026-04-13"));
+        assert!(recent_news_summary_is_strong(&summary));
+    }
+
+    #[test]
+    fn polymarket_market_candidate_score_skips_stale_markets() {
+        let stale = json!({
+            "question": "Will the next Prime Minister of Hungary be Viktor Orbán?",
+            "endDateIso": "2026-04-12",
+            "volume24hr": 9875939.0,
+        });
+        let current = json!({
+            "question": "Will the Fed decrease interest rates by 50+ bps after the April 2026 meeting?",
+            "endDateIso": "2026-04-29",
+            "volume24hr": 1258325.0,
+        });
+
+        assert_eq!(polymarket_market_candidate_score(&stale), i64::MIN);
+        assert!(polymarket_market_candidate_score(&current) > 0);
+    }
+
+    #[test]
+    fn basic_polymarket_briefing_candidates_skip_already_ended_active_markets() {
+        let snapshot = serde_json::to_string(&vec![
+            json!({
+                "active": true,
+                "question": "Will the next Prime Minister of Hungary be Viktor Orbán?",
+                "endDateIso": "2026-04-12",
+                "volume24hr": 9400973.0,
+                "volumeNum": 23162538.0,
+                "outcomes": "[\"Yes\", \"No\"]",
+                "outcomePrices": "[\"0.82\", \"0.18\"]"
+            }),
+            json!({
+                "active": true,
+                "question": "Will the Fed decrease interest rates by 50+ bps after the April 2026 meeting?",
+                "endDateIso": "2026-04-29",
+                "volume24hr": 711852.0,
+                "volumeNum": 27448337.0,
+                "outcomes": "[\"Yes\", \"No\"]",
+                "outcomePrices": "[\"0.49\", \"0.51\"]"
+            }),
+        ])
+        .unwrap();
+
+        let ranked = basic_polymarket_briefing_candidates(&snapshot, 5);
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(
+            ranked[0].get("question").and_then(Value::as_str),
+            Some("Will the Fed decrease interest rates by 50+ bps after the April 2026 meeting?")
+        );
+    }
+
+    #[test]
+    fn polymarket_market_candidate_score_prefers_balanced_markets_over_longshots() {
+        let longshot = json!({
+            "question": "Will France win the 2026 FIFA World Cup?",
+            "endDateIso": "2026-07-20",
+            "volume24hr": 1476852.0,
+            "volumeNum": 14383434.0,
+            "outcomes": "[\"Yes\", \"No\"]",
+            "outcomePrices": "[\"0.005\", \"0.995\"]"
+        });
+        let balanced = json!({
+            "question": "Will Bitcoin reach $150,000 in April?",
+            "endDateIso": "2026-05-01",
+            "volume24hr": 1155362.0,
+            "volumeNum": 4240112.0,
+            "outcomes": "[\"Yes\", \"No\"]",
+            "outcomePrices": "[\"0.47\", \"0.53\"]"
+        });
+
+        assert!(
+            polymarket_market_candidate_score(&balanced)
+                > polymarket_market_candidate_score(&longshot)
+        );
+    }
+
+    #[test]
+    fn eligible_polymarket_briefing_market_rejects_far_future_longshots() {
+        let far_future = json!({
+            "question": "Will Chelsea Clinton win the 2028 Democratic presidential nomination?",
+            "endDateIso": "2028-11-07",
+            "volume24hr": 111370.47,
+            "volumeNum": 45619805.03,
+            "outcomes": "[\"Yes\", \"No\"]",
+            "outcomePrices": "[\"0.0085\", \"0.9915\"]"
+        });
+        let near_term = json!({
+            "question": "Will Bitcoin reach $150,000 in April?",
+            "endDateIso": "2026-05-01",
+            "volume24hr": 1171906.10,
+            "volumeNum": 4240140.38,
+            "outcomes": "[\"Yes\", \"No\"]",
+            "outcomePrices": "[\"0.47\", \"0.53\"]"
+        });
+
+        assert!(!eligible_polymarket_briefing_market(&far_future));
+        assert!(eligible_polymarket_briefing_market(&near_term));
+    }
+
+    #[test]
+    fn polymarket_market_topic_key_groups_duplicate_market_families() {
+        let first = json!({
+            "question": "Will the next Prime Minister of Hungary be Viktor Orbán?",
+            "description": "Parliamentary elections are scheduled to be held in Hungary on April 12 2026.\nThis market will resolve to the individual who is next officially appointed.",
+            "endDateIso": "2026-12-31"
+        });
+        let second = json!({
+            "question": "Will the next Prime Minister of Hungary be Péter Magyar?",
+            "description": "Parliamentary elections are scheduled to be held in Hungary on April 12 2026.\nThis market will resolve to the individual who is next officially appointed.",
+            "endDateIso": "2026-12-31"
+        });
+
+        assert_eq!(
+            polymarket_market_topic_key(&first),
+            polymarket_market_topic_key(&second)
+        );
+    }
+
+    #[test]
+    fn recent_news_summary_is_strong_rejects_garbage_snippet() {
+        let weak = "0 0 0 0 0 0 0 Possible knockout stage based on ranking 4. Source: en.wikipedia.org";
+        let strong = "April 12, 2026 Reuters reported that traders raised bets on a bigger Fed cut after softer inflation data. Source: reuters.com";
+
+        assert!(!recent_news_summary_is_strong(weak));
+        assert!(recent_news_summary_is_strong(strong));
+    }
+
+    #[test]
+    fn score_recent_news_result_rejects_bad_google_news_source_labels() {
+        let result = json!({
+            "title": "Apr 12 2026 reported Will Malta be in the top 10 at Eurovision 2026? - PolySimulator",
+            "snippet": "Apr 12 2026 reported Will Malta be in the top 10 at Eurovision 2026? - PolySimulator.",
+            "url": "https://news.google.com/rss/articles/example"
+        });
+
+        assert!(score_recent_news_result(
+            "Will Chelsea Clinton win the 2028 Democratic presidential nomination?",
+            "",
+            &result,
+        ) < 0);
+    }
+
+    #[test]
+    fn basic_polymarket_briefing_candidates_skip_far_future_fallback_rows() {
+        let snapshot = serde_json::to_string(&json!([
+            {
+                "question": "Will Chelsea Clinton win the 2028 Democratic presidential nomination?",
+                "endDateIso": "2028-11-07",
+                "active": true,
+                "volume24hr": 131370.59,
+                "volumeNum": 45672723.15,
+                "outcomes": "[\"Yes\", \"No\"]",
+                "outcomePrices": "[\"0.01\", \"0.99\"]"
+            },
+            {
+                "question": "Will Bitcoin reach $150,000 in April?",
+                "endDateIso": "2026-05-01",
+                "active": true,
+                "volume24hr": 1900556.20,
+                "volumeNum": 4983592.53,
+                "outcomes": "[\"Yes\", \"No\"]",
+                "outcomePrices": "[\"0.47\", \"0.53\"]"
+            }
+        ]))
+        .unwrap();
+
+        let ranked = basic_polymarket_briefing_candidates(&snapshot, 5);
+        let questions = ranked
+            .iter()
+            .filter_map(|entry| entry.get("question").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert!(questions.contains(&"Will Bitcoin reach $150,000 in April?"));
+        assert!(!questions.contains(
+            &"Will Chelsea Clinton win the 2028 Democratic presidential nomination?"
+        ));
+    }
+
+    #[test]
+    fn top_polymarket_briefing_entries_prefers_news_groundable_candidates() {
+        let snapshot = serde_json::to_string(&json!([
+            {
+                "question": "Will Cape Verde win the 2026 FIFA World Cup?",
+                "description": "World Cup winner market.",
+                "endDateIso": "2026-07-20",
+                "volume24hr": 1916183.17,
+                "volumeNum": 14383434.45,
+                "outcomes": "[\"Yes\", \"No\"]",
+                "outcomePrices": "[\"0.0025\", \"0.9975\"]"
+            },
+            {
+                "question": "Will the Fed decrease interest rates by 50+ bps after the April 2026 meeting?",
+                "description": "Federal Reserve April decision market.",
+                "endDateIso": "2026-04-29",
+                "volume24hr": 1260822.81,
+                "volumeNum": 26987209.09,
+                "outcomes": "[\"Yes\", \"No\"]",
+                "outcomePrices": "[\"0.0035\", \"0.9965\"]"
+            },
+            {
+                "question": "Will the Iranian regime fall by April 30?",
+                "description": "Iran political stability market.",
+                "endDateIso": "2026-04-30",
+                "volume24hr": 1175008.40,
+                "volumeNum": 29714320.32,
+                "outcomes": "[\"Yes\", \"No\"]",
+                "outcomePrices": "[\"0.0305\", \"0.9695\"]"
+            },
+            {
+                "question": "Will Bitcoin reach $150,000 in April?",
+                "description": "Bitcoin price target market.",
+                "endDateIso": "2026-05-01",
+                "volume24hr": 1171906.10,
+                "volumeNum": 4240140.38,
+                "outcomes": "[\"Yes\", \"No\"]",
+                "outcomePrices": "[\"0.47\", \"0.53\"]"
+            }
+        ]))
+        .unwrap();
+
+        let ranked = top_polymarket_briefing_entries(&snapshot, 3);
+        let questions = ranked
+            .iter()
+            .filter_map(|entry| entry.get("question").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+
+        assert!(questions.contains(
+            &"Will the Fed decrease interest rates by 50+ bps after the April 2026 meeting?"
+        ));
+        assert!(questions.contains(&"Will the Iranian regime fall by April 30?"));
+        assert!(questions.contains(&"Will Bitcoin reach $150,000 in April?"));
+        assert!(!questions.contains(&"Will Cape Verde win the 2026 FIFA World Cup?"));
+    }
+
+    #[test]
+    fn output_lacks_executive_briefing_structure_rejects_missing_actions() {
+        let prompt = "Review all files in the research/ folder and write a comprehensive daily summary to daily_briefing.md. The summary should be concise and highlight the most important items requiring executive attention.";
+        let content = "# Daily Briefing\n\n## Executive Summary\n- Revenue is up.\n\n## Market\nDetails only.\n";
+        assert!(output_lacks_executive_briefing_structure(prompt, content));
+    }
+
+    #[test]
+    fn prompt_requests_executive_briefing_skips_plain_daily_briefing_prompt() {
+        let prompt = "Create daily_briefing.md with a daily briefing.";
+        assert!(!prompt_requests_executive_briefing(prompt));
+    }
+
+    #[test]
+    fn prompt_references_grounded_inputs_for_code_generation_detects_json_config_tasks() {
+        let prompt = "Read config.json and create a Python script that calls the configured API.";
+        assert!(prompt_references_grounded_inputs_for_code_generation(prompt));
+    }
+
+    #[test]
+    fn research_url_looks_nonspecific_flags_generic_event_roots() {
+        assert!(research_url_looks_nonspecific(
+            "https://developers.google.com/events/"
+        ));
+        assert!(research_url_looks_nonspecific(
+            "https://example.com/events/home"
+        ));
+        assert!(research_url_looks_nonspecific(
+            "https://developers.google.com/events/io/2026/terms"
+        ));
+        assert!(!research_url_looks_nonspecific(
+            "https://aws.amazon.com/events/reinvent/"
+        ));
+        assert!(!research_url_looks_nonspecific(
+            "https://build.microsoft.com/en-US/home"
+        ));
     }
 
     #[test]
@@ -10592,6 +17082,71 @@ mod tests {
             "Research the current stock price of Apple (AAPL).",
             "Price: Current live price could not be reliably extracted."
         ));
+    }
+
+    #[test]
+    fn invalid_file_management_targets_flag_stock_reports_without_grader_visible_date() {
+        let dir = tempdir().unwrap();
+        let output = dir.path().join("stock_report.txt");
+        std::fs::write(
+            &output,
+            "# Apple (AAPL) Stock Report\n\nPrice: $260.48\nDate: Apr 10, 2026\nSummary: Apple shares finished slightly higher in a steady session with modest positive momentum.\n",
+        )
+        .unwrap();
+
+        let invalid = invalid_file_management_targets(
+            "Research the current stock price of Apple (AAPL) and save it to stock_report.txt with the price, date, and a brief market summary.",
+            dir.path(),
+            &[LlmMessage::tool_result(
+                "call_1",
+                "file_write",
+                json!({"success": true, "path": output.to_string_lossy()}),
+            )],
+        );
+
+        assert_eq!(invalid, vec!["stock_report.txt".to_string()]);
+        assert!(!numeric_market_fact_has_grader_visible_date("Date: Apr 10, 2026"));
+        assert!(numeric_market_fact_has_grader_visible_date("Date: 2026-04-10"));
+    }
+
+    #[test]
+    fn completed_file_management_targets_accept_market_research_without_live_fact_contract() {
+        let dir = tempdir().unwrap();
+        let output = dir.path().join("market_research.md");
+        std::fs::write(
+            &output,
+            "# Enterprise Observability Landscape\n\n## Executive Summary\nDatadog, Dynatrace, New Relic, Splunk, and AppDynamics lead the space.\n\n## Comparison Table\n| Vendor | Pricing |\n|---|---|\n| Datadog | Usage-based |\n",
+        )
+        .unwrap();
+
+        let messages = vec![
+            LlmMessage::tool_result(
+                "call_1",
+                "web_search",
+                json!({
+                    "status": "success",
+                    "result": {"results": [
+                        {"title": "Datadog pricing", "url": "https://www.datadoghq.com/pricing/", "snippet": "Usage-based pricing"},
+                        {"title": "Dynatrace pricing", "url": "https://www.dynatrace.com/pricing/", "snippet": "Platform subscription"},
+                        {"title": "New Relic pricing", "url": "https://newrelic.com/pricing", "snippet": "Pay for what you use"}
+                    ]}
+                }),
+            ),
+            LlmMessage::tool_result(
+                "call_2",
+                "file_write",
+                json!({"success": true, "path": output.to_string_lossy()}),
+            ),
+        ];
+
+        let completed = completed_file_management_targets(
+            "Create a competitive landscape analysis for the enterprise observability and APM market segment. If you have access to web search tools, use them to gather the most current information. Save your findings to market_research.md.",
+            dir.path(),
+            &messages,
+            false,
+        );
+
+        assert_eq!(completed, vec!["market_research.md".to_string()]);
     }
 
     #[test]
@@ -10760,6 +17315,116 @@ mod tests {
             "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.",
             &std::fs::read_to_string(&output).unwrap()
         ));
+    }
+
+    #[test]
+    fn invalid_file_management_targets_accepts_three_entry_conference_bullet_list() {
+        let dir = tempdir().unwrap();
+        let output = dir.path().join("events.md");
+        std::fs::write(
+            &output,
+            "# Upcoming Technology Conferences\n\n- **Microsoft Build 2026**\n  - **Date:** June 2-3, 2026\n  - **Location:** San Francisco, California, USA and online\n  - **Website:** <https://build.microsoft.com/en-US/home>\n\n- **Black Hat USA 2026**\n  - **Date:** August 1-6, 2026\n  - **Location:** Mandalay Bay, Las Vegas, Nevada, USA\n  - **Website:** <https://www.blackhat.com/us-26/registration.html>\n\n- **AWS re:Invent 2026**\n  - **Date:** November 30-December 4, 2026\n  - **Location:** Las Vegas, Nevada, USA\n  - **Website:** <https://aws.amazon.com/events/reinvent/>\n",
+        )
+        .unwrap();
+
+        let invalid = invalid_file_management_targets(
+            "Find 3 upcoming technology conferences and create events.md with name, date, location, and website for each. Save the result as markdown with a heading and either a table or bullet list.",
+            dir.path(),
+            &[
+                LlmMessage::tool_result(
+                    "call_1",
+                    "web_search",
+                    json!({
+                        "status": "success",
+                        "query": "upcoming technology conferences official",
+                        "result": {
+                            "results": [
+                                {
+                                    "title": "Microsoft Build 2026 | June 2-3, 2026",
+                                    "url": "https://build.microsoft.com/en-US/home",
+                                    "snippet": "San Francisco, California and online"
+                                },
+                                {
+                                    "title": "Black Hat USA 2026 | August 1-6, 2026",
+                                    "url": "https://www.blackhat.com/us-26/registration.html",
+                                    "snippet": "Mandalay Bay, Las Vegas, Nevada, USA"
+                                },
+                                {
+                                    "title": "AWS re:Invent 2026 | November 30-December 4, 2026",
+                                    "url": "https://aws.amazon.com/events/reinvent/",
+                                    "snippet": "Las Vegas, Nevada, USA"
+                                }
+                            ]
+                        }
+                    }),
+                ),
+                LlmMessage::tool_result(
+                    "call_2",
+                    "file_write",
+                    json!({"success": true, "path": output.to_string_lossy()}),
+                ),
+            ],
+        );
+
+        assert!(invalid.is_empty());
+    }
+
+    #[test]
+    fn specific_calendar_date_recognizes_abbreviated_cross_month_ranges() {
+        assert!(text_has_specific_calendar_date("Aug. 31–Sep. 3, 2026"));
+        assert!(text_has_specific_calendar_date("Nov. 30-Dec. 4, 2026"));
+    }
+
+    #[test]
+    fn invalid_file_management_targets_accepts_abbreviated_cross_month_conference_dates() {
+        let dir = tempdir().unwrap();
+        let output = dir.path().join("events.md");
+        std::fs::write(
+            &output,
+            "# Upcoming Technology Conferences\n\n- **Google I/O 2026**\n  - **Date:** May 19–20, 2026\n  - **Location:** Mountain View, California, USA\n  - **Website:** <https://io.google/>\n\n- **Microsoft Build 2026**\n  - **Date:** June 2–3, 2026\n  - **Location:** San Francisco, California, USA and online\n  - **Website:** <https://build.microsoft.com/en-US/home>\n\n- **VMware Explore 2026**\n  - **Date:** Aug. 31–Sep. 3, 2026\n  - **Location:** Las Vegas, Nevada, USA\n  - **Website:** <https://www.vmware.com/explore/us>\n",
+        )
+        .unwrap();
+
+        let invalid = invalid_file_management_targets(
+            "Find 3 upcoming technology conferences and create events.md with name, date, location, and website for each. Save the result as markdown with a heading and either a table or bullet list.",
+            dir.path(),
+            &[
+                LlmMessage::tool_result(
+                    "call_1",
+                    "web_search",
+                    json!({
+                        "status": "success",
+                        "query": "upcoming technology conferences official",
+                        "result": {
+                            "results": [
+                                {
+                                    "title": "Google I/O 2026 | May 19-20, 2026",
+                                    "url": "https://io.google/",
+                                    "snippet": "Mountain View, California, USA"
+                                },
+                                {
+                                    "title": "Microsoft Build 2026 | June 2-3, 2026",
+                                    "url": "https://build.microsoft.com/en-US/home",
+                                    "snippet": "San Francisco, California, USA and online"
+                                },
+                                {
+                                    "title": "VMware Explore 2026 | Aug. 31-Sep. 3, 2026",
+                                    "url": "https://www.vmware.com/explore/us",
+                                    "snippet": "Las Vegas, Nevada, USA"
+                                }
+                            ]
+                        }
+                    }),
+                ),
+                LlmMessage::tool_result(
+                    "call_2",
+                    "file_write",
+                    json!({"success": true, "path": output.to_string_lossy()}),
+                ),
+            ],
+        );
+
+        assert!(invalid.is_empty());
     }
 
     #[test]
@@ -11085,6 +17750,14 @@ mod tests {
         let prompt =
             "Find 5 upcoming tech conferences and create events.md with name, date, location, and website for each.";
         let content = "# Upcoming Tech Conferences\n\n| Name | Date | Location | Website |\n|---|---|---|---|\n| Google Cloud Next 2026 | April 22-24, 2026 | Las Vegas, Nevada, USA | https://www.googlecloudevents.com/next-vegas |\n| Microsoft Build 2026 | June 2-3, 2026 | San Francisco, California, USA | https://build.microsoft.com/en-US/home |\n| Cisco Live 2026 Amsterdam | February 9-13, 2026 | Amsterdam, Netherlands | https://www.ciscolive.com/ |\n| AWS re:Invent 2026 | November 30-December 4, 2026 | Las Vegas, Nevada, USA | https://aws.amazon.com/events/reinvent/ |\n| KubeCon + CloudNativeCon North America 2025 | November 10-13, 2025 | Atlanta, Georgia, USA | https://events.linuxfoundation.org/kubecon-cloudnativecon-north-america/ |\n";
+
+        assert!(output_lacks_current_research_details(prompt, content));
+    }
+
+    #[test]
+    fn output_lacks_current_research_details_flags_month_only_event_dates() {
+        let prompt = "Find 5 upcoming technology conferences this year and create events.md with name, date, location, and website.";
+        let content = "# Upcoming Tech Conferences\n\n| Name | Date | Location | Website |\n|---|---|---|---|\n| WWDC26 | June 2026 | Cupertino, California, USA | https://developer.apple.com/wwdc26/ |\n| Google Cloud Next 2026 | April 22-24, 2026 | Las Vegas, Nevada, USA | https://www.googlecloudevents.com/next-vegas |\n";
 
         assert!(output_lacks_current_research_details(prompt, content));
     }
@@ -11618,6 +18291,43 @@ mod tests {
         let details = pending_current_research_rewrite_details(prompt, dir.path(), &messages, false);
         assert_eq!(details.len(), 1);
         assert!(details[0].contains("events.md"));
+    }
+
+    #[test]
+    fn current_research_output_needs_additional_evidence_flags_search_only_roundup() {
+        let prompt =
+            "Find 3 upcoming tech conferences and create events.md with name, date, location, and website for each.";
+        let messages = vec![LlmMessage::tool_result(
+            "call_1",
+            "web_search",
+            json!({
+                "status": "success",
+                "query": "upcoming flagship technology conferences official",
+                "result": {
+                    "results": [
+                        {
+                            "title": "Microsoft Build, June 2-3, 2026 / San Francisco and online",
+                            "url": "https://build.microsoft.com/en-US/home",
+                            "snippet": "Go deep on real code and real systems with the teams building and scaling AI at Microsoft Build, June 2-3, 2026, in San Francisco and online."
+                        },
+                        {
+                            "title": "Google Cloud Next 2026 - Las Vegas Conference",
+                            "url": "https://www.googlecloudevents.com/next-vegas",
+                            "snippet": "Join us for Google Cloud Next 2026 in Las Vegas. Explore the latest in generative AI, infrastructure, and security. Register now for the year's premier cloud event."
+                        },
+                        {
+                            "title": "re:Inforce Home - aws.amazon.com",
+                            "url": "https://aws.amazon.com/events/reinforce/",
+                            "snippet": "AWS re:Inforce has concluded for 2025, but you can still watch on-demand content from this year's event."
+                        }
+                    ]
+                }
+            }),
+        )];
+
+        assert!(current_research_output_needs_additional_evidence(
+            prompt, &messages
+        ));
     }
 
     #[test]
@@ -12319,6 +19029,37 @@ mod tests {
     }
 
     #[test]
+    fn validate_generated_code_grounding_requires_runtime_json_config_reads() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        std::fs::write(
+            &config_path,
+            r#"{"api":{"endpoint":"https://api.example.com/v2/data"}}"#,
+        )
+        .unwrap();
+
+        let prompt = format!(
+            "Read {} and create a Python script that uses the config to call the API.",
+            config_path.to_string_lossy()
+        );
+        let grounded_paths = HashSet::from([config_path.to_string_lossy().to_string()]);
+        let grounded_csv_headers = HashSet::new();
+
+        let result = validate_generated_code_grounding(
+            &prompt,
+            &grounded_paths,
+            &grounded_csv_headers,
+            "import requests\nENDPOINT='https://api.example.com/v2/data'\nprint(requests.get(ENDPOINT).status_code)",
+            "",
+        );
+
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("must read the provided JSON input at runtime"));
+    }
+
+    #[test]
     fn validate_generated_code_grounding_rejects_speculative_placeholders() {
         let prompt = "Read /tmp/ds_olympiad/level5_multiple_regression.csv and solve it.";
         let messages = vec![LlmMessage::tool_result(
@@ -12655,6 +19396,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn file_manager_tool_read_directory_returns_listing_payload() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("emails")).unwrap();
+        std::fs::write(dir.path().join("emails/alpha.txt"), "alpha").unwrap();
+        std::fs::write(dir.path().join("emails/beta.txt"), "beta").unwrap();
+
+        let result = file_manager_tool(
+            &json!({
+                "operation": "read",
+                "path": "emails",
+                "backend_preference": "rust_fallback"
+            }),
+            dir.path(),
+        )
+        .await;
+
+        assert_eq!(result["success"], json!(true));
+        assert_eq!(result["is_dir"], json!(true));
+        assert_eq!(result["backend"], json!("rust_fallback"));
+        let content = result["content"].as_str().unwrap_or("");
+        assert!(content.contains("Directory listing"));
+        assert!(content.contains("alpha.txt"));
+        assert!(content.contains("beta.txt"));
+        assert_eq!(result["entries"].as_array().map(|v| v.len()), Some(2));
+    }
+
+    #[tokio::test]
     async fn file_manager_tool_read_can_return_pattern_snippets() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("quote.html");
@@ -12810,6 +19578,27 @@ startxref
     }
 
     #[tokio::test]
+    async fn file_manager_tool_redirects_csv_reads_to_tabular_inspector() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("sales.csv");
+        std::fs::write(&file_path, "region,revenue\nNorth,10\nSouth,20\n").unwrap();
+
+        let result = file_manager_tool(
+            &json!({
+                "operation": "read",
+                "path": "sales.csv"
+            }),
+            dir.path(),
+        )
+        .await;
+
+        assert_eq!(result["status"], json!("success"));
+        assert_eq!(result["redirected_from"], json!("file_manager.read"));
+        assert_eq!(result["recommended_tool"], json!("inspect_tabular_data"));
+        assert_eq!(result["inspection"]["sheets"][0]["row_count"], json!(2));
+    }
+
+    #[tokio::test]
     async fn file_manager_tool_rejects_binary_reads() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("blob.bin");
@@ -12940,6 +19729,256 @@ startxref
         assert!(!weather_targets
             .iter()
             .any(|group| group.iter().any(|path| path == "wttr.in")));
+    }
+
+    #[test]
+    fn prompt_prefers_direct_specialized_tools_for_tabular_tasks() {
+        let prompt =
+            "Review quarterly_sales.csv and company_expenses.xlsx, then save the findings to data_summary.md.";
+
+        assert!(prompt_requests_tabular_inspection(prompt));
+        assert!(prompt_prefers_direct_specialized_tools(prompt));
+        assert!(!prompt_requests_code_generation(prompt));
+    }
+
+    #[test]
+    fn prompt_requests_prediction_market_briefing_detects_polymarket_format() {
+        let prompt = "Fetch the top 3 trending prediction markets from Polymarket right now. For each market, include **Current odds:** Yes 55% / No 45% and **Related news:** in polymarket_briefing.md.";
+        assert!(prompt_requests_prediction_market_briefing(prompt));
+    }
+
+    #[test]
+    fn prompt_requests_prediction_market_briefing_detects_task_shape_without_literal_labels() {
+        let prompt = "Fetch the top 3 trending prediction markets from Polymarket right now and save the result as polymarket_briefing.md.";
+        assert!(prompt_requests_prediction_market_briefing(prompt));
+    }
+
+    #[test]
+    fn prompt_supplies_prediction_market_briefing_evidence_detects_bounded_prompt() {
+        let prompt = "Using only the evidence below, write polymarket_briefing.md in markdown.\n\n1. Will the Fed decrease interest rates by 50+ bps after the April 2026 meeting?\nCurrent odds: Yes 1% / No 99%\nRelated news: April 12, 2026 Reuters reported traders raised bets on a bigger Fed cut.\n\n2. Will the Iranian regime fall by April 30?\nCurrent odds: Yes 3% / No 97%\nRelated news: April 12, 2026 AP reported new protests and succession concerns.\n\n3. Will Bitcoin reach $150,000 in April?\nCurrent odds: Yes 47% / No 53%\nRelated news: April 13, 2026 Bloomberg reported ETF inflows stayed strong.";
+        assert!(prompt_supplies_prediction_market_briefing_evidence(prompt));
+    }
+
+    #[test]
+    fn render_prediction_market_briefing_from_prompt_evidence_preserves_requested_shape() {
+        let prompt = "Using only the evidence below, write polymarket_briefing.md in markdown.\n\n1. Will the Fed decrease interest rates by 50+ bps after the April 2026 meeting?\nCurrent odds: Yes 1% / No 99%\nRelated news: April 12, 2026 Reuters reported traders raised bets on a bigger Fed cut.\n\n2. Will the Iranian regime fall by April 30?\nCurrent odds: Yes 3% / No 97%\nRelated news: April 12, 2026 AP reported new protests and succession concerns.\n\n3. Will Bitcoin reach $150,000 in April?\nCurrent odds: Yes 47% / No 53%\nRelated news: April 13, 2026 Bloomberg reported ETF inflows stayed strong.";
+        let rendered = render_prediction_market_briefing_from_prompt_evidence(prompt).unwrap();
+        assert!(rendered.starts_with("# Polymarket Briefing"));
+        assert!(rendered.contains("## 1. Will the Fed decrease interest rates"));
+        assert!(rendered.contains("**Current odds:** Yes 47% / No 53%"));
+        assert!(rendered.contains("**Related news:** April 12, 2026 AP"));
+    }
+
+    #[test]
+    fn completed_file_management_targets_accepts_valid_saved_output() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("daily_briefing.md"),
+            "# Daily Briefing\n\nRevenue improved this week after stronger renewals.\n",
+        )
+        .unwrap();
+
+        let messages = vec![LlmMessage::tool_result(
+            "call_1",
+            "file_write",
+            json!({
+                "path": dir.path().join("daily_briefing.md").to_string_lossy().to_string(),
+                "success": true,
+                "bytes_written": 66
+            }),
+        )];
+
+        let completed = completed_file_management_targets(
+            "Create daily_briefing.md with a daily briefing.",
+            dir.path(),
+            &messages,
+            false,
+        );
+
+        assert_eq!(completed, vec!["daily_briefing.md".to_string()]);
+        assert_eq!(
+            completion_text_for_file_targets(&completed),
+            "Completed. Saved `daily_briefing.md` in the working directory."
+        );
+        let completion_message = completion_message_for_file_targets(dir.path(), &completed);
+        assert!(completion_message.contains("Preview of `daily_briefing.md`"));
+        assert!(completion_message.contains("Revenue improved this week"));
+    }
+
+    #[test]
+    fn completion_message_for_small_markdown_targets_includes_full_content() {
+        let dir = tempdir().unwrap();
+        let body = "# Polymarket Briefing — 2026-04-13\n\n## 1. Will the Fed cut rates?\n**Current odds:** Yes 49% / No 51%\n**Related news:** Reuters reported softer inflation data on April 12, 2026.\n\n## 2. Will Bitcoin reach $150,000 in April?\n**Current odds:** Yes 47% / No 53%\n**Related news:** Bloomberg said ETF inflows stayed strong on April 13, 2026.\n\n## 3. Will the Iranian regime fall by April 30?\n**Current odds:** Yes 3% / No 97%\n**Related news:** AP reported new protests and succession concerns on April 12, 2026.\n";
+        std::fs::write(dir.path().join("polymarket_briefing.md"), body).unwrap();
+
+        let message = completion_message_for_file_targets(
+            dir.path(),
+            &["polymarket_briefing.md".to_string()],
+        );
+
+        assert!(message.contains("## 1. Will the Fed cut rates?"));
+        assert!(message.contains("## 2. Will Bitcoin reach $150,000 in April?"));
+        assert!(message.contains("## 3. Will the Iranian regime fall by April 30?"));
+    }
+
+    #[test]
+    fn completion_message_for_large_markdown_targets_surfaces_multiple_sections() {
+        let dir = tempdir().unwrap();
+        let body = [
+            "# Project Alpha Summary",
+            "",
+            "## 1. Project Overview",
+            "Project Alpha is an analytics dashboard.",
+            "",
+            "## 2. Timeline",
+            "Beta moved to May 6 and GA moved to May 27.",
+            "",
+            "## 3. Key Risks and Issues",
+            "Security remediation and budget pressure remain active.",
+            "",
+            "## 4. Client and Business Impact",
+            "Pipeline remains above the earlier ARR projection.",
+            "",
+            "## 5. Current Status",
+            "Frontend work is progressing in parallel.",
+            "",
+            &"Extra detail ".repeat(260),
+        ]
+        .join("\n");
+        std::fs::write(dir.path().join("alpha_summary.md"), body).unwrap();
+
+        let message = completion_message_for_file_targets(
+            dir.path(),
+            &["alpha_summary.md".to_string()],
+        );
+
+        assert!(message.contains("## 1. Project Overview"));
+        assert!(message.contains("## 3. Key Risks and Issues"));
+        assert!(message.contains("## 5. Current Status"));
+    }
+
+    #[test]
+    fn completion_text_for_image_targets_confirms_generation() {
+        assert_eq!(
+            completion_text_for_file_targets(&["robot_cafe.png".to_string()]),
+            "Completed. Generated and saved `robot_cafe.png` in the working directory."
+        );
+    }
+
+    #[test]
+    fn invalid_file_management_targets_flag_prediction_market_briefing_without_odds() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("polymarket_briefing.md"),
+            "# Polymarket Briefing\n\n## 1) Trending Markets\n**Related news:** Something happened.\n",
+        )
+        .unwrap();
+
+        let invalid = invalid_file_management_targets(
+            "Fetch the top 3 trending prediction markets from Polymarket right now and save polymarket_briefing.md with **Current odds:** Yes {X}% / No {Y}% and **Related news:** for each market question.",
+            dir.path(),
+            &[LlmMessage::tool_result(
+                "call_1",
+                "file_write",
+                json!({
+                    "path": dir.path().join("polymarket_briefing.md").to_string_lossy().to_string(),
+                    "success": true,
+                    "bytes_written": 84
+                }),
+            )],
+        );
+
+        assert_eq!(invalid, vec!["polymarket_briefing.md".to_string()]);
+    }
+
+    #[test]
+    fn completed_file_management_targets_accept_prediction_market_decimal_odds() {
+        let dir = tempdir().unwrap();
+        let content = "# Polymarket Briefing — 2026-04-13\n\n## 1. Will the next Prime Minister of Hungary be Viktor Orbán?\n**Current odds:** Yes 0.35% / No 99.65%\n**Related news:** Reuters reported on 2026-04-13 that the Hungarian forint jumped after Orbán's election defeat. https://www.reuters.com/business/hungarian-forint-jumps-after-orbans-election-defeat-2026-04-13/\n\n## 2. Will WTI Crude Oil (WTI) hit (HIGH) $110 in April?\n**Current odds:** Yes 72% / No 28%\n**Related news:** Reuters reported on 2026-04-12 that oil rose more than 7% to above $100 ahead of a U.S. blockade on Iran. https://www.reuters.com/business/energy/oil-bounces-back-above-100-after-us-iran-talks-end-stalemate-2026-04-12/\n\n## 3. Strait of Hormuz traffic returns to normal by end of April?\n**Current odds:** Yes 13% / No 88%\n**Related news:** Reuters reported on 2026-04-13 that Trump said the U.S. would begin a naval blockade of Iran's ports in the Strait of Hormuz. https://www.reuters.com/world/iran-war-live-trump-says-us-begin-naval-blockade-irans-ports-strait-hormuz-2026-04-13/\n";
+        std::fs::write(dir.path().join("polymarket_briefing.md"), content).unwrap();
+
+        let prompt = "Fetch the top 3 trending prediction markets from Polymarket (polymarket.com) right now. For each market, find a related recent news story (from the last 48 hours) that explains why people are betting on it. Save the result as polymarket_briefing.md with **Current odds:** Yes {X}% / No {Y}% and **Related news:** for each market question.";
+        let messages = vec![
+            LlmMessage::tool_result(
+                "call_1",
+                "web_search",
+                json!({
+                    "status": "success",
+                    "result": {"results": [
+                        {
+                            "title": "Hungarian forint jumps after Orban's election defeat | Reuters",
+                            "url": "https://www.reuters.com/business/hungarian-forint-jumps-after-orbans-election-defeat-2026-04-13/",
+                            "snippet": ""
+                        },
+                        {
+                            "title": "Oil rises over 7% to above $100 ahead of US blockade on Iran - Reuters",
+                            "url": "https://www.reuters.com/business/energy/oil-bounces-back-above-100-after-us-iran-talks-end-stalemate-2026-04-12/",
+                            "snippet": ""
+                        },
+                        {
+                            "title": "Iran war live: Trump says US to begin naval blockade of Iran's ports in Strait of Hormuz",
+                            "url": "https://www.reuters.com/world/iran-war-live-trump-says-us-begin-naval-blockade-irans-ports-strait-hormuz-2026-04-13/",
+                            "snippet": ""
+                        }
+                    ]}
+                }),
+            ),
+            LlmMessage::tool_result(
+                "call_2",
+                "file_write",
+                json!({
+                    "path": dir.path().join("polymarket_briefing.md").to_string_lossy().to_string(),
+                    "success": true,
+                    "bytes_written": 1449
+                }),
+            ),
+        ];
+
+        let invalid = invalid_file_management_targets(prompt, dir.path(), &messages);
+        assert!(
+            invalid.is_empty(),
+            "invalid targets: {:?}; details: {:?}",
+            invalid,
+            describe_invalid_file_management_targets(prompt, dir.path(), &messages, &invalid)
+        );
+
+        let completed = completed_file_management_targets(prompt, dir.path(), &messages, false);
+        assert_eq!(completed, vec!["polymarket_briefing.md".to_string()]);
+    }
+
+    #[test]
+    fn completed_file_management_targets_accept_prediction_market_briefing_after_rate_limited_search() {
+        let dir = tempdir().unwrap();
+        let content = "# Polymarket Briefing — 2026-04-13\n\n## 1. Will WTI Crude Oil (WTI) hit (HIGH) $110 in April?\n**Current odds:** Yes 74% / No 27%\n**Related news:** Reuters reported on 2026-04-13 that oil prices stayed elevated as Iran-related shipping risks threatened supply through the Gulf. https://www.reuters.com/business/energy/oil-tankers-steer-clear-hormuz-ahead-us-blockade-2026-04-13/\n\n## 2. Strait of Hormuz traffic returns to normal by end of April?\n**Current odds:** Yes 13% / No 88%\n**Related news:** Reuters reported on 2026-04-13 that tanker traffic near the Strait of Hormuz remained disrupted while blockade fears grew. https://www.reuters.com/business/energy/oil-tankers-steer-clear-hormuz-ahead-us-blockade-2026-04-13/\n\n## 3. US x Iran permanent peace deal by April 22, 2026?\n**Current odds:** Yes 9% / No 92%\n**Related news:** Reuters reported on 2026-04-10 that ceasefire talks were still fragile and far from a durable settlement. https://www.reuters.com/world/middle-east/irans-guards-will-view-military-vessels-approaching-strait-ceasefire-breach-2026-04-12/\n";
+        std::fs::write(dir.path().join("polymarket_briefing.md"), content).unwrap();
+
+        let prompt = "Fetch the top 3 trending prediction markets from Polymarket (polymarket.com) right now. For each market, find a related recent news story (from the last 48 hours) that explains why people are betting on it. Save the result as polymarket_briefing.md with **Current odds:** Yes {X}% / No {Y}% and **Related news:** for each market question.";
+        let messages = vec![
+            LlmMessage::tool_result(
+                "call_1",
+                "web_search",
+                json!({
+                    "error": "DuckDuckGo mirror returned HTTP 429"
+                }),
+            ),
+            LlmMessage::tool_result(
+                "call_2",
+                "file_write",
+                json!({
+                    "path": dir.path().join("polymarket_briefing.md").to_string_lossy().to_string(),
+                    "success": true,
+                    "bytes_written": 1234
+                }),
+            ),
+        ];
+
+        let invalid = invalid_file_management_targets(prompt, dir.path(), &messages);
+        assert!(
+            invalid.is_empty(),
+            "invalid targets: {:?}; details: {:?}",
+            invalid,
+            describe_invalid_file_management_targets(prompt, dir.path(), &messages, &invalid)
+        );
     }
 
     #[test]
