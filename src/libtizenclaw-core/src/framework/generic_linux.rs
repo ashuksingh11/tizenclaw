@@ -9,6 +9,7 @@ use super::{
     PlatformPlugin, SystemInfoProvider,
 };
 use serde_json::{json, Value};
+use std::ffi::{CStr, CString};
 use std::process::Command;
 
 // ─────────────────────────────────────────
@@ -54,6 +55,11 @@ impl PlatformPlugin for GenericLinuxPlatform {
 /// Logs to Tizen dlog if on Tizen, otherwise stderr.
 pub struct StderrLogger;
 
+fn ffi_safe_cstring(input: &str, fallback: &'static CStr) -> CString {
+    let sanitized = input.replace('\0', " ");
+    CString::new(sanitized).unwrap_or_else(|_| fallback.to_owned())
+}
+
 impl PlatformLogger for StderrLogger {
     fn log(&self, level: LogLevel, tag: &str, msg: &str) {
         let is_tizen = std::fs::read_to_string("/etc/os-release")
@@ -67,11 +73,10 @@ impl PlatformLogger for StderrLogger {
                 LogLevel::Info => crate::tizen_sys::dlog::DLOG_INFO,
                 LogLevel::Debug => crate::tizen_sys::dlog::DLOG_DEBUG,
             };
-            let tag_c = std::ffi::CString::new(tag)
-                .unwrap_or_else(|_| std::ffi::CString::new("TIZENCLAW").unwrap());
-            let safe_msg = msg.replace("%", "%%");
-            let msg_c = std::ffi::CString::new(safe_msg)
-                .unwrap_or_else(|_| std::ffi::CString::new("Error in log message").unwrap());
+            let tag_c = ffi_safe_cstring(tag, c"TIZENCLAW");
+            let msg_c = ffi_safe_cstring(&msg.replace('%', "%%"), c"Error in log message");
+            // SAFETY: `tag_c` and `msg_c` are valid NUL-terminated strings that
+            // stay alive for the duration of the dlog call.
             unsafe {
                 crate::tizen_sys::dlog::dlog_print(prio, tag_c.as_ptr(), msg_c.as_ptr());
             }
@@ -329,7 +334,16 @@ impl AppControlProvider for GenericAppControl {
 
 #[cfg(test)]
 mod tests {
-    use super::{get_arch, get_os_name};
+    use super::{ffi_safe_cstring, get_arch, get_os_name};
+
+    #[test]
+    fn ffi_safe_cstring_replaces_embedded_nul() {
+        let value = ffi_safe_cstring("hello\0world", c"fallback");
+        assert_eq!(
+            value.as_c_str().to_str().expect("valid UTF-8 CString"),
+            "hello world"
+        );
+    }
 
     #[test]
     fn get_arch_returns_non_empty_value() {

@@ -11,10 +11,10 @@ const STATE_UNAVAILABLE: u8 = 2;
 
 static PROBE_STATE: AtomicU8 = AtomicU8::new(STATE_UNTESTED);
 
-const DBUS_SYSTEM_BUS_SOCKET: &str = "/run/dbus/system_bus_socket";
-
 /// Run the probe in a child process to safely test D-Bus availability.
 fn run_probe() -> bool {
+    // SAFETY: The probe intentionally forks into a short-lived child process
+    // and only calls libc process primitives before `_exit`.
     unsafe {
         let pid = libc::fork();
         if pid < 0 {
@@ -24,8 +24,8 @@ fn run_probe() -> bool {
 
         if pid == 0 {
             // Child: check socket accessibility
-            let path = std::ffi::CString::new(DBUS_SYSTEM_BUS_SOCKET).unwrap();
-            if libc::access(path.as_ptr(), libc::R_OK | libc::W_OK) == 0 {
+            if libc::access(c"/run/dbus/system_bus_socket".as_ptr(), libc::R_OK | libc::W_OK) == 0
+            {
                 libc::_exit(0);
             }
             libc::_exit(1);

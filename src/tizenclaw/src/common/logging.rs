@@ -7,6 +7,7 @@
 //!   log::debug!("message {}", value);
 //!   log::error!("something failed: {}", err);
 
+use std::ffi::{CStr, CString};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, Once};
 
@@ -17,10 +18,18 @@ static INIT: Once = Once::new();
 /// Initialize with the TizenClaw global logger.
 pub fn init_with_logger() {
     INIT.call_once(|| {
-        log::set_logger(&PlatformLogBridge).unwrap();
+        if let Err(err) = log::set_logger(&PlatformLogBridge) {
+            eprintln!("Failed to install TizenClaw logger: {}", err);
+            return;
+        }
         // Allow all levels to the bridge, we will filter in `enabled` based on target.
         log::set_max_level(log::LevelFilter::Trace);
     });
+}
+
+fn ffi_safe_cstring(input: &str, fallback: &'static CStr) -> CString {
+    let sanitized = input.replace('\0', " ");
+    CString::new(sanitized).unwrap_or_else(|_| fallback.to_owned())
 }
 
 struct PlatformLogBridge;
@@ -79,17 +88,16 @@ impl log::Log for PlatformLogBridge {
                     libtizenclaw_core::tizen_sys::dlog::DLOG_DEBUG
                 }
             };
-            if let (Ok(tag_c), Ok(msg_c)) = (
-                std::ffi::CString::new(TAG),
-                std::ffi::CString::new(msg.replace('%', "%%")),
-            ) {
-                unsafe {
-                    libtizenclaw_core::tizen_sys::dlog::dlog_print(
-                        prio,
-                        tag_c.as_ptr(),
-                        msg_c.as_ptr(),
-                    );
-                }
+            let tag_c = ffi_safe_cstring(TAG, c"TIZENCLAW");
+            let msg_c = ffi_safe_cstring(&msg.replace('%', "%%"), c"Error in log message");
+            // SAFETY: `tag_c` and `msg_c` are valid NUL-terminated strings that
+            // live for the duration of the call.
+            unsafe {
+                libtizenclaw_core::tizen_sys::dlog::dlog_print(
+                    prio,
+                    tag_c.as_ptr(),
+                    msg_c.as_ptr(),
+                );
             }
             FileLogBackend::write(&msg, level);
             return;
@@ -144,7 +152,10 @@ impl FileLogBackend {
                     .unwrap_or_default();
                 let secs = now.as_secs() as libc::time_t;
                 let ms = now.subsec_millis();
+                // SAFETY: `libc::tm` is POD and is immediately filled by
+                // `gmtime_r` before any field is read.
                 let mut tm_buf: libc::tm = unsafe { std::mem::zeroed() };
+                // SAFETY: `secs` and `tm_buf` are valid pointers for `gmtime_r`.
                 unsafe { libc::gmtime_r(&secs, &mut tm_buf) };
 
                 let ts = format!(
@@ -206,7 +217,10 @@ fn local_time_parts() -> LocalTimeParts {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as libc::time_t;
+    // SAFETY: `libc::tm` is POD and is immediately filled by `localtime_r`
+    // before any field is read.
     let mut tm_buf: libc::tm = unsafe { std::mem::zeroed() };
+    // SAFETY: `now` and `tm_buf` are valid inputs for `localtime_r`.
     unsafe {
         libc::localtime_r(&now, &mut tm_buf);
     }
@@ -233,6 +247,15 @@ fn local_time_parts() -> LocalTimeParts {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn ffi_safe_cstring_replaces_embedded_nul() {
+        let value = ffi_safe_cstring("before\0after", c"fallback");
+        assert_eq!(
+            value.as_c_str().to_str().expect("valid UTF-8 CString"),
+            "before after"
+        );
+    }
 
     #[tokio::test]
     async fn test_file_log_format_contains_pid() {

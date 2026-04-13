@@ -62,11 +62,31 @@ fn parse_daemon_options() -> DaemonOptions {
 }
 
 fn setup_signal_handlers() {
+    // SAFETY: Installing process signal handlers requires libc. The handler
+    // only flips an atomic flag, which is signal-safe.
     unsafe {
         libc::signal(libc::SIGTERM, signal_handler as *const () as libc::sighandler_t);
         libc::signal(libc::SIGINT, signal_handler as *const () as libc::sighandler_t);
         libc::signal(libc::SIGPIPE, libc::SIG_IGN);
     }
+}
+
+fn with_channel_registry<T>(
+    registry: &Arc<Mutex<channel::ChannelRegistry>>,
+    context: &str,
+    action: impl FnOnce(&mut channel::ChannelRegistry) -> T,
+) -> Option<T> {
+    match registry.lock() {
+        Ok(mut guard) => Some(action(&mut guard)),
+        Err(err) => {
+            log::error!("Channel registry lock poisoned during {}: {}", context, err);
+            None
+        }
+    }
+}
+
+fn stop_channels(registry: &Arc<Mutex<channel::ChannelRegistry>>, reason: &str) {
+    let _ = with_channel_registry(registry, reason, |guard| guard.stop_all());
 }
 
 fn fix_tizen_tls() {
@@ -153,8 +173,7 @@ async fn main() {
 
     // Load from channel_config.json
     let channel_config_path = platform.paths.config_dir.join("channel_config.json");
-    {
-        let mut reg = channel_registry.lock().unwrap();
+    if with_channel_registry(&channel_registry, "channel startup", |reg| {
         reg.load_config(&channel_config_path.to_string_lossy(), Some(agent.clone()));
 
         // Ensure web_dashboard is always registered for manual CLI startup.
@@ -183,6 +202,13 @@ async fn main() {
         }
 
         reg.start_all();
+    })
+    .is_none()
+    {
+        boot_logger.write_phase(5, TOTAL_BOOT_PHASES, "Channel registry initialization failed");
+        task_scheduler.stop();
+        agent.shutdown().await;
+        std::process::exit(1);
     }
     log::info!("Channel registry initialized");
 
@@ -205,7 +231,7 @@ async fn main() {
         boot_logger.write_phase(7, TOTAL_BOOT_PHASES, "Running devel mode sequence");
         core::devel_mode::run(&agent).await;
         log::info!("Shutting down...");
-        channel_registry.lock().unwrap().stop_all();
+        stop_channels(&channel_registry, "devel-mode shutdown");
         task_scheduler.stop();
         mdns_scanner.stop();
         agent.shutdown().await;
@@ -219,12 +245,12 @@ async fn main() {
 
     // Main loop
     while RUNNING.load(Ordering::Relaxed) {
-        std::thread::sleep(Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
     log::info!("Shutting down...");
     boot_logger.write("Shutting down...");
-    channel_registry.lock().unwrap().stop_all();
+    stop_channels(&channel_registry, "daemon shutdown");
     task_scheduler.stop();
     mdns_scanner.stop();
     agent.shutdown().await;

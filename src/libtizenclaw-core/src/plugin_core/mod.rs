@@ -104,6 +104,11 @@ fn is_plugin_library(path: &Path) -> bool {
             .unwrap_or(false)
 }
 
+/// # Safety
+///
+/// `path` must point to a shared library that follows the plugin ABI:
+/// exported symbol names must match this loader and returned strings must stay
+/// valid until `claw_plugin_free_string` is called.
 unsafe fn load_plugin(path: &Path) -> Result<PlatformPlugin, String> {
     let library = Library::new(path).map_err(|err| format!("dlopen failed: {err}"))?;
 
