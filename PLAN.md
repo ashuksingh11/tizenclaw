@@ -1,16 +1,13 @@
-[O] Phase 1. Re-read the required guidance, inspect `.dev/SCORE.md`, and
-    document the current host-default resume decision plus the root cause of
-    the failed verification in `.dev/DASHBOARD.md`.
-[O] Phase 2. Finish the generic research-validation implementation and any
-    needed runtime/unit coverage without adding PinchBench-specific logic.
-[O] Phase 3. Deploy the current host build with `./deploy_host.sh` and record
-    daemon/OAuth health in `.dev/DASHBOARD.md`.
-[O] Phase 4. Run `./deploy_host.sh --test` plus the required
-    `tizenclaw-tests` runtime-contract scenarios, then record the review
+[O] Phase 1. Re-read `AGENTS.md`, confirm the host-default resume cycle, and
+    record the current supervisor failure root cause in `.dev/DASHBOARD.md`.
+[O] Phase 2. Define the resume-cycle design boundaries for the benchmark
+    rerun and synchronize both `PLAN.md` copies with that design.
+[O] Phase 3. Run `./deploy_host.sh` and execute a fresh full
+    `python3 scripts/run_pinchbench_oauth.py --suite all --runs 1
+    --no-stream-runtime-io` benchmark from scratch.
+[O] Phase 4. Run `./deploy_host.sh --test`, review the host runtime
+    evidence, and update `.dev/SCORE.md`, `docs/BENCHMARK.md`, and
+    `.dev/DASHBOARD.md` from the verified results.
+[O] Phase 5. Clean the workspace, commit the synchronized resume-cycle
+    changes with `.tmp/commit_msg.txt`, and leave final verification
     evidence in `.dev/DASHBOARD.md`.
-[O] Phase 5. Re-run the host OpenAI OAuth PinchBench slice, update
-    `.dev/SCORE.md`, synchronize `.dev/DASHBOARD.md`, and complete the commit
-    stage only if the verified score is `>=95%`.
-[O] Phase 6. Review the latest supervisor report, re-run the required host
-    verification evidence, and synchronize `PLAN.md` with
-    `.dev/DASHBOARD.md` for the resume cycle.

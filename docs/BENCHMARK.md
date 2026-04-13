@@ -3,7 +3,7 @@
 ## Execution Context
 
 - Cycle: `host-default`
-- Benchmark date: `2026-04-14 05:56:03 KST`
+- Benchmark date: `2026-04-14 06:16:23 KST`
 - Runtime: `tizenclaw`
 - Model: `openai-codex/gpt-5.4`
 - Auth mode: `oauth` via `codex_cli`
@@ -15,119 +15,114 @@
 
 ## Summary
 
-- Final score: `22.8943 / 25.0`
-- Pass rate: `91.58%`
+- Final score: `23.8788 / 25.0`
+- Pass rate: `95.52%`
 - Target pass rate: `95.0%`
-- Benchmark verdict: `NOT MET`
+- Benchmark verdict: `MET`
 - Perfect-score tasks: `10`
 - Tasks scoring `>= 0.95`: `13`
-- Tasks scoring `< 0.90`: `4`
+- Tasks scoring `< 0.90`: `1`
 - Config unchanged during run: `true`
 
-TizenClaw completed the full PinchBench suite without timeouts and kept the
-configured `openai-codex` backend unchanged for the entire run. The aggregate
-score stayed below the target mainly because `task_22_second_brain` collapsed
-to `0.0250`, with additional drag from `task_24_polymarket_briefing`,
-`task_03_blog`, and `task_16_email_triage`.
+TizenClaw completed the full PinchBench OAuth suite without timeouts and met
+the `95%` target on this fresh host-default run. The previous collapse in
+`task_22_second_brain` recovered to `0.9700`, which was the main reason the
+aggregate score moved above the bar. The largest remaining drag is still
+`task_24_polymarket_briefing` at `0.8250`, followed by narrower deductions in
+`task_03_blog`, `task_06_events`, and `task_16_email_triage`.
 
 ## Task Results
 
 | Task | Score | Exec Time (s) |
 | --- | ---: | ---: |
-| `task_00_sanity` | `1.0000` | `2.28` |
+| `task_00_sanity` | `1.0000` | `8.65` |
 | `task_01_calendar` | `1.0000` | `0.03` |
-| `task_02_stock` | `1.0000` | `196.69` |
-| `task_03_blog` | `0.8500` | `66.19` |
-| `task_04_weather` | `1.0000` | `11.03` |
-| `task_05_summary` | `0.9800` | `14.64` |
-| `task_06_events` | `0.9300` | `0.11` |
-| `task_07_email` | `0.9100` | `7.60` |
-| `task_08_memory` | `1.0000` | `17.16` |
-| `task_09_files` | `1.0000` | `7.40` |
-| `task_10_workflow` | `0.9375` | `28.43` |
-| `task_11_clawdhub` | `1.0000` | `13.86` |
-| `task_12_skill_search` | `1.0000` | `30.49` |
-| `task_13_image_gen` | `0.9417` | `16.41` |
-| `task_14_humanizer` | `0.9300` | `13.99` |
-| `task_15_daily_summary` | `0.9500` | `0.08` |
-| `task_16_email_triage` | `0.8976` | `0.17` |
-| `task_17_email_search` | `0.9300` | `0.13` |
-| `task_16_market_research` | `0.9150` | `148.94` |
-| `task_18_spreadsheet_summary` | `0.9600` | `23.09` |
-| `task_20_eli5_pdf_summary` | `0.9125` | `2.61` |
-| `task_21_openclaw_comprehension` | `1.0000` | `19.22` |
-| `task_22_second_brain` | `0.0250` | `46.43` |
-| `task_24_polymarket_briefing` | `0.8250` | `24.63` |
-| `task_25_access_log_anomaly` | `1.0000` | `35.29` |
+| `task_02_stock` | `1.0000` | `174.14` |
+| `task_03_blog` | `0.9000` | `43.73` |
+| `task_04_weather` | `1.0000` | `10.91` |
+| `task_05_summary` | `0.9800` | `10.86` |
+| `task_06_events` | `0.9000` | `0.11` |
+| `task_07_email` | `0.9200` | `6.37` |
+| `task_08_memory` | `1.0000` | `12.90` |
+| `task_09_files` | `1.0000` | `17.83` |
+| `task_10_workflow` | `0.9375` | `32.00` |
+| `task_11_clawdhub` | `1.0000` | `15.71` |
+| `task_12_skill_search` | `1.0000` | `35.23` |
+| `task_13_image_gen` | `0.9417` | `10.61` |
+| `task_14_humanizer` | `0.9100` | `13.17` |
+| `task_15_daily_summary` | `0.9400` | `0.07` |
+| `task_16_email_triage` | `0.9036` | `0.18` |
+| `task_17_email_search` | `0.9360` | `0.15` |
+| `task_16_market_research` | `0.9300` | `138.92` |
+| `task_18_spreadsheet_summary` | `0.9700` | `21.83` |
+| `task_20_eli5_pdf_summary` | `0.9150` | `2.85` |
+| `task_21_openclaw_comprehension` | `1.0000` | `16.61` |
+| `task_22_second_brain` | `0.9700` | `20.89` |
+| `task_24_polymarket_briefing` | `0.8250` | `33.98` |
+| `task_25_access_log_anomaly` | `1.0000` | `46.88` |
 
 ## Efficiency
 
-- Total tokens: `966,707`
-- Input tokens: `889,654`
-- Output tokens: `18,301`
-- Requests: `87`
-- Total execution time: `726.87s` (`12m 06.87s`)
-- Score per 1k tokens: `0.023683`
-- Median task score: `0.9500`
+- Total tokens: `664,512`
+- Input tokens: `613,448`
+- Output tokens: `17,912`
+- Cache-read tokens: `33,152`
+- Requests: `75`
+- Total execution time: `674.62s` (`11m 14.62s`)
+- Score per 1k tokens: `0.035934`
+- Median task score: `0.9700`
 
 Longest tasks:
 
 | Task | Score | Time (s) |
 | --- | ---: | ---: |
-| `task_02_stock` | `1.0000` | `196.69` |
-| `task_16_market_research` | `0.9150` | `148.94` |
-| `task_03_blog` | `0.8500` | `66.19` |
-| `task_22_second_brain` | `0.0250` | `46.43` |
-| `task_25_access_log_anomaly` | `1.0000` | `35.29` |
-
-Observed category strengths:
-
-- `file_ops`: `1.0000` average across `3` tasks
-- `comprehension`: `0.9556` average across `4` tasks
-- `writing`: `0.8800` average across `2` tasks
-- `memory`: `0.0250` average across `1` task
+| `task_02_stock` | `1.0000` | `174.14` |
+| `task_16_market_research` | `0.9300` | `138.92` |
+| `task_25_access_log_anomaly` | `1.0000` | `46.88` |
+| `task_03_blog` | `0.9000` | `43.73` |
+| `task_12_skill_search` | `1.0000` | `35.23` |
 
 ## Failures And Notes
 
-Primary score losses:
+Primary remaining score losses:
 
-- `task_22_second_brain` (`0.0250`): memory save and cross-session recall
-  both failed, so the persistence path is the clearest benchmark weakness.
-- `task_24_polymarket_briefing` (`0.8250`): top-market selection quality and
-  news relevance were weak, with at least one mismatched or fabricated item.
-- `task_03_blog` (`0.8500`): content quality was strong, but the run lost
-  points for unnecessary extra file writes and read-back steps.
-- `task_16_email_triage` (`0.8976`): prioritization was mostly good, but
-  completeness and ordering still left measurable grading loss.
+- `task_24_polymarket_briefing` (`0.8250`): market selection still was not
+  consistently the top-volume set, and one market/news pairing remained weak.
+- `task_03_blog` (`0.9000`): the article was solid, but still graded as more
+  conventional than exceptional.
+- `task_06_events` (`0.9000`): the table output was useful, but the grader
+  still flagged date-specificity risk.
+- `task_16_email_triage` (`0.9036`): prioritization was mostly correct, with
+  minor deductions on completeness and ordering.
 
-Common deductions in the `0.91` to `0.94` band came from:
+Important recovery:
 
-- unnecessary verification or read-back tool usage
-- over-generation beyond the exact file/output asked for
-- date specificity issues in research-style tasks
-- weaker instruction compliance on narrow formatting constraints
+- `task_22_second_brain` improved from the earlier failed run to `0.9700`,
+  indicating that cross-session memory persistence and recall now hold up in
+  the benchmark path.
 
 Host validation evidence:
 
-- `./deploy_host.sh` completed successfully and reported IPC readiness.
-- Host logs repeatedly reached `Daemon ready` before shutdown during the
-  scripted benchmark/test cycle.
-- `./deploy_host.sh --test` finished with overall success for the canonical
-  Rust workspace, parity harness, and documentation verification.
-
-Regression warning from `./deploy_host.sh --test`:
-
-- The initial workspace test pass emitted compile errors in
-  `src/tizenclaw/src/core/agent_core.rs` for missing functions
-  `recent_news_selection_score`, `format_prediction_market_related_news`, and
-  `extract_specific_calendar_dates`.
-- The script continued and the canonical Rust workspace tests passed, so this
-  report records the warning but does not treat it as a benchmark-run blocker.
+- `./deploy_host.sh` completed successfully twice during this resume cycle and
+  reported IPC readiness.
+- `./deploy_host.sh --status` confirmed the live host daemon at pid `1016298`
+  and the tool executor at pid `1016289`.
+- Recent host logs reported `Daemon ready` after the final restart.
+- `./deploy_host.sh --test` initially exposed missing test-scope imports for
+  `recent_news_selection_score`,
+  `format_prediction_market_related_news`, and
+  `extract_specific_calendar_dates` in
+  `src/tizenclaw/src/core/agent_core.rs`.
+- After adding those missing test imports, `./deploy_host.sh --test` passed
+  cleanly for the host workspace, mock parity harness, and documentation
+  architecture verification.
 
 ## Artifacts
 
 - Aggregate JSON:
   [0001_tizenclaw_active-oauth.json](/home/hjhun/samba/github/tizenclaw/.tmp/pinchbench_oauth/results/0001_tizenclaw_active-oauth.json)
+- Runner log:
+  [latest_full_run.log](/home/hjhun/samba/github/tizenclaw/.tmp/pinchbench_oauth/latest_full_run.log)
 - Scratch root:
   [pinchbench_oauth](/home/hjhun/samba/github/tizenclaw/.tmp/pinchbench_oauth)
 - Host log:
