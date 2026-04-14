@@ -80,6 +80,9 @@ impl SkillCapabilitySnapshot {
             .filter(|root| root.external)
             .map(|root| root.path.clone())
             .collect::<Vec<_>>();
+        let managed_roots = self.root_paths_for_kind("user");
+        let system_roots = self.root_paths_for_kind("system");
+        let external_roots_by_kind = self.root_paths_for_kind("external");
 
         json!({
             "config_path": self.config_path,
@@ -91,9 +94,10 @@ impl SkillCapabilitySnapshot {
             "external_root_count": external_roots.len(),
             "external_roots": external_roots,
             "roots": {
-                "user": self.root_paths_for_kind("user"),
-                "system": self.root_paths_for_kind("system"),
-                "external": self.root_paths_for_kind("external"),
+                "managed": managed_roots.clone(),
+                "user": managed_roots,
+                "system": system_roots,
+                "external": external_roots_by_kind,
             },
             "skills": self.skills.iter().map(|entry| json!({
                 "name": entry.skill.file_name,
@@ -406,6 +410,14 @@ mod tests {
         assert_eq!(entry.root_kind, "system");
 
         let summary = snapshot.summary_json();
+        assert_eq!(
+            summary["roots"]["managed"][0],
+            json!(paths.skills_dir.to_string_lossy().to_string())
+        );
+        assert_eq!(
+            summary["roots"]["user"][0],
+            json!(paths.skills_dir.to_string_lossy().to_string())
+        );
         assert_eq!(
             summary["roots"]["system"][0],
             json!(paths.skill_hubs_dir.to_string_lossy().to_string())
