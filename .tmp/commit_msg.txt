@@ -1,7 +1,7 @@
-Refactor agent prompt orchestration
+Synchronize improve-agent-loop workflow state
 
-Extract prompt contract injection and pre-loop planning
-from AgentCore::process_prompt into focused helpers.
+Record the completed commit and evaluator stages for the
+improve-agent-loop scope.
 
-Document the intentional multilingual parsing hooks and
-tighten the file-grounded recall runtime contract.
+Sync the dashboard, plan, and workflow checklist with the
+validated implementation already committed in 01f4d3ff.

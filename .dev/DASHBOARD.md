@@ -4,16 +4,14 @@
 
 - Goal: `improve-agent-loop`
 - Execution class: `host-default`
-- Active workflow phase: `review`
-- Last completed workflow phase: `build/deploy`
+- Active workflow phase: `complete`
+- Last completed workflow phase: `evaluate`
 - Supervisor verdict: `approved`
-- Next action: finalize review state, write commit artifacts, and produce the
-  evaluator verdict
+- Next action: none; workflow complete
 
 ## In Progress
 
-- Reviewing the validated refactor and synchronizing `.dev` evidence before
-  commit/evaluation
+- Workflow complete; `.dev` records are synchronized with the validated scope
 
 ## Planned Validation
 
@@ -47,6 +45,14 @@
 - Scenario evidence:
   `tizenclaw-tests scenario --file tests/system/file_grounded_recall_runtime_contract.json`
   passed on 2026-04-14 with all 3 steps green
+- Implementation commit: `01f4d3ff`
+  (`Refactor agent prompt orchestration`) captured the validated code changes
+  for this scope
+- Evaluation stage:
+  `.dev/07-evaluator/20260414-improve-agent-loop.md` records
+  `VERDICT: goal_achieved`
+- Repository state sync: `.dev` workflow artifacts now match the completed
+  commit and evaluator stages
 
 ## Review Outcome
 

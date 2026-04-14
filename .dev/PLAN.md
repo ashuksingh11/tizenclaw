@@ -13,8 +13,8 @@
       daemon-visible behavior
 - [x] Run `./deploy_host.sh` and the selected `tizenclaw-tests` scenarios
 - [x] Record validation evidence and residual risks in `.dev/DASHBOARD.md`
-- [ ] Prepare commit artifacts if the cycle reaches a clean commit point
-- [ ] Produce the final evaluator report under `.dev/07-evaluator/`
+- [x] Prepare commit artifacts if the cycle reaches a clean commit point
+- [x] Produce the final evaluator report under `.dev/07-evaluator/`
 
 ## Resume Rule
 
