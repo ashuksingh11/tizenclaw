@@ -1,253 +1,169 @@
 ---
-description: TizenClaw Development Overarching Management Document
+description: TizenClaw Development Agent Operation Rules
 ---
-
-This root copy exists so tools that auto-detect `AGENTS.md` from the
-repository root can load the project rules. The canonical source remains
-`.agent/rules/AGENTS.md`.
 
 # TizenClaw Development Agent Operation Rules
 
-This document is the **top-level operational rule** representing the
-comprehensive management of the `tizenclaw` project's development process.
-The agent (you) must strictly adhere to the procedures defined in this
-document to develop TizenClaw.
+This file mirrors `.agent/rules/AGENTS.md` so root-level auto-detection can
+load the repository workflow rules.
 
-> [!IMPORTANT]
-> **Language Rule**: You must plan and report in the same language as the
-> user's input. (If asked in English, use English; if asked in Korean,
-> use Korean / 사용자의 입력과 같은 언어로 plan과 보고를 합니다.
-> 영어로 질의하면 영어로, 한국어로 질의하면 한국어로 답합니다).
+## Purpose
 
-## Project Overview
+TizenClaw is a Rust-based autonomous agent daemon that is developed on host
+Linux by default and optionally validated on Tizen when the user explicitly
+requests that path.
 
-**TizenClaw** is a Rust-based, high-performance Autonomous AI Agent daemon
-that supports both host Linux development and Tizen deployment.
-The core goal is to build an ecosystem that operates autonomously,
-asynchronously, and flawlessly with optimal resource efficiency.
-The fundamental development principles are as follows:
+This bundle has three layers:
 
-- **Host-First Development Default**: Unless the user explicitly asks for
-  Tizen/emulator/device validation, perform development through
-  `./deploy_host.sh` on Ubuntu/WSL.
-- **Script-First Build/Test Rule**: Do not invoke `cargo build`,
-  `cargo test`, `cargo check`, or `cargo clippy` directly for ordinary
-  development work. Use `./deploy_host.sh` for the host path and
-  `./deploy.sh` only when the user explicitly requests the Tizen path.
-- **Explicit Tizen Override**: When the user asks for device packaging,
-  emulator deployment, or Tizen validation, switch to `./deploy.sh`
-  (GBS build / deploy flow) for that cycle.
-- **Single Architecture Focus (x86_64)**: For rapid development and
-  verification, the default focus remains **x86_64**.
-- **Execution Centric**: Do not stop at just writing documents;
-  physically execute the actual terminal commands (e.g.,
-  `./deploy_host.sh`, `./deploy.sh`, `git commit`).
-- **Feedback Loops**: If an agent capability fails testing
-  (e.g. memory leak, async panic), analyze the active host/Tizen
-  constraints, roll back to the previous stage, modify, and retry.
+- reusable workflow templates under `.agent/workflows/`
+- reusable local skills under `.agent/skills/`
+- repository rules under `.agent/rules/`
 
----
+Use `supervising-workflow` whenever the next workflow is not obvious.
 
-## Development Cycle (6 Stages)
+## Language Rule
 
-All development tasks for the Autonomous Agent **MUST strictly proceed
-through the 6 stages below sequentially**.
-**Skipping stages or autonomously jumping between skill agents is strictly
-prohibited.** Development must follow a rigid, step-by-step process.
+- Interactive planning, progress updates, and final reports must match the
+  user's language.
+- Stable repository artifacts may remain in English unless the user requests a
+  different language.
 
-```
-1. Planning → [Supervisor] → 2. Design → [Supervisor] → 3. Development → [Supervisor] →
-4. Build/Deploy → [Supervisor] → 5. Test/Review → [Supervisor] → 6. Commit → [Supervisor]
-```
+## TizenClaw Core Rules
 
-> [!IMPORTANT]
-> **Strict Cycle Principle**: The coding agent **MUST strictly adhere to
-> all 6 development stages sequentially** without skipping.
-> Flexible execution or skipping stages is strictly forbidden.
-> **Actions requiring approval** during the development process are
-> automatically granted (`SafeToAutoRun: true`).
+- Host-first by default: use `./deploy_host.sh` unless the user explicitly
+  requests Tizen, emulator, or device validation.
+- Script-first by default: do not substitute raw `cargo build`, `cargo test`,
+  `cargo check`, `cargo clippy`, or ad-hoc `cmake` commands for the normal
+  development cycle.
+- Explicit Tizen override: use `./deploy.sh` only when the user asks for a
+  Tizen packaging or deployment cycle.
+- Keep the default rapid-development focus on `x86_64`.
+- Run commands synchronously in the foreground. Do not use `nohup`, `&`, or
+  detached subprocesses.
 
----
+## Environment Entry Rule
 
-## Roles and Skills per Stage
+Before executing repository commands, follow
+`.agent/rules/shell-detection.md` and use
+`.agent/skills/managing-environment/SKILL.md`.
 
-### Stage 1: Planning
-- **Role**: Analyze requirements and define the scope of the autonomous
-  agent behavior.
-- **Activity**: Analyze whether the cycle should use the default
-  host workflow (`./deploy_host.sh`) or an explicitly requested Tizen
-  workflow (`./deploy.sh`), then organize the required daemon behavior.
-- **Artifact**: Update stage status in `.dev/DASHBOARD.md`
-- **Skill Usage**:
-  [`.agent/skills/planning-project/SKILL.md`](.agent/skills/planning-project/SKILL.md)
+The normal case in this repository is a WSL Ubuntu `bash` shell that should
+run commands directly without a `wsl.exe` wrapper.
 
-### Stage 2: Design
-- **Role**: Design the optimized Rust architecture.
-- **Activity**: Define the Rust architecture, host/Tizen execution
-  boundaries, async traits (Tokio), FFI boundaries, and zero-cost
-  abstraction rules that fit the requested environment.
-- **Artifact**: Update stage status in `.dev/DASHBOARD.md`
-- **Skill Usage**:
-  [`.agent/skills/designing-architecture/SKILL.md`](.agent/skills/designing-architecture/SKILL.md)
+## Workflow Entry Points
 
-### Stage 3: Development
-- **Role**: Write highly stable, memory-safe code under TDD principles.
-- **Activity**: Develop state machines, continuous loops, and event-driven
-  implementations. Validate code quality through `./deploy_host.sh` by
-  default, and use `./deploy.sh` only when the user explicitly requests
-  Tizen/emulator/device validation. When runtime-visible behavior changes,
-  first add or update a `tizenclaw-tests` scenario and use it as the system
-  test contract for the implementation.
-- **Artifact**: Update stage status in `.dev/DASHBOARD.md`
-- **Skill Usage**:
-  [`.agent/skills/developing-code/SKILL.md`](.agent/skills/developing-code/SKILL.md),
-  [`.agent/skills/testing-with-tizenclaw-tests/SKILL.md`](.agent/skills/testing-with-tizenclaw-tests/SKILL.md)
+Start with the workflow that matches the task:
 
-> [!CAUTION]
-> **Direct Cargo/CMake Prohibition**: Do not execute `cargo build`,
-> `cargo test`, `cargo check`, `cargo clippy`, or ad-hoc `cmake` commands
-> directly for ordinary development work.
-> Use `./deploy_host.sh` for default host builds/tests and `./deploy.sh`
-> only for explicit Tizen/emulator/device cycles.
-> **Untested Code is Garbage**: A developer must *never* consider a task
-> done simply by writing code. Running the appropriate script-driven
-> build/test path is the baseline requirement.
+- `.agent/workflows/refine-plan.md`
+- `.agent/workflows/planning-design.md`
+- `.agent/workflows/develop-system-tests.md`
+- `.agent/workflows/build-deploy-review.md`
+- `.agent/workflows/cleanup-commit.md`
 
-### Stage 4: Build & Deploy
-- **Role**: Execute the build/install/deploy path that matches the active
-  cycle.
-- **Activity**: Run `./deploy_host.sh` by default for host install/restart
-  validation, or `./deploy.sh` when the user explicitly requests Tizen
-  packaging/deployment.
-- **Artifact**: Update stage status in `.dev/DASHBOARD.md`
-- **Skill Usage**:
-  [`.agent/skills/building-deploying/SKILL.md`](.agent/skills/building-deploying/SKILL.md)
+## Pipeline Overview
 
-### Stage 5: Test & Review
-- **Role**: Analyze autonomous E2E test results and review memory
-  footprint, execution speed, and FFI safety.
-- **Activity**: Run verification via `./deploy_host.sh --test` by default,
-  and use `./deploy.sh --test` / device-specific validation only when the
-  user explicitly requests a Tizen cycle. For daemon-visible behavior,
-  execute the relevant `tizenclaw-tests` scenario against the live host
-  daemon in addition to repository tests.
-- **Artifact**: Update stage status in `.dev/DASHBOARD.md`
-- **Skill Usage**:
-  [`.agent/skills/reviewing-code/SKILL.md`](.agent/skills/reviewing-code/SKILL.md),
-  [`.agent/skills/testing-with-tizenclaw-tests/SKILL.md`](.agent/skills/testing-with-tizenclaw-tests/SKILL.md)
+All non-trivial tasks begin with requirement refinement. Planning then
+generates the task-specific `.dev/WORKFLOWS.md` that drives the rest of the
+cycle.
 
-### Stage 6: Commit & Push
-- **Role**: Record final deliverables to Git.
-- **Activity**: Clean up unnecessary build artifacts, write a commit
-  message adhering to upstream rules, and commit.
-- **Artifact**: Update stage status in `.dev/DASHBOARD.md`
-- **Skill Usage**:
-  [`.agent/skills/managing-versions/SKILL.md`](.agent/skills/managing-versions/SKILL.md)
-
-> [!WARNING]
-> **Commit Rule**: Using `git commit -m "..."` is forbidden. Write the
-> message inside `.tmp/commit_msg.txt` first and execute
-> `git commit -F .tmp/commit_msg.txt`.
-
-> [!CAUTION]
-> **Mandatory Skill Enforcement**: ALL commit and push operations
-> **MUST** use the
-> `.agent/skills/managing-versions/SKILL.md` skill without exception.
-> Directly running `git commit` or `git push` outside of this skill is a
-> critical protocol violation subject to immediate Supervisor rollback.
-
-> [!IMPORTANT]
-> **Commit Message Rules** (enforced by Supervisor):
-> 1. **Language**: All commit messages must be written in **English**.
-> 2. **Line Length**: No single line may exceed **80 characters**.
-> 3. **Format**: Summarized content style.
->    ```
->    <Title: concise imperative sentence, ≤50 chars>
->
->    <Body: Summarize the purpose and specific changes in clear prose
->    or bullet points. Do NOT use explicit 'Why:' or 'What:' headers.
->    Each line ≤80 chars.>
->    ```
-> 4. Titles must clearly convey the intent; bodies must provide a
->    comprehensive summary of the modifications.
-
----
-
-## Global Environment Management
-
-> [!IMPORTANT]
-> **Primary Shell Context**: The agent operates **directly inside a WSL
-> Ubuntu shell**. Run all project commands (build, test, git) as plain
-> bash — no `wsl -e bash -c "..."` wrapper is needed under normal
-> conditions. The wrapper is only required when the agent is invoked from
-> a Windows PowerShell session (edge case, e.g. Windows-side IDE).
-
-> [!IMPORTANT]
-> **Shell Detection Rule**: Before executing ANY command, follow the
-> [`.agent/rules/shell-detection.md`](.agent/rules/shell-detection.md)
-> decision matrix to confirm the active shell context. That rule is
-> authoritative for all shell decisions.
-
-> [!WARNING]
-> **No Background Sub-processes**: Never spawn background sub-shells
-> (`nohup` or `&`) for build or deploy commands. Run them synchronously
-> in the foreground to avoid Samba/WSL I/O lockups.
-
-- **Rule Reference**:
-  [`.agent/rules/shell-detection.md`](.agent/rules/shell-detection.md)
-- **Skill Usage**:
-  [`.agent/skills/managing-environment/SKILL.md`](.agent/skills/managing-environment/SKILL.md)
-
----
-
-## Supervisor (Stage-Gate Validator)
-
-The Supervisor is the **active stage-gate validator** that is invoked
-**after every stage completion** in the development cycle.
-No stage transition occurs without the Supervisor's explicit PASS verdict.
-
-- **Skill Usage**:
-  [`.agent/skills/supervising-workflow/SKILL.md`](.agent/skills/supervising-workflow/SKILL.md)
-- **Artifact**: Audit records are logged in `.dev/DASHBOARD.md`
-
-### Updated Cycle Diagram (with Supervisor Gates)
-
-```
-1. Planning → [Supervisor Gate] → 2. Design → [Supervisor Gate] → 3. Development → [Supervisor Gate] →
-4. Build/Deploy → [Supervisor Gate] → 5. Test/Review → [Supervisor Gate] → 6. Commit → [Supervisor Gate]
+```text
+refine -> plan -> design -> develop -> build/deploy -> test/review -> commit
+             ^          ^                ^
+      supervisor gates between phases; evaluator checkpoints only when planned
 ```
 
-### Rollback Protocol
+`testing-with-tizenclaw-tests` is part of development and validation whenever
+daemon-visible behavior changes.
 
-When the Supervisor detects a violation (e.g., missing artifacts, using
-the wrong execution script for the cycle, direct `cargo` / `cmake`
-usage, inline `-m` commit):
+## Stage Outputs
 
-1. The Supervisor writes a **Violation Record** inside
-   `.dev/DASHBOARD.md` documenting which SKILL.md rule was broken.
-2. Control is returned to the **violating stage's agent** with the
-   violation report as corrective guidance.
-3. The stage agent re-reads its SKILL.md, applies the corrective action,
-   and re-executes.
-4. The Supervisor re-validates upon stage completion.
+### Stage 0. Refine
+- Skill: `.agent/skills/refining-requirements/SKILL.md`
+- Output: `.dev/REQUIREMENTS.md`
 
-> [!CAUTION]
-> **Retry Limit**: A maximum of **3 retry attempts** per stage gate is
-> allowed. If the violation persists after 3 attempts, the cycle is halted
-> and escalated to the user for manual intervention.
+### Stage 1. Plan
+- Skill: `.agent/skills/planning-project/SKILL.md`
+- Outputs:
+  - `.dev/WORKFLOWS.md`
+  - `.dev/PLAN.md`
+  - `.dev/DASHBOARD.md`
 
----
+### Stage 2. Design
+- Skill: `.agent/skills/designing-architecture/SKILL.md`
+- Outputs:
+  - design notes under `.dev/docs/` when needed
+  - refreshed `.dev/DASHBOARD.md`
 
-## Operation Log (`.dev`)
+### Stage 3. Develop
+- Skills:
+  - `.agent/skills/developing-code/SKILL.md`
+  - `.agent/skills/testing-with-tizenclaw-tests/SKILL.md` when applicable
+- Outputs:
+  - scoped implementation changes
+  - any required `tests/system/` scenario updates
+  - refreshed `.dev/DASHBOARD.md`
 
-All stages' thought processes and autonomous logic are recorded
-exclusively in the single `.dev/DASHBOARD.md` tracking file.
-Keep the dashboard concise.
+### Stage 4. Build/Deploy
+- Skill: `.agent/skills/building-deploying/SKILL.md`
+- Output:
+  - scripted host or Tizen build/deploy evidence
 
-## Documentation Location
+### Stage 5. Test/Review
+- Skills:
+  - `.agent/skills/reviewing-code/SKILL.md`
+  - `.agent/skills/testing-with-tizenclaw-tests/SKILL.md` when applicable
+- Output:
+  - executed validation results
+  - findings and residual risks in `.dev/DASHBOARD.md`
 
-All development-process documents created during Planning, Design,
-Review, or similar stage work MUST be created under `.dev/docs/`.
-Do not create new workflow or stage artifact documents under `docs/`.
+### Stage 6. Commit
+- Skill: `.agent/skills/managing-versions/SKILL.md`
+- Output:
+  - `.tmp/commit_msg.txt`
+  - final commit
 
-//turbo-all
+### Optional Evaluator Stage
+- Skill: `.agent/skills/evaluating-outcomes/SKILL.md`
+- Output:
+  - reports under `.dev/07-evaluator/`
+
+Planning may insert the evaluator stage for high-risk or ambiguous work.
+
+## Supervisor Gate Rules
+
+The supervisor validates each stage transition before work advances:
+
+- refine -> requirements are explicit
+- plan -> workflow, plan, and dashboard exist
+- design -> implementation no longer needs invented structure
+- develop -> intended files changed and state is synchronized
+- build/deploy -> scripted path executed
+- test/review -> executed evidence recorded
+- commit -> diff scope and commit format are correct
+
+If a gate fails:
+
+1. Record the reason in `.dev/DASHBOARD.md`
+2. Route back to the earliest incomplete stage
+3. Re-run the corrected stage
+
+Escalate to the user after three failed retries on the same gate.
+
+## Commit Rules
+
+- Write the message to `.tmp/commit_msg.txt`
+- Use `git commit -F .tmp/commit_msg.txt`
+- Never use `git commit -m`
+- Use English for the commit message
+- Keep the title at 50 characters or fewer
+- Keep every body line at 80 characters or fewer
+- Push only when the user explicitly requests it
+
+## `.dev` State Rules
+
+- Keep `.dev/DASHBOARD.md` concise and current
+- Keep `.dev/PLAN.md` as a prompt-derived checklist
+- Keep `.dev/WORKFLOWS.md` as the task-specific process map
+- Put new design or review documents under `.dev/docs/`
+- Preserve historical `.dev` records unless the user explicitly asks to clean
+  them up
