@@ -88,6 +88,11 @@ const DEFAULT_FILE_READ_MAX_MATCHES: usize = 5;
 const SYNTHETIC_INLINE_FULL_TEXT_LIMIT: usize = 6_000;
 const SYNTHETIC_EXTRACTION_PREVIEW_CHARS: usize = 2_000;
 
+#[path = "agent_core/prompt_completion.rs"]
+mod prompt_completion;
+#[path = "agent_core/prompt_shortcuts.rs"]
+mod prompt_shortcuts;
+
 include!("agent_core/foundation.rs");
 include!("agent_core/research.rs");
 include!("agent_core/content_and_workspace.rs");
