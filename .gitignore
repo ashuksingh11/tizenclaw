@@ -123,4 +123,5 @@ src/tizenclaw/error.log
 
 # Prompts
 .prompt
+/prompt/
 .analysis/
