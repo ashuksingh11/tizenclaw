@@ -167,8 +167,7 @@ fn extract_relative_calendar_request(prompt: &str) -> Option<(String, String)> {
     let weekday_name = weekday_re.captures(prompt)?.get(1)?.as_str();
     let target_wday = calendar_weekday_index(weekday_name)?;
 
-    let time_re =
-        regex::Regex::new(r"(?i)\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b").ok()?;
+    let time_re = regex::Regex::new(r"(?i)\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b").ok()?;
     let time_caps = time_re.captures(prompt)?;
     let hour_12 = time_caps.get(1)?.as_str().parse::<u32>().ok()?;
     let minute = time_caps
@@ -184,8 +183,7 @@ fn extract_relative_calendar_request(prompt: &str) -> Option<(String, String)> {
         hour_24 += 12;
     }
 
-    let email_re =
-        regex::Regex::new(r"(?i)\b([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b").ok()?;
+    let email_re = regex::Regex::new(r"(?i)\b([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})\b").ok()?;
     let attendee = email_re.captures(prompt)?.get(1)?.as_str().to_string();
 
     let title = regex::Regex::new(r#"(?i)\btitle it\s+"([^"]+)""#)
@@ -237,8 +235,7 @@ fn extract_relative_calendar_request(prompt: &str) -> Option<(String, String)> {
 }
 
 fn requested_word_range_bounds(prompt: &str) -> Option<(usize, usize)> {
-    let regex =
-        regex::Regex::new(r"(?ix)\b(\d{2,5})\s*(?:-|–|to)\s*(\d{2,5})\s*words?\b").ok()?;
+    let regex = regex::Regex::new(r"(?ix)\b(\d{2,5})\s*(?:-|–|to)\s*(\d{2,5})\s*words?\b").ok()?;
     let captures = regex.captures(prompt)?;
     let minimum = captures.get(1)?.as_str().parse::<usize>().ok()?;
     let maximum = captures.get(2)?.as_str().parse::<usize>().ok()?;
@@ -360,13 +357,7 @@ fn extract_text_match_snippets(
         };
         let match_start = search_from + relative_idx;
         let match_end = match_start + needle.len();
-        append_text_match_snippet(
-            &mut snippets,
-            text,
-            match_start,
-            match_end,
-            window_chars,
-        );
+        append_text_match_snippet(&mut snippets, text, match_start, match_end, window_chars);
         search_from = match_end;
     }
 
@@ -496,7 +487,10 @@ fn build_text_read_payload(content: &str, pattern: Option<&str>, max_chars: usiz
                 if collected.len() >= DEFAULT_FILE_READ_MAX_MATCHES {
                     break;
                 }
-                if !collected.iter().any(|existing: &String| existing == &snippet) {
+                if !collected
+                    .iter()
+                    .any(|existing: &String| existing == &snippet)
+                {
                     collected.push(snippet);
                 }
             }
@@ -530,7 +524,10 @@ fn build_text_read_payload(content: &str, pattern: Option<&str>, max_chars: usiz
 }
 
 fn directory_listing_text(path: &Path, entries: &[Value]) -> String {
-    let mut lines = vec![format!("Directory listing for `{}`", path.to_string_lossy())];
+    let mut lines = vec![format!(
+        "Directory listing for `{}`",
+        path.to_string_lossy()
+    )];
     for entry in entries {
         let name = entry
             .get("name")
@@ -559,7 +556,9 @@ fn build_directory_read_payload(
 ) -> Value {
     let listing_text = directory_listing_text(path, &entries);
     let mut payload = build_text_read_payload(&listing_text, pattern, max_chars);
-    let object = payload.as_object_mut().expect("directory read payload object");
+    let object = payload
+        .as_object_mut()
+        .expect("directory read payload object");
     object.insert("success".into(), json!(true));
     object.insert("operation".into(), json!("read"));
     object.insert("path".into(), json!(path.to_string_lossy()));
@@ -686,7 +685,8 @@ fn score_tool_search_match(tool: &crate::llm::backend::LlmToolDecl, query: &str)
         return score;
     }
 
-    let mut tool_tokens: HashSet<String> = tokenize_tool_search_text(&tool.name).into_iter().collect();
+    let mut tool_tokens: HashSet<String> =
+        tokenize_tool_search_text(&tool.name).into_iter().collect();
     tool_tokens.extend(tokenize_tool_search_text(&tool.description));
 
     let overlap = query_tokens
@@ -1419,9 +1419,11 @@ fn extract_relative_file_paths(text: &str) -> Vec<String> {
         let Some(path_match) = captures.get(1) else {
             continue;
         };
-        let Some(matched) = Some(path_match.as_str().trim_matches(|ch| {
-            matches!(ch, '`' | '"' | '\'' | ',' | '.' | ':' | ';' | ')' | '(')
-        })) else {
+        let Some(matched) =
+            Some(path_match.as_str().trim_matches(|ch| {
+                matches!(ch, '`' | '"' | '\'' | ',' | '.' | ':' | ';' | ')' | '(')
+            }))
+        else {
             continue;
         };
         let preceding_char = text[..path_match.start()].chars().next_back();
@@ -1507,7 +1509,8 @@ fn expected_file_management_targets(prompt: &str) -> Vec<Vec<String>> {
     if prompt_mentions_gitignore(intent_prompt)
         && prompt_requests_file_output(intent_prompt)
         && !groups.iter().any(|group| {
-            group.iter()
+            group
+                .iter()
                 .any(|path| path.eq_ignore_ascii_case(".gitignore"))
         })
     {
@@ -1520,15 +1523,7 @@ fn expected_file_management_targets(prompt: &str) -> Vec<Vec<String>> {
 fn prompt_requests_file_output(prompt: &str) -> bool {
     let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
     [
-        "create",
-        "write",
-        "save",
-        "generate",
-        "draft",
-        "document",
-        "update",
-        "append",
-        "export",
+        "create", "write", "save", "generate", "draft", "document", "update", "append", "export",
     ]
     .iter()
     .any(|needle| prompt_lower.contains(needle))
@@ -1570,10 +1565,18 @@ fn path_is_likely_input_reference(prompt: &str, path: &str) -> bool {
 
     let escaped_path = regex::escape(&path_lower);
     let patterns = [
-        format!(r"\bread(?:\s+the)?(?:\s+(?:document|file|emails?))?(?:\s+in|\s+from)?\s+`?{escaped_path}`?\b"),
-        format!(r"\bopen(?:\s+the)?(?:\s+(?:document|file))?(?:\s+in|\s+from)?\s+`?{escaped_path}`?\b"),
-        format!(r"\b(?:inspect|review|analy[sz]e|summari[sz]e)(?:\s+the)?(?:\s+(?:document|file))?(?:\s+in|\s+from)?\s+`?{escaped_path}`?\b"),
-        format!(r"\b(?:check|use|consult)(?:\s+the)?(?:\s+(?:document|file))?(?:\s+in|\s+from)?\s+`?{escaped_path}`?\b"),
+        format!(
+            r"\bread(?:\s+the)?(?:\s+(?:document|file|emails?))?(?:\s+in|\s+from)?\s+`?{escaped_path}`?\b"
+        ),
+        format!(
+            r"\bopen(?:\s+the)?(?:\s+(?:document|file))?(?:\s+in|\s+from)?\s+`?{escaped_path}`?\b"
+        ),
+        format!(
+            r"\b(?:inspect|review|analy[sz]e|summari[sz]e)(?:\s+the)?(?:\s+(?:document|file))?(?:\s+in|\s+from)?\s+`?{escaped_path}`?\b"
+        ),
+        format!(
+            r"\b(?:check|use|consult)(?:\s+the)?(?:\s+(?:document|file))?(?:\s+in|\s+from)?\s+`?{escaped_path}`?\b"
+        ),
         format!(r"\b(?:document|file)\s+in\s+`?{escaped_path}`?\b"),
         format!(r"\bfile\s+called\s+`?{escaped_path}`?\b"),
         format!(r"\bsaved\s+.*?\s+file\s+called\s+`?{escaped_path}`?\b"),
@@ -1621,6 +1624,8 @@ fn prompt_requests_executable_script(prompt: &str) -> bool {
 
 fn is_simple_file_management_request(prompt: &str) -> bool {
     let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    // Keep a compact Korean keyword subset so basic file-management prompts
+    // continue to route correctly for supported multilingual sessions.
     let has_file_action = [
         "create", "write", "save", "edit", "update", "append", "read", "list", "show", "remove",
         "delete", "copy", "move", "rename", "mkdir", "open", "display", "print", "view", "읽",
@@ -1628,6 +1633,8 @@ fn is_simple_file_management_request(prompt: &str) -> bool {
     ]
     .iter()
     .any(|keyword| prompt_lower.contains(keyword));
+    // These Korean path nouns remain intentional multilingual matching, not
+    // repository-authored prose or comments.
     let has_file_target = [
         "file",
         "files",
@@ -1799,9 +1806,16 @@ fn prompt_requests_numeric_market_fact(prompt: &str) -> bool {
     let wants_freshness = ["current", "latest", "today"]
         .iter()
         .any(|needle| prompt_lower.contains(needle));
-    let market_fact = ["stock", "share price", "stock price", "quote", "ticker", "market price"]
-        .iter()
-        .any(|needle| prompt_lower.contains(needle));
+    let market_fact = [
+        "stock",
+        "share price",
+        "stock price",
+        "quote",
+        "ticker",
+        "market price",
+    ]
+    .iter()
+    .any(|needle| prompt_lower.contains(needle));
 
     wants_freshness && market_fact
 }
@@ -1826,9 +1840,14 @@ fn prompt_requests_descriptive_answer_file(prompt: &str) -> bool {
     let asks_question = ["what", "when", "why", "how", "which", "who"]
         .iter()
         .any(|needle| prompt_lower.contains(needle));
-    let expects_answer_file = ["answer.txt", "save your answer", "write the answer", "save it to"]
-        .iter()
-        .any(|needle| prompt_lower.contains(needle));
+    let expects_answer_file = [
+        "answer.txt",
+        "save your answer",
+        "write the answer",
+        "save it to",
+    ]
+    .iter()
+    .any(|needle| prompt_lower.contains(needle));
 
     asks_question && expects_answer_file
 }
@@ -1881,8 +1900,7 @@ fn output_lacks_numeric_market_fact(prompt: &str, content: &str) -> bool {
     ]
     .iter()
     .any(|needle| content_lower.contains(needle));
-    let has_numeric_price =
-        regex::Regex::new(r"(?i)(\\$ ?\\d+(?:\\.\\d+)?|\\b\\d+\\.\\d{1,2}\\b)")
+    let has_numeric_price = regex::Regex::new(r"(?i)(\\$ ?\\d+(?:\\.\\d+)?|\\b\\d+\\.\\d{1,2}\\b)")
         .map(|re| re.is_match(content))
         .unwrap_or(false);
     let has_grader_visible_date = numeric_market_fact_has_grader_visible_date(content);
@@ -1944,7 +1962,9 @@ fn extract_url_host_counts(content: &str) -> HashMap<String, usize> {
 
     let mut counts = HashMap::new();
     for matched in url_re.find_iter(content) {
-        let raw = matched.as_str().trim_end_matches(|ch: char| ",.;|".contains(ch));
+        let raw = matched
+            .as_str()
+            .trim_end_matches(|ch: char| ",.;|".contains(ch));
         let Some(host) = reqwest::Url::parse(raw)
             .ok()
             .and_then(|url| url.host_str().map(ToString::to_string))
@@ -2113,9 +2133,16 @@ fn prompt_requests_conference_roundup(prompt: &str) -> bool {
     }
 
     let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
-    ["conference", "conferences", "summit", "congress", "expo", "forum"]
-        .iter()
-        .any(|needle| prompt_lower.contains(needle))
+    [
+        "conference",
+        "conferences",
+        "summit",
+        "congress",
+        "expo",
+        "forum",
+    ]
+    .iter()
+    .any(|needle| prompt_lower.contains(needle))
 }
 
 fn prompt_requires_strict_current_research_validation(prompt: &str) -> bool {

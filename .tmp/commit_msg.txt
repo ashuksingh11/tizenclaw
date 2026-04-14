@@ -1,0 +1,7 @@
+Refactor agent prompt orchestration
+
+Extract prompt contract injection and pre-loop planning
+from AgentCore::process_prompt into focused helpers.
+
+Document the intentional multilingual parsing hooks and
+tighten the file-grounded recall runtime contract.

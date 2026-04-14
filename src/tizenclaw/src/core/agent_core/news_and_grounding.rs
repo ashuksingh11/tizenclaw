@@ -75,7 +75,8 @@ async fn prefetch_polymarket_market_snapshot(
         }
     }
     if merged.is_empty() {
-        return Err(last_error.unwrap_or_else(|| "Polymarket Gamma API returned no active markets".to_string()));
+        return Err(last_error
+            .unwrap_or_else(|| "Polymarket Gamma API returned no active markets".to_string()));
     }
 
     let trimmed = trim_polymarket_snapshot_entries(&merged);
@@ -160,16 +161,16 @@ fn eligible_polymarket_briefing_market(entry: &Value) -> bool {
         .get(..10)
         .unwrap_or("")
         .to_string();
-    let end_date = entry
-        .get("endDateIso")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            entry
-                .get("endDate")
-                .and_then(Value::as_str)
-                .and_then(|value| value.get(..10))
-        });
-    if end_date.map(|value| value < today.as_str()).unwrap_or(false) {
+    let end_date = entry.get("endDateIso").and_then(Value::as_str).or_else(|| {
+        entry
+            .get("endDate")
+            .and_then(Value::as_str)
+            .and_then(|value| value.get(..10))
+    });
+    if end_date
+        .map(|value| value < today.as_str())
+        .unwrap_or(false)
+    {
         return false;
     }
 
@@ -235,12 +236,8 @@ fn build_polymarket_ranked_snapshot_context(snapshot_content: &str) -> Option<St
             .to_string(),
     );
     lines.push(String::new());
-    lines.push(
-        "| Rank | Question | 24h Volume | Total Volume | End Date | Odds |".to_string(),
-    );
-    lines.push(
-        "| --- | --- | ---: | ---: | --- | --- |".to_string(),
-    );
+    lines.push("| Rank | Question | 24h Volume | Total Volume | End Date | Odds |".to_string());
+    lines.push("| --- | --- | ---: | ---: | --- | --- |".to_string());
 
     for (index, entry) in ranked.iter().take(8).enumerate() {
         let question = entry
@@ -248,12 +245,10 @@ fn build_polymarket_ranked_snapshot_context(snapshot_content: &str) -> Option<St
             .and_then(Value::as_str)
             .unwrap_or("")
             .replace('|', "\\|");
-        let volume_24h = format_polymarket_volume(
-            polymarket_numeric_field(entry, "volume24hr").unwrap_or(0.0),
-        );
-        let total_volume = format_polymarket_volume(
-            polymarket_numeric_field(entry, "volumeNum").unwrap_or(0.0),
-        );
+        let volume_24h =
+            format_polymarket_volume(polymarket_numeric_field(entry, "volume24hr").unwrap_or(0.0));
+        let total_volume =
+            format_polymarket_volume(polymarket_numeric_field(entry, "volumeNum").unwrap_or(0.0));
         let end_date = entry
             .get("endDateIso")
             .and_then(Value::as_str)
@@ -323,16 +318,23 @@ fn basic_polymarket_briefing_candidates(snapshot_content: &str, limit: usize) ->
 
     let mut ranked = markets
         .iter()
-        .filter(|entry| entry.get("active").and_then(Value::as_bool).unwrap_or(false))
         .filter(|entry| {
-            entry.get("question")
+            entry
+                .get("active")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .filter(|entry| {
+            entry
+                .get("question")
                 .and_then(Value::as_str)
                 .map(|value| !value.trim().is_empty() && value.contains('?'))
                 .unwrap_or(false)
         })
         .filter(|entry| polymarket_yes_no_percentages(entry).is_some())
         .filter(|entry| {
-            entry.get("endDateIso")
+            entry
+                .get("endDateIso")
                 .and_then(Value::as_str)
                 .or_else(|| {
                     entry
@@ -406,7 +408,10 @@ fn strip_wrapping_markdown_fence(text: &str) -> String {
     let inner = lines.collect::<Vec<_>>();
     if let Some(last) = inner.last() {
         if last.trim() == "```" {
-            return inner[..inner.len().saturating_sub(1)].join("\n").trim().to_string();
+            return inner[..inner.len().saturating_sub(1)]
+                .join("\n")
+                .trim()
+                .to_string();
         }
     }
     trimmed.to_string()
@@ -489,9 +494,7 @@ fn preferred_news_host_display_name(host: &str) -> Option<&'static str> {
         ("aljazeera.com", "Al Jazeera"),
     ]
     .iter()
-    .find_map(|(suffix, display_name)| {
-        normalized.ends_with(suffix).then_some(*display_name)
-    })
+    .find_map(|(suffix, display_name)| normalized.ends_with(suffix).then_some(*display_name))
 }
 
 fn blocked_news_source_label(label: &str) -> bool {
@@ -649,18 +652,23 @@ fn polymarket_market_candidate_score(entry: &Value) -> i64 {
         .get(..10)
         .unwrap_or("")
         .to_string();
-    let end_date = entry
-        .get("endDateIso")
-        .and_then(Value::as_str)
-        .or_else(|| entry.get("endDate").and_then(Value::as_str).and_then(|value| value.get(..10)));
-    if end_date.map(|value| value < today.as_str()).unwrap_or(false) {
+    let end_date = entry.get("endDateIso").and_then(Value::as_str).or_else(|| {
+        entry
+            .get("endDate")
+            .and_then(Value::as_str)
+            .and_then(|value| value.get(..10))
+    });
+    if end_date
+        .map(|value| value < today.as_str())
+        .unwrap_or(false)
+    {
         return i64::MIN;
     }
 
     let recent_volume = polymarket_recent_volume(entry);
     let total_volume = polymarket_primary_volume(entry);
-    let mut score = ((recent_volume / 25_000.0).round() as i64)
-        + ((total_volume / 250_000.0).round() as i64);
+    let mut score =
+        ((recent_volume / 25_000.0).round() as i64) + ((total_volume / 250_000.0).round() as i64);
 
     if question.contains('?') {
         score += 10;
@@ -704,7 +712,10 @@ fn polymarket_market_candidate_score(entry: &Value) -> i64 {
             }
         }
     }
-    if let Some(year) = end_date.and_then(|value| value.get(..4)).and_then(|value| value.parse::<i32>().ok()) {
+    if let Some(year) = end_date
+        .and_then(|value| value.get(..4))
+        .and_then(|value| value.parse::<i32>().ok())
+    {
         if let Some(current_year) = current_utc_year().map(|value| value as i32) {
             if year == current_year {
                 score += 25;
@@ -753,11 +764,50 @@ fn polymarket_market_candidate_score(entry: &Value) -> i64 {
 
 fn prediction_market_anchor_tokens(question: &str, description: &str) -> Vec<String> {
     let generic = [
-        "will", "after", "before", "today", "right", "now", "market", "markets", "question",
-        "current", "odds", "recent", "latest", "news", "this", "that", "active", "april",
-        "may", "june", "july", "august", "september", "october", "november", "december",
-        "high", "low", "hit", "reach", "returns", "return", "normal", "regime", "fall",
-        "ends", "end", "deal", "peace", "conflict", "price", "prices", "2026", "2027",
+        "will",
+        "after",
+        "before",
+        "today",
+        "right",
+        "now",
+        "market",
+        "markets",
+        "question",
+        "current",
+        "odds",
+        "recent",
+        "latest",
+        "news",
+        "this",
+        "that",
+        "active",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+        "high",
+        "low",
+        "hit",
+        "reach",
+        "returns",
+        "return",
+        "normal",
+        "regime",
+        "fall",
+        "ends",
+        "end",
+        "deal",
+        "peace",
+        "conflict",
+        "price",
+        "prices",
+        "2026",
+        "2027",
     ];
     let mut tokens = tokenize_grounded_keywords(&format!(
         "{} {}",
@@ -809,12 +859,10 @@ fn prediction_market_match_count<'a>(
 }
 
 fn score_recent_news_result(question: &str, description: &str, result: &Value) -> i64 {
-    let title = clean_news_text_component(
-        result.get("title").and_then(Value::as_str).unwrap_or(""),
-    );
-    let snippet = clean_news_text_component(
-        result.get("snippet").and_then(Value::as_str).unwrap_or(""),
-    );
+    let title =
+        clean_news_text_component(result.get("title").and_then(Value::as_str).unwrap_or(""));
+    let snippet =
+        clean_news_text_component(result.get("snippet").and_then(Value::as_str).unwrap_or(""));
     let url = result.get("url").and_then(Value::as_str).unwrap_or("");
     let host = normalize_url_host(url).unwrap_or_default();
     let source_label = extract_google_news_source_label(&title).unwrap_or_default();
@@ -885,10 +933,9 @@ fn score_recent_news_result(question: &str, description: &str, result: &Value) -
         return -220;
     }
     let anchor_tokens = prediction_market_anchor_tokens(question, description);
-    let anchor_overlap = prediction_market_match_count(
-        &combined,
-        anchor_tokens.iter().map(|token| token.as_str()),
-    ) as i64;
+    let anchor_overlap =
+        prediction_market_match_count(&combined, anchor_tokens.iter().map(|token| token.as_str()))
+            as i64;
     if !anchor_tokens.is_empty() && anchor_overlap == 0 {
         return -180;
     }
@@ -980,7 +1027,10 @@ fn score_recent_news_result(question: &str, description: &str, result: &Value) -
     if anchor_overlap < 1 && !anchor_tokens.is_empty() {
         score -= 120;
     }
-    if overlap < 2 && !host_is_preferred_news_source(&host) && !preferred_news_source_label(&source_label) {
+    if overlap < 2
+        && !host_is_preferred_news_source(&host)
+        && !preferred_news_source_label(&source_label)
+    {
         score -= 50;
     }
     if snippet.split_whitespace().count() >= 12 {
@@ -1028,7 +1078,9 @@ fn strip_source_suffix(text: &str, source_name: &str) -> String {
     ];
     for pattern in patterns {
         if let Some(stripped) = trimmed.strip_suffix(&pattern) {
-            return stripped.trim_end_matches(['.', ' ', '-', '|', '—', '–']).to_string();
+            return stripped
+                .trim_end_matches(['.', ' ', '-', '|', '—', '–'])
+                .to_string();
         }
     }
     trimmed.to_string()
@@ -1048,18 +1100,20 @@ fn prediction_market_odds_context_sentence(yes_pct: u32, no_pct: u32) -> &'stati
     }
 }
 
-fn summarize_recent_news_result(question: &str, description: &str, result: &Value) -> Option<String> {
+fn summarize_recent_news_result(
+    question: &str,
+    description: &str,
+    result: &Value,
+) -> Option<String> {
     let score = score_recent_news_result(question, description, result);
     if score < 24 {
         return None;
     }
 
-    let title = clean_news_text_component(
-        result.get("title").and_then(Value::as_str).unwrap_or(""),
-    );
-    let snippet = clean_news_text_component(
-        result.get("snippet").and_then(Value::as_str).unwrap_or(""),
-    );
+    let title =
+        clean_news_text_component(result.get("title").and_then(Value::as_str).unwrap_or(""));
+    let snippet =
+        clean_news_text_component(result.get("snippet").and_then(Value::as_str).unwrap_or(""));
     let host = normalize_url_host(result.get("url").and_then(Value::as_str).unwrap_or(""))
         .unwrap_or_default();
     let url_date =
@@ -1067,10 +1121,8 @@ fn summarize_recent_news_result(question: &str, description: &str, result: &Valu
     let source_label = extract_google_news_source_label(&title).unwrap_or_default();
     let combined = format!("{} {}", title, snippet).to_ascii_lowercase();
     let anchor_tokens = prediction_market_anchor_tokens(question, description);
-    let anchor_overlap = prediction_market_match_count(
-        &combined,
-        anchor_tokens.iter().map(|token| token.as_str()),
-    );
+    let anchor_overlap =
+        prediction_market_match_count(&combined, anchor_tokens.iter().map(|token| token.as_str()));
     let has_recency_signal = text_has_specific_calendar_date(&title)
         || text_has_specific_calendar_date(&snippet)
         || url_date.is_some()
@@ -1145,12 +1197,11 @@ fn summarize_recent_news_result(question: &str, description: &str, result: &Valu
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("");
-    let cleaned_snippet = regex::Regex::new(
-        r"(?i)^(?:[A-Za-z]{3,9}\s+\d{1,2}(?:,)?\s+\d{4}\s+reported\s+)",
-    )
-    .ok()
-    .map(|re| re.replace(&snippet, "").into_owned())
-    .unwrap_or_else(|| snippet.clone());
+    let cleaned_snippet =
+        regex::Regex::new(r"(?i)^(?:[A-Za-z]{3,9}\s+\d{1,2}(?:,)?\s+\d{4}\s+reported\s+)")
+            .ok()
+            .map(|re| re.replace(&snippet, "").into_owned())
+            .unwrap_or_else(|| snippet.clone());
     let lead = if !cleaned_snippet.is_empty() {
         cleaned_snippet.trim_end_matches('.').to_string()
     } else {
@@ -1164,19 +1215,12 @@ fn summarize_recent_news_result(question: &str, description: &str, result: &Valu
     };
     let summary = format!(
         "{} reported on {} that {}. {}",
-        source_name,
-        published_date,
-        lead,
-        source_markup,
+        source_name, published_date, lead, source_markup,
     );
     recent_news_summary_is_strong(&summary).then_some(summary)
 }
 
-fn format_prediction_market_related_news(
-    yes_pct: u32,
-    no_pct: u32,
-    news_summary: &str,
-) -> String {
+fn format_prediction_market_related_news(yes_pct: u32, no_pct: u32, news_summary: &str) -> String {
     format!(
         "{} {}",
         news_summary.trim(),
@@ -1368,11 +1412,10 @@ fn prediction_market_news_queries(question: &str, description: &str) -> Vec<Stri
         ));
     }
 
-    if let Some(team) =
-        regex::Regex::new(r"(?i)^Will (.+) win the 2025[–-]26 Champions League\??$")
-            .ok()
-            .and_then(|re| re.captures(base))
-            .and_then(|caps| caps.get(1).map(|value| value.as_str().trim().to_string()))
+    if let Some(team) = regex::Regex::new(r"(?i)^Will (.+) win the 2025[–-]26 Champions League\??$")
+        .ok()
+        .and_then(|re| re.captures(base))
+        .and_then(|caps| caps.get(1).map(|value| value.as_str().trim().to_string()))
     {
         queries.push(format!(
             "{} Champions League recent news -site:polymarket.com -site:frenflow.com -site:pulptastic.com",
@@ -1487,10 +1530,12 @@ fn text_contains_recent_news_date(text: &str, max_age_days: i64) -> bool {
         return false;
     };
     let current_days = days_from_civil(current_year, current_month, current_day);
-    extract_specific_calendar_dates(text).into_iter().any(|(year, month, day)| {
-        let delta = current_days - days_from_civil(year, month, day);
-        (0..=max_age_days).contains(&delta)
-    })
+    extract_specific_calendar_dates(text)
+        .into_iter()
+        .any(|(year, month, day)| {
+            let delta = current_days - days_from_civil(year, month, day);
+            (0..=max_age_days).contains(&delta)
+        })
 }
 
 fn format_specific_calendar_date(year: i32, month: u32, day: u32) -> String {
@@ -1503,12 +1548,15 @@ fn parse_markdown_level_requirements(markdown: &str) -> Vec<(String, String)> {
 
     for line in markdown.lines() {
         let trimmed = line.trim();
+        // Keep Korean worksheet markers because existing grounded task
+        // fixtures use them in production daemon flows.
         if let Some(captures) = MARKDOWN_LEVEL_HEADING_RE.captures(trimmed) {
             current_level = captures.get(1).map(|value| value.as_str().to_string());
             continue;
         }
 
         if let Some(level) = current_level.as_ref() {
+            // Korean `**문제:**` labels remain supported for those fixtures.
             if let Some(question) = trimmed.strip_prefix("**문제:**") {
                 requirements.push((level.clone(), question.trim().to_string()));
                 current_level = None;
@@ -1536,6 +1584,8 @@ fn summarize_requirement_directive(requirement: &str, csv_path: Option<&str>) ->
         .map(|path| format!(" using {}", path))
         .unwrap_or_default();
 
+    // These localized phrases map supported Korean worksheet prompts onto the
+    // same normalized directive shape used for grounded tabular reasoning.
     if requirement.contains("가장 많이 팔렸") {
         return format!(
             "Count the frequency of Fruit{} and print only the single most common fruit name.",
@@ -2294,12 +2344,7 @@ fn file_looks_binary(path: &Path) -> bool {
     }
     let suspicious = sample
         .iter()
-        .filter(|byte| {
-            !matches!(
-                byte,
-                b'\n' | b'\r' | b'\t' | 0x20..=0x7e
-            )
-        })
+        .filter(|byte| !matches!(byte, b'\n' | b'\r' | b'\t' | 0x20..=0x7e))
         .count();
     suspicious * 5 > sample.len()
 }
@@ -2399,4 +2444,3 @@ fn missing_file_management_targets(
         })
         .collect()
 }
-

@@ -500,7 +500,11 @@ impl AgentCore {
                                 "list_files",
                                 "list_files",
                                 json!({ "path": "emails" }),
-                                &synthetic_list_files_result(session_workdir, "emails", &source_files),
+                                &synthetic_list_files_result(
+                                    session_workdir,
+                                    "emails",
+                                    &source_files,
+                                ),
                             );
                             for (idx, (relative_path, content)) in source_files.iter().enumerate() {
                                 record_synthetic_tool_interaction(
@@ -627,7 +631,8 @@ impl AgentCore {
         }
 
         let grounded_input_files = collect_existing_grounded_input_files(prompt, session_workdir);
-        if let Some(text) = synthesize_file_grounded_answers_from_files(prompt, &grounded_input_files)
+        if let Some(text) =
+            synthesize_file_grounded_answers_from_files(prompt, &grounded_input_files)
         {
             if let Ok(ss) = self.session_store.lock() {
                 if let Some(store) = ss.as_ref() {

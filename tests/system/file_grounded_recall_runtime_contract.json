@@ -54,6 +54,10 @@
         {
           "path": "text",
           "contains": "4. Your project is NeonDB, a distributed key-value store."
+        },
+        {
+          "path": "text",
+          "contains": "5. Your team's secret code phrase is \"purple elephant sunrise\"."
         }
       ]
     },
