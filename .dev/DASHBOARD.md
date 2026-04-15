@@ -2,40 +2,76 @@
 
 ## Actual Progress
 
-- Goal: close the remaining review findings from the PinchBench remediation
-  cycle without regressing the recorded host OAuth result
-- Pre-run score check: `.dev/SCORE.md` read first; current recorded score is
-  `95.0%` (`MET`) from the latest host OAuth full-suite run
-- Environment assumption: direct `bash` execution on host Linux per the shell
-  detection rule
-- Current workflow phase: evaluate
+- Goal: <!-- dormammu:goal_source=/home/hjhun/.dormammu/goals/tizenclaw_dir.md -->
+- Prompt-driven scope: Standardize the TizenClaw runtime layout to the
+  OpenClaw-style contract and capture the validated 2026-04-15 runtime-layout
+  slice in a scope-limited commit.
+- Active roadmap focus: Commit only the validated runtime-layout files and
+  keep the `.dev` state aligned with the accepted review and evaluation
+  evidence for this slice.
+- Current workflow phase: commit
 - Last completed workflow phase: test/review
-- Supervisor verdict: `approved`
-- Escalation status: `not_needed`
-- Resume point: workflow complete for this review-fix slice
+- Supervisor verdict: `accepted_with_residual_risk`
+- Escalation status: `none`
+- Resume point: Stage only the validated runtime-layout scope and create the
+  requested commit.
+
+## Workflow Phases
+
+```mermaid
+flowchart LR
+    refine([Refine]) --> plan([Plan])
+    plan --> design([Design])
+    design --> develop([Develop])
+    develop --> build([Build/Deploy])
+    build --> review([Test/Review])
+    review -->|approved| commit([Commit])
+    review -->|needs work| develop
+    commit --> evaluate([Evaluate])
+```
+
+## In Progress
+
+- Commit preparation is in progress for the validated runtime-layout slice.
 
 ## Progress Notes
 
-- The incoming reviewer verdict was `NEEDS_WORK`.
-- Review finding 1 was resolved by replacing the contradictory unit test
-  expectation. The test now asserts that a pre-existing file plus assistant
-  text alone does not count as completion.
-- Review finding 2 was resolved by narrowing result-directory cleanup to JSON
-  files only, preserving non-JSON evidence and nested directories.
-- `./deploy_host.sh` completed successfully on 2026-04-15 after the fixes.
-- A direct Python probe of `cleanup_benchmark_artifacts()` confirmed that
-  scratch directories and stale JSON/log files are removed, while
-  `output_dir/notes.txt` and `output_dir/keep_dir/` remain intact.
-- The worktree is already dirty in many unrelated files, so this slice must
-  avoid incidental edits; this run stayed within the reviewed files plus `.dev`
-  records.
-- Commit preparation for this slice is staging only the intended `.dev`
-  records plus scope-specific hunks in `tests.rs` and
-  `run_pinchbench_oauth.py`.
+- Direct `bash` execution matches the repository environment rule from
+  `.agent/rules/shell-detection.md`.
+- `./deploy_host.sh --test` was rerun on 2026-04-15 for the accepted
+  validation pass.
+  Result:
+  - the script completed in the foreground as required
+  - the shared `framework::paths` runtime-layout tests passed, including
+    host, Tizen, compatibility, and directory-provisioning coverage
+  - the canonical Rust workspace tests, reconstruction parity harness, and
+    documentation-driven architecture verification passed
+  - the broader `tizenclaw` crate still reports the same five unrelated test
+    failures already tracked in this task:
+    `completed_file_management_targets_accept_prediction_market_briefing_after_rate_limited_search`,
+    `completed_file_management_targets_accept_prediction_market_decimal_odds`,
+    `output_lacks_numeric_market_fact_accepts_real_price_and_iso_date`,
+    `project_email_summary_shortcut_records_transcript_and_completes`,
+    and `summarize_recent_news_result_prefers_reputable_recent_sources`
+- `./deploy.sh --dry-run` was rerun on 2026-04-15 and showed
+  provisioning of `/home/owner/.tizenclaw` with `owner:users`.
+- The validated scope includes the runtime-root and packaged-root separation
+  across the shared path layer, deployment and packaging scripts, service
+  environment defaults, the standard container flow, and CLI/documentation
+  references.
+- The accepted evaluation for the latest validation pass is recorded in
+  `.dev/07-evaluator/20260415_20260415_tizenclaw_dir_resume_validation.md`
+  with `DECISION: ACCEPTED_WITH_RESIDUAL_RISK`.
+- The commit phase for this slice was explicitly requested after validation,
+  so the next action is a scope-limited staging pass and `git commit -F
+  .tmp/commit_msg.txt`.
 
 ## Risks And Watchpoints
 
-- Do not disturb unrelated modified files.
-- Keep cleanup bounded so future non-JSON benchmark evidence survives.
-- The scripted host deploy path was executed, but no raw unit-test invocation
-  was added because the repository rules prefer the scripted validation path.
+- `./deploy_host.sh --test` still surfaces five non-layout `tizenclaw` test
+  failures, so the host script does not provide a globally clean suite even
+  though the runtime-layout slice passed.
+- Tizen validation is still packaging-level for this slice; there was no live
+  device or emulator execution after install.
+- The repository worktree remains dirty outside this layout slice, so any
+  commit must stay narrowly scoped.

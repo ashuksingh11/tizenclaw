@@ -2,7 +2,7 @@
 //!
 //! ## Directory Structure
 //! ```
-//! /opt/usr/share/tizenclaw/sessions/
+//! <runtime_root>/sessions/
 //! └── {session_id}/
 //!     ├── compacted.md      ← compact snapshot (atomic overwrite on compaction)
 //!     ├── 2026-04-01.md     ← day-1 conversation (append-only)

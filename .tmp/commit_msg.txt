@@ -1,7 +1,6 @@
-Synchronize improve-agent-loop workflow state
+Standardize runtime layout under .tizenclaw roots
 
-Record the completed commit and evaluator stages for the
-improve-agent-loop scope.
-
-Sync the dashboard, plan, and workflow checklist with the
-validated implementation already committed in 01f4d3ff.
+Move mutable host and Tizen runtime state to the canonical .tizenclaw
+roots while keeping packaged assets under /opt/usr/share/tizenclaw.
+Align services, deploy scripts, container helpers, path resolution, and
+CLI documentation with the new contract.

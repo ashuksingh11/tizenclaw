@@ -33,9 +33,7 @@ namespace cli {
 
 namespace {
 
-constexpr const char* kConfigPath =
-    "/opt/usr/share/tizenclaw/config"
-    "/web_search_config.json";
+constexpr const char* kConfigFileName = "web_search_config.json";
 
 constexpr const char* kSupportedEngines[] = {
     "naver", "google", "brave",
@@ -130,6 +128,32 @@ std::string ReadFile(const std::string& path) {
   return ss.str();
 }
 
+std::string ResolveConfigPath() {
+  if (const char* config_dir =
+          std::getenv("TIZENCLAW_CONFIG_DIR");
+      config_dir && config_dir[0] != '\0') {
+    return std::string(config_dir) + "/" +
+           kConfigFileName;
+  }
+
+  std::string runtime_root;
+  if (const char* home =
+          std::getenv("TIZENCLAW_HOME");
+      home && home[0] != '\0') {
+    runtime_root = home;
+  } else if (const char* home =
+                 std::getenv("HOME");
+             home && home[0] != '\0') {
+    runtime_root = std::string(home) +
+                   "/.tizenclaw";
+  } else {
+    runtime_root = "/home/owner/.tizenclaw";
+  }
+
+  return runtime_root + "/config/" +
+         kConfigFileName;
+}
+
 // --- Config loading ---
 
 struct EngineConfig {
@@ -148,7 +172,7 @@ struct Config {
 
 Config LoadConfig() {
   Config cfg;
-  std::string raw = ReadFile(kConfigPath);
+  std::string raw = ReadFile(ResolveConfigPath());
   if (raw.empty())
     return cfg;
 

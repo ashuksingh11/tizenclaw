@@ -74,6 +74,24 @@ cp %{SOURCE1001} .
 DESTDIR=%{buildroot} /usr/bin/cmake --install . --verbose
 
 %post
+mkdir -p /home/owner/.tizenclaw/config
+mkdir -p /home/owner/.tizenclaw/workspace/skills
+mkdir -p /home/owner/.tizenclaw/workspace/skill-hubs
+mkdir -p /home/owner/.tizenclaw/tools
+mkdir -p /home/owner/.tizenclaw/plugins/llm
+mkdir -p /home/owner/.tizenclaw/plugins/cli
+mkdir -p /home/owner/.tizenclaw/workflows
+mkdir -p /home/owner/.tizenclaw/codes
+mkdir -p /home/owner/.tizenclaw/logs
+mkdir -p /home/owner/.tizenclaw/actions
+mkdir -p /home/owner/.tizenclaw/pipelines
+mkdir -p /home/owner/.tizenclaw/state
+mkdir -p /home/owner/.tizenclaw/sessions
+mkdir -p /home/owner/.tizenclaw/memory
+mkdir -p /home/owner/.tizenclaw/outbound
+mkdir -p /home/owner/.tizenclaw/telegram_sessions
+cp -rn /opt/usr/share/tizenclaw/config/. /home/owner/.tizenclaw/config/ 2>/dev/null || true
+chown -R owner:users /home/owner/.tizenclaw 2>/dev/null || true
 systemctl daemon-reload >/dev/null 2>&1 || true
 systemctl enable tizenclaw.service >/dev/null 2>&1 || true
 

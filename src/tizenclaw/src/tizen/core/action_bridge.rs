@@ -8,7 +8,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-pub const ACTIONS_DIR: &str = "/opt/usr/share/tizenclaw/tools/actions";
+fn actions_dir() -> PathBuf {
+    libtizenclaw_core::framework::paths::PlatformPaths::detect().actions_dir
+}
 
 #[derive(Clone, Debug)]
 pub struct ActionSchema {
@@ -151,7 +153,7 @@ impl ActionBridge {
         // Drop the lock during filesystem operations
         drop(state);
 
-        fs::create_dir_all(ACTIONS_DIR).ok();
+        fs::create_dir_all(actions_dir()).ok();
 
         let mut actions_map = HashMap::new();
         let mut index_entries = Vec::new();
@@ -171,15 +173,21 @@ impl ActionBridge {
             // Create markdown
             write_action_md(&pkg_id, &action_id, &schema);
 
+            let base_actions_dir = actions_dir();
             let md_path = if pkg_id.is_empty() {
-                format!("{}/{}.md", ACTIONS_DIR, action_id)
+                base_actions_dir.join(format!("{}.md", action_id))
             } else {
-                format!("{}/{}/{}.md", ACTIONS_DIR, pkg_id, action_id)
+                base_actions_dir
+                    .join(&pkg_id)
+                    .join(format!("{}.md", action_id))
             };
 
             index_entries.push(format!(
                 "| {} | {} | {} | [Link]({}) |",
-                action_id, pkg_id, description, md_path
+                action_id,
+                pkg_id,
+                description,
+                md_path.to_string_lossy()
             ));
 
             actions_map.insert(
@@ -430,10 +438,11 @@ fn extract_pkg_id(schema: &Value) -> String {
 }
 
 fn write_action_md(pkg_id: &str, action_id: &str, schema: &Value) {
+    let base_actions_dir = actions_dir();
     let dir_path = if pkg_id.is_empty() {
-        PathBuf::from(ACTIONS_DIR)
+        base_actions_dir
     } else {
-        let dir = Path::new(ACTIONS_DIR).join(pkg_id);
+        let dir = base_actions_dir.join(pkg_id);
         fs::create_dir_all(&dir).ok();
         dir
     };
@@ -493,6 +502,6 @@ fn write_index_md(entries: &[String]) {
         index_content.push('\n');
     }
 
-    let index_path = Path::new(ACTIONS_DIR).join("index.md");
+    let index_path = actions_dir().join("index.md");
     let _ = fs::write(&index_path, index_content);
 }

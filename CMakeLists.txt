@@ -18,8 +18,8 @@ endif()
 
 set(CARGO_TARGET_DIR "${CMAKE_SOURCE_DIR}/target/${CARGO_TARGET}/release")
 set(TIZENCLAW_BIN_DIR "${CMAKE_INSTALL_PREFIX}/usr/bin")
-set(TIZENCLAW_DATA_DIR "${CMAKE_INSTALL_PREFIX}/opt/usr/share/tizenclaw")
-set(TIZENCLAW_PLUGIN_DIR "${TIZENCLAW_DATA_DIR}/plugins")
+set(TIZENCLAW_PACKAGED_DIR "${CMAKE_INSTALL_PREFIX}/opt/usr/share/tizenclaw")
+set(TIZENCLAW_PLUGIN_DIR "${TIZENCLAW_PACKAGED_DIR}/plugins")
 
 add_custom_target(cargo_build ALL
   COMMAND cargo build --release --workspace --target ${CARGO_TARGET}
@@ -43,19 +43,19 @@ install(PROGRAMS
 install(FILES
   "${CMAKE_SOURCE_DIR}/data/config/agent_roles.json"
   "${CMAKE_SOURCE_DIR}/data/config/system_prompt.txt"
-  DESTINATION "${TIZENCLAW_DATA_DIR}/config"
+  DESTINATION "${TIZENCLAW_PACKAGED_DIR}/config"
 )
 
 install(DIRECTORY
   "${CMAKE_SOURCE_DIR}/data/web"
   "${CMAKE_SOURCE_DIR}/data/docs"
   "${CMAKE_SOURCE_DIR}/tools/embedded"
-  DESTINATION "${TIZENCLAW_DATA_DIR}"
+  DESTINATION "${TIZENCLAW_PACKAGED_DIR}"
 )
 
 install(FILES
   "${CMAKE_SOURCE_DIR}/data/img/tizenclaw.svg"
-  DESTINATION "${TIZENCLAW_DATA_DIR}/web/img"
+  DESTINATION "${TIZENCLAW_PACKAGED_DIR}/web/img"
 )
 
 install(FILES

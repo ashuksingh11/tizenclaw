@@ -722,18 +722,11 @@ fn parse_usage_baseline(raw: &str) -> Result<Value, String> {
 }
 
 fn is_tizen_runtime() -> bool {
-    Path::new("/etc/tizen-release").exists() || Path::new("/opt/usr/share/tizenclaw").exists()
+    libtizenclaw_core::framework::paths::PlatformPaths::detect().is_tizen()
 }
 
 fn setup_data_dir() -> PathBuf {
-    if let Ok(path) = std::env::var("TIZENCLAW_DATA_DIR") {
-        return PathBuf::from(path);
-    }
-    if is_tizen_runtime() {
-        return PathBuf::from("/opt/usr/share/tizenclaw");
-    }
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(".tizenclaw")
+    libtizenclaw_core::framework::paths::PlatformPaths::detect().runtime_root
 }
 
 fn setup_config_dir() -> PathBuf {

@@ -532,6 +532,31 @@ do_deploy() {
 
   ok "All RPMs processed"
 
+  log "Provisioning mutable runtime directories under /home/owner/.tizenclaw..."
+  if [ "${DRY_RUN}" = false ]; then
+    sdb_shell "mkdir -p /home/owner/.tizenclaw/config \
+      /home/owner/.tizenclaw/workspace/skills \
+      /home/owner/.tizenclaw/workspace/skill-hubs \
+      /home/owner/.tizenclaw/tools \
+      /home/owner/.tizenclaw/plugins/llm \
+      /home/owner/.tizenclaw/plugins/cli \
+      /home/owner/.tizenclaw/workflows \
+      /home/owner/.tizenclaw/codes \
+      /home/owner/.tizenclaw/logs \
+      /home/owner/.tizenclaw/actions \
+      /home/owner/.tizenclaw/pipelines \
+      /home/owner/.tizenclaw/state \
+      /home/owner/.tizenclaw/sessions \
+      /home/owner/.tizenclaw/memory \
+      /home/owner/.tizenclaw/outbound \
+      /home/owner/.tizenclaw/telegram_sessions"
+    sdb_shell "cp -rn /opt/usr/share/tizenclaw/config/. /home/owner/.tizenclaw/config/ 2>/dev/null || true"
+    sdb_shell "chown -R owner:users /home/owner/.tizenclaw 2>/dev/null || true"
+    ok "Runtime directories provisioned"
+  else
+    log "[DRY-RUN] Provision /home/owner/.tizenclaw/* and chown owner:users"
+  fi
+
   # 3-5.5. Install Web Dashboard frontend files
   log "Installing Web Dashboard frontend..."
   local web_src="${PROJECT_DIR}/data/web"
@@ -694,8 +719,9 @@ remove_from_device() {
   log "Removing RPM package..."
   run sdb_shell rpm -e "${PKG_NAME}" 2>/dev/null || true
 
-  log "Cleaning package-owned runtime paths..."
-  run sdb_shell rm -rf /opt/usr/share/tizenclaw/tools 2>/dev/null || true
+  log "Cleaning mutable runtime paths..."
+  run sdb_shell rm -rf /home/owner/.tizenclaw/tools 2>/dev/null || true
+  run sdb_shell rm -rf /home/owner/.tizenclaw/workspace 2>/dev/null || true
   run sdb_shell rm -rf /opt/usr/share/tizen-tools 2>/dev/null || true
 
   ok "TizenClaw removal command completed"
@@ -706,6 +732,7 @@ cleanup_legacy_paths_on_device() {
 
   log "Removing legacy tool path..."
   run sdb_shell rm -rf /opt/usr/share/tizen-tools 2>/dev/null || true
+  run sdb_shell rm -rf /opt/usr/share/tizenclaw/tools 2>/dev/null || true
 
   ok "Legacy device paths cleaned"
 }

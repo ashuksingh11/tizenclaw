@@ -65,7 +65,10 @@ impl RuntimeTopology {
     }
 
     pub fn summary_json(&self) -> Value {
+        let platform_paths = libtizenclaw_core::framework::paths::PlatformPaths::detect();
         json!({
+            "runtime_root": platform_paths.runtime_root,
+            "packaged_root": platform_paths.packaged_root,
             "data_dir": self.data_dir,
             "config_dir": self.config_dir,
             "state_dir": self.state_dir,
@@ -85,12 +88,11 @@ impl RuntimeTopology {
 }
 
 pub fn is_tizen_runtime() -> bool {
-    std::path::Path::new("/etc/tizen-release").exists()
-        || std::path::Path::new("/opt/usr/share/tizenclaw").exists()
+    libtizenclaw_core::framework::paths::PlatformPaths::detect().is_tizen()
 }
 
 pub fn default_data_dir() -> PathBuf {
-    libtizenclaw_core::framework::paths::PlatformPaths::detect().data_dir
+    libtizenclaw_core::framework::paths::PlatformPaths::detect().runtime_root
 }
 
 fn default_dashboard_port_for_runtime(is_tizen_runtime: bool) -> u16 {

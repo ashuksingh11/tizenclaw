@@ -1,12 +1,17 @@
 #!/bin/bash
 set -euo pipefail
 
-APP_DATA_DIR="/opt/usr/share/tizenclaw"
-BUNDLE_DIR="${APP_DATA_DIR}/bundles/standard_agent"
-ROOTFS_TAR="${APP_DATA_DIR}/img/rootfs.tar.gz"
+APP_RUNTIME_DIR="/home/owner/.tizenclaw"
+APP_PACKAGED_DIR="/opt/usr/share/tizenclaw"
+BUNDLE_DIR="${APP_RUNTIME_DIR}/bundles/standard_agent"
+ROOTFS_TAR="${APP_PACKAGED_DIR}/img/rootfs.tar.gz"
 CONTAINER_ID="tizenclaw_standard"
 LOG_FILE="/opt/var/log/tizenclaw-standard-container.log"
 SAFE_MODE="${SAFE_MODE:-0}"
+OWNER_USER="${OWNER_USER:-owner}"
+OWNER_GROUP="${OWNER_GROUP:-users}"
+OWNER_UID_DEFAULT="${OWNER_UID_DEFAULT:-5000}"
+OWNER_GID_DEFAULT="${OWNER_GID_DEFAULT:-5000}"
 
 detect_runtime() {
   if [ "${SAFE_MODE}" = "1" ] && command -v runc >/dev/null 2>&1; then
@@ -38,6 +43,18 @@ mkdir -p "$(dirname "${LOG_FILE}")"
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S%z')] $*" >>"${LOG_FILE}"
 }
+
+resolve_owner_uid() {
+  id -u "${OWNER_USER}" 2>/dev/null || printf '%s\n' "${OWNER_UID_DEFAULT}"
+}
+
+resolve_owner_gid() {
+  getent group "${OWNER_GROUP}" 2>/dev/null | cut -d: -f3 | head -n1 \
+    || printf '%s\n' "${OWNER_GID_DEFAULT}"
+}
+
+OWNER_UID="$(resolve_owner_uid)"
+OWNER_GID="$(resolve_owner_gid)"
 
 run_without_container() {
   log "Watchdog cgroup unavailable. Running without OCI container (fallback to chroot with unshare)."
@@ -93,8 +110,9 @@ run_without_container() {
     mount --rbind /opt/etc \"${BUNDLE_DIR}/rootfs/opt/etc\" || true
     mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/opt/etc\" || true
     mount --rbind /opt/usr/share/tizenclaw \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw\" || true
-    mkdir -p \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw/tools\"
-    mount --rbind /opt/usr/share/tizenclaw/tools \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw/tools\" || true
+    mount -o remount,bind,ro \"${BUNDLE_DIR}/rootfs/opt/usr/share/tizenclaw\" || true
+    mkdir -p \"${BUNDLE_DIR}/rootfs/home/owner/.tizenclaw/tools\"
+    mount --rbind /home/owner/.tizenclaw/tools \"${BUNDLE_DIR}/rootfs/home/owner/.tizenclaw/tools\" || true
     mkdir -p \"${BUNDLE_DIR}/rootfs/opt/usr/share/crash/dump\"
     if [ -d /opt/usr/share/crash ]; then
       mount --rbind /opt/usr/share/crash \"${BUNDLE_DIR}/rootfs/opt/usr/share/crash\" || true
@@ -102,7 +120,7 @@ run_without_container() {
     mount --rbind /run \"${BUNDLE_DIR}/rootfs/run\" || true
     mount --rbind /tmp \"${BUNDLE_DIR}/rootfs/tmp\" || true
 
-    exec chroot \"${BUNDLE_DIR}/rootfs\" /usr/bin/env XDG_RUNTIME_DIR=\"\${XDG_RUNTIME_DIR}\" WAYLAND_DISPLAY=\"\${WAYLAND_DISPLAY}\" LD_LIBRARY_PATH=/usr/lib64/hal:/usr/lib/hal ${CMD} 2>>/tmp/tizenclaw_daemon.log
+    exec chroot --userspec=${OWNER_UID}:${OWNER_GID} \"${BUNDLE_DIR}/rootfs\" /usr/bin/env HOME=/home/owner USER=${OWNER_USER} LOGNAME=${OWNER_USER} XDG_RUNTIME_DIR=\"\${XDG_RUNTIME_DIR}\" WAYLAND_DISPLAY=\"\${WAYLAND_DISPLAY}\" LD_LIBRARY_PATH=/usr/lib64/hal:/usr/lib/hal ${CMD} 2>>/tmp/tizenclaw_daemon.log
   "
 }
 
@@ -155,12 +173,12 @@ write_config() {
     }"
   fi
   # Add managed tools mount if it exists
-  if [ -d /opt/usr/share/tizenclaw/tools ]; then
+  if [ -d /home/owner/.tizenclaw/tools ]; then
     OPTIONAL_MOUNTS="${OPTIONAL_MOUNTS},
     {
-      \"destination\": \"/opt/usr/share/tizenclaw/tools\",
+      \"destination\": \"/home/owner/.tizenclaw/tools\",
       \"type\": \"bind\",
-      \"source\": \"/opt/usr/share/tizenclaw/tools\",
+      \"source\": \"/home/owner/.tizenclaw/tools\",
       \"options\": [\"rbind\", \"rw\"]
     }"
   fi
@@ -170,12 +188,15 @@ write_config() {
   "ociVersion": "1.0.2",
   "process": {
     "terminal": false,
-    "user": {"uid": 0, "gid": 0},
+    "user": {"uid": ${OWNER_UID}, "gid": ${OWNER_GID}},
     "args": ${process_args_json},
     "env": [
       "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+      "HOME=/home/owner",
+      "USER=${OWNER_USER}",
+      "LOGNAME=${OWNER_USER}",
       "MALLOC_ARENA_MAX=2",
-      "XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/5000}",
+      "XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/${OWNER_UID}}",
       "XVDA_SOCKET=${XVDA_SOCKET:-}",
       "WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-wayland-0}",
       "DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-}"
@@ -237,7 +258,7 @@ write_config() {
       "destination": "/opt/usr/share/tizenclaw",
       "type": "bind",
       "source": "/opt/usr/share/tizenclaw",
-      "options": ["rbind", "rw"]
+      "options": ["rbind", "ro"]
     },
     {
       "destination": "/run",

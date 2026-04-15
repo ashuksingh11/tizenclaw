@@ -8,6 +8,7 @@ name = "tizenclaw-web-dashboard"
 path = "src/main.rs"
 
 [dependencies]
+libtizenclaw_core = { package = "libtizenclaw-core", path = "../libtizenclaw-core" }
 tokio = { version = "1", features = ["rt-multi-thread", "time", "macros", "net", "sync", "io-util"] }
 axum = { version = "0.7", features = ["macros"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }

@@ -1,94 +1,109 @@
 //! Platform-resolved paths.
 //!
-//! Determines the correct directories for data, config, tools, skills,
-//! plugins, embedded tool descriptors, and web assets based on
-//! environment variables or defaults.
+//! Canonical mutable state lives under the runtime root:
+//! - host: `~/.tizenclaw`
+//! - Tizen: `/home/owner/.tizenclaw`
 //!
-//! Priority:
-//! 1. Environment variables (TIZENCLAW_DATA_DIR, TIZENCLAW_TOOLS_DIR, etc.)
-//! 2. Tizen standard paths (if /opt/usr/share/tizenclaw exists)
-//! 3. Host Linux paths (~/.tizenclaw)
+//! Packaged read-only assets may live under `/opt/usr/share/tizenclaw` on
+//! Tizen. Callers should consume this module instead of inferring paths from
+//! `/opt/usr/share/tizenclaw` directly.
 
 use std::path::{Path, PathBuf};
 
 /// All resolved platform paths.
 #[derive(Debug, Clone)]
 pub struct PlatformPaths {
-    /// Main data directory (configs, sessions, etc.)
+    /// Canonical mutable runtime root.
+    pub runtime_root: PathBuf,
+    /// Backward-compatible alias for the runtime root.
     pub data_dir: PathBuf,
-    /// Configuration files directory
+    /// Optional packaged read-only asset root.
+    pub packaged_root: Option<PathBuf>,
+    /// Configuration files directory.
     pub config_dir: PathBuf,
-    /// Tool scripts directory
+    /// Tool scripts directory.
     pub tools_dir: PathBuf,
-    /// Textual skills directory
+    /// Textual skills directory.
     pub skills_dir: PathBuf,
-    /// Skill hub mount directory containing external OpenClaw-style roots
+    /// Skill hub mount directory containing external OpenClaw-style roots.
     pub skill_hubs_dir: PathBuf,
-    /// TizenClaw-owned embedded tool descriptor directory
+    /// TizenClaw-owned embedded tool descriptor directory.
     pub embedded_tools_dir: PathBuf,
-    /// Plugin .so files directory
+    /// Plugin shared objects directory.
     pub plugins_dir: PathBuf,
-    /// Packaged reference docs directory
+    /// Packaged or runtime reference docs directory.
     pub docs_dir: PathBuf,
-    /// Web dashboard static files
+    /// Web dashboard static files.
     pub web_root: PathBuf,
-    /// Workflows directory
+    /// Workflows directory.
     pub workflows_dir: PathBuf,
-    /// Generated and reusable code directory
+    /// Generated and reusable code directory.
     pub codes_dir: PathBuf,
-    /// Log directory
+    /// Log directory.
     pub logs_dir: PathBuf,
-    /// Actions directory
+    /// Actions directory.
     pub actions_dir: PathBuf,
-    /// Pipelines directory
+    /// Pipelines directory.
     pub pipelines_dir: PathBuf,
-    /// LLM backend plugins directory
+    /// LLM backend plugins directory.
     pub llm_plugins_dir: PathBuf,
-    /// CLI plugins metadata directory
+    /// CLI plugins metadata directory.
     pub cli_plugins_dir: PathBuf,
 }
 
-/// Tizen standard base path.
-const TIZEN_DATA_DIR: &str = "/opt/usr/share/tizenclaw";
+const TIZEN_RUNTIME_DIR: &str = "/home/owner/.tizenclaw";
+const TIZEN_PACKAGED_DIR: &str = "/opt/usr/share/tizenclaw";
 const HOST_DATA_DIR_NAME: &str = ".tizenclaw";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeEnvironment {
+    Host,
+    Tizen,
+}
 
 impl PlatformPaths {
     /// Resolve platform paths from environment and runtime markers.
     pub fn resolve() -> Self {
-        let is_tizen = has_tizen_markers();
-        let data_dir = std::env::var_os("TIZENCLAW_DATA_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| default_data_dir(is_tizen));
+        let env = detect_runtime_environment();
+        let runtime_root = resolve_runtime_root(env);
+        let packaged_root = resolve_packaged_root(env);
+        let packaged_assets_root = packaged_root.clone().unwrap_or_else(|| runtime_root.clone());
+        let plugins_default = packaged_root
+            .as_ref()
+            .map(|root| root.join("plugins"))
+            .unwrap_or_else(|| runtime_root.join("plugins"));
 
         Self {
-            data_dir: data_dir.clone(),
-            config_dir: resolve_path("TIZENCLAW_CONFIG_DIR", data_dir.join("config")),
-            tools_dir: resolve_path("TIZENCLAW_TOOLS_DIR", data_dir.join("tools")),
-            skills_dir: resolve_path("TIZENCLAW_SKILLS_DIR", data_dir.join("workspace/skills")),
+            runtime_root: runtime_root.clone(),
+            data_dir: runtime_root.clone(),
+            packaged_root,
+            config_dir: resolve_path("TIZENCLAW_CONFIG_DIR", runtime_root.join("config")),
+            tools_dir: resolve_path("TIZENCLAW_TOOLS_DIR", runtime_root.join("tools")),
+            skills_dir: resolve_path("TIZENCLAW_SKILLS_DIR", runtime_root.join("workspace/skills")),
             skill_hubs_dir: resolve_path(
                 "TIZENCLAW_SKILL_HUBS_DIR",
-                data_dir.join("workspace/skill-hubs"),
+                runtime_root.join("workspace/skill-hubs"),
             ),
             embedded_tools_dir: resolve_path(
                 "TIZENCLAW_EMBEDDED_TOOLS_DIR",
-                data_dir.join("embedded"),
+                packaged_assets_root.join("embedded"),
             ),
-            plugins_dir: resolve_path("TIZENCLAW_PLUGINS_DIR", data_dir.join("plugins")),
+            plugins_dir: resolve_path("TIZENCLAW_PLUGINS_DIR", plugins_default),
             llm_plugins_dir: resolve_path(
                 "TIZENCLAW_LLM_PLUGINS_DIR",
-                data_dir.join("plugins/llm"),
+                runtime_root.join("plugins/llm"),
             ),
             cli_plugins_dir: resolve_path(
                 "TIZENCLAW_CLI_PLUGINS_DIR",
-                data_dir.join("plugins/cli"),
+                runtime_root.join("plugins/cli"),
             ),
-            docs_dir: resolve_path("TIZENCLAW_DOCS_DIR", data_dir.join("docs")),
-            web_root: resolve_path("TIZENCLAW_WEB_ROOT", data_dir.join("web")),
-            workflows_dir: resolve_path("TIZENCLAW_WORKFLOWS_DIR", data_dir.join("workflows")),
-            codes_dir: resolve_path("TIZENCLAW_CODES_DIR", data_dir.join("codes")),
-            logs_dir: resolve_path("TIZENCLAW_LOGS_DIR", data_dir.join("logs")),
-            actions_dir: resolve_path("TIZENCLAW_ACTIONS_DIR", data_dir.join("actions")),
-            pipelines_dir: resolve_path("TIZENCLAW_PIPELINES_DIR", data_dir.join("pipelines")),
+            docs_dir: resolve_path("TIZENCLAW_DOCS_DIR", packaged_assets_root.join("docs")),
+            web_root: resolve_path("TIZENCLAW_WEB_ROOT", packaged_assets_root.join("web")),
+            workflows_dir: resolve_path("TIZENCLAW_WORKFLOWS_DIR", runtime_root.join("workflows")),
+            codes_dir: resolve_path("TIZENCLAW_CODES_DIR", runtime_root.join("codes")),
+            logs_dir: resolve_path("TIZENCLAW_LOGS_DIR", runtime_root.join("logs")),
+            actions_dir: resolve_path("TIZENCLAW_ACTIONS_DIR", runtime_root.join("actions")),
+            pipelines_dir: resolve_path("TIZENCLAW_PIPELINES_DIR", runtime_root.join("pipelines")),
         }
     }
 
@@ -97,10 +112,12 @@ impl PlatformPaths {
         Self::resolve()
     }
 
-    /// Build paths from a custom base directory.
+    /// Build paths from a custom runtime root.
     pub fn from_base(base: PathBuf) -> Self {
         PlatformPaths {
+            runtime_root: base.clone(),
             data_dir: base.clone(),
+            packaged_root: None,
             config_dir: base.join("config"),
             tools_dir: base.join("tools"),
             skills_dir: base.join("workspace/skills"),
@@ -119,65 +136,126 @@ impl PlatformPaths {
         }
     }
 
-    /// Ensure all directories exist (create if missing).
+    /// Ensure writable runtime directories exist.
     pub fn ensure_dirs(&self) {
-        let dirs = [
-            &self.data_dir,
-            &self.config_dir,
-            &self.tools_dir,
-            &self.skills_dir,
-            &self.skill_hubs_dir,
-            &self.embedded_tools_dir,
-            &self.plugins_dir,
-            &self.docs_dir,
-            &self.web_root,
-            &self.workflows_dir,
-            &self.codes_dir,
-            &self.logs_dir,
-            &self.actions_dir,
-            &self.pipelines_dir,
-            &self.llm_plugins_dir,
-            &self.cli_plugins_dir,
-        ];
-        for dir in dirs {
-            if let Err(err) = std::fs::create_dir_all(dir) {
+        for dir in self.runtime_dirs_to_create() {
+            if let Err(err) = std::fs::create_dir_all(&dir) {
                 log::warn!("Failed to create dir {:?}: {}", dir, err);
+            }
+        }
+
+        for dir in [&self.embedded_tools_dir, &self.docs_dir, &self.web_root, &self.plugins_dir] {
+            if self.is_writable_runtime_path(dir) {
+                if let Err(err) = std::fs::create_dir_all(dir) {
+                    log::warn!("Failed to create dir {:?}: {}", dir, err);
+                }
             }
         }
     }
 
     pub fn is_tizen(&self) -> bool {
-        has_tizen_markers()
+        detect_runtime_environment() == RuntimeEnvironment::Tizen
     }
 
     /// Get the session database path.
     pub fn sessions_db_path(&self) -> PathBuf {
-        self.data_dir.join("sessions/sessions.db")
+        self.runtime_root.join("sessions/sessions.db")
     }
 
     /// Get the app data directory for file-based storage.
-    /// The project now keeps both Tizen and host runtime state under the
-    /// resolved data root directly.
     pub fn app_data_dir(&self) -> PathBuf {
-        self.data_dir.clone()
+        self.runtime_root.clone()
     }
 
     /// Discover external skill roots mounted under `workspace/skill-hubs`.
     pub fn discover_skill_hub_roots(&self) -> Vec<PathBuf> {
         let mut roots = Vec::new();
-        let Ok(entries) = std::fs::read_dir(&self.skill_hubs_dir) else {
-            return roots;
-        };
+        for base in self.skill_hub_root_dirs() {
+            let Ok(entries) = std::fs::read_dir(base) else {
+                continue;
+            };
 
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                roots.push(path);
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    roots.push(path);
+                }
             }
         }
 
         roots.sort();
+        roots.dedup();
         roots
+    }
+
+    /// Compatibility skill roots for read-time discovery.
+    pub fn skill_root_dirs(&self) -> Vec<PathBuf> {
+        let mut roots = vec![self.skills_dir.clone()];
+        if let Some(legacy) = self.legacy_runtime_root() {
+            roots.push(legacy.join("workspace/skills"));
+        }
+        roots.sort();
+        roots.dedup();
+        roots
+    }
+
+    /// Compatibility skill-hub roots for read-time discovery.
+    pub fn skill_hub_root_dirs(&self) -> Vec<PathBuf> {
+        let mut roots = vec![self.skill_hubs_dir.clone()];
+        if let Some(legacy) = self.legacy_runtime_root() {
+            roots.push(legacy.join("workspace/skill-hubs"));
+        }
+        roots.sort();
+        roots.dedup();
+        roots
+    }
+
+    pub fn packaged_dir(&self) -> Option<&Path> {
+        self.packaged_root.as_deref()
+    }
+
+    fn legacy_runtime_root(&self) -> Option<PathBuf> {
+        let packaged = self.packaged_root.as_ref()?;
+        (packaged != &self.runtime_root).then(|| packaged.clone())
+    }
+
+    fn is_writable_runtime_path(&self, path: &Path) -> bool {
+        match self.packaged_root.as_deref() {
+            Some(packaged_root) => !path.starts_with(packaged_root),
+            None => true,
+        }
+    }
+
+    fn runtime_dirs_to_create(&self) -> Vec<PathBuf> {
+        let state_dir = self.runtime_root.join("state");
+        let state_registry_dir = state_dir.join("registry");
+        let state_loop_dir = state_dir.join("loop");
+        let sessions_dir = self.runtime_root.join("sessions");
+        let memory_dir = self.runtime_root.join("memory");
+        let outbound_dir = self.runtime_root.join("outbound");
+        let telegram_sessions_dir = self.runtime_root.join("telegram_sessions");
+
+        vec![
+            self.runtime_root.clone(),
+            self.config_dir.clone(),
+            self.tools_dir.clone(),
+            self.skills_dir.clone(),
+            self.skill_hubs_dir.clone(),
+            self.llm_plugins_dir.clone(),
+            self.cli_plugins_dir.clone(),
+            self.workflows_dir.clone(),
+            self.codes_dir.clone(),
+            self.logs_dir.clone(),
+            self.actions_dir.clone(),
+            self.pipelines_dir.clone(),
+            state_dir,
+            state_registry_dir,
+            state_loop_dir,
+            sessions_dir,
+            memory_dir,
+            outbound_dir,
+            telegram_sessions_dir,
+        ]
     }
 }
 
@@ -187,16 +265,39 @@ fn resolve_path(env_key: &str, default: PathBuf) -> PathBuf {
         .unwrap_or(default)
 }
 
-fn default_data_dir(is_tizen: bool) -> PathBuf {
-    if is_tizen {
-        PathBuf::from(TIZEN_DATA_DIR)
-    } else {
-        dirs_or_home().join(HOST_DATA_DIR_NAME)
+fn resolve_runtime_root(env: RuntimeEnvironment) -> PathBuf {
+    std::env::var_os("TIZENCLAW_HOME")
+        .or_else(|| std::env::var_os("TIZENCLAW_DATA_DIR"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| match env {
+            RuntimeEnvironment::Tizen => PathBuf::from(TIZEN_RUNTIME_DIR),
+            RuntimeEnvironment::Host => dirs_or_home().join(HOST_DATA_DIR_NAME),
+        })
+}
+
+fn resolve_packaged_root(env: RuntimeEnvironment) -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("TIZENCLAW_PACKAGED_DIR") {
+        return Some(PathBuf::from(path));
+    }
+
+    match env {
+        RuntimeEnvironment::Tizen => Some(PathBuf::from(TIZEN_PACKAGED_DIR)),
+        RuntimeEnvironment::Host => None,
     }
 }
 
-fn has_tizen_markers() -> bool {
-    Path::new("/etc/tizen-release").exists() || Path::new(TIZEN_DATA_DIR).exists()
+fn detect_runtime_environment() -> RuntimeEnvironment {
+    match std::env::var("TIZENCLAW_RUNTIME_ENV") {
+        Ok(value) if value.eq_ignore_ascii_case("tizen") => RuntimeEnvironment::Tizen,
+        Ok(value) if value.eq_ignore_ascii_case("host") => RuntimeEnvironment::Host,
+        _ => {
+            if Path::new("/etc/tizen-release").exists() {
+                RuntimeEnvironment::Tizen
+            } else {
+                RuntimeEnvironment::Host
+            }
+        }
+    }
 }
 
 fn dirs_or_home() -> PathBuf {
@@ -216,19 +317,29 @@ mod tests {
     }
 
     #[test]
-    fn from_base_places_embedded_tools_under_base() {
+    fn from_base_places_openclaw_style_paths_under_runtime_root() {
         let base = PathBuf::from("/tmp/tizenclaw-paths");
         let paths = PlatformPaths::from_base(base.clone());
 
-        assert_eq!(paths.tools_dir, base.join("tools"));
-        assert_eq!(paths.skills_dir, base.join("workspace/skills"));
-        assert_eq!(paths.skill_hubs_dir, base.join("workspace/skill-hubs"));
-        assert_eq!(paths.embedded_tools_dir, base.join("embedded"));
-        assert_eq!(paths.codes_dir, base.join("codes"));
+        assert_eq!(paths.runtime_root, base);
+        assert_eq!(paths.tools_dir, PathBuf::from("/tmp/tizenclaw-paths/tools"));
+        assert_eq!(
+            paths.skills_dir,
+            PathBuf::from("/tmp/tizenclaw-paths/workspace/skills")
+        );
+        assert_eq!(
+            paths.skill_hubs_dir,
+            PathBuf::from("/tmp/tizenclaw-paths/workspace/skill-hubs")
+        );
+        assert_eq!(
+            paths.embedded_tools_dir,
+            PathBuf::from("/tmp/tizenclaw-paths/embedded")
+        );
+        assert_eq!(paths.codes_dir, PathBuf::from("/tmp/tizenclaw-paths/codes"));
     }
 
     #[test]
-    fn ensure_dirs_creates_embedded_directory() {
+    fn ensure_dirs_creates_writable_runtime_directories() {
         let unique = format!(
             "tizenclaw-paths-{}",
             std::time::SystemTime::now()
@@ -244,14 +355,22 @@ mod tests {
         assert!(paths.skill_hubs_dir.exists());
         assert!(paths.embedded_tools_dir.exists());
         assert!(paths.codes_dir.exists());
+        assert!(base.join("state").exists());
+        assert!(base.join("state/registry").exists());
+        assert!(base.join("state/loop").exists());
+        assert!(base.join("sessions").exists());
+        assert!(base.join("memory").exists());
+        assert!(base.join("outbound").exists());
+        assert!(base.join("telegram_sessions").exists());
 
         let _ = std::fs::remove_dir_all(base);
     }
 
     #[test]
-    fn resolve_prefers_environment_overrides() {
+    fn resolve_prefers_runtime_overrides() {
         let _guard = env_lock().lock().unwrap();
-        let original_data_dir = std::env::var_os("TIZENCLAW_DATA_DIR");
+        let original_runtime_dir = std::env::var_os("TIZENCLAW_DATA_DIR");
+        let original_home_dir = std::env::var_os("TIZENCLAW_HOME");
         let original_tools_dir = std::env::var_os("TIZENCLAW_TOOLS_DIR");
         let base = std::env::temp_dir().join(format!(
             "tizenclaw-env-{}",
@@ -263,19 +382,21 @@ mod tests {
         let tools = base.join("custom-tools");
 
         unsafe {
+            std::env::remove_var("TIZENCLAW_HOME");
             std::env::set_var("TIZENCLAW_DATA_DIR", &base);
             std::env::set_var("TIZENCLAW_TOOLS_DIR", &tools);
         }
 
         let paths = PlatformPaths::resolve();
 
-        assert_eq!(paths.data_dir, base);
+        assert_eq!(paths.runtime_root, base);
+        assert_eq!(paths.data_dir, paths.runtime_root);
         assert_eq!(paths.tools_dir, tools);
-        assert_eq!(paths.plugins_dir, base.join("plugins"));
         assert_eq!(paths.llm_plugins_dir, base.join("plugins/llm"));
 
         unsafe {
-            restore_env_var("TIZENCLAW_DATA_DIR", original_data_dir);
+            restore_env_var("TIZENCLAW_DATA_DIR", original_runtime_dir);
+            restore_env_var("TIZENCLAW_HOME", original_home_dir);
             restore_env_var("TIZENCLAW_TOOLS_DIR", original_tools_dir);
         }
     }
@@ -284,7 +405,8 @@ mod tests {
     fn resolve_uses_home_based_host_paths_without_overrides() {
         let _guard = env_lock().lock().unwrap();
         let original_home = std::env::var_os("HOME");
-        let original_data_dir = std::env::var_os("TIZENCLAW_DATA_DIR");
+        let original_runtime_dir = std::env::var_os("TIZENCLAW_DATA_DIR");
+        let original_runtime_env = std::env::var_os("TIZENCLAW_RUNTIME_ENV");
         let home = std::env::temp_dir().join(format!(
             "tizenclaw-home-{}",
             std::time::SystemTime::now()
@@ -294,45 +416,74 @@ mod tests {
         ));
 
         unsafe {
+            std::env::set_var("TIZENCLAW_RUNTIME_ENV", "host");
             std::env::remove_var("TIZENCLAW_DATA_DIR");
             std::env::set_var("HOME", &home);
         }
 
         let paths = PlatformPaths::resolve();
 
-        assert_eq!(paths.data_dir, home.join(".tizenclaw"));
+        assert_eq!(paths.runtime_root, home.join(".tizenclaw"));
         assert_eq!(paths.config_dir, home.join(".tizenclaw/config"));
+        assert!(paths.packaged_root.is_none());
 
         unsafe {
             restore_env_var("HOME", original_home);
-            restore_env_var("TIZENCLAW_DATA_DIR", original_data_dir);
+            restore_env_var("TIZENCLAW_DATA_DIR", original_runtime_dir);
+            restore_env_var("TIZENCLAW_RUNTIME_ENV", original_runtime_env);
         }
     }
 
     #[test]
-    fn platform_paths_resolve_host() {
+    fn resolve_uses_owner_home_and_packaged_assets_on_tizen() {
         let _guard = env_lock().lock().unwrap();
-        let original_home = std::env::var_os("HOME");
-        let original_data_dir = std::env::var_os("TIZENCLAW_DATA_DIR");
-        let home = std::env::temp_dir().join(format!(
-            "tizenclaw-host-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let original_runtime_dir = std::env::var_os("TIZENCLAW_DATA_DIR");
+        let original_runtime_env = std::env::var_os("TIZENCLAW_RUNTIME_ENV");
 
         unsafe {
+            std::env::set_var("TIZENCLAW_RUNTIME_ENV", "tizen");
             std::env::remove_var("TIZENCLAW_DATA_DIR");
-            std::env::set_var("HOME", &home);
         }
 
         let paths = PlatformPaths::resolve();
-        assert!(!paths.is_tizen() || paths.data_dir.to_string_lossy().contains("tizenclaw"));
+
+        assert_eq!(paths.runtime_root, PathBuf::from("/home/owner/.tizenclaw"));
+        assert_eq!(paths.skills_dir, PathBuf::from("/home/owner/.tizenclaw/workspace/skills"));
+        assert_eq!(paths.docs_dir, PathBuf::from("/opt/usr/share/tizenclaw/docs"));
+        assert_eq!(paths.web_root, PathBuf::from("/opt/usr/share/tizenclaw/web"));
+        assert_eq!(
+            paths.packaged_root,
+            Some(PathBuf::from("/opt/usr/share/tizenclaw"))
+        );
 
         unsafe {
-            restore_env_var("HOME", original_home);
-            restore_env_var("TIZENCLAW_DATA_DIR", original_data_dir);
+            restore_env_var("TIZENCLAW_DATA_DIR", original_runtime_dir);
+            restore_env_var("TIZENCLAW_RUNTIME_ENV", original_runtime_env);
+        }
+    }
+
+    #[test]
+    fn skill_root_dirs_include_legacy_packaged_root_for_compatibility() {
+        let _guard = env_lock().lock().unwrap();
+        let original_runtime_env = std::env::var_os("TIZENCLAW_RUNTIME_ENV");
+
+        unsafe {
+            std::env::set_var("TIZENCLAW_RUNTIME_ENV", "tizen");
+        }
+
+        let paths = PlatformPaths::resolve();
+        let roots = paths.skill_root_dirs();
+
+        assert_eq!(
+            roots,
+            vec![
+                PathBuf::from("/home/owner/.tizenclaw/workspace/skills"),
+                PathBuf::from("/opt/usr/share/tizenclaw/workspace/skills"),
+            ]
+        );
+
+        unsafe {
+            restore_env_var("TIZENCLAW_RUNTIME_ENV", original_runtime_env);
         }
     }
 

@@ -28,7 +28,7 @@ impl WebDashboardChannel {
             .get("web_root")
             .and_then(Value::as_str)
             .map(PathBuf::from)
-            .unwrap_or_else(|| crate::core::runtime_paths::default_data_dir().join("web"));
+            .unwrap_or_else(|| libtizenclaw_core::framework::paths::PlatformPaths::detect().web_root);
         let socket_path = std::env::var("TIZENCLAW_SOCKET_PATH").unwrap_or_default();
 
         Self {

@@ -195,14 +195,7 @@ fn parse_args() -> CliOptions {
 }
 
 fn default_data_dir() -> PathBuf {
-    if let Ok(path) = std::env::var("TIZENCLAW_DATA_DIR") {
-        return expand_home(PathBuf::from(path));
-    }
-    if is_tizen_runtime() {
-        PathBuf::from("/opt/usr/share/tizenclaw")
-    } else {
-        expand_home(PathBuf::from("~/.tizenclaw"))
-    }
+    libtizenclaw_core::framework::paths::PlatformPaths::detect().runtime_root
 }
 
 fn resolve_web_root(cli_web_root: Option<PathBuf>) -> PathBuf {
@@ -212,10 +205,7 @@ fn resolve_web_root(cli_web_root: Option<PathBuf>) -> PathBuf {
     if let Ok(path) = std::env::var("TIZENCLAW_WEB_ROOT") {
         return expand_home(PathBuf::from(path));
     }
-    if is_tizen_runtime() {
-        return PathBuf::from("/opt/usr/share/tizenclaw/web/");
-    }
-    expand_home(PathBuf::from("~/.tizenclaw/web/"))
+    libtizenclaw_core::framework::paths::PlatformPaths::detect().web_root
 }
 
 fn expand_home(path: PathBuf) -> PathBuf {
@@ -230,10 +220,6 @@ fn expand_home(path: PathBuf) -> PathBuf {
         return PathBuf::from(home).join(suffix);
     }
     path
-}
-
-fn is_tizen_runtime() -> bool {
-    StdPath::new("/etc/tizen-release").exists()
 }
 
 async fn index_handler(State(state): State<AppState>) -> impl IntoResponse {
