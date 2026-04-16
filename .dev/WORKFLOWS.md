@@ -18,10 +18,10 @@ refine -> plan -> design -> develop -> build/deploy -> test/review
 - [O] Stage 0. Refine — DONE
 - [O] Stage 1. Plan — DONE
 - [O] Stage 2. Design — DONE
-- [O] Stage 3. Develop — DONE (rework pass 5: priority ordering + circuit-breaker status fixed)
+- [O] Stage 3. Develop — DONE (rework passes 5–8: priority ordering, circuit-breaker status, tool_paths fingerprint, tool_dir_signatures, ProviderSelector in planning/prompt-prep, Telegram coding-agent precedence, chat_with_fallback in planning loop)
 - [O] Stage 4. Build/Deploy — DONE (`./deploy_host.sh -b` PASS)
 - [O] Stage 5. Test/Review — DONE (`./deploy_host.sh --test` PASS: 597; 0 failed)
-- [O] Stage 6. Commit — DONE (ce70f4b4)
+- [O] Stage 6. Commit — DONE (ce70f4b4, b6c8b3d8)
 - [O] Stage 7. Evaluate — DONE (see .dev/07-evaluator/20260416-tizenclaw-improve.md)
 
 ## Stage Contracts

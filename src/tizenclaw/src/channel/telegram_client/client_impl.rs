@@ -258,6 +258,12 @@ impl TelegramClient {
         let mut cli_timeout_secs = DEFAULT_CLI_TIMEOUT_SECS;
         let mut cli_backends = TelegramCliBackendRegistry::default();
 
+        // Apply llm_config.json first so that telegram_config.json is merged
+        // second and therefore wins — matching the precedence in
+        // TelegramClient::new() where the same two sources are merged in the
+        // same order.
+        Self::read_backend_models_from_llm_config(config_dir, &mut cli_backends);
+
         let telegram_config = config_dir.join("telegram_config.json");
         if let Ok(content) = std::fs::read_to_string(&telegram_config) {
             if let Ok(json) = serde_json::from_str::<Value>(&content) {
@@ -272,8 +278,6 @@ impl TelegramClient {
                 cli_backends.merge_config_value(json.get("cli_backends"));
             }
         }
-
-        Self::read_backend_models_from_llm_config(config_dir, &mut cli_backends);
         let cli_backend_paths = Self::resolve_cli_backend_paths(&cli_backends);
         (
             cli_workdir,

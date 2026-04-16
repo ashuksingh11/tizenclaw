@@ -375,12 +375,19 @@ impl AgentCore {
                 .collect();
             builder = builder.add_available_skill_references(formatted_skill_references);
 
-            let model_name = self
-                .provider_registry
-                .read()
-                .await
-                .primary_name()
-                .to_string();
+            let model_name = {
+                let rg = self.provider_registry.read().await;
+                // Derive prompt mode and reasoning policy from the first
+                // available provider rather than always the top-priority one,
+                // so that circuit-breaker state is respected at prompt build
+                // time as well as at request execution time.
+                let idx = crate::core::provider_selection::ProviderSelector::first_available(
+                    &rg,
+                    |name| self.is_backend_available(name),
+                );
+                idx.map(|i| rg.instances()[i].name.clone())
+                    .unwrap_or_else(|| rg.primary_name().to_string())
+            };
             let prompt_mode = session_profile
                 .as_ref()
                 .and_then(|profile| profile.prompt_mode)
