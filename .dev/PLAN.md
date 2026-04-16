@@ -10,6 +10,5 @@
 
 ## Resume Checkpoint
 
-All PLAN items are complete. The rework pass addressed three reviewer findings
-and applied the startup-path `providers_authoritative` filter that was missing
-from the initial implementation.
+All PLAN items are complete. Two rework passes addressed all reviewer findings.
+See DASHBOARD.md for the full completion record.
