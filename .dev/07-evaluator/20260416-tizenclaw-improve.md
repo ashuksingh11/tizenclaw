@@ -56,7 +56,7 @@ operator maintainability in `tizenclaw`:
 
 All rework passes validated via `./deploy_host.sh --test`.
 
-Final result: **594 passed, 0 failed** (rework pass 4).
+Final result: **597 passed, 0 failed** (rework pass 5+6).
 
 ## Rework History
 
@@ -66,6 +66,8 @@ Final result: **594 passed, 0 failed** (rework pass 4).
 | 2 | Second reviewer findings | Various fixes | `8ab1a6ef` |
 | 3 | Fallback path misreported provider order for `providers[]` configs | Added `raw_doc` to `LlmConfig`; fallback uses `ProviderCompatibilityTranslator::translate()` | `cb3c1153` |
 | 4 | Write-locked fallback hard-coded `"providers": []` | Fallback builds populated `providers[]` from `routing.providers` | `f69aa1c3` |
+| 5 | `backends.*.priority` ignored; circuit-breaker not reflected in status | Rewrote legacy synthesis path; added `is_available` predicate to `status_json` | `ce70f4b4` |
+| 6 | PLAN.md tracking items left unchecked after implementation was done | Marked all 5 PLAN.md items `[O]`; updated WORKFLOWS.md/DASHBOARD.md | `23ea5ac7` |
 
 ## Acceptance Criteria Verification
 
@@ -74,7 +76,9 @@ Final result: **594 passed, 0 failed** (rework pass 4).
 | Provider routing no longer tied to one primary + static fallback | PASS |
 | Dedicated provider-selection layer with preference/availability/routing | PASS |
 | Legacy `active_backend`/`fallback_backends` compatibility preserved | PASS |
+| Legacy `backends.*.priority` respected in routing order | PASS |
 | Admin/runtime status exposes routing state on both normal and fallback paths | PASS |
+| Circuit-breaker state reflected as `open_circuit` in provider status | PASS |
 | Telegram model lists externalized to operator config | PASS |
 | ClawHub update backed by lock file | PASS |
 | ClawHub update preserves install safety guarantees | PASS |
@@ -97,5 +101,6 @@ Final result: **594 passed, 0 failed** (rework pass 4).
 
 - All five roadmap targets implemented and committed.
 - No open reviewer findings remain.
-- All tests pass.
-- Repository state is synchronized with plan and dashboard.
+- All PLAN.md tracking items marked `[O]`.
+- All tests pass (597 passed, 0 failed).
+- Repository state is synchronized with plan and dashboard (commit `23ea5ac7`).
