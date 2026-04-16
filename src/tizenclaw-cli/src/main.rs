@@ -545,7 +545,8 @@ impl IpcClient {
     }
 
     fn clawhub_update(&self) -> Result<Value, String> {
-        self.call("clawhub_update", json!({}))
+        self.with_timeout_floor(Duration::from_secs(120))
+            .call("clawhub_update", json!({}))
     }
 
     fn clawhub_install(&self, source: &str) -> Result<Value, String> {

@@ -155,18 +155,33 @@ impl SkillRootSignature {
         let dir = Path::new(path);
         let mut entry_count = 0usize;
         let mut latest_secs = 0u64;
+
+        fn mtime_secs(path: &Path) -> u64 {
+            std::fs::metadata(path)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        }
+
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 entry_count += 1;
-                if let Ok(meta) = entry.metadata() {
-                    let secs = meta
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    if secs > latest_secs {
-                        latest_secs = secs;
+                let child_path = entry.path();
+                let secs = mtime_secs(&child_path);
+                if secs > latest_secs {
+                    latest_secs = secs;
+                }
+                // On Linux, editing a file inside a subdirectory does not update
+                // the subdirectory's mtime.  Skills live at root/name/SKILL.md, so
+                // also track the SKILL.md mtime one level deeper so that in-place
+                // edits are detected without an explicit cache invalidation call.
+                if child_path.is_dir() {
+                    let skill_md = child_path.join("SKILL.md");
+                    let nested_secs = mtime_secs(&skill_md);
+                    if nested_secs > latest_secs {
+                        latest_secs = nested_secs;
                     }
                 }
             }
@@ -690,6 +705,48 @@ mod tests {
         let snap = load_snapshot(&paths, &registrations);
         assert_eq!(snap.skills.len(), 1);
         assert!(SNAPSHOT_CACHE.lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn snapshot_cache_detects_skill_md_edit_without_explicit_invalidation() {
+        // Editing SKILL.md inside root/skill_name/SKILL.md must not require an
+        // explicit invalidate_snapshot_cache call.  The fingerprint must change
+        // automatically because SkillRootSignature tracks SKILL.md mtimes at
+        // depth 1 inside each immediate child directory.
+        *SNAPSHOT_CACHE.lock().unwrap() = None;
+
+        let temp = tempdir().unwrap();
+        let paths = PlatformPaths::from_base(temp.path().join("runtime"));
+        paths.ensure_dirs();
+
+        let skill_dir = paths.skills_dir.join("edit_skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        let skill_md = skill_dir.join("SKILL.md");
+        fs::write(&skill_md, "---\ndescription: Original\n---\n# Edit\n").unwrap();
+
+        let registrations = RegisteredPaths::default();
+
+        // Populate the cache.
+        let snap1 = load_snapshot(&paths, &registrations);
+        assert_eq!(snap1.skills.len(), 1);
+        assert_eq!(
+            snap1.skills[0].skill.description,
+            "Original",
+        );
+
+        // Overwrite SKILL.md — this updates the file's mtime but NOT the
+        // parent directory's mtime on Linux.
+        // Sleep 1s so the mtime is strictly greater than the cached value.
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        fs::write(&skill_md, "---\ndescription: Updated\n---\n# Edit\n").unwrap();
+
+        // load_snapshot must detect the change via fingerprint comparison.
+        let snap2 = load_snapshot(&paths, &registrations);
+        assert_eq!(
+            snap2.skills[0].skill.description,
+            "Updated",
+            "load_snapshot must detect SKILL.md edits without an explicit invalidation call"
+        );
     }
 
     #[test]

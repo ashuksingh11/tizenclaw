@@ -760,14 +760,12 @@ impl IpcServer {
                 Err(response) => return response,
             },
             "get_llm_runtime" => {
-                let runtime = agent.get_llm_runtime();
-                json!({
-                    "status": "ok",
-                    "configured_active_backend": runtime["configured_active_backend"].clone(),
-                    "configured_fallback_backends": runtime["configured_fallback_backends"].clone(),
-                    "runtime_primary_backend": runtime["runtime_primary_backend"].clone(),
-                    "runtime_has_primary_backend": runtime["runtime_has_primary_backend"].clone()
-                })
+                // Pass through the full provider-registry status so operators
+                // can inspect configured_provider_order, providers[], and
+                // current_selection alongside the legacy compatibility fields.
+                let mut runtime = agent.get_llm_runtime();
+                runtime["status"] = json!("ok");
+                runtime
             }
             "start_channel" => match Self::handle_start_channel(channel_registry, &params, &req_id)
             {
