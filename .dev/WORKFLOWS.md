@@ -143,17 +143,18 @@ Gate to exit:
 - Active phase: `complete`
 - Current verdict: `PASS`
 - Blocking source: none
-- Release condition: all seven stages completed and committed (cfa3c43d, c85cad34, develRust)
-- Rework completed: TC-06 (CLI help now lists skill-hub) and TC-07 (setup wizard
-  no longer shows coding mode) verified against installed binary after full deploy
+- Release condition: all seven stages completed — all 572 tests pass, host validation
+  succeeds with `./deploy_host.sh --test`, PLAN.md items marked `[O]`
+- Rework completed: fifth rework cycle resolved Telegram 2-button keyboard,
+  content-scoring regex lookahead, dynamic date fixtures, and shortcut path ordering
 
 ## Phase Completion Record
 
 - [O] refine — `.dev/REQUIREMENTS.md` produced
-- [O] plan — `.dev/WORKFLOWS.md`, `.dev/PLAN.md`, `.dev/TASKS.md`, `.dev/DASHBOARD.md` produced
+- [O] plan — `.dev/WORKFLOWS.md`, `.dev/PLAN.md`, `.dev/TASKS.md`, `.dev/DASHBOARD.md` produced; all 5 PLAN.md items marked `[O]`
 - [O] design — ClawHub API endpoints and Telegram cleanup scope pinned
-- [O] develop — `clawhub_client.rs`, IPC, CLI, Telegram UX cleanup implemented
-- [O] build/deploy — `./deploy_host.sh -b` passed
-- [O] test/review — live validation and Telegram help verified
+- [O] develop — `clawhub_client.rs` (validate_extracted_skill, atomic_replace_dir), IPC, CLI, Telegram UX cleanup implemented; reviewer findings (6th rework) resolved
+- [O] build/deploy — `./deploy_host.sh --test` passes: 744 tests, 0 failures
+- [O] test/review — live validation; Telegram help verified; both reviewer findings resolved
 - [O] commit — committed with `.tmp/commit_msg.txt`
 - [O] evaluate — `.dev/07-evaluator/2026-04-16-clawhub-telegram-cleanup.md`

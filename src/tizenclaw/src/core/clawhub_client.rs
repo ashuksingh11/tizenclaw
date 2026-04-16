@@ -153,23 +153,21 @@ pub async fn clawhub_install(skill_hubs_dir: &Path, source: &str) -> Result<Valu
     })?;
     extract_zip_archive(&archive_bytes, &staging_dir, &slug)?;
 
-    // Replace the live install directory with the staging directory.
-    if install_dir.exists() {
-        std::fs::remove_dir_all(&install_dir).map_err(|err| {
-            format!(
-                "Failed to remove existing install directory '{}': {}",
-                install_dir.display(),
-                err
-            )
-        })?;
-    }
-    std::fs::rename(&staging_dir, &install_dir).map_err(|err| {
-        format!(
-            "Failed to move staging directory to '{}': {}",
-            install_dir.display(),
-            err
-        )
+    // Reject archives that do not contain a SKILL.md — the skill scanner
+    // only recognises directories that have this file, so recording a
+    // malformed archive in the lock file would produce an unusable install.
+    validate_extracted_skill(&staging_dir, &slug).map_err(|err| {
+        let _ = std::fs::remove_dir_all(&staging_dir);
+        err
     })?;
+
+    // Replace the live install directory with the staging directory using a
+    // backup-and-restore pattern so a rename failure never discards the
+    // previously-working install.
+    let backup_dir = skill_hubs_dir
+        .join("clawhub")
+        .join(format!("{}.__backup__", slug));
+    atomic_replace_dir(&staging_dir, &install_dir, &backup_dir)?;
 
     // Record the install in the lock file.
     let workspace_dir = skill_hubs_dir
@@ -206,6 +204,75 @@ pub fn clawhub_list(skill_hubs_dir: &Path) -> Result<Value, String> {
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
+
+/// Verify that a freshly-extracted staging directory contains a `SKILL.md`
+/// file.  The textual skill scanner only recognises directories that have this
+/// file, so we must reject malformed archives before they reach the lock file.
+fn validate_extracted_skill(dir: &Path, slug: &str) -> Result<(), String> {
+    let skill_md = dir.join("SKILL.md");
+    if !skill_md.is_file() {
+        return Err(format!(
+            "ClawHub archive for '{}' does not contain a SKILL.md file; \
+             the install was rejected.",
+            slug
+        ));
+    }
+    Ok(())
+}
+
+/// Replace `install` with `staging` while keeping `backup` as a safety net.
+///
+/// Sequence:
+/// 1. Remove any stale `backup` from a previous incomplete run.
+/// 2. Rename the current `install` to `backup` (if it exists).
+/// 3. Rename `staging` to `install`.
+/// 4. On step-3 success: remove `backup`.
+/// 5. On step-3 failure: restore `backup` → `install` before returning the
+///    error.  This guarantees the previously-working skill survives a failed
+///    update.
+fn atomic_replace_dir(staging: &Path, install: &Path, backup: &Path) -> Result<(), String> {
+    // Remove stale backup from any previous incomplete run.
+    if backup.exists() {
+        std::fs::remove_dir_all(backup).map_err(|err| {
+            format!(
+                "Failed to remove stale backup directory '{}': {}",
+                backup.display(),
+                err
+            )
+        })?;
+    }
+
+    // Move the live install to the backup slot (if one exists).
+    if install.exists() {
+        std::fs::rename(install, backup).map_err(|err| {
+            format!(
+                "Failed to back up existing install directory '{}': {}",
+                install.display(),
+                err
+            )
+        })?;
+    }
+
+    // Promote staging to the live install slot.
+    if let Err(err) = std::fs::rename(staging, install) {
+        // Restore the backup so the caller still has a working skill.
+        if backup.exists() {
+            let _ = std::fs::rename(backup, install);
+        }
+        return Err(format!(
+            "Failed to move staging directory to '{}': {}",
+            install.display(),
+            err
+        ));
+    }
+
+    // Discard the backup now that the new version is live.
+    if backup.exists() {
+        let _ = std::fs::remove_dir_all(backup);
+    }
+
+    Ok(())
+}
 
 fn resolve_base_url() -> String {
     std::env::var("TIZENCLAW_CLAWHUB_URL")
@@ -412,8 +479,22 @@ pub fn skill_hubs_dir_from_paths(
 
 #[cfg(test)]
 mod tests {
-    use super::{load_lock_file, parse_clawhub_slug, update_lock_file, ClawHubLock};
+    use super::{extract_zip_archive, load_lock_file, parse_clawhub_slug, update_lock_file, ClawHubLock};
+    use std::io::Write as _;
     use tempfile::tempdir;
+
+    // Build an in-memory zip archive for use in extraction tests.
+    fn build_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let buf = std::io::Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(buf);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (name, data) in entries {
+            zip.start_file(*name, options).unwrap();
+            zip.write_all(data).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
 
     #[test]
     fn parse_clawhub_slug_strips_clawhub_prefix() {
@@ -474,5 +555,169 @@ mod tests {
         let result = super::clawhub_list(&skill_hubs_dir).unwrap();
         let skills = result["skills"].as_array().unwrap();
         assert!(skills.is_empty());
+    }
+
+    #[test]
+    fn extract_zip_archive_writes_files_to_dest() {
+        let dir = tempdir().unwrap();
+        let dest = dir.path().join("skill");
+        std::fs::create_dir_all(&dest).unwrap();
+
+        let archive = build_zip(&[
+            ("SKILL.md", b"# Test skill"),
+            ("lib/helper.sh", b"#!/bin/sh\necho ok"),
+        ]);
+
+        extract_zip_archive(&archive, &dest, "test-skill").unwrap();
+
+        assert!(dest.join("SKILL.md").exists());
+        assert!(dest.join("lib/helper.sh").exists());
+        assert_eq!(
+            std::fs::read_to_string(dest.join("SKILL.md")).unwrap(),
+            "# Test skill"
+        );
+    }
+
+    #[test]
+    fn extract_zip_archive_strips_slug_prefix_when_present() {
+        let dir = tempdir().unwrap();
+        let dest = dir.path().join("skill");
+        std::fs::create_dir_all(&dest).unwrap();
+
+        // Archive contains entries prefixed with the slug, as GitHub releases do.
+        let archive = build_zip(&[
+            ("my-skill/SKILL.md", b"# prefixed"),
+            ("my-skill/lib/tool.sh", b"#!/bin/sh"),
+        ]);
+
+        extract_zip_archive(&archive, &dest, "my-skill").unwrap();
+
+        // Prefix must be stripped: files land directly in dest, not dest/my-skill/.
+        assert!(dest.join("SKILL.md").exists());
+        assert!(dest.join("lib/tool.sh").exists());
+        assert!(!dest.join("my-skill").exists());
+    }
+
+    #[test]
+    fn extract_zip_archive_rejects_path_traversal() {
+        let dir = tempdir().unwrap();
+        let dest = dir.path().join("skill");
+        std::fs::create_dir_all(&dest).unwrap();
+
+        // A malicious entry that would escape dest via "..".
+        let archive = build_zip(&[
+            ("SKILL.md", b"safe"),
+            ("../escape.txt", b"should not land outside dest"),
+        ]);
+
+        // extract_zip_archive must not error — it silently skips unsafe entries.
+        extract_zip_archive(&archive, &dest, "test-skill").unwrap();
+
+        // Safe entry must be written.
+        assert!(dest.join("SKILL.md").exists());
+        // Traversal target must not be created outside dest.
+        assert!(!dir.path().join("escape.txt").exists());
+    }
+
+    #[test]
+    fn extract_zip_archive_rejects_absolute_paths() {
+        let dir = tempdir().unwrap();
+        let dest = dir.path().join("skill");
+        std::fs::create_dir_all(&dest).unwrap();
+
+        let archive = build_zip(&[
+            ("SKILL.md", b"safe"),
+            ("/etc/passwd", b"should not overwrite"),
+        ]);
+
+        extract_zip_archive(&archive, &dest, "test-skill").unwrap();
+
+        assert!(dest.join("SKILL.md").exists());
+        // Absolute path entry must not create a file rooted at dest via join().
+        assert!(!dest.join("etc/passwd").exists());
+    }
+
+    #[test]
+    fn validate_extracted_skill_accepts_dir_with_skill_md() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("SKILL.md"), b"# ok").unwrap();
+        assert!(super::validate_extracted_skill(dir.path(), "my-skill").is_ok());
+    }
+
+    #[test]
+    fn validate_extracted_skill_rejects_dir_without_skill_md() {
+        let dir = tempdir().unwrap();
+        // No SKILL.md written — must be rejected.
+        let err = super::validate_extracted_skill(dir.path(), "my-skill").unwrap_err();
+        assert!(err.contains("SKILL.md"), "error should mention SKILL.md: {}", err);
+    }
+
+    #[test]
+    fn atomic_replace_dir_installs_fresh_skill() {
+        // Happy path: no existing install; staging is promoted cleanly.
+        let dir = tempdir().unwrap();
+        let staging = dir.path().join("staging");
+        let install = dir.path().join("install");
+        let backup = dir.path().join("backup");
+
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(staging.join("SKILL.md"), b"# installed").unwrap();
+
+        super::atomic_replace_dir(&staging, &install, &backup).unwrap();
+
+        assert!(install.join("SKILL.md").exists());
+        assert!(!staging.exists());
+        assert!(!backup.exists());
+    }
+
+    #[test]
+    fn atomic_replace_dir_preserves_existing_on_rename_failure() {
+        // Regression guard: if staging does not exist (simulating a rename
+        // failure), the previously-working install must be restored from backup.
+        let dir = tempdir().unwrap();
+        let staging = dir.path().join("staging"); // intentionally absent
+        let install = dir.path().join("install");
+        let backup = dir.path().join("backup");
+
+        // Create the "old" working install.
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::write(install.join("SKILL.md"), b"old version").unwrap();
+
+        let result = super::atomic_replace_dir(&staging, &install, &backup);
+        assert!(result.is_err(), "should fail when staging is absent");
+
+        // The old install must have been restored so the skill stays usable.
+        assert!(
+            install.join("SKILL.md").exists(),
+            "old install must be restored after failure"
+        );
+        assert_eq!(
+            std::fs::read_to_string(install.join("SKILL.md")).unwrap(),
+            "old version"
+        );
+        // Backup slot must be cleaned up or restored — not left dangling.
+        assert!(!backup.exists(), "backup must not be left dangling");
+    }
+
+    #[test]
+    fn atomic_replace_dir_removes_stale_backup() {
+        // If a stale backup exists from a previous failed run, it must be
+        // removed before the new backup is created.
+        let dir = tempdir().unwrap();
+        let staging = dir.path().join("staging");
+        let install = dir.path().join("install");
+        let backup = dir.path().join("backup");
+
+        // Stale backup from a previous incomplete run.
+        std::fs::create_dir_all(&backup).unwrap();
+        std::fs::write(backup.join("stale.txt"), b"stale").unwrap();
+
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(staging.join("SKILL.md"), b"new version").unwrap();
+
+        super::atomic_replace_dir(&staging, &install, &backup).unwrap();
+
+        assert!(install.join("SKILL.md").exists());
+        assert!(!backup.exists());
     }
 }

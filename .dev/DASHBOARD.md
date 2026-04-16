@@ -3,14 +3,13 @@
 ## Actual Progress
 
 - Goal: <!-- dormammu:goal_source=/home/hjhun/.dormammu/goals/tizenclaw_improve.md -->
-- Prompt-driven scope: Phase 4. Supervisor Validation, Continuation Loop, and Resume prompt-driven setup for Follow the guidance files below before making changes.
-- Active roadmap focus:
-- Phase 4. Supervisor Validation, Continuation Loop, and Resume
-- Current workflow phase: plan
-- Last completed workflow phase: none
+- Prompt-driven scope: All 5 PLAN.md items complete — ClawHub integration + Telegram UX cleanup + ROADMAP.md
+- Active roadmap focus: complete
+- Current workflow phase: complete
+- Last completed workflow phase: evaluate
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: Return to Plan and resume from the first unchecked PLAN item if setup is interrupted
+- Resume point: n/a — all phases complete
 
 ## Workflow Phases
 
@@ -28,9 +27,7 @@ flowchart LR
 
 ## In Progress
 
-- Review the prompt-derived goal and success criteria for <!-- dormammu:goal_source=/home/hjhun/.dormammu/goals/tizenclaw_improve.md -->.
-- Review repository guidance from AGENTS.md, .github/workflows/ci.yml, .github/workflows/release-host-bundle.yml
-- Generate DASHBOARD.md and PLAN.md from the active prompt before implementation continues.
+- None. All phases complete.
 
 ## Progress Notes
 
@@ -48,7 +45,7 @@ flowchart LR
 
 ---
 
-## 2026-04-16 — Fifth rework cycle (reviewer NEEDS_WORK resolution)
+## 2026-04-16 — Sixth rework cycle (reviewer NEEDS_WORK resolution)
 
 **Stage**: Test/Review rework — both reviewer findings resolved.
 
@@ -56,20 +53,16 @@ flowchart LR
 
 | Finding | Severity | File | Fix |
 |---------|----------|------|-----|
-| `select_keyboard()` only showed `/select chat` | Medium | `transport.rs:107` | Added `/select backend` as second button in the same row |
-| `pending_menu_command()` only mapped `1` to chat | Medium | `commands.rs:95-97` | Added `2 => Some("/select backend")` arm |
-| Tests locked in broken single-button behavior | Medium | `tests.rs:243-252, 307-314` | Updated to assert 2-button row and `"2"` → `/select backend` |
-| Regex lookahead `(?!\s*%)` in `output_lacks_numeric_market_fact` | High | `foundation.rs:1906` | Removed lookahead — `regex` crate does not support it; `Regex::new()` was failing silently, making `has_numeric_price` always `false` |
-| Four date fixtures hardcoded to 2026-04-12/13/14 | Medium | `tests.rs` (4 tests) | Added `iso_date_days_ago()` helper; fixtures now compute dates relative to wall-clock time |
-| `project_email_summary_shortcut` test unreachable | Medium | `process_prompt.rs:60-109` | Moved `session_workdir` + `try_process_prompt_shortcuts` before the no-backend early return; shortcuts are pure local transforms |
+| `clawhub_install` wrote lock file without verifying `SKILL.md` exists | High | `clawhub_client.rs:154` | Added `validate_extracted_skill()` helper; called after extraction; cleans up staging dir and returns error if `SKILL.md` is absent |
+| Atomic replace deleted live install before rename, losing old version on failure | Medium | `clawhub_client.rs:156` | Replaced remove-then-rename with `atomic_replace_dir()`: backs up live install → renames staging → removes backup; restores backup on rename failure |
+| `atomic_install_staging_then_rename` test only covered happy path | Medium | `clawhub_client.rs` tests | Replaced with four targeted tests: `atomic_replace_dir_installs_fresh_skill`, `atomic_replace_dir_preserves_existing_on_rename_failure` (simulates failure via absent staging dir), `atomic_replace_dir_removes_stale_backup`, plus `validate_extracted_skill_accepts_dir_with_skill_md` and `validate_extracted_skill_rejects_dir_without_skill_md` |
 
 ### Validation
 
 `./deploy_host.sh --test`:
-- **572 passed / 0 failed** (was 566 passed / 6 failed)
-- All Telegram client tests pass including 2-button keyboard assertions
-- All content-scoring tests pass with dynamic date fixtures
-- `project_email_summary_shortcut_records_transcript_and_completes` now passes
+- **744 passed / 0 failed** (14 clawhub_client tests, including all 4 new ones)
+- `atomic_replace_dir_preserves_existing_on_rename_failure` proves old install is restored when rename fails
+- `validate_extracted_skill_rejects_dir_without_skill_md` proves malformed archives are rejected before lock write
 - Host validation gate exit code: 0
 
-**Status**: RESOLVED — all reviewer findings addressed, `deploy_host.sh --test` passes.
+**Status**: RESOLVED — both reviewer findings addressed, `deploy_host.sh --test` passes.
