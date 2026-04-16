@@ -18,11 +18,11 @@ refine -> plan -> design -> develop -> build/deploy -> test/review
 - [O] Stage 0. Refine — DONE
 - [O] Stage 1. Plan — DONE
 - [O] Stage 2. Design — DONE
-- [O] Stage 3. Develop — DONE
+- [O] Stage 3. Develop — DONE (rework pass: startup providers_authoritative filter added)
 - [O] Stage 4. Build/Deploy — DONE (`./deploy_host.sh -b` PASS)
-- [O] Stage 5. Test/Review — DONE (`./deploy_host.sh --test` PASS, 589 tests)
-- [O] Stage 6. Commit — DONE
-- [O] Stage 7. Evaluate — DONE
+- [O] Stage 5. Test/Review — DONE (`./deploy_host.sh --test` PASS: 590+others; 0 failed)
+- [ ] Stage 6. Commit — pending
+- [ ] Stage 7. Evaluate — pending re-evaluation after rework commit
 
 ## Stage Contracts
 

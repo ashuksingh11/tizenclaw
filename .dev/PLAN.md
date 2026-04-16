@@ -10,4 +10,6 @@
 
 ## Resume Checkpoint
 
-Resume from the first unchecked PLAN item unless validation requires a return to earlier planning work.
+All PLAN items are complete. The rework pass addressed three reviewer findings
+and applied the startup-path `providers_authoritative` filter that was missing
+from the initial implementation.
