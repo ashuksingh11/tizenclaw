@@ -28,9 +28,9 @@ flowchart LR
 
 ## In Progress
 
-- Stage 5 rework pass: addressed reviewer findings #1 (high) and #2 (medium).
-- Current workflow phase: test/review (rework complete, pending commit)
-- Supervisor verdict: `rework complete`
+- Rework pass 10 complete: both reviewer findings resolved, build verified clean.
+- Current workflow phase: commit
+- Supervisor verdict: `approved`
 
 ## Rework Summary (reviewer findings addressed)
 
