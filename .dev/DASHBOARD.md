@@ -48,55 +48,28 @@ flowchart LR
 
 ---
 
-## 2026-04-16 — Reviewer NEEDS_WORK resolution (third rework cycle)
+## 2026-04-16 — Fifth rework cycle (reviewer NEEDS_WORK resolution)
 
-**Stage**: Test/Review rework — all three reviewer findings addressed.
-
-### Changes applied
-
-| Finding | Severity | File | Fix |
-|---------|----------|------|-----|
-| `deploy_host.sh` swallows `cargo test` failures | High | `deploy_host.sh:548` | Changed `warn` to `fail` so test failures cause a non-zero exit |
-| `/select` accepted `coding-agent`, `coding_agent`, `agent` aliases | Medium | `types.rs:18` | Removed those aliases; retained `"coding"` as the internal canonical value and added `"backend"` as the new user-facing alias |
-| User-facing fallback said "Choose [chat] or [coding]." | Medium | `commands.rs:136` | Changed to "Unknown mode. Choose [chat] or [backend]." |
-| Backend prompts described session as "Telegram coding mode" | Medium | `commands.rs:852,855` | Changed to "AI agent via TizenClaw" |
-| Session history block labelled "Telegram coding session history" | Medium | `commands.rs:869` | Changed to "Current session history" |
-| Tests asserted `coding-agent` alias was valid | Medium | `tests.rs:36-48` | Updated `parse_mode_aliases_work` to assert old aliases return `None` and `"backend"` returns `Coding` |
-| ClawHub tests lacked extraction, path-sanitization, atomic-replace coverage | Medium | `clawhub_client.rs` | Added 5 new tests: `extract_zip_archive_writes_files_to_dest`, `extract_zip_archive_strips_slug_prefix_when_present`, `extract_zip_archive_rejects_path_traversal`, `extract_zip_archive_rejects_absolute_paths`, `atomic_install_staging_then_rename` |
-
-### Validation
-
-`cargo test -p tizenclaw` (offline, locked):
-- **566 passed / 6 failed** (same 6 pre-existing `agent_core` content-scoring failures)
-- All 42 Telegram client tests pass
-- All 10 ClawHub tests pass (5 new + 5 existing)
-- No regressions introduced
-
-**Status**: RESOLVED — all reviewer findings addressed.
-
----
-
-## 2026-04-16 — Fourth rework cycle (supervisor rework_required)
-
-**Stage**: Develop — addressing supervisor finding that PLAN.md items were still
-`[ ]` and reviewer finding that `"coding"` was still accepted as a mode alias.
+**Stage**: Test/Review rework — both reviewer findings resolved.
 
 ### Changes applied
 
 | Finding | Severity | File | Fix |
 |---------|----------|------|-----|
-| PLAN.md items still `[ ]` | High | `.dev/PLAN.md` | Marked all 5 prompt-derived items `[O]` |
-| `/select coding` still accepted | Medium | `types.rs:16-18` | Removed `"coding"` from `parse()`; only `"backend"` maps to `Coding` mode |
-| `as_str()` returned `"coding"` | Medium | `types.rs:23-26` | Changed `Coding.as_str()` to return `"backend"`; session labels now show `backend-0001` |
-| Test expected `"coding-0001"` session label | Medium | `tests.rs:67-69` | Updated to expect `"backend-0001"` |
-| No test asserting `"coding"` parse returns `None` | Low | `tests.rs:41-44` | Added `assert_eq!(TelegramInteractionMode::parse("coding"), None)` |
+| `select_keyboard()` only showed `/select chat` | Medium | `transport.rs:107` | Added `/select backend` as second button in the same row |
+| `pending_menu_command()` only mapped `1` to chat | Medium | `commands.rs:95-97` | Added `2 => Some("/select backend")` arm |
+| Tests locked in broken single-button behavior | Medium | `tests.rs:243-252, 307-314` | Updated to assert 2-button row and `"2"` → `/select backend` |
+| Regex lookahead `(?!\s*%)` in `output_lacks_numeric_market_fact` | High | `foundation.rs:1906` | Removed lookahead — `regex` crate does not support it; `Regex::new()` was failing silently, making `has_numeric_price` always `false` |
+| Four date fixtures hardcoded to 2026-04-12/13/14 | Medium | `tests.rs` (4 tests) | Added `iso_date_days_ago()` helper; fixtures now compute dates relative to wall-clock time |
+| `project_email_summary_shortcut` test unreachable | Medium | `process_prompt.rs:60-109` | Moved `session_workdir` + `try_process_prompt_shortcuts` before the no-backend early return; shortcuts are pure local transforms |
 
 ### Validation
 
 `./deploy_host.sh --test`:
-- **566 passed / 6 failed** (same 6 pre-existing `agent_core` content-scoring failures)
-- All Telegram client tests pass including `select_with_valid_arg_removes_reply_keyboard`
-  and `coding_usage_report_includes_actual_cli_tokens`
-- No regressions introduced
+- **572 passed / 0 failed** (was 566 passed / 6 failed)
+- All Telegram client tests pass including 2-button keyboard assertions
+- All content-scoring tests pass with dynamic date fixtures
+- `project_email_summary_shortcut_records_transcript_and_completes` now passes
+- Host validation gate exit code: 0
 
-**Status**: RESOLVED — all supervisor and reviewer findings addressed.
+**Status**: RESOLVED — all reviewer findings addressed, `deploy_host.sh --test` passes.
