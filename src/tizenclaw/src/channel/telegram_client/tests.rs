@@ -33,10 +33,16 @@ mod tests {
 
     #[test]
     fn parse_mode_aliases_work() {
+        // "backend" is the user-facing alias for the backend/CLI mode.
         assert_eq!(
-            TelegramInteractionMode::parse("coding-agent"),
+            TelegramInteractionMode::parse("backend"),
             Some(TelegramInteractionMode::Coding)
         );
+        // Legacy coding aliases are no longer accepted.
+        assert_eq!(TelegramInteractionMode::parse("coding"), None);
+        assert_eq!(TelegramInteractionMode::parse("coding-agent"), None);
+        assert_eq!(TelegramInteractionMode::parse("coding_agent"), None);
+        assert_eq!(TelegramInteractionMode::parse("agent"), None);
         assert_eq!(
             TelegramExecutionMode::parse("fast"),
             Some(TelegramExecutionMode::Fast)
@@ -60,7 +66,7 @@ mod tests {
         );
         assert_eq!(
             state.session_label_for(TelegramInteractionMode::Coding),
-            "coding-0001"
+            "backend-0001"
         );
     }
 
@@ -256,7 +262,7 @@ mod tests {
         ));
         let reply = TelegramClient::handle_command(
             77,
-            "/select coding",
+            "/select backend",
             None,
             &chat_states,
             &state_path,
@@ -267,7 +273,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(reply.text.contains("Mode: [coding]"));
+        assert!(reply.text.contains("Mode: [backend]"));
         assert!(!reply.text.contains("CodingAgent:"));
         assert_eq!(
             reply.reply_markup.as_ref().unwrap()["remove_keyboard"],
@@ -910,7 +916,7 @@ mod tests {
             &backend("gemini"),
             &default_registry(),
         );
-        assert!(report.contains("Mode: [coding]"));
+        assert!(report.contains("Mode: [backend]"));
         assert!(report.contains("Session: [0002]"));
         assert!(report.contains("Backend: [gemini]"));
         assert!(report.contains("ModelSource: [backend default]"));

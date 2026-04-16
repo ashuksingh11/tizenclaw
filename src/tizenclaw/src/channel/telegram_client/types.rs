@@ -15,7 +15,7 @@ impl TelegramInteractionMode {
     fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
             "chat" => Some(Self::Chat),
-            "coding" | "coding-agent" | "coding_agent" | "agent" => Some(Self::Coding),
+            "backend" => Some(Self::Coding),
             _ => None,
         }
     }
@@ -23,7 +23,7 @@ impl TelegramInteractionMode {
     fn as_str(&self) -> &'static str {
         match self {
             Self::Chat => "chat",
-            Self::Coding => "coding",
+            Self::Coding => "backend",
         }
     }
 }

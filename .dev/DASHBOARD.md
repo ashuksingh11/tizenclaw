@@ -48,43 +48,55 @@ flowchart LR
 
 ---
 
-## 2026-04-16 — Reviewer NEEDS_WORK resolution
+## 2026-04-16 — Reviewer NEEDS_WORK resolution (third rework cycle)
 
-**Stage**: Test/Review rework after reviewer findings.
+**Stage**: Test/Review rework — all three reviewer findings addressed.
 
-**Changes applied**:
+### Changes applied
 
-| Finding | File | Fix |
-|---------|------|-----|
-| High: path traversal in zip extraction | `src/tizenclaw/src/core/clawhub_client.rs` | Replaced `contains("..")` check with `Path::components()` guard that rejects `ParentDir`, `RootDir`, and `Prefix` components, plus a final `starts_with(dest_dir)` defense-in-depth check |
-| Medium: non-atomic install | `src/tizenclaw/src/core/clawhub_client.rs` | Extract to `<slug>.__installing__` staging dir, then `remove_dir_all` + `rename` to final path |
-| High: "CodingAgent:" in Telegram UX | `transport.rs`, `commands.rs`, `execution.rs` | Renamed label to `"Backend:"` across all five format sites |
-| High: coding-agent prompt language | `commands.rs` (`build_unified_agent_prompt`) | Renamed preference keys (`Backend:`, `Model:`, `Execution mode:`, `Auto approve:`); removed `run_coding_agent` / `create_task` instruction paragraph |
-| High: tests locked old wording | `tests.rs` | Updated `assert!(message.contains("CodingAgent: [...]"))` → `"Backend: [...]"` at lines 609, 634, 914 |
+| Finding | Severity | File | Fix |
+|---------|----------|------|-----|
+| `deploy_host.sh` swallows `cargo test` failures | High | `deploy_host.sh:548` | Changed `warn` to `fail` so test failures cause a non-zero exit |
+| `/select` accepted `coding-agent`, `coding_agent`, `agent` aliases | Medium | `types.rs:18` | Removed those aliases; retained `"coding"` as the internal canonical value and added `"backend"` as the new user-facing alias |
+| User-facing fallback said "Choose [chat] or [coding]." | Medium | `commands.rs:136` | Changed to "Unknown mode. Choose [chat] or [backend]." |
+| Backend prompts described session as "Telegram coding mode" | Medium | `commands.rs:852,855` | Changed to "AI agent via TizenClaw" |
+| Session history block labelled "Telegram coding session history" | Medium | `commands.rs:869` | Changed to "Current session history" |
+| Tests asserted `coding-agent` alias was valid | Medium | `tests.rs:36-48` | Updated `parse_mode_aliases_work` to assert old aliases return `None` and `"backend"` returns `Coding` |
+| ClawHub tests lacked extraction, path-sanitization, atomic-replace coverage | Medium | `clawhub_client.rs` | Added 5 new tests: `extract_zip_archive_writes_files_to_dest`, `extract_zip_archive_strips_slug_prefix_when_present`, `extract_zip_archive_rejects_path_traversal`, `extract_zip_archive_rejects_absolute_paths`, `atomic_install_staging_then_rename` |
 
-**Validation**: `./deploy_host.sh --test` → 561 passed / 6 failed (same 6 pre-existing agent_core content-scoring failures; no regressions introduced).
+### Validation
+
+`cargo test -p tizenclaw` (offline, locked):
+- **566 passed / 6 failed** (same 6 pre-existing `agent_core` content-scoring failures)
+- All 42 Telegram client tests pass
+- All 10 ClawHub tests pass (5 new + 5 existing)
+- No regressions introduced
 
 **Status**: RESOLVED — all reviewer findings addressed.
 
 ---
 
-## 2026-04-16 — Second rework cycle (supervisor rework_required)
+## 2026-04-16 — Fourth rework cycle (supervisor rework_required)
 
-**Stage**: Develop — resume from supervisor finding that PLAN items were unchecked
-and remaining reviewer findings were not fully applied.
+**Stage**: Develop — addressing supervisor finding that PLAN.md items were still
+`[ ]` and reviewer finding that `"coding"` was still accepted as a mode alias.
 
-**Reviewer findings addressed in this cycle**:
+### Changes applied
 
-| Finding | File | Fix |
-|---------|------|-----|
-| High: keyboard still uses `/coding_agent` | `transport.rs:112` | Changed `cli_backend_keyboard` to emit `/backend {backend}` buttons |
-| High: "local coding agent" in system prompt | `commands.rs:855,858` | Changed to "AI agent handling requests through TizenClaw" |
-| High: tests locked `/coding_agent` keyboard text | `tests.rs:138-142,189` | Updated assertions to `/backend codex`, `/backend gemini`, etc.; renamed test |
-| Medium: `/backend` command missing from handler | `commands.rs` | Added `"backend"` arm in `handle_command`, implemented `set_cli_backend` |
-| Medium: `/backend` absent from help text and bot menu | `transport.rs` | Added `/backend [name]` to `supported_commands_text`; added `("backend", "Select AI backend")` to `command_menu_entries` |
-| State: PLAN.md and TASKS.md still showed `[ ]` | `.dev/PLAN.md`, `.dev/TASKS.md` | Marked all 5 prompt-derived items `[O]` |
+| Finding | Severity | File | Fix |
+|---------|----------|------|-----|
+| PLAN.md items still `[ ]` | High | `.dev/PLAN.md` | Marked all 5 prompt-derived items `[O]` |
+| `/select coding` still accepted | Medium | `types.rs:16-18` | Removed `"coding"` from `parse()`; only `"backend"` maps to `Coding` mode |
+| `as_str()` returned `"coding"` | Medium | `types.rs:23-26` | Changed `Coding.as_str()` to return `"backend"`; session labels now show `backend-0001` |
+| Test expected `"coding-0001"` session label | Medium | `tests.rs:67-69` | Updated to expect `"backend-0001"` |
+| No test asserting `"coding"` parse returns `None` | Low | `tests.rs:41-44` | Added `assert_eq!(TelegramInteractionMode::parse("coding"), None)` |
 
-**Validation**: `./deploy_host.sh --test` → 561 passed / 6 failed (same 6 pre-existing
-agent_core content-scoring failures; no regressions introduced).
+### Validation
+
+`./deploy_host.sh --test`:
+- **566 passed / 6 failed** (same 6 pre-existing `agent_core` content-scoring failures)
+- All Telegram client tests pass including `select_with_valid_arg_removes_reply_keyboard`
+  and `coding_usage_report_includes_actual_cli_tokens`
+- No regressions introduced
 
 **Status**: RESOLVED — all supervisor and reviewer findings addressed.
