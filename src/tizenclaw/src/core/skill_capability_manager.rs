@@ -202,6 +202,11 @@ struct SkillSnapshotFingerprint {
     registration_signature: u64,
     /// Content hash of `skill_capabilities.json`.
     config_signature: u64,
+    /// Signatures for tool directories (tools_dir, embedded_tools_dir, and
+    /// registered tool_paths).  dependency_ready is derived from the live tool
+    /// inventory under all three sources, so file additions, removals, or
+    /// modifications inside those directories must also invalidate the cache.
+    tool_dir_signatures: Vec<SkillRootSignature>,
 }
 
 fn hash_str_u64(s: &str) -> u64 {
@@ -219,17 +224,40 @@ impl SkillSnapshotFingerprint {
             .map(|root| SkillRootSignature::from_path(&root.path))
             .collect();
 
-        let registration_input = registrations.skill_paths.join("|");
+        // Include both skill_paths and tool_paths so that a tool-registration
+        // change also invalidates the cache (dependency_ready depends on the
+        // registered tool set, not just skill roots).
+        let registration_input = format!(
+            "{}||{}",
+            registrations.skill_paths.join("|"),
+            registrations.tool_paths.join("|"),
+        );
         let registration_signature = hash_str_u64(&registration_input);
 
         let config_path = paths.config_dir.join(SKILL_CAPABILITIES_CONFIG);
         let config_content = std::fs::read_to_string(&config_path).unwrap_or_default();
         let config_signature = hash_str_u64(&config_content);
 
+        // Build directory-level signatures for every source that registered_tool_names()
+        // scans so that file additions, removals, or modifications within those directories
+        // also invalidate the snapshot.  registration_signature only covers the path-list
+        // itself (detecting new/removed registrations) — it does not detect file changes
+        // inside already-registered directories.
+        let mut tool_dir_paths: Vec<String> = vec![
+            paths.tools_dir.to_string_lossy().to_string(),
+            paths.embedded_tools_dir.to_string_lossy().to_string(),
+        ];
+        tool_dir_paths.extend(registrations.tool_paths.iter().cloned());
+        let tool_dir_signatures: Vec<SkillRootSignature> = tool_dir_paths
+            .iter()
+            .map(|p| SkillRootSignature::from_path(p))
+            .collect();
+
         Self {
             root_signatures,
             registration_signature,
             config_signature,
+            tool_dir_signatures,
         }
     }
 }

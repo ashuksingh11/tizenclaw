@@ -68,25 +68,20 @@ impl AgentCore {
             );
             let plan_sys = "You are a precise planner. Outline the distinct steps to solve the user's request. Output only a list of concise steps.";
 
-            let plan_response = {
-                let rg = self.provider_registry.read().await;
-                if let Some(primary) = rg.instances().first() {
-                    Some(
-                        primary
-                            .backend
-                            .chat(
-                                &sanitize_messages_for_transport(vec![LlmMessage::user(prompt)]),
-                                &[],
-                                None,
-                                plan_sys,
-                                Some(1024),
-                            )
-                            .await,
-                    )
-                } else {
-                    None
-                }
-            };
+            // Use chat_with_fallback so the planning preflight participates in
+            // the full provider-selection loop.  A transient failure on the first
+            // available provider no longer silently disables planning when a later
+            // provider is healthy.
+            let plan_response = Some(
+                self.chat_with_fallback(
+                    &sanitize_messages_for_transport(vec![LlmMessage::user(prompt)]),
+                    &[],
+                    None,
+                    plan_sys,
+                    Some(1024),
+                )
+                .await,
+            );
 
             if let Some(plan_response) = plan_response {
                 if plan_response.success {
