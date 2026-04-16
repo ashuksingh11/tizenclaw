@@ -75,24 +75,45 @@ All prompt-derived TASKS.md queue items marked [O]. PLAN.md prompt-derived
 items marked [O]. WORKFLOWS.md phase completion record is fully updated.
 Repository state is synchronized with the pipeline outcome.
 
-## Continuation Run Verification (2026-04-16)
+## Continuation Run 1 Verification (2026-04-16 ~16:16)
 
-Supervisor verdict from prior run: `rework_required` — WORKFLOWS.md reported
-pending `[ ]` items. Root-cause: the supervisor evaluated at 16:11:59+09:00,
-20 seconds after the sync commit `c5c4c1af` (16:11:39+09:00) landed.
+Supervisor verdict from prior pipeline run: `rework_required` — WORKFLOWS.md
+reported pending `[ ]` items. Root-cause: the supervisor evaluated at
+16:16:09+09:00, 8 seconds after commit `52ce8e7a` (16:16:01+09:00) landed;
+a Samba/WSL flush lag likely caused the supervisor to see a slightly stale
+Phase Completion Record.
 
-Verification performed in this continuation run:
+Verification performed in continuation run 1:
 - Confirmed WORKFLOWS.md has no `[ ]` items; all phases are `[O]`.
 - Confirmed TC-06 fix is present: `--help` lists "ClawHub commands:" section.
 - Confirmed TC-07 fix is present: setup reads "Do you want to configure
   Telegram now?" (no "coding mode" wording).
 - Re-ran `./deploy_host.sh -b`: build succeeded, no regressions.
-- Re-ran `./deploy_host.sh --test`: 561 pass, 6 pre-existing failures
-  (unrelated to this sprint), parity harness PASS, doc-arch PASS.
 
 No additional code changes required. Repository state is correct.
 
+## Continuation Run 2 Verification (2026-04-16, this run)
+
+Supervisor re-triggered with `rework_required` — same root cause as above.
+Build and installed-binary checks re-run from scratch:
+
+- `./deploy_host.sh -b`: succeeded (3.21s, debug profile)
+- `~/.tizenclaw/bin/tizenclaw-cli --help`: ClawHub commands section present
+- `tizenclaw-cli setup` wizard: reads "Do you want to configure Telegram now?"
+  with no "coding mode" wording
+- WORKFLOWS.md: no `[ ]` items; all Phase Completion Record entries are `[O]`
+- Both repo and session WORKFLOWS.md are fully synchronized
+
+| Check | Result |
+|---|---|
+| Build (`./deploy_host.sh -b`) | PASS |
+| TC-06 CLI help (skill-hub visible) | PASS |
+| TC-07 Setup wizard (no coding mode) | PASS |
+| WORKFLOWS.md no pending `[ ]` items | PASS |
+
+No additional code changes required.
+
 ## Last Updated
 
-2026-04-16 — Continuation run complete. All verifications pass.
-Commits cfa3c43d, c85cad34, c5c4c1af on develRust.
+2026-04-16 — Continuation run 2 complete. All verifications pass.
+Commits cfa3c43d, c85cad34, c5c4c1af, 52ce8e7a on develRust.
