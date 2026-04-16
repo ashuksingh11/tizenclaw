@@ -7,7 +7,7 @@ implement ClawHub-ready host path, and clean up Telegram coding-agent UX.
 
 ## Current Stage
 
-**Stage 6. Commit** — in progress
+**Stage 7. Evaluate** — DONE
 
 ## Stage Completion Status
 
@@ -19,8 +19,8 @@ implement ClawHub-ready host path, and clean up Telegram coding-agent UX.
 | 3. Develop | DONE |
 | 4. Build/Deploy | DONE |
 | 5. Test/Review | DONE |
-| 6. Commit | IN PROGRESS |
-| 7. Evaluate | PENDING |
+| 6. Commit | DONE |
+| 7. Evaluate | DONE |
 
 ## Scope
 
@@ -43,7 +43,12 @@ implement ClawHub-ready host path, and clean up Telegram coding-agent UX.
 - Removed dead functions: `set_cli_backend`, `set_execution_mode`, `set_auto_approve`
 - Updated 42 Telegram tests: all pass
 
-## Test Results (Stage 5)
+### CLI Help and Setup Cleanup (c85cad34)
+- `tizenclaw-cli --help` now lists ClawHub commands under "ClawHub commands:" section
+- `tizenclaw-cli setup` no longer shows "Telegram coding mode" wording
+- Setup prompt now reads: "Do you want to configure Telegram now?"
+
+## Test Results (Stage 5 + Rework)
 
 | Suite | Pass | Fail |
 |---|---|---|
@@ -53,6 +58,9 @@ implement ClawHub-ready host path, and clean up Telegram coding-agent UX.
 | ClawHub list | ✓ returns empty lock | — |
 | Parity harness | PASS | — |
 | Doc architecture | PASS | — |
+| TC-06 CLI help (skill-hub visible) | PASS | — |
+| TC-07 Setup wizard (no coding mode) | PASS | — |
+| deploy_host.sh full deploy | PASS | — |
 
 ## Risks and Watchpoints
 
@@ -61,10 +69,13 @@ implement ClawHub-ready host path, and clean up Telegram coding-agent UX.
 - 6 pre-existing test failures in `agent_core::tests` (prediction market / news
   summarization) are unrelated to this sprint and were present before these changes.
 
-## Supervisor Verdict
+## Task Queue Synchronization
 
-Plan stage: `approved` — proceed to develop.
+All prompt-derived TASKS.md queue items marked [O]. PLAN.md prompt-derived
+items marked [O]. WORKFLOWS.md phase completion record is fully updated.
+Repository state is synchronized with the pipeline outcome.
 
 ## Last Updated
 
-2026-04-16 — Stage 5 done, entering Stage 6.
+2026-04-16 — All stages complete and verified. TC-06 (CLI help) and TC-07
+(setup wizard) rework completed. Commits cfa3c43d and c85cad34 on develRust.

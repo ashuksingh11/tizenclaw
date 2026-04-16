@@ -140,7 +140,20 @@ Gate to exit:
 
 ## Current Gate Status
 
-- Active phase: `plan`
-- Current verdict: `ready_for_design`
-- Blocking source: none in planning state
-- Release condition: design may start immediately from the synced plan outputs
+- Active phase: `complete`
+- Current verdict: `PASS`
+- Blocking source: none
+- Release condition: all seven stages completed and committed (cfa3c43d, c85cad34, develRust)
+- Rework completed: TC-06 (CLI help now lists skill-hub) and TC-07 (setup wizard
+  no longer shows coding mode) verified against installed binary after full deploy
+
+## Phase Completion Record
+
+- [O] refine — `.dev/REQUIREMENTS.md` produced
+- [O] plan — `.dev/WORKFLOWS.md`, `.dev/PLAN.md`, `.dev/TASKS.md`, `.dev/DASHBOARD.md` produced
+- [O] design — ClawHub API endpoints and Telegram cleanup scope pinned
+- [O] develop — `clawhub_client.rs`, IPC, CLI, Telegram UX cleanup implemented
+- [O] build/deploy — `./deploy_host.sh -b` passed
+- [O] test/review — live validation and Telegram help verified
+- [O] commit — committed with `.tmp/commit_msg.txt`
+- [O] evaluate — `.dev/07-evaluator/2026-04-16-clawhub-telegram-cleanup.md`
