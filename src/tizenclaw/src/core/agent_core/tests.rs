@@ -2759,6 +2759,7 @@ mod tests {
                     }
                 }
             }),
+            raw_doc: json!({}),
         };
         let dir = tempdir().unwrap();
         let key_store = KeyStore::new(dir.path());

@@ -230,32 +230,20 @@ impl AgentCore {
             return rg.status_json();
         }
         // Fallback path: registry is write-locked (reload in progress).
-        let (configured_active_backend, configured_fallback_backends) =
-            match self.llm_config.lock() {
-                Ok(config) => (
-                    config.active_backend.clone(),
-                    config.fallback_backends.clone(),
-                ),
-                Err(err) => {
-                    let config = err.into_inner();
-                    (
-                        config.active_backend.clone(),
-                        config.fallback_backends.clone(),
-                    )
-                }
-            };
-        // Reconstruct the full preference order (active first, then fallbacks,
-        // deduplicated) so the fallback status matches what the normal read-lock
-        // path returns via ProviderRegistry::status_json().
-        let mut configured_provider_order: Vec<String> = Vec::new();
-        if !configured_active_backend.is_empty() {
-            configured_provider_order.push(configured_active_backend.clone());
-        }
-        for fb in &configured_fallback_backends {
-            if !configured_provider_order.contains(fb) {
-                configured_provider_order.push(fb.clone());
-            }
-        }
+        // Derive the routing config from the stored raw document so that the
+        // authoritative `providers[]` array (when present) is reflected in the
+        // status output, not just the legacy `active_backend`/`fallback_backends`
+        // fields that `LlmConfig` also exposes.
+        let raw_doc = match self.llm_config.lock() {
+            Ok(config) => config.raw_doc.clone(),
+            Err(err) => err.into_inner().raw_doc.clone(),
+        };
+        let routing =
+            crate::core::provider_selection::ProviderCompatibilityTranslator::translate(&raw_doc);
+        let configured_active_backend = routing.raw_active_backend.clone();
+        let configured_fallback_backends = routing.raw_fallback_backends.clone();
+        let configured_provider_order: Vec<String> =
+            routing.ordered_names().into_iter().map(String::from).collect();
         json!({
             "configured_active_backend": configured_active_backend,
             "configured_fallback_backends": configured_fallback_backends,

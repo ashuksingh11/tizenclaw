@@ -1271,6 +1271,11 @@ struct LlmConfig {
     active_backend: String,
     fallback_backends: Vec<String>,
     backends: Value,
+    /// Raw document preserved so the write-lock status fallback in
+    /// `get_llm_runtime()` can derive the correct provider order via
+    /// `ProviderCompatibilityTranslator::translate()`, including when the
+    /// authoritative `providers[]` array is present in the document.
+    raw_doc: Value,
 }
 
 impl Default for LlmConfig {
@@ -1295,6 +1300,7 @@ impl LlmConfig {
                 })
                 .unwrap_or_else(|| vec!["openai".into(), "ollama".into()]),
             backends: json.get("backends").cloned().unwrap_or_else(|| json!({})),
+            raw_doc: json.clone(),
         }
     }
 
