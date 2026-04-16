@@ -3,14 +3,13 @@
 ## Actual Progress
 
 - Goal: <!-- dormammu:goal_source=/home/hjhun/.dormammu/goals/tizenclaw_improve.md -->
-- Prompt-driven scope: Phase 4. Supervisor Validation, Continuation Loop, and Resume prompt-driven setup for Follow the guidance files below before making changes.
-- Active roadmap focus:
-- Phase 4. Supervisor Validation, Continuation Loop, and Resume
-- Current workflow phase: plan
-- Last completed workflow phase: none
+- Prompt-driven scope: Runtime flexibility improvements — provider selection,
+  Telegram model config, ClawHub update, skill snapshot cache, host validation.
+- Active roadmap focus: all five roadmap targets delivered and committed.
+- Current workflow phase: evaluate (complete)
+- Last completed workflow phase: commit
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- Resume point: Return to Plan and resume from the first unchecked PLAN item if setup is interrupted
 
 ## Workflow Phases
 
@@ -28,41 +27,32 @@ flowchart LR
 
 ## In Progress
 
-- Rework pass 10 complete: both reviewer findings resolved, build verified clean.
-- Current workflow phase: commit
+- All stages complete. Rework passes 1–10 resolved all reviewer findings.
+- Current workflow phase: done
 - Supervisor verdict: `approved`
 
-## Rework Summary (reviewer findings addressed)
+## Rework Summary (rework pass 10 — reviewer findings addressed)
 
-### Finding #1 — High: `backends.*`-only entries excluded from routing
+### Finding #1 — High: fallback executions recorded under primary backend
 
-- Root: `ProviderCompatibilityTranslator::translate()` only added backends
-  named in `active_backend` or `fallback_backends` to `routing.providers`.
-  Backends defined only under `backends.<name>` could initialize but never
-  be selected by `ProviderSelector::ordered_enabled_names()`.
-- Fix: Added a second scan of all `backends.*` keys after the positional
-  loop. Keys not yet in the `seen` set are added as `CompatibilityBackends`
-  entries, using explicit `priority` if present or a positional default
-  below the fallback range (800 - index).
-- New source variant: `ProviderConfigSource::CompatibilityBackends`.
-- Tests added: `backends_only_entry_included_in_routing_config`,
-  `backends_only_high_priority_sorts_before_positional_defaults`.
+- Root: `process_prompt.rs` was using `primary_name()` to record token usage,
+  so usage was attributed to the primary even when a fallback provider served.
+- Fix: `process_prompt.rs` now reads `active_selection_provider_name()` from
+  the registry, which `chat_with_fallback` sets via `set_active_selection`
+  before returning. Token usage is now attributed to the actual serving backend.
+- Files: `src/tizenclaw/src/core/agent_core/process_prompt.rs`.
+
+### Finding #2 — Medium: plugin-discovered backends excluded from selection
+
+- Root: `ProviderSelector::first_available` would skip providers absent from
+  the routing config, breaking the legacy plugin-backend implicit-fallback path.
+- Fix: `.unwrap_or(true)` on the routing config lookup so plugin-discovered
+  backends are treated as enabled and eligible as last-resort fallbacks.
 - Files: `src/tizenclaw/src/core/provider_selection.rs`.
-
-### Finding #2 — Medium: legacy ClawHub lock entries use hardcoded URL
-
-- Root: `clawhub_update()` fell back to `DEFAULT_CLAWHUB_BASE_URL` when
-  `source_base_url` was absent in a lock entry, ignoring
-  `TIZENCLAW_CLAWHUB_URL` / `CLAWHUB_URL` env vars.
-- Fix: Replaced `unwrap_or(DEFAULT_CLAWHUB_BASE_URL)` with
-  `unwrap_or(&resolved)` where `resolved = resolve_base_url()`, so
-  operator env-var overrides are respected for pre-migration entries.
-- Test added: `clawhub_update_missing_source_url_falls_back_to_env_var`.
-- Files: `src/tizenclaw/src/core/clawhub_client.rs`.
 
 ## Validation Evidence
 
-- `./deploy_host.sh -b`: succeeded, no warnings.
+- `./deploy_host.sh -b`: succeeded, no warnings (rework pass 10).
 - `./deploy_host.sh --test`: all test suites passed (603 unit tests in
   tizenclaw crate, plus canonical workspace and parity harness).
 
@@ -71,5 +61,7 @@ flowchart LR
 - `backends.*` scan order is non-deterministic (HashMap iteration) when
   multiple backends have the same default priority. Operators with
   deterministic ordering requirements should set explicit `priority` values.
-- Env var mutation in the new ClawHub test is not thread-safe across
-  parallel test threads; `tokio::test` single-thread runtime limits risk.
+- Env var mutation in ClawHub tests is not thread-safe across parallel test
+  threads; `tokio::test` single-thread runtime limits risk.
+- Plugin backends are now eligible as last-resort fallbacks but appear after
+  all configured providers in preference order.
