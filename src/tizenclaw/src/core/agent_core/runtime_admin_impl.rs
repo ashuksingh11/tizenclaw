@@ -244,10 +244,22 @@ impl AgentCore {
                     )
                 }
             };
+        // Reconstruct the full preference order (active first, then fallbacks,
+        // deduplicated) so the fallback status matches what the normal read-lock
+        // path returns via ProviderRegistry::status_json().
+        let mut configured_provider_order: Vec<String> = Vec::new();
+        if !configured_active_backend.is_empty() {
+            configured_provider_order.push(configured_active_backend.clone());
+        }
+        for fb in &configured_fallback_backends {
+            if !configured_provider_order.contains(fb) {
+                configured_provider_order.push(fb.clone());
+            }
+        }
         json!({
             "configured_active_backend": configured_active_backend,
             "configured_fallback_backends": configured_fallback_backends,
-            "configured_provider_order": configured_fallback_backends,
+            "configured_provider_order": configured_provider_order,
             "providers": [],
             "current_selection": Value::Null,
         })
@@ -600,7 +612,15 @@ impl AgentCore {
         let skill_hubs_dir =
             crate::core::clawhub_client::skill_hubs_dir_from_paths(&self.platform.paths);
         match crate::core::clawhub_client::clawhub_install(&skill_hubs_dir, source).await {
-            Ok(result) => json!({ "status": "ok", "result": result }),
+            Ok(result) => {
+                // A new skill directory was written; drop the cached snapshot so the
+                // next consumer sees the updated skill roots immediately rather than
+                // waiting for the second-resolution mtime to roll over.
+                skill_capability_manager::invalidate_snapshot_cache(
+                    skill_capability_manager::SkillSnapshotInvalidationReason::ClawHubInstall,
+                );
+                json!({ "status": "ok", "result": result })
+            }
             Err(err) => json!({ "status": "error", "error": err }),
         }
     }
@@ -618,7 +638,15 @@ impl AgentCore {
         let skill_hubs_dir =
             crate::core::clawhub_client::skill_hubs_dir_from_paths(&self.platform.paths);
         match crate::core::clawhub_client::clawhub_update(&skill_hubs_dir).await {
-            Ok(result) => json!({ "status": "ok", "result": result }),
+            Ok(result) => {
+                // Invalidate unconditionally: even a partial success writes skill
+                // directories, and the mtime-based fingerprint cannot distinguish
+                // a same-second write from a no-change read.
+                skill_capability_manager::invalidate_snapshot_cache(
+                    skill_capability_manager::SkillSnapshotInvalidationReason::ClawHubUpdate,
+                );
+                json!({ "status": "ok", "result": result })
+            }
             Err(err) => json!({ "status": "error", "error": err }),
         }
     }

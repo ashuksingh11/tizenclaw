@@ -390,6 +390,29 @@ impl ProviderSelector {
         }
         None
     }
+
+    /// Return the names of all enabled providers in preference order.
+    ///
+    /// Only providers that are enabled in the routing config appear in the
+    /// result.  Unknown providers (no routing config entry) default to enabled.
+    /// This is the authoritative source for the ordered provider list that
+    /// `chat_with_fallback` iterates so selection policy stays centralized here.
+    pub fn ordered_enabled_names(registry: &ProviderRegistry) -> Vec<String> {
+        registry
+            .instances
+            .iter()
+            .filter(|inst| {
+                registry
+                    .routing
+                    .providers
+                    .iter()
+                    .find(|p| p.name == inst.name)
+                    .map(|p| p.enabled)
+                    .unwrap_or(true)
+            })
+            .map(|inst| inst.name.clone())
+            .collect()
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

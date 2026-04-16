@@ -973,4 +973,98 @@ mod tests {
         assert!(result["failed"].as_array().unwrap().is_empty());
         assert!(result["updated"].as_array().unwrap().is_empty());
     }
+
+    fn write_lock_with_entries(workspace_dir: &std::path::Path, entries: &[(&str, &str, &str)]) {
+        // entries: (slug, display_name, source_base_url)
+        let lock_dir = workspace_dir.join(".clawhub");
+        std::fs::create_dir_all(&lock_dir).unwrap();
+        let skills: Vec<serde_json::Value> = entries
+            .iter()
+            .map(|(slug, display_name, source_base_url)| {
+                serde_json::json!({
+                    "slug": slug,
+                    "display_name": display_name,
+                    "version": "1.0.0",
+                    "install_path": workspace_dir.join("skill-hubs/clawhub").join(slug)
+                        .to_string_lossy().as_ref(),
+                    "installed_at_secs": 0,
+                    "source_kind": "clawhub",
+                    "source_base_url": source_base_url,
+                })
+            })
+            .collect();
+        let lock = serde_json::json!({ "skills": skills });
+        std::fs::write(lock_dir.join("lock.json"), lock.to_string()).unwrap();
+    }
+
+    #[test]
+    fn clawhub_update_uses_source_base_url_from_lock_entry() {
+        // When a lock entry has a custom source_base_url, the update request
+        // must use that URL — not the default — so source identity is preserved.
+        // We prove this by pointing to an unreachable local address and
+        // checking that the resulting error message contains that address.
+        let dir = tempdir().unwrap();
+        let workspace_dir = dir.path().join("workspace");
+        let skill_hubs_dir = workspace_dir.join("skill-hubs");
+        std::fs::create_dir_all(&skill_hubs_dir).unwrap();
+
+        let custom_url = "http://127.0.0.1:19999";
+        write_lock_with_entries(workspace_dir.as_path(), &[
+            ("my-skill", "My Skill", custom_url),
+        ]);
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt
+            .block_on(super::clawhub_update(&skill_hubs_dir))
+            .unwrap();
+
+        let failed = result["failed"].as_array().unwrap();
+        assert!(
+            !failed.is_empty(),
+            "expected update to fail because custom URL is unreachable"
+        );
+        let detail = failed[0]["detail"].as_str().unwrap_or("");
+        // The error must reference the custom address, proving it was used in
+        // the HTTP request rather than the default clawhub.ai URL.
+        assert!(
+            detail.contains("127.0.0.1:19999"),
+            "error detail must reference the custom source URL; got: {}", detail
+        );
+    }
+
+    #[test]
+    fn clawhub_update_accumulates_failures_for_multiple_entries() {
+        // A failure for one lock entry must not abort the loop — all entries
+        // must be processed and each failure must appear in the `failed` list.
+        let dir = tempdir().unwrap();
+        let workspace_dir = dir.path().join("workspace");
+        let skill_hubs_dir = workspace_dir.join("skill-hubs");
+        std::fs::create_dir_all(&skill_hubs_dir).unwrap();
+
+        // Two entries that will both fail: unreachable local address.
+        write_lock_with_entries(workspace_dir.as_path(), &[
+            ("skill-one", "Skill One", "http://127.0.0.1:19999"),
+            ("skill-two", "Skill Two", "http://127.0.0.1:19999"),
+        ]);
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt
+            .block_on(super::clawhub_update(&skill_hubs_dir))
+            .unwrap();
+
+        let failed = result["failed"].as_array().unwrap();
+        assert_eq!(
+            failed.len(), 2,
+            "both entries must appear in failed (partial-failure accumulation); \
+             got failed={}, result={}",
+            failed.len(), result
+        );
+        assert!(result["updated"].as_array().unwrap().is_empty());
+    }
 }

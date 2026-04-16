@@ -1411,11 +1411,13 @@ impl AgentCore {
         let mut failure_summaries: Vec<String> = Vec::new();
         let mut attempted: Vec<ProviderAttempt> = Vec::new();
 
-        // Snapshot the provider names so we can release the read lock before
-        // the chat call (which is async and may be long-running).
+        // Snapshot the enabled, preference-ordered provider names through
+        // ProviderSelector so selection policy stays centralized there.
+        // Disabled providers are excluded here; the circuit-breaker check
+        // inside the loop handles temporarily unavailable ones.
         let provider_names: Vec<String> = {
             let rg = self.provider_registry.read().await;
-            rg.instances().iter().map(|i| i.name.clone()).collect()
+            ProviderSelector::ordered_enabled_names(&rg)
         };
 
         // Track a successful response to write the selection record after the loop.
