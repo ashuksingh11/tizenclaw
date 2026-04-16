@@ -1100,13 +1100,16 @@ impl AgentCore {
                 }
             }
 
-            // Record token usage
+            // Record token usage against the provider that actually served this
+            // request.  `chat_with_fallback` calls `set_active_selection` before
+            // returning, so `active_selection_provider_name` reflects the real
+            // backend even when routing fell through to a non-primary provider.
             {
                 let be_name = self
                     .provider_registry
                     .read()
                     .await
-                    .primary_name()
+                    .active_selection_provider_name()
                     .to_string();
                 if let Ok(ss) = self.session_store.lock() {
                     if let Some(store) = ss.as_ref() {
