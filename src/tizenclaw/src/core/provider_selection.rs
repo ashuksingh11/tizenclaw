@@ -95,6 +95,9 @@ pub enum ProviderConfigSource {
     CompatibilityActive,
     /// Synthesized from the legacy `fallback_backends` key.
     CompatibilityFallback,
+    /// Synthesized from a `backends.<name>` entry not referenced by
+    /// `active_backend` or `fallback_backends`.
+    CompatibilityBackends,
 }
 
 impl ProviderConfigSource {
@@ -103,6 +106,7 @@ impl ProviderConfigSource {
             Self::Providers => "providers",
             Self::CompatibilityActive => "compatibility_active",
             Self::CompatibilityFallback => "compatibility_fallback",
+            Self::CompatibilityBackends => "compatibility_backends",
         }
     }
 }
@@ -262,6 +266,34 @@ impl ProviderCompatibilityTranslator {
                 raw_priority,
                 source,
             });
+        }
+
+        // Also include backends defined under `backends.*` that were not
+        // referenced by `active_backend` or `fallback_backends`.  The design
+        // policy (runtime_flexibility_ooad_design_20260416.md §44) requires
+        // that every configured backend remains selectable; without this step
+        // an operator-configured backend that has no entry in either legacy key
+        // would be initialized but never routed to.
+        if let Some(backends_map) = doc.get("backends").and_then(Value::as_object) {
+            for (extra_name, be_val) in backends_map {
+                let trimmed = extra_name.trim().to_string();
+                if trimmed.is_empty() || !seen.insert(trimmed.clone()) {
+                    continue;
+                }
+                let raw_priority = be_val
+                    .get("priority")
+                    .and_then(Value::as_i64)
+                    .unwrap_or_else(|| {
+                        // Place these below any positional fallback score so
+                        // they are tried last unless given an explicit priority.
+                        800i64 - candidates.len() as i64
+                    });
+                candidates.push(LegacyCandidate {
+                    name: trimmed,
+                    raw_priority,
+                    source: ProviderConfigSource::CompatibilityBackends,
+                });
+            }
         }
 
         // Sort descending: highest raw_priority is routed first.
@@ -852,5 +884,55 @@ mod tests {
             idx.is_none(),
             "first_available must not select an unconfigured provider as a fallback"
         );
+    }
+
+    /// A backend defined under `backends.<name>` but not in `active_backend` or
+    /// `fallback_backends` must still appear in the routing config so it can be
+    /// selected at request time.  This is the compatibility policy fix for
+    /// reviewer finding #1.
+    #[test]
+    fn backends_only_entry_included_in_routing_config() {
+        let doc = json!({
+            "active_backend": "gemini",
+            "fallback_backends": ["openai"],
+            "backends": {
+                "gemini": {},
+                "openai": {},
+                // "anthropic" exists only in backends.*, not in active or fallback.
+                "anthropic": { "priority": 50 },
+            },
+        });
+        let config = ProviderCompatibilityTranslator::translate(&doc);
+        let names: Vec<&str> = config.ordered_names();
+        // gemini (1000), openai (900) come first via positional scoring;
+        // anthropic (50) is below them but must be included.
+        assert!(
+            names.contains(&"anthropic"),
+            "backends-only entry must appear in ordered_names: {:?}",
+            names
+        );
+        // Source must be CompatibilityBackends.
+        let entry = config.providers.iter().find(|p| p.name == "anthropic").unwrap();
+        assert_eq!(entry.source, ProviderConfigSource::CompatibilityBackends);
+    }
+
+    /// When a backend has a very high explicit priority in `backends.*` but is
+    /// absent from `active_backend` / `fallback_backends`, it must sort above
+    /// the positional defaults.
+    #[test]
+    fn backends_only_high_priority_sorts_before_positional_defaults() {
+        let doc = json!({
+            "active_backend": "gemini",
+            "fallback_backends": ["openai"],
+            "backends": {
+                // anthropic has priority 5000, higher than gemini's default 1000.
+                "anthropic": { "priority": 5000 },
+            },
+        });
+        let config = ProviderCompatibilityTranslator::translate(&doc);
+        let names: Vec<&str> = config.ordered_names();
+        assert_eq!(names[0], "anthropic", "highest explicit priority must route first");
+        assert!(names.contains(&"gemini"));
+        assert!(names.contains(&"openai"));
     }
 }

@@ -238,10 +238,15 @@ pub async fn clawhub_update(skill_hubs_dir: &Path) -> Result<Value, String> {
 
     for entry in &lock.skills {
         let slug = &entry.slug;
+        // Use the locked source URL when present.  Fall back to
+        // resolve_base_url() rather than the hard-coded constant so that
+        // operators using TIZENCLAW_CLAWHUB_URL or CLAWHUB_URL get consistent
+        // behavior for pre-migration lock entries that lack source_base_url.
+        let resolved = resolve_base_url();
         let base_url = entry
             .source_base_url
             .as_deref()
-            .unwrap_or(DEFAULT_CLAWHUB_BASE_URL)
+            .unwrap_or(&resolved)
             .trim_end_matches('/')
             .to_string();
 
@@ -1167,6 +1172,64 @@ mod tests {
                 .map(|u| u.contains(&format!("127.0.0.1:{}", port)))
                 .unwrap_or(false),
             "lock file must preserve the original source_base_url"
+        );
+    }
+
+    /// When a pre-migration lock entry has no `source_base_url`, the update
+    /// path must use the URL from `TIZENCLAW_CLAWHUB_URL` (or `CLAWHUB_URL`)
+    /// rather than the hardcoded default constant.
+    ///
+    /// We verify this by setting the env var to an unreachable local address
+    /// and asserting that the resulting error references that address — proving
+    /// `resolve_base_url()` was consulted instead of `DEFAULT_CLAWHUB_BASE_URL`.
+    #[test]
+    fn clawhub_update_missing_source_url_falls_back_to_env_var() {
+        let dir = tempdir().unwrap();
+        let workspace_dir = dir.path().join("workspace");
+        let skill_hubs_dir = workspace_dir.join("skill-hubs");
+        std::fs::create_dir_all(&skill_hubs_dir).unwrap();
+
+        // Write a lock entry without source_base_url (legacy format).
+        let lock_dir = workspace_dir.join(".clawhub");
+        std::fs::create_dir_all(&lock_dir).unwrap();
+        let legacy_lock = serde_json::json!({
+            "skills": [{
+                "slug": "legacy-skill",
+                "display_name": "Legacy Skill",
+                "version": "0.9.0",
+                "install_path": workspace_dir.join("skill-hubs/clawhub/legacy-skill")
+                    .to_string_lossy().as_ref(),
+                "installed_at_secs": 0,
+            }]
+        });
+        std::fs::write(lock_dir.join("lock.json"), legacy_lock.to_string()).unwrap();
+
+        let custom_url = "http://127.0.0.1:19998";
+        // Safety: env var mutation is test-local but not thread-safe across
+        // concurrent tests; the uniqueness of the port keeps interference low.
+        // SAFETY: single-threaded runtime, env var set only in this test scope.
+        unsafe { std::env::set_var("TIZENCLAW_CLAWHUB_URL", custom_url) };
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt
+            .block_on(super::clawhub_update(&skill_hubs_dir))
+            .unwrap();
+
+        unsafe { std::env::remove_var("TIZENCLAW_CLAWHUB_URL") };
+
+        let failed = result["failed"].as_array().unwrap();
+        assert!(
+            !failed.is_empty(),
+            "update to unreachable env-var URL must fail"
+        );
+        let detail = failed[0]["detail"].as_str().unwrap_or("");
+        assert!(
+            detail.contains("127.0.0.1:19998"),
+            "error must reference the env-var URL, not the hardcoded default; got: {}",
+            detail
         );
     }
 }

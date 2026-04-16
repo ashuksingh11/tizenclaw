@@ -3,12 +3,14 @@
 ## Actual Progress
 
 - Goal: <!-- dormammu:goal_source=/home/hjhun/.dormammu/goals/tizenclaw_improve.md -->
-- Prompt-driven scope: runtime flexibility roadmap (provider selection, Telegram model config, ClawHub update, skill snapshot cache, host validation)
-- Current workflow phase: complete
-- Last completed workflow phase: evaluate
+- Prompt-driven scope: Phase 4. Supervisor Validation, Continuation Loop, and Resume prompt-driven setup for Follow the guidance files below before making changes.
+- Active roadmap focus:
+- Phase 4. Supervisor Validation, Continuation Loop, and Resume
+- Current workflow phase: plan
+- Last completed workflow phase: none
 - Supervisor verdict: `approved`
 - Escalation status: `approved`
-- All PLAN/TASKS items: `[O]` complete
+- Resume point: Return to Plan and resume from the first unchecked PLAN item if setup is interrupted
 
 ## Workflow Phases
 
@@ -24,50 +26,50 @@ flowchart LR
     final_verify -->|rework| develop
 ```
 
-## Completed Work
+## In Progress
 
-All five roadmap targets delivered:
+- Stage 5 rework pass: addressed reviewer findings #1 (high) and #2 (medium).
+- Current workflow phase: test/review (rework complete, pending commit)
+- Supervisor verdict: `rework complete`
 
-1. **Provider selection layer** — `core/provider_selection.rs` introduced
-   `ProviderRegistry`, `ProviderSelector`, and `ProviderCompatibilityTranslator`.
-   Legacy `active_backend`/`fallback_backends` translated via compatibility path.
-   Routing authority enforced: providers absent from routing config cannot be
-   selected (`unwrap_or(false)` at `first_available` and `ordered_enabled_names`).
+## Rework Summary (reviewer findings addressed)
 
-2. **Telegram model configuration** — model lists externalized from Rust
-   defaults into operator config with documented precedence rule.
+### Finding #1 — High: `backends.*`-only entries excluded from routing
 
-3. **ClawHub update flow** — `clawhub_update()` reads `workspace/.clawhub/lock.json`
-   and re-installs tracked skills using locked source identity.
+- Root: `ProviderCompatibilityTranslator::translate()` only added backends
+  named in `active_backend` or `fallback_backends` to `routing.providers`.
+  Backends defined only under `backends.<name>` could initialize but never
+  be selected by `ProviderSelector::ordered_enabled_names()`.
+- Fix: Added a second scan of all `backends.*` keys after the positional
+  loop. Keys not yet in the `seen` set are added as `CompatibilityBackends`
+  entries, using explicit `priority` if present or a positional default
+  below the fallback range (800 - index).
+- New source variant: `ProviderConfigSource::CompatibilityBackends`.
+- Tests added: `backends_only_entry_included_in_routing_config`,
+  `backends_only_high_priority_sorts_before_positional_defaults`.
+- Files: `src/tizenclaw/src/core/provider_selection.rs`.
 
-4. **Skill snapshot cache** — deterministic invalidation on root, registration,
-   and capability-config changes added to `skill_capability_manager.rs`.
+### Finding #2 — Medium: legacy ClawHub lock entries use hardcoded URL
 
-5. **Host validation** — `./deploy_host.sh --test` passed with 600 tests;
-   `./deploy_host.sh` build confirmed.
+- Root: `clawhub_update()` fell back to `DEFAULT_CLAWHUB_BASE_URL` when
+  `source_base_url` was absent in a lock entry, ignoring
+  `TIZENCLAW_CLAWHUB_URL` / `CLAWHUB_URL` env vars.
+- Fix: Replaced `unwrap_or(DEFAULT_CLAWHUB_BASE_URL)` with
+  `unwrap_or(&resolved)` where `resolved = resolve_base_url()`, so
+  operator env-var overrides are respected for pre-migration entries.
+- Test added: `clawhub_update_missing_source_url_falls_back_to_env_var`.
+- Files: `src/tizenclaw/src/core/clawhub_client.rs`.
+
+## Validation Evidence
+
+- `./deploy_host.sh -b`: succeeded, no warnings.
+- `./deploy_host.sh --test`: all test suites passed (603 unit tests in
+  tizenclaw crate, plus canonical workspace and parity harness).
 
 ## Risks And Watchpoints
 
-- Do not overwrite existing operator-authored Markdown.
-- Keep JSON merges additive so interrupted runs stay resumable.
-
-## Review Gate — 2026-04-16
-
-**Reviewer findings (rework pass 9) — RESOLVED**
-
-Finding 1: `provider_selection.rs` — `ordered_enabled_names` and
-`first_available` used `.unwrap_or(true)`, allowing providers absent
-from the routing config to be selected as fallbacks, breaking routing
-authority.
-Resolution: changed to `.unwrap_or(false)` in both call sites; updated
-comments; added `unconfigured_provider_excluded_from_selection` test.
-
-Finding 2: `clawhub_client.rs` — success-path reinstall unverified.
-Resolution: added `clawhub_update_success_path_installs_skill_and_updates_lock`
-test that spins up an in-process axum server, verifies install dir +
-SKILL.md presence, and confirms lock file version and source URL are
-updated correctly.
-
-`./deploy_host.sh --test`: 600 tizenclaw tests — all passed.
-Commit: 7470229f
-Supervisor verdict: RESOLVED — ready for re-review gate.
+- `backends.*` scan order is non-deterministic (HashMap iteration) when
+  multiple backends have the same default priority. Operators with
+  deterministic ordering requirements should set explicit `priority` values.
+- Env var mutation in the new ClawHub test is not thread-safe across
+  parallel test threads; `tokio::test` single-thread runtime limits risk.
