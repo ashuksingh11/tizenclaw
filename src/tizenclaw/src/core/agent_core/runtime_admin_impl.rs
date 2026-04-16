@@ -588,6 +588,31 @@ impl AgentCore {
         })
     }
 
+    pub async fn clawhub_search(&self, query: &str) -> Value {
+        match crate::core::clawhub_client::clawhub_search(query).await {
+            Ok(result) => json!({ "status": "ok", "result": result }),
+            Err(err) => json!({ "status": "error", "error": err }),
+        }
+    }
+
+    pub async fn clawhub_install(&self, source: &str) -> Value {
+        let skill_hubs_dir =
+            crate::core::clawhub_client::skill_hubs_dir_from_paths(&self.platform.paths);
+        match crate::core::clawhub_client::clawhub_install(&skill_hubs_dir, source).await {
+            Ok(result) => json!({ "status": "ok", "result": result }),
+            Err(err) => json!({ "status": "error", "error": err }),
+        }
+    }
+
+    pub fn clawhub_list(&self) -> Value {
+        let skill_hubs_dir =
+            crate::core::clawhub_client::skill_hubs_dir_from_paths(&self.platform.paths);
+        match crate::core::clawhub_client::clawhub_list(&skill_hubs_dir) {
+            Ok(result) => json!({ "status": "ok", "result": result }),
+            Err(err) => json!({ "status": "error", "error": err }),
+        }
+    }
+
     pub async fn register_external_path(
         &self,
         kind: RegistrationKind,

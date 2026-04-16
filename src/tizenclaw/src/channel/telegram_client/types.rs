@@ -1043,10 +1043,7 @@ impl TelegramChatState {
 #[serde(rename_all = "snake_case")]
 enum TelegramPendingMenu {
     SelectMode,
-    CodingAgent,
     Model,
-    ExecutionMode,
-    AutoApprove,
 }
 
 #[derive(Clone, Debug, Default)]

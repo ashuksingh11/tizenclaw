@@ -802,6 +802,15 @@ impl IpcServer {
             },
             "get_tool_audit" => agent.tool_audit_status(),
             "get_skill_capabilities" => agent.skill_capability_status(),
+            "clawhub_list" => agent.clawhub_list(),
+            "clawhub_search" => match Self::handle_clawhub_search(rt_handle, agent, &params, &req_id) {
+                Ok(result) => result,
+                Err(response) => return response,
+            },
+            "clawhub_install" => match Self::handle_clawhub_install(rt_handle, agent, &params, &req_id) {
+                Ok(result) => result,
+                Err(response) => return response,
+            },
             _ => {
                 return Self::jsonrpc_error(
                     req_id,
@@ -1079,6 +1088,32 @@ impl IpcServer {
             "reachable": result["reachable"].clone(),
             "status_code": result["status_code"].clone(),
         }))
+    }
+
+    fn handle_clawhub_search(
+        rt_handle: &tokio::runtime::Handle,
+        agent: &Arc<AgentCore>,
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let query = Self::required_str(params, "query", req_id)?;
+        let result = tokio::task::block_in_place(|| {
+            rt_handle.block_on(agent.clawhub_search(query))
+        });
+        Ok(result)
+    }
+
+    fn handle_clawhub_install(
+        rt_handle: &tokio::runtime::Handle,
+        agent: &Arc<AgentCore>,
+        params: &Value,
+        req_id: &Value,
+    ) -> Result<Value, String> {
+        let source = Self::required_str(params, "source", req_id)?;
+        let result = tokio::task::block_in_place(|| {
+            rt_handle.block_on(agent.clawhub_install(source))
+        });
+        Ok(result)
     }
 
     fn handle_backend_config_get(

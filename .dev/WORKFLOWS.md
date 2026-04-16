@@ -1,108 +1,146 @@
 # WORKFLOWS
 
-## Task Classification
+## Planning Classification
 
-- Scope: live Tizen runtime-layout validation
-- Cycle type: explicit deploy-and-verify closure run
-- Primary source: `.dev/REQUIREMENTS.md`
-- Required starting gate: `refine -> plan`
-- Deployment policy for this cycle: execute the real non-dry-run
-  `./deploy.sh` path against a reachable Tizen target
+- Request class source: `.dev/workflow_state.json`
+- `intake.request_class`: `full_workflow`
+- `workflow_policy.required_phases`:
+  `refine -> plan -> design -> develop -> build_deploy -> test_review ->
+  commit -> evaluate`
+- `workflow_policy.skipped_phases`: none
+- `workflow_policy.skip_rationale`: none
+- `refinement.mode`: `clarify`
+- `refinement.blocked`: `false`
+- Effective planning depth: `full_workflow`
+- Rationale: this goal requires comparison, roadmap authoring, concrete
+  implementation, host validation through `./deploy_host.sh`, test or review
+  follow-up, and the mandatory final evaluator stage.
 
 ## Active Stage Sequence
 
 ```text
-refine -> plan -> design -> build/deploy -> test/review -> evaluate
+refine(resolved) -> plan -> design -> develop -> build/deploy
+-> test/review -> commit -> evaluate
 ```
-
-## Planning Decisions
-
-### 1. Design Authority
-
-- Use the existing runtime-layout design record in
-  `.dev/02-architect/20260415_tizenclaw_dir.md` as the design authority for
-  this cycle.
-- The packaged-asset standard is runtime-context mutation denial under
-  `/opt/usr/share/tizenclaw`, not a requirement for a read-only filesystem
-  mount at the kernel level.
-
-### 2. Validation Authority
-
-- Earlier evaluator files remain preserved history only.
-- The newest live-validation report produced by this cycle becomes the
-  authoritative runtime-layout closure statement.
-
-### 3. Evidence Freshness Rule
-
-- Use evidence collected during this execution cycle.
-- Distinguish fresh runtime-state observations from stale residue by using the
-  current deployment window and unique probe names.
 
 ## Stage Plan
 
 ### Stage 0. Refine
+Purpose:
+- keep the resolved requirements as the authoritative scope for execution
 
-Status:
-- Complete
-
-Output:
+Outputs:
 - `.dev/REQUIREMENTS.md`
+- synchronized `.dev/workflow_state.json`
+
+Gate to exit:
+- baselines, ClawHub definition, runnable host proof, and Telegram UX policy
+  are explicit and no refinement blocker remains
 
 ### Stage 1. Plan
-
-Status:
-- Complete
+Purpose:
+- define the downstream execution path from the resolved requirements and the
+  synced workflow policy
 
 Outputs:
 - `.dev/WORKFLOWS.md`
 - `.dev/PLAN.md`
+- `.dev/TASKS.md`
 - `.dev/DASHBOARD.md`
 
+Gate to exit:
+- workflow, plan, tasks, and dashboard match the resolved requirements and
+  machine state
+
 ### Stage 2. Design
+Purpose:
+- pin down the ClawHub skill install or mount path and the Telegram UX
+  migration before code changes begin
 
-Status:
-- Complete
+Outputs:
+- design notes under `.dev/docs/` when needed
+- refreshed `.dev/DASHBOARD.md`
 
-Authority:
-- `.dev/02-architect/20260415_tizenclaw_dir.md`
+Gate to exit:
+- implementation no longer depends on guesswork around skill source handling,
+  runtime discovery, or Telegram-visible behavior
 
-Recorded outcome:
-- confirmed that the live-validation cycle still follows the previously
-  published runtime-layout design and acceptance model
+### Stage 3. Develop
+Purpose:
+- compare `tizenclaw` against the pinned references
+- rewrite `.dev/ROADMAP.md`
+- implement the ClawHub path and Telegram UX cleanup
 
-### Stage 3. Build/Deploy
+Required skills:
+- `developing-code`
+- `testing-with-tizenclaw-tests`
 
-Status:
-- Complete
+Outputs:
+- scoped code and config changes
+- rewritten `.dev/ROADMAP.md`
+- refreshed `.dev/DASHBOARD.md`
 
-Recorded outcome:
-- executed `PATH="$HOME/tizen-studio/tools:$PATH" ./deploy.sh -d emulator-26101`
-- `pkgcmd` returned `Operation not allowed [-4]`, then the script fell back to
-  `rpm -Uvh`
-- the install transaction was proven by the updated installed package state:
-  `tizenclaw 1.0.0-3.x86_64 1776260997`
-- the service restart completed at `2026-04-15 22:50:01 KST`
+Gate to exit:
+- intended files are changed and the repository state matches the planned scope
 
-### Stage 4. Test/Review
+### Stage 4. Build/Deploy
+Purpose:
+- validate the host path using the repository-approved script only
 
-Status:
-- Complete
+Outputs:
+- scripted host evidence from `./deploy_host.sh`
 
-Recorded outcome:
-- `systemctl show` and `ps` confirmed `User=owner`, `Group=users`, and the live
-  process `/usr/bin/tizenclaw`
-- fresh files were written under `/home/owner/.tizenclaw` from
-  `2026-04-15 22:50:01 KST` onward, including `memory/memory.md`,
-  `logs/tizenclaw.log`, `state/loop/scheduler_health.json`, `tools/tools.md`,
-  and `actions/index.md`
-- `/opt/usr/share/tizenclaw` remained `root:root`, no non-root entries were
-  found, and the runtime-user write probe failed with `Permission denied`
+Gate to exit:
+- `./deploy_host.sh` succeeds and records usable host-path evidence
 
-### Stage 5. Evaluate
+### Stage 5. Test/Review
+Purpose:
+- validate runtime-visible and Telegram-visible behavior changes
+- confirm the ClawHub path is observable through runtime discovery
+- record residual risks or missing coverage
 
-Status:
-- Complete
+Required skills:
+- `reviewing-code`
+- `testing-with-tizenclaw-tests`
 
-Recorded outcome:
-- published a new authoritative live-validation evaluator report for this
-  execution cycle
+Outputs:
+- executed validation results
+- refreshed `.dev/DASHBOARD.md`
+
+Gate to exit:
+- test and review evidence is recorded with clear findings or residual risks
+
+### Stage 6. Commit
+Purpose:
+- prepare the commit stage if the implementation reaches a clean handoff
+
+Outputs:
+- `.tmp/commit_msg.txt`
+- final commit
+
+Gate to exit:
+- diff scope is correct and commit formatting follows `AGENTS.md`
+
+### Stage 7. Evaluate
+Purpose:
+- produce the mandatory final evaluator verdict
+
+Outputs:
+- evaluator report under `.dev/07-evaluator/`
+
+Gate to exit:
+- the final assessment is recorded with an explicit verdict
+
+## Skipped Phases
+
+- None.
+- `workflow_policy.skipped_phases` is an empty list in
+  `.dev/workflow_state.json`.
+- No skip rationale applies for this run.
+
+## Current Gate Status
+
+- Active phase: `plan`
+- Current verdict: `ready_for_design`
+- Blocking source: none in planning state
+- Release condition: design may start immediately from the synced plan outputs

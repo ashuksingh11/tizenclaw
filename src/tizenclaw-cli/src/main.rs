@@ -94,6 +94,9 @@ enum CommandMode {
     Auth(Vec<String>),
     Setup,
     Usage { baseline: Option<Value> },
+    SkillHubList,
+    SkillHubSearch { query: String },
+    SkillHubInstall { source: String },
 }
 
 #[derive(Clone, Debug)]
@@ -530,6 +533,19 @@ impl IpcClient {
 
     fn get_tool_audit(&self) -> Result<Value, String> {
         self.call("get_tool_audit", json!({}))
+    }
+
+    fn clawhub_list(&self) -> Result<Value, String> {
+        self.call("clawhub_list", json!({}))
+    }
+
+    fn clawhub_search(&self, query: &str) -> Result<Value, String> {
+        self.call("clawhub_search", json!({ "query": query }))
+    }
+
+    fn clawhub_install(&self, source: &str) -> Result<Value, String> {
+        self.with_timeout_floor(Duration::from_secs(120))
+            .call("clawhub_install", json!({ "source": source }))
     }
 }
 
@@ -2454,6 +2470,34 @@ fn parse_cli(args: &[String]) -> Result<ParsedCli, String> {
                     mode: CommandMode::Setup,
                 });
             }
+            "skill-hub" => {
+                let sub = args.get(i + 1).map(String::as_str).unwrap_or("");
+                let mode = match sub {
+                    "list" => CommandMode::SkillHubList,
+                    "search" => {
+                        let query = args[i + 2..].join(" ");
+                        if query.trim().is_empty() {
+                            return Err("Usage: tizenclaw-cli skill-hub search <query>".into());
+                        }
+                        CommandMode::SkillHubSearch { query }
+                    }
+                    "install" => {
+                        let source = args.get(i + 2).cloned().unwrap_or_default();
+                        if source.trim().is_empty() {
+                            return Err(
+                                "Usage: tizenclaw-cli skill-hub install <slug>".into()
+                            );
+                        }
+                        CommandMode::SkillHubInstall { source }
+                    }
+                    _ => {
+                        return Err(
+                            "Usage: tizenclaw-cli skill-hub <list|search|install>".into()
+                        );
+                    }
+                };
+                return Ok(ParsedCli { options, mode });
+            }
             value if value.starts_with('-') => return Err(format!("Unknown option '{}'", value)),
             _ => {
                 return Ok(ParsedCli {
@@ -2524,6 +2568,28 @@ fn cmd_skill_status(client: &IpcClient) {
 
 fn cmd_tool_status(client: &IpcClient) {
     match client.get_tool_audit() {
+        Ok(result) => print_json(&result),
+        Err(error) => print_error_and_exit(&error),
+    }
+}
+
+fn cmd_skill_hub_list(client: &IpcClient) {
+    match client.clawhub_list() {
+        Ok(result) => print_json(&result),
+        Err(error) => print_error_and_exit(&error),
+    }
+}
+
+fn cmd_skill_hub_search(client: &IpcClient, query: &str) {
+    match client.clawhub_search(query) {
+        Ok(result) => print_json(&result),
+        Err(error) => print_error_and_exit(&error),
+    }
+}
+
+fn cmd_skill_hub_install(client: &IpcClient, source: &str) {
+    eprintln!("Installing '{}' from ClawHub...", source);
+    match client.clawhub_install(source) {
         Ok(result) => print_json(&result),
         Err(error) => print_error_and_exit(&error),
     }
@@ -2620,6 +2686,9 @@ fn main() {
                 print_json(&result);
             }
         }
+        CommandMode::SkillHubList => cmd_skill_hub_list(&client),
+        CommandMode::SkillHubSearch { query } => cmd_skill_hub_search(&client, &query),
+        CommandMode::SkillHubInstall { source } => cmd_skill_hub_install(&client, &source),
         CommandMode::Auth(_) | CommandMode::Setup => unreachable!(),
     }
 }

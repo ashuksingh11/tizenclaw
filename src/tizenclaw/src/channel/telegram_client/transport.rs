@@ -41,17 +41,11 @@ impl TelegramClient {
 
     fn command_menu_entries() -> Vec<(&'static str, &'static str)> {
         vec![
-            ("select", "Switch mode"),
-            ("coding_agent", "Choose backend"),
-            ("devel", "Queue devel prompt"),
-            ("devel_result", "Read latest devel result"),
             ("model", "Choose model"),
             ("project", "Set project path"),
             ("new_session", "Start new session"),
             ("usage", "Show usage"),
-            ("mode", "Choose plan or fast"),
             ("status", "Show current state"),
-            ("auto_approve", "Toggle auto approve"),
         ]
     }
 
@@ -109,7 +103,7 @@ impl TelegramClient {
     }
 
     fn select_keyboard() -> Value {
-        Self::build_reply_keyboard(&[&["/select chat", "/select coding"]])
+        Self::build_reply_keyboard(&[&["/select chat"]])
     }
 
     fn cli_backend_keyboard(cli_backends: &TelegramCliBackendRegistry) -> Value {
@@ -438,23 +432,15 @@ impl TelegramClient {
         });
     }
 
-    fn supported_commands_text(cli_backends: &TelegramCliBackendRegistry) -> String {
-        let backend_choices = cli_backends.backend_choices_text();
+    fn supported_commands_text(_cli_backends: &TelegramCliBackendRegistry) -> String {
         [
             "Commands",
-            "Development requests can be sent directly in normal chat.",
-            "/select [chat|coding]",
-            &format!("/coding_agent [{}]", backend_choices),
-            "/devel [prompt]",
-            "/devel_result",
+            "Send your request directly in chat.",
             "/model [name|list|reset]",
-            "/project [path]",
-            "/project reset",
+            "/project [path|reset]",
             "/new_session",
             "/usage",
-            "/mode [plan|fast]",
             "/status",
-            "/auto_approve [on|off]",
         ]
         .join("\n")
     }

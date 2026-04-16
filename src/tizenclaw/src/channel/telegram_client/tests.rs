@@ -6,10 +6,8 @@ mod tests {
     };
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
-    use std::fs;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
-    use tempfile::tempdir;
 
     fn backend(value: &str) -> TelegramCliBackend {
         TelegramCliBackend::new(value)
@@ -77,20 +75,17 @@ mod tests {
     }
 
     #[test]
-    fn supported_commands_text_uses_coding_agent_name() {
+    fn supported_commands_text_lists_core_commands() {
         let help = TelegramClient::supported_commands_text(&default_registry());
-        assert!(help.contains("/coding_agent [codex|gemini|claude]"));
-        assert!(help.contains("/devel [prompt]"));
-        assert!(help.contains("/devel_result"));
         assert!(help.contains("/model [name|list|reset]"));
         assert!(help.contains("/usage"));
-        assert!(help.contains("/auto_approve [on|off]"));
-        assert!(help.contains("/project [path]"));
+        assert!(help.contains("/project"));
         assert!(help.contains("/new_session"));
-        assert!(!help.contains("/agent_cli [codex|gemini|claude]"));
-        assert!(!help.contains("/cli_backend [codex|gemini|claude]"));
-        assert!(!help.contains("/cli-backend [codex|gemini|claude]"));
-        assert!(!help.contains("/auto-approve [on|off]"));
+        assert!(help.contains("/status"));
+        assert!(!help.contains("/coding_agent"));
+        assert!(!help.contains("/devel"));
+        assert!(!help.contains("/auto_approve"));
+        assert!(!help.contains("/mode ["));
     }
 
     #[test]
@@ -105,20 +100,12 @@ mod tests {
 
         assert_eq!(
             names,
-            vec![
-                "select",
-                "coding_agent",
-                "devel",
-                "devel_result",
-                "model",
-                "project",
-                "new_session",
-                "usage",
-                "mode",
-                "status",
-                "auto_approve"
-            ]
+            vec!["model", "project", "new_session", "usage", "status"]
         );
+        assert!(!names.contains(&"coding_agent"));
+        assert!(!names.contains(&"devel"));
+        assert!(!names.contains(&"mode"));
+        assert!(!names.contains(&"auto_approve"));
     }
 
     #[test]
@@ -197,32 +184,30 @@ mod tests {
             }
         })));
 
-        let help = TelegramClient::supported_commands_text(&registry);
         let keyboard = TelegramClient::cli_backend_keyboard(&registry);
 
-        assert!(help.contains("/coding_agent [codex|gemini|claude|custom_agent]"));
         assert_eq!(keyboard["keyboard"][3][0], "/coding_agent custom_agent");
         assert_eq!(registry.parse("custom"), Some(backend("custom_agent")));
         assert_eq!(registry.default_backend(), backend("custom_agent"));
     }
 
     #[test]
-    fn connected_message_mentions_current_mode() {
+    fn connected_message_mentions_session() {
         let message = TelegramClient::build_connected_message(&TelegramChatState::default());
         assert!(message.text.contains("Telegram: [connected]"));
-        assert!(message.text.contains("Mode: [chat]"));
         assert!(message.text.contains("Session: [0001]"));
-        assert!(message.text.contains("CodingAgent: [codex]"));
+        assert!(!message.text.contains("CodingAgent:"));
+        assert!(!message.text.contains("Mode:"));
         assert!(message.reply_markup.is_none());
     }
 
     #[test]
-    fn startup_message_mentions_current_mode() {
+    fn startup_message_mentions_session() {
         let message = TelegramClient::build_startup_message(&TelegramChatState::default());
         assert!(message.text.contains("TizenClaw: [online]"));
-        assert!(message.text.contains("Mode: [chat]"));
         assert!(message.text.contains("Session: [0001]"));
-        assert!(message.text.contains("CodingAgent: [codex]"));
+        assert!(!message.text.contains("CodingAgent:"));
+        assert!(!message.text.contains("Mode:"));
         assert!(message.reply_markup.is_none());
     }
 
@@ -252,9 +237,11 @@ mod tests {
             reply.reply_markup.as_ref().unwrap()["keyboard"][0][0],
             "/select chat"
         );
-        assert_eq!(
-            reply.reply_markup.as_ref().unwrap()["keyboard"][0][1],
-            "/select coding"
+        assert!(
+            reply.reply_markup.as_ref().unwrap()["keyboard"][0]
+                .as_array()
+                .map(|row| row.len())
+                == Some(1)
         );
     }
 
@@ -280,7 +267,7 @@ mod tests {
         .unwrap();
 
         assert!(reply.text.contains("Mode: [coding]"));
-        assert!(reply.text.contains("CodingAgent: [codex]"));
+        assert!(!reply.text.contains("CodingAgent:"));
         assert_eq!(
             reply.reply_markup.as_ref().unwrap()["remove_keyboard"],
             true
@@ -311,8 +298,12 @@ mod tests {
 
         let state = TelegramClient::load_chat_state_snapshot(&chat_states, 77);
         assert_eq!(
-            TelegramClient::pending_menu_command(&state, "2", &default_registry()).as_deref(),
-            Some("/select coding")
+            TelegramClient::pending_menu_command(&state, "1", &default_registry()).as_deref(),
+            Some("/select chat")
+        );
+        assert_eq!(
+            TelegramClient::pending_menu_command(&state, "2", &default_registry()),
+            None
         );
     }
 
@@ -377,239 +368,20 @@ mod tests {
     }
 
     #[test]
-    fn coding_agent_command_and_legacy_aliases_route_to_backend_selection() {
+    fn removed_commands_return_unknown_response() {
         let chat_states = Arc::new(Mutex::new(HashMap::new()));
         let state_path = std::env::temp_dir().join(format!(
-            "telegram_coding_agent_state_{}_{}.json",
+            "telegram_unknown_cmd_{}_{}.json",
             std::process::id(),
             TelegramClient::current_timestamp_millis()
         ));
-        let backend_paths = HashMap::from([(backend("claude"), "/usr/bin/claude".to_string())]);
-        let registry = default_registry();
-
-        let new_reply = TelegramClient::handle_command(
-            77,
-            "/coding_agent claude",
-            None,
-            &chat_states,
-            &state_path,
-            &registry,
-            &backend_paths,
-            std::path::Path::new("/tmp"),
-            0,
-        )
-        .unwrap();
-        assert!(new_reply.text.contains("CodingAgent: [claude]"));
-        assert!(new_reply.text.contains("Binary: [/usr/bin/claude]"));
-        assert_eq!(
-            new_reply.reply_markup.as_ref().unwrap()["remove_keyboard"],
-            true
-        );
-
-        let legacy_reply = TelegramClient::handle_command(
-            77,
-            "/cli_backend codex",
-            None,
-            &chat_states,
-            &state_path,
-            &registry,
-            &HashMap::new(),
-            std::path::Path::new("/tmp"),
-            0,
-        )
-        .unwrap();
-        assert!(legacy_reply.text.contains("CodingAgent: [codex]"));
-        assert!(legacy_reply.text.contains("Binary: [not found]"));
-        assert_eq!(
-            legacy_reply.reply_markup.as_ref().unwrap()["remove_keyboard"],
-            true
-        );
-
-        let older_alias_reply = TelegramClient::handle_command(
-            77,
-            "/agent_cli claude",
-            None,
-            &chat_states,
-            &state_path,
-            &registry,
-            &backend_paths,
-            std::path::Path::new("/tmp"),
-            0,
-        )
-        .unwrap();
-        assert!(older_alias_reply.text.contains("CodingAgent: [claude]"));
-        assert!(older_alias_reply.text.contains("Binary: [/usr/bin/claude]"));
-        assert_eq!(
-            older_alias_reply.reply_markup.as_ref().unwrap()["remove_keyboard"],
-            true
-        );
-    }
-
-    #[test]
-    fn coding_agent_menu_resolves_numeric_selection() {
-        let chat_states = Arc::new(Mutex::new(HashMap::new()));
-        let state_path = std::env::temp_dir().join(format!(
-            "telegram_coding_agent_numeric_{}_{}.json",
-            std::process::id(),
-            TelegramClient::current_timestamp_millis()
-        ));
-
-        let _ = TelegramClient::handle_command(
-            77,
-            "/coding_agent",
-            None,
-            &chat_states,
-            &state_path,
-            &default_registry(),
-            &HashMap::new(),
-            std::path::Path::new("/tmp"),
-            0,
-        )
-        .unwrap();
-
-        let state = TelegramClient::load_chat_state_snapshot(&chat_states, 77);
-        assert_eq!(
-            TelegramClient::pending_menu_command(&state, "3", &default_registry()).as_deref(),
-            Some("/coding_agent claude")
-        );
-    }
-
-    #[test]
-    fn devel_command_creates_prompt_file() {
-        let temp = tempdir().unwrap();
-        let repo_root = temp.path().join("repo");
-        let data_root = temp.path().join("runtime");
-        fs::create_dir_all(repo_root.join(".dev")).unwrap();
-        fs::write(repo_root.join(".dev/ROADMAP.md"), "- [ ] next\n").unwrap();
-        fs::create_dir_all(&data_root).unwrap();
-
-        let previous_data_dir = std::env::var("TIZENCLAW_DATA_DIR").ok();
-        let previous_dir = std::env::current_dir().unwrap();
-        std::env::set_var("TIZENCLAW_DATA_DIR", &data_root);
-        std::env::set_current_dir(&repo_root).unwrap();
-
-        let reply = TelegramClient::handle_command(
-            77,
-            "/devel implement file bridge",
-            None,
-            &Arc::new(Mutex::new(HashMap::new())),
-            &temp.path().join("telegram_devel_state.json"),
-            &default_registry(),
-            &HashMap::new(),
-            std::path::Path::new("/tmp"),
-            0,
-        )
-        .unwrap();
-
-        let prompt_dir = data_root.join("devel").join("prompt");
-        let files = fs::read_dir(&prompt_dir).unwrap().collect::<Vec<_>>();
-        assert_eq!(files.len(), 1);
-        assert!(reply.text.contains("DevelPrompt: [queued]"));
-        assert!(reply.text.contains("Watcher: [inactive]"));
-
-        std::env::set_current_dir(previous_dir).unwrap();
-        if let Some(previous_data_dir) = previous_data_dir {
-            std::env::set_var("TIZENCLAW_DATA_DIR", previous_data_dir);
-        } else {
-            std::env::remove_var("TIZENCLAW_DATA_DIR");
-        }
-    }
-
-    #[test]
-    fn devel_result_command_reads_latest_result_file() {
-        let temp = tempdir().unwrap();
-        let repo_root = temp.path().join("repo");
-        let data_root = temp.path().join("runtime");
-        fs::create_dir_all(repo_root.join(".dev")).unwrap();
-        fs::write(repo_root.join(".dev/ROADMAP.md"), "- [ ] next\n").unwrap();
-        fs::create_dir_all(data_root.join("devel/result")).unwrap();
-        fs::write(
-            data_root.join("devel/result/01_prompt_RESULT.md"),
-            "older result\n",
-        )
-        .unwrap();
-        std::thread::sleep(Duration::from_millis(5));
-        let latest_path = data_root.join("devel/result/02_prompt_RESULT.md");
-        fs::write(&latest_path, "latest result\n").unwrap();
-
-        let previous_data_dir = std::env::var("TIZENCLAW_DATA_DIR").ok();
-        let previous_dir = std::env::current_dir().unwrap();
-        std::env::set_var("TIZENCLAW_DATA_DIR", &data_root);
-        std::env::set_current_dir(&repo_root).unwrap();
-
-        let reply = TelegramClient::handle_command(
-            77,
-            "/devel_result",
-            None,
-            &Arc::new(Mutex::new(HashMap::new())),
-            &temp.path().join("telegram_devel_result_state.json"),
-            &default_registry(),
-            &HashMap::new(),
-            std::path::Path::new("/tmp"),
-            0,
-        )
-        .unwrap();
-
-        assert!(reply.text.contains("DevelResult: [loaded]"));
-        assert!(reply.text.contains("latest result"));
-        assert!(reply.text.contains(&latest_path.display().to_string()));
-
-        std::env::set_current_dir(previous_dir).unwrap();
-        if let Some(previous_data_dir) = previous_data_dir {
-            std::env::set_var("TIZENCLAW_DATA_DIR", previous_data_dir);
-        } else {
-            std::env::remove_var("TIZENCLAW_DATA_DIR");
-        }
-    }
-
-    #[test]
-    fn devel_result_command_reports_pending_newer_prompt() {
-        let temp = tempdir().unwrap();
-        let repo_root = temp.path().join("repo");
-        let data_root = temp.path().join("runtime");
-        fs::create_dir_all(repo_root.join(".dev")).unwrap();
-        fs::write(repo_root.join(".dev/ROADMAP.md"), "- [ ] next\n").unwrap();
-        fs::create_dir_all(data_root.join("devel/prompt")).unwrap();
-        fs::create_dir_all(data_root.join("devel/result")).unwrap();
-        fs::write(
-            data_root.join("devel/result/02_prompt_RESULT.md"),
-            "older result\n",
-        )
-        .unwrap();
-        std::thread::sleep(Duration::from_millis(5));
-        let pending_prompt = data_root.join("devel/prompt/20260411104959_prompt.md");
-        fs::write(&pending_prompt, "pending prompt\n").unwrap();
-
-        let previous_data_dir = std::env::var("TIZENCLAW_DATA_DIR").ok();
-        let previous_dir = std::env::current_dir().unwrap();
-        std::env::set_var("TIZENCLAW_DATA_DIR", &data_root);
-        std::env::set_current_dir(&repo_root).unwrap();
-
-        let reply = TelegramClient::handle_command(
-            77,
-            "/devel_result",
-            None,
-            &Arc::new(Mutex::new(HashMap::new())),
-            &temp.path().join("telegram_devel_result_pending_state.json"),
-            &default_registry(),
-            &HashMap::new(),
-            std::path::Path::new("/tmp"),
-            0,
-        )
-        .unwrap();
-
-        assert!(reply.text.contains("DevelResult: [loaded]"));
-        assert!(reply.text.contains("Prompt: ["));
-        assert!(reply
-            .text
-            .contains("latest prompt pending; showing latest completed result"));
-        assert!(reply.text.contains(&pending_prompt.display().to_string()));
-
-        std::env::set_current_dir(previous_dir).unwrap();
-        if let Some(previous_data_dir) = previous_data_dir {
-            std::env::set_var("TIZENCLAW_DATA_DIR", previous_data_dir);
-        } else {
-            std::env::remove_var("TIZENCLAW_DATA_DIR");
+        for cmd in &["/coding_agent", "/devel test", "/devel_result", "/mode plan", "/auto_approve on"] {
+            let reply = TelegramClient::handle_command(
+                77, cmd, None, &chat_states, &state_path,
+                &default_registry(), &HashMap::new(),
+                std::path::Path::new("/tmp"), 0,
+            ).unwrap();
+            assert!(reply.text.contains("Unknown:"), "Expected Unknown: for {}", cmd);
         }
     }
 
@@ -634,7 +406,7 @@ mod tests {
             0,
         )
         .unwrap();
-        assert!(set_reply.text.contains("CodingAgent: [codex]"));
+        assert!(!set_reply.text.contains("CodingAgent:"));
         assert!(set_reply.text.contains("Model: [claude-sonnet-4-6]"));
         assert!(set_reply.text.contains("Source: [chat override]"));
 
@@ -732,25 +504,19 @@ mod tests {
             }
         })));
 
-        let chat_states = Arc::new(Mutex::new(HashMap::new()));
+        let chat_states: Arc<Mutex<HashMap<i64, TelegramChatState>>> =
+            Arc::new(Mutex::new(HashMap::new()));
         let state_path = std::env::temp_dir().join(format!(
             "telegram_model_custom_state_{}_{}.json",
             std::process::id(),
             TelegramClient::current_timestamp_millis()
         ));
 
-        let _ = TelegramClient::handle_command(
-            77,
-            "/coding_agent custom_agent",
-            None,
-            &chat_states,
-            &state_path,
-            &registry,
-            &HashMap::new(),
-            std::path::Path::new("/tmp"),
-            0,
-        )
-        .unwrap();
+        // Set backend directly since /coding_agent is no longer a user-facing command.
+        {
+            let mut states = chat_states.lock().unwrap();
+            states.entry(77).or_default().cli_backend = backend("custom_agent");
+        }
 
         let reply = TelegramClient::handle_command(
             77,

@@ -94,13 +94,8 @@ impl TelegramClient {
         match state.pending_menu.as_ref()? {
             TelegramPendingMenu::SelectMode => match selection {
                 1 => Some("/select chat".to_string()),
-                2 => Some("/select coding".to_string()),
                 _ => None,
             },
-            TelegramPendingMenu::CodingAgent => cli_backends
-                .backends()
-                .nth(selection - 1)
-                .map(|backend| format!("/coding_agent {}", backend.as_str())),
             TelegramPendingMenu::Model => {
                 let backend = state.effective_cli_backend(cli_backends);
                 let (choices, _) = Self::available_model_choices(state, &backend, cli_backends);
@@ -112,16 +107,6 @@ impl TelegramClient {
                     None
                 }
             }
-            TelegramPendingMenu::ExecutionMode => match selection {
-                1 => Some("/mode plan".to_string()),
-                2 => Some("/mode fast".to_string()),
-                _ => None,
-            },
-            TelegramPendingMenu::AutoApprove => match selection {
-                1 => Some("/auto_approve on".to_string()),
-                2 => Some("/auto_approve off".to_string()),
-                _ => None,
-            },
         }
     }
 
@@ -161,67 +146,8 @@ impl TelegramClient {
                 state.interaction_mode = mode;
                 state.pending_menu = None;
                 format!(
-                    "Mode: {}\nCodingAgent: {}",
+                    "Mode: {}",
                     Self::value_label(mode.as_str()),
-                    Self::backend_label(&state.cli_backend)
-                )
-            },
-        ))
-    }
-
-    fn set_cli_backend(
-        chat_states: &Arc<Mutex<HashMap<i64, TelegramChatState>>>,
-        state_path: &Path,
-        chat_id: i64,
-        args: &[String],
-        cli_backends: &TelegramCliBackendRegistry,
-        cli_backend_paths: &HashMap<TelegramCliBackend, String>,
-    ) -> TelegramOutgoingMessage {
-        let Some(backend_raw) = args.first() else {
-            Self::set_pending_menu(
-                chat_states,
-                state_path,
-                chat_id,
-                Some(TelegramPendingMenu::CodingAgent),
-            );
-            return TelegramOutgoingMessage::with_markup(
-                "Select CodingAgent.",
-                Self::cli_backend_keyboard(cli_backends),
-            );
-        };
-        let Some(backend) = cli_backends.parse(backend_raw) else {
-            Self::set_pending_menu(
-                chat_states,
-                state_path,
-                chat_id,
-                Some(TelegramPendingMenu::CodingAgent),
-            );
-            return TelegramOutgoingMessage::with_markup(
-                format!(
-                    "Choose CodingAgent: {}.",
-                    Self::backend_choices_labels_text(cli_backends)
-                ),
-                Self::cli_backend_keyboard(cli_backends),
-            );
-        };
-
-        let availability = cli_backend_paths
-            .get(&backend)
-            .map(|path| format!("Binary: {}", Self::value_label(path)))
-            .unwrap_or_else(|| format!("Binary: {}", Self::value_label("not found")));
-
-        TelegramOutgoingMessage::with_removed_keyboard(Self::mutate_chat_state(
-            chat_states,
-            state_path,
-            chat_id,
-            move |state| {
-                state.cli_backend = backend.clone();
-                state.pending_menu = None;
-                let availability = availability.replace('`', "");
-                format!(
-                    "CodingAgent: {}\n{}",
-                    Self::backend_label(&backend),
-                    availability
                 )
             },
         ))
@@ -281,8 +207,7 @@ impl TelegramClient {
                         .unwrap_or_else(|| "auto".to_string());
                     let source = state.effective_cli_model_source(&backend, cli_backends);
                     format!(
-                        "CodingAgent: {}\nModel: {}\nSource: {}",
-                        Self::backend_label(&backend),
+                        "Model: {}\nSource: {}",
                         Self::value_label(model),
                         Self::value_label(source)
                     )
@@ -299,8 +224,7 @@ impl TelegramClient {
                         .insert(backend.as_str().to_string(), requested.clone());
                     state.pending_menu = None;
                     format!(
-                        "CodingAgent: {}\nModel: {}\nSource: {}",
-                        Self::backend_label(&backend),
+                        "Model: {}\nSource: {}",
                         Self::value_label(requested.clone()),
                         Self::value_label("chat override")
                     )
@@ -396,100 +320,6 @@ impl TelegramClient {
             move |state| {
                 state.project_dir = Some(project_dir_text.clone());
                 format!("Project: {}", Self::value_label(&project_dir_text))
-            },
-        ))
-    }
-
-    fn set_execution_mode(
-        chat_states: &Arc<Mutex<HashMap<i64, TelegramChatState>>>,
-        state_path: &Path,
-        chat_id: i64,
-        args: &[String],
-    ) -> TelegramOutgoingMessage {
-        let Some(mode_raw) = args.first() else {
-            Self::set_pending_menu(
-                chat_states,
-                state_path,
-                chat_id,
-                Some(TelegramPendingMenu::ExecutionMode),
-            );
-            return TelegramOutgoingMessage::with_markup(
-                "Select CodingMode.",
-                Self::mode_keyboard(),
-            );
-        };
-        let Some(mode) = TelegramExecutionMode::parse(mode_raw) else {
-            Self::set_pending_menu(
-                chat_states,
-                state_path,
-                chat_id,
-                Some(TelegramPendingMenu::ExecutionMode),
-            );
-            return TelegramOutgoingMessage::with_markup(
-                "Choose [plan] or [fast].",
-                Self::mode_keyboard(),
-            );
-        };
-
-        TelegramOutgoingMessage::with_removed_keyboard(Self::mutate_chat_state(
-            chat_states,
-            state_path,
-            chat_id,
-            move |state| {
-                state.execution_mode = mode;
-                state.pending_menu = None;
-                format!("CodingMode: {}", Self::value_label(mode.as_str()))
-            },
-        ))
-    }
-
-    fn set_auto_approve(
-        chat_states: &Arc<Mutex<HashMap<i64, TelegramChatState>>>,
-        state_path: &Path,
-        chat_id: i64,
-        args: &[String],
-    ) -> TelegramOutgoingMessage {
-        let Some(value_raw) = args.first() else {
-            Self::set_pending_menu(
-                chat_states,
-                state_path,
-                chat_id,
-                Some(TelegramPendingMenu::AutoApprove),
-            );
-            return TelegramOutgoingMessage::with_markup(
-                "Select AutoApprove.",
-                Self::auto_approve_keyboard(),
-            );
-        };
-        let enabled = match value_raw.trim().to_ascii_lowercase().as_str() {
-            "on" | "true" | "yes" | "1" => true,
-            "off" | "false" | "no" | "0" => false,
-            _ => {
-                Self::set_pending_menu(
-                    chat_states,
-                    state_path,
-                    chat_id,
-                    Some(TelegramPendingMenu::AutoApprove),
-                );
-                return TelegramOutgoingMessage::with_markup(
-                    "Choose [on] or [off].",
-                    Self::auto_approve_keyboard(),
-                );
-            }
-        };
-
-        TelegramOutgoingMessage::with_removed_keyboard(Self::mutate_chat_state(
-            chat_states,
-            state_path,
-            chat_id,
-            move |state| {
-                state.auto_approve = enabled;
-                state.pending_menu = None;
-                format!(
-                    "AutoApprove: {}\nCodingAgent: {}",
-                    Self::value_label(if enabled { "on" } else { "off" }),
-                    Self::backend_label(&state.cli_backend)
-                )
             },
         ))
     }
@@ -806,32 +636,18 @@ Reset: {}",
             .effective_cli_model(&backend, cli_backends)
             .unwrap_or_else(|| "auto".to_string());
 
+        let _ = (backend_path, usage);
         format!(
             "TizenClaw: {}\n\
-Mode: {}\n\
 Session: {}\n\
-CodingAgent: {}\n\
 Model: {}\n\
-CodingMode: {}\n\
-AutoApprove: {}\n\
 Project: {}\n\
-Binary: {}\n\
-Handlers: {}\n\
-Runs: {}",
+Handlers: {}",
             Self::value_label("online"),
-            Self::value_label(state.interaction_mode.as_str()),
             Self::active_session_value_label(state),
-            Self::backend_label(&backend),
             Self::value_label(model),
-            Self::value_label(state.execution_mode.as_str()),
-            Self::value_label(if state.auto_approve { "on" } else { "off" }),
             Self::value_label(effective_workdir.display().to_string()),
-            Self::value_label(backend_path),
             Self::value_label(active_handlers.to_string()),
-            Self::value_label(format!(
-                "req {} | ok {} | fail {}",
-                usage.requests, usage.successes, usage.failures
-            ))
         )
     }
 
@@ -853,98 +669,11 @@ Runs: {}",
                 TelegramOutgoingMessage::plain(Self::supported_commands_text(cli_backends))
             }
             "select" => Self::set_interaction_mode(chat_states, state_path, chat_id, &args),
-            "coding-agent" | "coding_agent" | "agent-cli" | "agent_cli" | "cli-backend"
-            | "cli_backend" => Self::set_cli_backend(
-                chat_states,
-                state_path,
-                chat_id,
-                &args,
-                cli_backends,
-                cli_backend_paths,
-            ),
-            "devel" => match Self::command_argument_text(text) {
-                Some(prompt_text) => match crate::core::devel_mode::create_prompt_file(&prompt_text) {
-                    Ok(path) => {
-                        let watcher_state = if crate::core::devel_mode::devel_status(Path::new("."), &std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))).result_watcher_active {
-                            "active"
-                        } else {
-                            "inactive"
-                        };
-                        TelegramOutgoingMessage::plain(format!(
-                            "DevelPrompt: {}\nFile: {}\nWatcher: {}",
-                            Self::value_label("queued"),
-                            Self::value_label(path.display().to_string()),
-                            Self::value_label(watcher_state)
-                        ))
-                    }
-                    Err(err) => TelegramOutgoingMessage::plain(format!(
-                        "DevelPrompt: {}\nReason: {}",
-                        Self::value_label("error"),
-                        Self::value_label(err)
-                    )),
-                },
-                None => TelegramOutgoingMessage::plain(
-                    "Usage: /devel [prompt]\nExample: /devel Telegram devel flow를 파일 브리지로 바꿔줘."
-                        .to_string(),
-                ),
-            },
-            "devel_result" => {
-                let repo_root = std::env::current_dir()
-                    .ok()
-                    .and_then(|cwd| crate::core::devel_mode::detect_repo_root(&cwd))
-                    .unwrap_or_else(|| {
-                        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-                    });
-                let result = crate::core::devel_mode::latest_devel_result(&repo_root);
-
-                if result.available {
-                    let latest_path = result
-                        .latest_result_path
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| result.result_dir.display().to_string());
-                    let mut reply = format!(
-                        "DevelResult: {}\nFile: {}",
-                        Self::value_label("loaded"),
-                        Self::value_label(latest_path),
-                    );
-                    if !result.latest_result_matches_latest_prompt {
-                        let prompt_path = result
-                            .latest_prompt_path
-                            .as_ref()
-                            .map(|path| path.display().to_string())
-                            .unwrap_or_else(|| result.result_dir.display().to_string());
-                        let prompt_result_path = result
-                            .latest_prompt_result_path
-                            .as_ref()
-                            .map(|path| path.display().to_string())
-                            .unwrap_or_else(|| result.result_dir.display().to_string());
-                        reply.push_str(&format!(
-                            "\nPrompt: {}\nExpectedResult: {}\nState: {}",
-                            Self::value_label(prompt_path),
-                            Self::value_label(prompt_result_path),
-                            Self::value_label("latest prompt pending; showing latest completed result"),
-                        ));
-                    }
-                    reply.push_str(&format!("\n\n{}", result.content.trim()));
-                    TelegramOutgoingMessage::plain(reply)
-                } else {
-                    TelegramOutgoingMessage::plain(format!(
-                        "DevelResult: {}\nDir: {}",
-                        Self::value_label("empty"),
-                        Self::value_label(result.result_dir.display().to_string())
-                    ))
-                }
-            }
             "model" => Self::set_model(chat_states, state_path, chat_id, &args, cli_backends),
             "project" => {
                 Self::set_project_directory(chat_states, state_path, chat_id, &args, cli_workdir)
             }
             "new_session" => Self::start_new_session(chat_states, state_path, chat_id),
-            "mode" => Self::set_execution_mode(chat_states, state_path, chat_id, &args),
-            "auto-approve" | "auto_approve" => {
-                Self::set_auto_approve(chat_states, state_path, chat_id, &args)
-            }
             "usage" => {
                 let state = Self::load_chat_state_snapshot(chat_states, chat_id);
                 TelegramOutgoingMessage::plain(Self::format_usage_text(
@@ -1016,21 +745,17 @@ Runs: {}",
 
     fn build_connected_message(state: &TelegramChatState) -> TelegramOutgoingMessage {
         TelegramOutgoingMessage::plain(format!(
-            "Telegram: {}\nMode: {}\nSession: {}\nCodingAgent: {}",
+            "Telegram: {}\nSession: {}",
             Self::value_label("connected"),
-            Self::value_label(state.interaction_mode.as_str()),
             Self::active_session_value_label(state),
-            Self::backend_label(&state.cli_backend)
         ))
     }
 
     fn build_startup_message(state: &TelegramChatState) -> TelegramOutgoingMessage {
         TelegramOutgoingMessage::plain(format!(
-            "TizenClaw: {}\nMode: {}\nSession: {}\nCodingAgent: {}",
+            "TizenClaw: {}\nSession: {}",
             Self::value_label("online"),
-            Self::value_label(state.interaction_mode.as_str()),
             Self::active_session_value_label(state),
-            Self::backend_label(&state.cli_backend)
         ))
     }
 

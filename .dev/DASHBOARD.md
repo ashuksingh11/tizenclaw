@@ -1,47 +1,70 @@
 # DASHBOARD
 
-## Actual Progress
+## Active Goal
 
-- Goal: <!-- dormammu:goal_source=/home/hjhun/.dormammu/goals/tizenclaw_dir.md -->
-- Prompt-driven scope: Phase 4. Supervisor Validation, Continuation Loop, and Resume prompt-driven setup for Follow the guidance files below before making changes.
-- Active roadmap focus:
-- Phase 4. Supervisor Validation, Continuation Loop, and Resume
-- Current workflow phase: plan
-- Last completed workflow phase: none
-- Supervisor verdict: `approved`
-- Escalation status: `approved`
-- Resume point: Return to Plan and resume from the first unchecked PLAN item if setup is interrupted
+Compare tizenclaw against openclaw and openclaude, identify gaps, author ROADMAP.md,
+implement ClawHub-ready host path, and clean up Telegram coding-agent UX.
 
-## Workflow Phases
+## Current Stage
 
-```mermaid
-flowchart LR
-    plan([Plan]) --> design([Design])
-    design --> develop([Develop])
-    design --> test_author([Test Author])
-    develop --> test_review([Test & Review])
-    test_author --> test_review
-    test_review --> final_verify([Final Verify])
-    final_verify -->|approved| commit([Commit])
-    final_verify -->|rework| develop
-```
+**Stage 6. Commit** — in progress
 
-## In Progress
+## Stage Completion Status
 
-- Review the prompt-derived goal and success criteria for <!-- dormammu:goal_source=/home/hjhun/.dormammu/goals/tizenclaw_dir.md -->.
-- Review repository guidance from AGENTS.md, .github/workflows/ci.yml, .github/workflows/release-host-bundle.yml
-- Generate DASHBOARD.md and PLAN.md from the active prompt before implementation continues.
+| Stage | Status |
+|---|---|
+| 0. Refine | DONE |
+| 1. Plan | DONE |
+| 2. Design | DONE |
+| 3. Develop | DONE |
+| 4. Build/Deploy | DONE |
+| 5. Test/Review | DONE |
+| 6. Commit | IN PROGRESS |
+| 7. Evaluate | PENDING |
 
-## Progress Notes
+## Scope
 
-- This file should show the actual progress of the active scope.
-- workflow_state.json remains machine truth.
-- PLAN.md should list prompt-derived development items in phase order.
-- Repository rules to follow: AGENTS.md
-- Relevant repository workflows: .github/workflows/ci.yml, .github/workflows/release-host-bundle.yml
+### ClawHub Integration
+- New `clawhub_client.rs` module in tizenclaw daemon
+- IPC methods: `clawhub_install`, `clawhub_search`, `clawhub_list`
+- CLI commands: `tizenclaw-cli skill-hub install|search|list`
+- Install target: `~/.tizenclaw/workspace/skill-hubs/clawhub/<slug>/`
+- Lock file: `~/.tizenclaw/workspace/.clawhub/lock.json`
+- Base URL: `https://clawhub.ai` (env override: `TIZENCLAW_CLAWHUB_URL`)
+- `zip` crate (v2, deflate) vendored for archive extraction
 
-## Risks And Watchpoints
+### Telegram UX Cleanup
+- Removed commands: `/coding_agent`, `/devel`, `/devel_result`, `/mode`, `/auto_approve`
+- Removed `/select coding` from keyboard; only `/select chat` remains
+- Removed from status/startup/connected messages: `CodingAgent:`, `CodingMode:`,
+  `AutoApprove:`, `Binary:`, `Runs:`
+- Removed from `TelegramPendingMenu`: `CodingAgent`, `ExecutionMode`, `AutoApprove`
+- `TelegramInteractionMode::Coding` retained internally for persisted state compat
+- Removed dead functions: `set_cli_backend`, `set_execution_mode`, `set_auto_approve`
+- Updated 42 Telegram tests: all pass
 
-- Do not overwrite existing operator-authored Markdown.
-- Keep JSON merges additive so interrupted runs stay resumable.
-- Keep session-scoped state isolated when multiple workflows run in parallel.
+## Test Results (Stage 5)
+
+| Suite | Pass | Fail |
+|---|---|---|
+| Telegram client | 42 | 0 |
+| All tizenclaw tests | 561 | 6 (pre-existing, unrelated) |
+| ClawHub live search | ✓ live response from clawhub.ai | — |
+| ClawHub list | ✓ returns empty lock | — |
+| Parity harness | PASS | — |
+| Doc architecture | PASS | — |
+
+## Risks and Watchpoints
+
+- ClawHub live download requires network access at runtime; offline or rate-limited
+  hosts will need the lock file pre-populated.
+- 6 pre-existing test failures in `agent_core::tests` (prediction market / news
+  summarization) are unrelated to this sprint and were present before these changes.
+
+## Supervisor Verdict
+
+Plan stage: `approved` — proceed to develop.
+
+## Last Updated
+
+2026-04-16 — Stage 5 done, entering Stage 6.
