@@ -168,7 +168,7 @@ impl TelegramClient {
             .unwrap_or_else(|| "waiting...".to_string());
 
         format!(
-            "CodingAgent: {}\nStatus: {}\nSession: {}\nProject: {}\nElapsed: {}\nLastOutput: {}\n\nOutput:\n{}",
+            "Backend: {}\nStatus: {}\nSession: {}\nProject: {}\nElapsed: {}\nLastOutput: {}\n\nOutput:\n{}",
             Self::backend_label(backend),
             Self::value_label(phase_text),
             Self::session_value_label_for_mode(state, TelegramInteractionMode::Coding),
@@ -499,7 +499,7 @@ impl TelegramClient {
             }
 
             return format!(
-                "CodingAgent: {}\nStatus: {}\nElapsed: {}\nOutput: {}",
+                "Backend: {}\nStatus: {}\nElapsed: {}\nOutput: {}",
                 Self::backend_label(backend),
                 Self::value_label("done"),
                 Self::value_label(format!("{}ms", duration_ms)),
@@ -511,7 +511,7 @@ impl TelegramClient {
             .unwrap_or_else(|| "CLI failed with no output.".to_string());
 
         format!(
-            "CodingAgent: {}\nStatus: {}\nElapsed: {}\nExitCode: {}\n\n{}",
+            "Backend: {}\nStatus: {}\nElapsed: {}\nExitCode: {}\n\n{}",
             Self::backend_label(backend),
             Self::value_label("failed"),
             Self::value_label(format!("{}ms", duration_ms)),

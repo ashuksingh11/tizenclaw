@@ -153,6 +153,48 @@ impl TelegramClient {
         ))
     }
 
+    fn set_cli_backend(
+        chat_states: &Arc<Mutex<HashMap<i64, TelegramChatState>>>,
+        state_path: &Path,
+        chat_id: i64,
+        args: &[String],
+        cli_backends: &TelegramCliBackendRegistry,
+    ) -> TelegramOutgoingMessage {
+        let Some(requested) = args.first() else {
+            return TelegramOutgoingMessage::with_markup(
+                format!(
+                    "Backend: {}\nUse: /backend [{}]",
+                    Self::backend_label(
+                        &Self::load_chat_state_snapshot(chat_states, chat_id)
+                            .effective_cli_backend(cli_backends)
+                    ),
+                    Self::backend_choices_labels_text(cli_backends)
+                ),
+                Self::cli_backend_keyboard(cli_backends),
+            );
+        };
+
+        let parsed = cli_backends.parse(requested);
+        let Some(new_backend) = parsed else {
+            return TelegramOutgoingMessage::plain(format!(
+                "Unknown backend: {}\nAvailable: {}",
+                Self::value_label(requested),
+                Self::backend_choices_labels_text(cli_backends)
+            ));
+        };
+
+        TelegramOutgoingMessage::with_removed_keyboard(Self::mutate_chat_state(
+            chat_states,
+            state_path,
+            chat_id,
+            move |state| {
+                state.cli_backend = new_backend.clone();
+                state.pending_menu = None;
+                format!("Backend: {}", Self::value_label(new_backend.as_str()))
+            },
+        ))
+    }
+
     fn set_model(
         chat_states: &Arc<Mutex<HashMap<i64, TelegramChatState>>>,
         state_path: &Path,
@@ -416,7 +458,7 @@ Reset: {}",
                 "Session: {}",
                 Self::session_value_label_for_mode(state, TelegramInteractionMode::Coding)
             ),
-            format!("CodingAgent: {}", Self::backend_label(backend)),
+            format!("Backend: {}", Self::backend_label(backend)),
             format!("Model: {}", Self::value_label(effective_model)),
             format!("ModelSource: {}", Self::value_label(model_source)),
             format!("Source: {}", Self::value_label(usage_source)),
@@ -669,6 +711,9 @@ Handlers: {}",
                 TelegramOutgoingMessage::plain(Self::supported_commands_text(cli_backends))
             }
             "select" => Self::set_interaction_mode(chat_states, state_path, chat_id, &args),
+            "backend" => {
+                Self::set_cli_backend(chat_states, state_path, chat_id, &args, cli_backends)
+            }
             "model" => Self::set_model(chat_states, state_path, chat_id, &args, cli_backends),
             "project" => {
                 Self::set_project_directory(chat_states, state_path, chat_id, &args, cli_workdir)
@@ -852,10 +897,10 @@ User request:\n{}",
     ) -> String {
         let mode_prefix = match state.execution_mode {
             TelegramExecutionMode::Plan => {
-                "You are operating as a local coding agent invoked by TizenClaw. Start with a short plan, then perform the work carefully. Keep the final response concise and actionable."
+                "You are an AI agent handling requests through TizenClaw. Start with a short plan, then perform the work carefully. Keep the final response concise and actionable."
             }
             TelegramExecutionMode::Fast => {
-                "You are operating as a local coding agent invoked by TizenClaw. Optimize for speed, keep the response concise, and take the fastest reasonable path."
+                "You are an AI agent handling requests through TizenClaw. Optimize for speed, keep the response concise, and take the fastest reasonable path."
             }
         };
 
@@ -884,15 +929,12 @@ User request:\n{}",
         format!(
             "You are handling a Telegram request through TizenClaw.\n\
 \n\
-Telegram development preferences:\n\
-- Coding backend: {}\n\
-- Coding model: {}\n\
+Runtime preferences:\n\
+- Backend: {}\n\
+- Model: {}\n\
 - Project directory: {}\n\
-- Coding execution mode: {}\n\
-- Coding auto approve: {}\n\
-\n\
-Ordinary Telegram messages must be handled by TizenClaw first. If the user requests repository work, implementation, refactoring, debugging, testing, or other development work, prefer the run_coding_agent tool instead of replying with prose only.\n\
-If the user requests periodic follow-up development work, use create_task and preserve the same coding defaults with project_dir, coding_backend, coding_model, execution_mode, and auto_approve.\n\
+- Execution mode: {}\n\
+- Auto approve: {}\n\
 \n\
 Telegram user request:\n{}",
             backend.as_str(),

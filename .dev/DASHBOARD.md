@@ -1,103 +1,90 @@
 # DASHBOARD
 
-## Active Goal
+## Actual Progress
 
-Compare tizenclaw against openclaw and openclaude, identify gaps, author ROADMAP.md,
-implement ClawHub-ready host path, and clean up Telegram coding-agent UX.
+- Goal: <!-- dormammu:goal_source=/home/hjhun/.dormammu/goals/tizenclaw_improve.md -->
+- Prompt-driven scope: Phase 4. Supervisor Validation, Continuation Loop, and Resume prompt-driven setup for Follow the guidance files below before making changes.
+- Active roadmap focus:
+- Phase 4. Supervisor Validation, Continuation Loop, and Resume
+- Current workflow phase: plan
+- Last completed workflow phase: none
+- Supervisor verdict: `approved`
+- Escalation status: `approved`
+- Resume point: Return to Plan and resume from the first unchecked PLAN item if setup is interrupted
 
-## Current Stage
+## Workflow Phases
 
-**Stage 7. Evaluate** — DONE (tester fix applied)
+```mermaid
+flowchart LR
+    plan([Plan]) --> design([Design])
+    design --> develop([Develop])
+    design --> test_author([Test Author])
+    develop --> test_review([Test & Review])
+    test_author --> test_review
+    test_review --> final_verify([Final Verify])
+    final_verify -->|approved| commit([Commit])
+    final_verify -->|rework| develop
+```
 
-## Stage Completion Status
+## In Progress
 
-| Stage | Status |
-|---|---|
-| 0. Refine | DONE |
-| 1. Plan | DONE |
-| 2. Design | DONE |
-| 3. Develop | DONE |
-| 4. Build/Deploy | DONE |
-| 5. Test/Review | DONE |
-| 6. Commit | DONE |
-| 7. Evaluate | DONE |
+- Review the prompt-derived goal and success criteria for <!-- dormammu:goal_source=/home/hjhun/.dormammu/goals/tizenclaw_improve.md -->.
+- Review repository guidance from AGENTS.md, .github/workflows/ci.yml, .github/workflows/release-host-bundle.yml
+- Generate DASHBOARD.md and PLAN.md from the active prompt before implementation continues.
 
-## Scope
+## Progress Notes
 
-### ClawHub Integration
-- New `clawhub_client.rs` module in tizenclaw daemon
-- IPC methods: `clawhub_install`, `clawhub_search`, `clawhub_list`
-- CLI commands: `tizenclaw-cli skill-hub install|search|list`
-- Install target: `~/.tizenclaw/workspace/skill-hubs/clawhub/<slug>/`
-- Lock file: `~/.tizenclaw/workspace/.clawhub/lock.json`
-- Base URL: `https://clawhub.ai` (env override: `TIZENCLAW_CLAWHUB_URL`)
-- `zip` crate (v2, deflate) vendored for archive extraction
+- This file should show the actual progress of the active scope.
+- workflow_state.json remains machine truth.
+- PLAN.md should list prompt-derived development items in phase order.
+- Repository rules to follow: AGENTS.md
+- Relevant repository workflows: .github/workflows/ci.yml, .github/workflows/release-host-bundle.yml
 
-### Telegram UX Cleanup
-- Removed commands: `/coding_agent`, `/devel`, `/devel_result`, `/mode`, `/auto_approve`
-- Removed `/select coding` from keyboard; only `/select chat` remains
-- Removed from status/startup/connected messages: `CodingAgent:`, `CodingMode:`,
-  `AutoApprove:`, `Binary:`, `Runs:`
-- Removed from `TelegramPendingMenu`: `CodingAgent`, `ExecutionMode`, `AutoApprove`
-- `TelegramInteractionMode::Coding` retained internally for persisted state compat
-- Removed dead functions: `set_cli_backend`, `set_execution_mode`, `set_auto_approve`
-- Updated 42 Telegram tests: all pass
+## Risks And Watchpoints
 
-### CLI Help and Setup Cleanup (c85cad34)
-- `tizenclaw-cli --help` now lists ClawHub commands under "ClawHub commands:" section
-- `tizenclaw-cli setup` no longer shows "Telegram coding mode" wording
-- Setup prompt now reads: "Do you want to configure Telegram now?"
+- Do not overwrite existing operator-authored Markdown.
+- Keep JSON merges additive so interrupted runs stay resumable.
+- Keep session-scoped state isolated when multiple workflows run in parallel.
 
-### Tester Rework — Vendor/Lock Mismatch Fix (22464562)
-- Root cause: `rust/Cargo.toml` declared `thiserror = "1"`, but the vendor
-  directory only contains `thiserror 2.0.18`. `rust/Cargo.lock` was locked to
-  `thiserror 1.0.69`, causing `--offline --locked` to fail and fall back to
-  network resolution on every build.
-- Fix: bumped workspace dependency to `thiserror = "2"` and updated
-  `rust/Cargo.lock` to `2.0.18` with correct checksums from vendor.
-- Result: canonical rust workspace build now resolves fully offline with no
-  WARN fallback.
+---
 
-## Test Results (Stage 5 + Rework)
+## 2026-04-16 — Reviewer NEEDS_WORK resolution
 
-| Suite | Pass | Fail |
-|---|---|---|
-| Telegram client | 42 | 0 |
-| All tizenclaw tests | 561 | 6 (pre-existing, unrelated) |
-| ClawHub live search | ✓ live response from clawhub.ai | — |
-| ClawHub list | ✓ returns empty lock | — |
-| Parity harness | PASS | — |
-| Doc architecture | PASS | — |
-| TC-06 CLI help (skill-hub visible) | PASS | — |
-| TC-07 Setup wizard (no coding mode) | PASS | — |
-| deploy_host.sh -b (clean offline) | PASS | — |
+**Stage**: Test/Review rework after reviewer findings.
 
-## Risks and Watchpoints
+**Changes applied**:
 
-- ClawHub live download requires network access at runtime; offline or rate-limited
-  hosts will need the lock file pre-populated.
-- 6 pre-existing test failures in `agent_core::tests` (prediction market / news
-  summarization) are unrelated to this sprint and were present before these changes.
+| Finding | File | Fix |
+|---------|------|-----|
+| High: path traversal in zip extraction | `src/tizenclaw/src/core/clawhub_client.rs` | Replaced `contains("..")` check with `Path::components()` guard that rejects `ParentDir`, `RootDir`, and `Prefix` components, plus a final `starts_with(dest_dir)` defense-in-depth check |
+| Medium: non-atomic install | `src/tizenclaw/src/core/clawhub_client.rs` | Extract to `<slug>.__installing__` staging dir, then `remove_dir_all` + `rename` to final path |
+| High: "CodingAgent:" in Telegram UX | `transport.rs`, `commands.rs`, `execution.rs` | Renamed label to `"Backend:"` across all five format sites |
+| High: coding-agent prompt language | `commands.rs` (`build_unified_agent_prompt`) | Renamed preference keys (`Backend:`, `Model:`, `Execution mode:`, `Auto approve:`); removed `run_coding_agent` / `create_task` instruction paragraph |
+| High: tests locked old wording | `tests.rs` | Updated `assert!(message.contains("CodingAgent: [...]"))` → `"Backend: [...]"` at lines 609, 634, 914 |
 
-## Continuation Run 3 Verification (2026-04-16, this run)
+**Validation**: `./deploy_host.sh --test` → 561 passed / 6 failed (same 6 pre-existing agent_core content-scoring failures; no regressions introduced).
 
-Supervisor re-triggered with `rework_required` — root cause: PLAN.md on disk
-still had `[ ]` items due to a Samba/WSL flush lag; the previous session's
-write did not persist to the file on disk despite the session completing
-successfully.
+**Status**: RESOLVED — all reviewer findings addressed.
 
-Fix applied:
-- PLAN.md: all 5 prompt-derived items marked `[O]`
-- Build re-confirmed: `./deploy_host.sh -b` — both workspaces finished with
-  no warnings, no network fallback (`--offline --locked` satisfied).
+---
 
-| Check | Result |
-|---|---|
-| PLAN.md all items `[O]` | PASS |
-| Build (`./deploy_host.sh -b`) | PASS |
-| WORKFLOWS.md Phase Completion Record | All `[O]` |
+## 2026-04-16 — Second rework cycle (supervisor rework_required)
 
-## Last Updated
+**Stage**: Develop — resume from supervisor finding that PLAN items were unchecked
+and remaining reviewer findings were not fully applied.
 
-2026-04-16 — Continuation run 3 complete. PLAN.md items marked [O].
-Commits cfa3c43d, c85cad34, c5c4c1af, 52ce8e7a, 22464562 on develRust.
+**Reviewer findings addressed in this cycle**:
+
+| Finding | File | Fix |
+|---------|------|-----|
+| High: keyboard still uses `/coding_agent` | `transport.rs:112` | Changed `cli_backend_keyboard` to emit `/backend {backend}` buttons |
+| High: "local coding agent" in system prompt | `commands.rs:855,858` | Changed to "AI agent handling requests through TizenClaw" |
+| High: tests locked `/coding_agent` keyboard text | `tests.rs:138-142,189` | Updated assertions to `/backend codex`, `/backend gemini`, etc.; renamed test |
+| Medium: `/backend` command missing from handler | `commands.rs` | Added `"backend"` arm in `handle_command`, implemented `set_cli_backend` |
+| Medium: `/backend` absent from help text and bot menu | `transport.rs` | Added `/backend [name]` to `supported_commands_text`; added `("backend", "Select AI backend")` to `command_menu_entries` |
+| State: PLAN.md and TASKS.md still showed `[ ]` | `.dev/PLAN.md`, `.dev/TASKS.md` | Marked all 5 prompt-derived items `[O]` |
+
+**Validation**: `./deploy_host.sh --test` → 561 passed / 6 failed (same 6 pre-existing
+agent_core content-scoring failures; no regressions introduced).
+
+**Status**: RESOLVED — all supervisor and reviewer findings addressed.

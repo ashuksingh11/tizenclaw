@@ -126,16 +126,50 @@ pub async fn clawhub_install(skill_hubs_dir: &Path, source: &str) -> Result<Valu
         .await
         .map_err(|err| format!("ClawHub archive read failed: {}", err))?;
 
-    // Extract into skill-hubs/clawhub/<slug>/.
+    // Extract into a staging directory first, then atomically replace the
+    // final install path.  This prevents retries or concurrent updates from
+    // leaving a partially-extracted skill in place.
     let install_dir = skill_hubs_dir.join("clawhub").join(&slug);
-    std::fs::create_dir_all(&install_dir).map_err(|err| {
+    let staging_dir = skill_hubs_dir
+        .join("clawhub")
+        .join(format!("{}.__installing__", slug));
+
+    // Remove any leftover staging directory from a previous failed attempt.
+    if staging_dir.exists() {
+        std::fs::remove_dir_all(&staging_dir).map_err(|err| {
+            format!(
+                "Failed to remove stale staging directory '{}': {}",
+                staging_dir.display(),
+                err
+            )
+        })?;
+    }
+    std::fs::create_dir_all(&staging_dir).map_err(|err| {
         format!(
-            "Failed to create install directory '{}': {}",
+            "Failed to create staging directory '{}': {}",
+            staging_dir.display(),
+            err
+        )
+    })?;
+    extract_zip_archive(&archive_bytes, &staging_dir, &slug)?;
+
+    // Replace the live install directory with the staging directory.
+    if install_dir.exists() {
+        std::fs::remove_dir_all(&install_dir).map_err(|err| {
+            format!(
+                "Failed to remove existing install directory '{}': {}",
+                install_dir.display(),
+                err
+            )
+        })?;
+    }
+    std::fs::rename(&staging_dir, &install_dir).map_err(|err| {
+        format!(
+            "Failed to move staging directory to '{}': {}",
             install_dir.display(),
             err
         )
     })?;
-    extract_zip_archive(&archive_bytes, &install_dir, &slug)?;
 
     // Record the install in the lock file.
     let workspace_dir = skill_hubs_dir
@@ -253,16 +287,39 @@ fn extract_zip_archive(bytes: &[u8], dest_dir: &Path, slug: &str) -> Result<(), 
             continue;
         }
 
-        // Reject path-traversal attempts.
-        if relative.contains("..") {
+        // Reject path-traversal and absolute-path entries.
+        // Checking just for ".." misses absolute entries like "/etc/passwd"
+        // which Path::join() would treat as a new root. We inspect every
+        // component individually and also verify the final path stays inside
+        // dest_dir as a defense-in-depth guard.
+        {
+            use std::path::Component;
+            let unsafe_component = Path::new(relative).components().any(|c| {
+                matches!(
+                    c,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            });
+            if unsafe_component {
+                log::warn!(
+                    "ClawHub: skipping unsafe archive entry '{}'",
+                    raw_name
+                );
+                continue;
+            }
+        }
+
+        let out_path = dest_dir.join(relative);
+
+        // Defense-in-depth: after joining, confirm the path is still rooted
+        // inside dest_dir (catches any edge case the component check missed).
+        if !out_path.starts_with(dest_dir) {
             log::warn!(
-                "ClawHub: skipping unsafe archive entry '{}'",
+                "ClawHub: skipping archive entry '{}' that would escape install dir",
                 raw_name
             );
             continue;
         }
-
-        let out_path = dest_dir.join(relative);
         if let Some(parent) = out_path.parent() {
             std::fs::create_dir_all(parent).map_err(|err| {
                 format!(

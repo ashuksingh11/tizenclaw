@@ -41,6 +41,7 @@ impl TelegramClient {
 
     fn command_menu_entries() -> Vec<(&'static str, &'static str)> {
         vec![
+            ("backend", "Select AI backend"),
             ("model", "Choose model"),
             ("project", "Set project path"),
             ("new_session", "Start new session"),
@@ -109,7 +110,7 @@ impl TelegramClient {
     fn cli_backend_keyboard(cli_backends: &TelegramCliBackendRegistry) -> Value {
         let rows = cli_backends
             .backends()
-            .map(|backend| vec![format!("/coding_agent {}", backend.as_str())])
+            .map(|backend| vec![format!("/backend {}", backend.as_str())])
             .collect::<Vec<_>>();
         let row_refs = rows
             .iter()
@@ -215,7 +216,7 @@ impl TelegramClient {
             .join(" | ");
 
         format!(
-            "CodingAgent: {}\nModel: {}\nSource: {}\nCatalog: {}\nChoices: {}\nUse: /model [name] | /model reset",
+            "Backend: {}\nModel: {}\nSource: {}\nCatalog: {}\nChoices: {}\nUse: /model [name] | /model reset",
             Self::backend_label(backend),
             Self::value_label(model),
             Self::value_label(source),
@@ -436,6 +437,7 @@ impl TelegramClient {
         [
             "Commands",
             "Send your request directly in chat.",
+            "/backend [name]",
             "/model [name|list|reset]",
             "/project [path|reset]",
             "/new_session",

@@ -77,6 +77,7 @@ mod tests {
     #[test]
     fn supported_commands_text_lists_core_commands() {
         let help = TelegramClient::supported_commands_text(&default_registry());
+        assert!(help.contains("/backend [name]"));
         assert!(help.contains("/model [name|list|reset]"));
         assert!(help.contains("/usage"));
         assert!(help.contains("/project"));
@@ -100,7 +101,7 @@ mod tests {
 
         assert_eq!(
             names,
-            vec!["model", "project", "new_session", "usage", "status"]
+            vec!["backend", "model", "project", "new_session", "usage", "status"]
         );
         assert!(!names.contains(&"coding_agent"));
         assert!(!names.contains(&"devel"));
@@ -135,11 +136,11 @@ mod tests {
     }
 
     #[test]
-    fn coding_agent_keyboard_uses_new_command_name() {
+    fn cli_backend_keyboard_uses_backend_command() {
         let keyboard = TelegramClient::cli_backend_keyboard(&default_registry());
-        assert_eq!(keyboard["keyboard"][0][0], "/coding_agent codex");
-        assert_eq!(keyboard["keyboard"][1][0], "/coding_agent gemini");
-        assert_eq!(keyboard["keyboard"][2][0], "/coding_agent claude");
+        assert_eq!(keyboard["keyboard"][0][0], "/backend codex");
+        assert_eq!(keyboard["keyboard"][1][0], "/backend gemini");
+        assert_eq!(keyboard["keyboard"][2][0], "/backend claude");
     }
 
     #[test]
@@ -186,7 +187,7 @@ mod tests {
 
         let keyboard = TelegramClient::cli_backend_keyboard(&registry);
 
-        assert_eq!(keyboard["keyboard"][3][0], "/coding_agent custom_agent");
+        assert_eq!(keyboard["keyboard"][3][0], "/backend custom_agent");
         assert_eq!(registry.parse("custom"), Some(backend("custom_agent")));
         assert_eq!(registry.default_backend(), backend("custom_agent"));
     }
@@ -606,7 +607,7 @@ mod tests {
             None,
         );
 
-        assert!(message.contains("CodingAgent: [codex]"));
+        assert!(message.contains("Backend: [codex]"));
         assert!(message.contains("Status: [running]"));
         assert!(message.contains("Session: [0001]"));
         assert!(message.contains("Project: [/tmp/project]"));
@@ -631,7 +632,7 @@ mod tests {
             Some("Third line extends the response"),
         );
 
-        assert!(message.contains("CodingAgent: [claude]"));
+        assert!(message.contains("Backend: [claude]"));
         assert!(message.contains("Status: [completed]"));
         assert!(message.contains("LastOutput: [3s ago]"));
         assert!(message.contains("Output:"));
@@ -911,7 +912,7 @@ mod tests {
         );
         assert!(report.contains("Mode: [coding]"));
         assert!(report.contains("Session: [0002]"));
-        assert!(report.contains("CodingAgent: [gemini]"));
+        assert!(report.contains("Backend: [gemini]"));
         assert!(report.contains("ModelSource: [backend default]"));
         assert!(report.contains("Source: [stats.models.<model>.tokens]"));
         assert!(report.contains("Refresh: [updates after the next successful Gemini run]"));
