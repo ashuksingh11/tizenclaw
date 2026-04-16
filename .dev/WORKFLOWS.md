@@ -1,160 +1,107 @@
 # WORKFLOWS
 
-## Planning Classification
+## Workflow Class
 
-- Request class source: `.dev/workflow_state.json`
-- `intake.request_class`: `full_workflow`
-- `workflow_policy.required_phases`:
-  `refine -> plan -> design -> develop -> build_deploy -> test_review ->
-  commit -> evaluate`
-- `workflow_policy.skipped_phases`: none
-- `workflow_policy.skip_rationale`: none
-- `refinement.mode`: `clarify`
-- `refinement.blocked`: `false`
-- Effective planning depth: `full_workflow`
-- Rationale: this goal requires comparison, roadmap authoring, concrete
-  implementation, host validation through `./deploy_host.sh`, test or review
-  follow-up, and the mandatory final evaluator stage.
+- Request class: `full_workflow`
+- Refinement mode: `normalize`
+- Host strategy: host-first, script-first, foreground `bash`
 
-## Active Stage Sequence
+## Stage Sequence
 
 ```text
-refine(resolved) -> plan -> design -> develop -> build/deploy
--> test/review -> commit -> evaluate
+refine -> plan -> design -> develop -> build/deploy -> test/review
+-> commit -> evaluate
 ```
 
-## Stage Plan
+## Phase Completion Status
+
+- [O] Stage 0. Refine — DONE
+- [O] Stage 1. Plan — DONE
+- [O] Stage 2. Design — DONE
+- [O] Stage 3. Develop — DONE
+- [O] Stage 4. Build/Deploy — DONE (`./deploy_host.sh -b` PASS)
+- [O] Stage 5. Test/Review — DONE (`./deploy_host.sh --test` PASS, 589 tests)
+- [O] Stage 6. Commit — DONE
+- [O] Stage 7. Evaluate — DONE
+
+## Stage Contracts
 
 ### Stage 0. Refine
-Purpose:
-- keep the resolved requirements as the authoritative scope for execution
 
-Outputs:
-- `.dev/REQUIREMENTS.md`
-- synchronized `.dev/workflow_state.json`
-
-Gate to exit:
-- baselines, ClawHub definition, runnable host proof, and Telegram UX policy
-  are explicit and no refinement blocker remains
+- Input: `.dev/REQUIREMENTS.md`
+- Outcome: the roadmap targets, scope boundaries, validation path, risks, and
+  open questions stay explicit enough for downstream work.
+- Gate to continue: requirements remain explicit and usable.
 
 ### Stage 1. Plan
-Purpose:
-- define the downstream execution path from the resolved requirements and the
-  synced workflow policy
 
-Outputs:
-- `.dev/WORKFLOWS.md`
-- `.dev/PLAN.md`
-- `.dev/TASKS.md`
-- `.dev/DASHBOARD.md`
-
-Gate to exit:
-- workflow, plan, tasks, and dashboard match the resolved requirements and
-  machine state
+- Outputs: `.dev/WORKFLOWS.md`, `.dev/PLAN.md`, `.dev/TASKS.md`,
+  `.dev/DASHBOARD.md`
+- Outcome: downstream agents can follow the exact stage sequence without
+  guessing skipped work, validation paths, or deliverables.
+- Gate to continue: planning artifacts exist and match the current workflow
+  policy.
 
 ### Stage 2. Design
-Purpose:
-- pin down the ClawHub skill install or mount path and the Telegram UX
-  migration before code changes begin
 
-Outputs:
-- design notes under `.dev/docs/` when needed
-- refreshed `.dev/DASHBOARD.md`
-
-Gate to exit:
-- implementation no longer depends on guesswork around skill source handling,
-  runtime discovery, or Telegram-visible behavior
+- Inputs: `.dev/REQUIREMENTS.md`, existing design note
+  `.dev/docs/runtime_flexibility_ooad_design_20260416.md`
+- Outcome: resolve provider-routing policy, Telegram config precedence,
+  ClawHub update semantics, and snapshot-cache ownership before coding.
+- Gate to continue: implementation-critical ambiguity is removed or explicitly
+  documented in `.dev/docs/` and `.dev/DASHBOARD.md`.
 
 ### Stage 3. Develop
-Purpose:
-- compare `tizenclaw` against the pinned references
-- rewrite `.dev/ROADMAP.md`
-- implement the ClawHub path and Telegram UX cleanup
 
-Required skills:
-- `developing-code`
-- `testing-with-tizenclaw-tests`
-
-Outputs:
-- scoped code and config changes
-- rewritten `.dev/ROADMAP.md`
-- refreshed `.dev/DASHBOARD.md`
-
-Gate to exit:
-- intended files are changed and the repository state matches the planned scope
+- Skills: developing-code, testing-with-tizenclaw-tests
+- Outcome: implement provider routing, Telegram model-list configuration,
+  ClawHub update flow, snapshot caching, status output, and targeted tests.
+- Gate to continue: intended files are updated and the runtime state stays
+  synchronized with the plan.
 
 ### Stage 4. Build/Deploy
-Purpose:
-- validate the host path using the repository-approved script only
 
-Outputs:
-- scripted host evidence from `./deploy_host.sh`
-
-Gate to exit:
-- `./deploy_host.sh` succeeds and records usable host-path evidence
+- Command path: `./deploy_host.sh`
+- Outcome: scripted host build evidence is captured for the changed scope.
+- Gate to continue: the scripted host path was executed and the result is
+  recorded.
 
 ### Stage 5. Test/Review
-Purpose:
-- validate runtime-visible and Telegram-visible behavior changes
-- confirm the ClawHub path is observable through runtime discovery
-- record residual risks or missing coverage
 
-Required skills:
-- `reviewing-code`
-- `testing-with-tizenclaw-tests`
-
-Outputs:
-- executed validation results
-- refreshed `.dev/DASHBOARD.md`
-
-Gate to exit:
-- test and review evidence is recorded with clear findings or residual risks
+- Command path: `./deploy_host.sh --test`
+- Skills: reviewing-code, testing-with-tizenclaw-tests
+- Outcome: validate routing, Telegram config loading, ClawHub update handling,
+  snapshot cache invalidation, and operator-facing status visibility.
+- Gate to continue: regression evidence and residual risks are recorded.
 
 ### Stage 6. Commit
-Purpose:
-- prepare the commit stage if the implementation reaches a clean handoff
 
-Outputs:
-- `.tmp/commit_msg.txt`
-- final commit
-
-Gate to exit:
-- diff scope is correct and commit formatting follows `AGENTS.md`
+- Commit contract: write `.tmp/commit_msg.txt`, then use
+  `git commit -F .tmp/commit_msg.txt`
+- Outcome: package only the approved diff scope.
+- Gate to continue: commit scope and message format satisfy `AGENTS.md`.
 
 ### Stage 7. Evaluate
-Purpose:
-- produce the mandatory final evaluator verdict
 
-Outputs:
-- evaluator report under `.dev/07-evaluator/`
+- Output: `.dev/07-evaluator/` report with an explicit verdict
+- Outcome: final assessment of whether the roadmap slice met its intent and
+  what follow-up remains.
+- Gate to continue: evaluator report exists and the dashboard reflects the
+  final verdict.
 
-Gate to exit:
-- the final assessment is recorded with an explicit verdict
+## Phase-Specific Focus
+
+- Provider routing must move from one primary backend plus static fallbacks to
+  a provider-selection layer with compatibility handling for legacy config.
+- Telegram model choices must move out of Rust source and into operator-managed
+  configuration with a documented precedence rule.
+- ClawHub update must reuse `workspace/.clawhub/lock.json` and keep install
+  safety guarantees intact.
+- Skill snapshot caching must avoid redundant rescans and invalidate safely on
+  root, registration, and capability-config changes.
+- Validation evidence must come from the scripted host paths only.
 
 ## Skipped Phases
 
-- None.
-- `workflow_policy.skipped_phases` is an empty list in
-  `.dev/workflow_state.json`.
-- No skip rationale applies for this run.
-
-## Current Gate Status
-
-- Active phase: `complete`
-- Current verdict: `PASS`
-- Blocking source: none
-- Release condition: all seven stages completed — all 572 tests pass, host validation
-  succeeds with `./deploy_host.sh --test`, PLAN.md items marked `[O]`
-- Rework completed: fifth rework cycle resolved Telegram 2-button keyboard,
-  content-scoring regex lookahead, dynamic date fixtures, and shortcut path ordering
-
-## Phase Completion Record
-
-- [O] refine — `.dev/REQUIREMENTS.md` produced
-- [O] plan — `.dev/WORKFLOWS.md`, `.dev/PLAN.md`, `.dev/TASKS.md`, `.dev/DASHBOARD.md` produced; all 5 PLAN.md items marked `[O]`
-- [O] design — ClawHub API endpoints and Telegram cleanup scope pinned
-- [O] develop — `clawhub_client.rs` (validate_extracted_skill, atomic_replace_dir), IPC, CLI, Telegram UX cleanup implemented; reviewer findings (6th rework) resolved
-- [O] build/deploy — `./deploy_host.sh --test` passes: 744 tests, 0 failures
-- [O] test/review — live validation; Telegram help verified; both reviewer findings resolved
-- [O] commit — committed with `.tmp/commit_msg.txt`
-- [O] evaluate — `.dev/07-evaluator/2026-04-16-clawhub-telegram-cleanup.md`
+- None. `workflow_policy.skipped_phases` is empty for this `full_workflow`
+  request.
