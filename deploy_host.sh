@@ -545,7 +545,7 @@ do_test() {
   if CARGO_TARGET_DIR="${CARGO_TARGET_DIR_HOST}" cargo test --workspace --offline --locked -- --test-threads=1 2>&1; then
     ok "All tests passed"
   else
-    warn "Some tests failed (see output above)"
+    fail "Some tests failed (see output above)"
   fi
 
   run_rust_workspace_tests
