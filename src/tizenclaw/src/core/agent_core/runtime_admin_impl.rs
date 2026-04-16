@@ -244,11 +244,29 @@ impl AgentCore {
         let configured_fallback_backends = routing.raw_fallback_backends.clone();
         let configured_provider_order: Vec<String> =
             routing.ordered_names().into_iter().map(String::from).collect();
+        // Build the providers array from routing config so per-provider
+        // visibility is preserved during reload.  Availability and init-error
+        // are unknown because instances are not accessible while the registry
+        // is write-locked.
+        let providers: Vec<Value> = routing
+            .providers
+            .iter()
+            .map(|pref| {
+                json!({
+                    "name": pref.name,
+                    "priority": pref.priority,
+                    "enabled": pref.enabled,
+                    "availability": "unknown",
+                    "last_init_error": Value::Null,
+                    "source": pref.source.as_str(),
+                })
+            })
+            .collect();
         json!({
             "configured_active_backend": configured_active_backend,
             "configured_fallback_backends": configured_fallback_backends,
             "configured_provider_order": configured_provider_order,
-            "providers": [],
+            "providers": providers,
             "current_selection": Value::Null,
         })
     }

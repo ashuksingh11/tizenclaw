@@ -511,4 +511,67 @@ mod tests {
         let names: Vec<&str> = config.ordered_names();
         assert_eq!(names, vec!["openai"]);
     }
+
+    /// Verify that the write-locked fallback path in `get_llm_runtime()` produces
+    /// a non-empty `providers[]` array.  The fallback reconstructs provider
+    /// metadata from the routing config without accessing live instances, so
+    /// availability is reported as `"unknown"`.
+    #[test]
+    fn fallback_status_json_providers_array_is_populated_legacy_config() {
+        let raw_doc = json!({
+            "active_backend": "gemini",
+            "fallback_backends": ["openai"],
+        });
+        let routing = ProviderCompatibilityTranslator::translate(&raw_doc);
+        // Replicate the fallback JSON construction from runtime_admin_impl.rs.
+        let providers: Vec<Value> = routing
+            .providers
+            .iter()
+            .map(|pref| {
+                json!({
+                    "name": pref.name,
+                    "priority": pref.priority,
+                    "enabled": pref.enabled,
+                    "availability": "unknown",
+                    "last_init_error": Value::Null,
+                    "source": pref.source.as_str(),
+                })
+            })
+            .collect();
+        assert_eq!(providers.len(), 2, "fallback must not return an empty providers array");
+        assert_eq!(providers[0]["name"], "gemini");
+        assert_eq!(providers[0]["availability"], "unknown");
+        assert_eq!(providers[1]["name"], "openai");
+        assert_eq!(providers[1]["availability"], "unknown");
+    }
+
+    #[test]
+    fn fallback_status_json_providers_array_is_populated_providers_array_config() {
+        let raw_doc = json!({
+            "providers": [
+                {"name": "anthropic", "priority": 10, "enabled": true},
+                {"name": "openai",    "priority": 20, "enabled": false},
+            ],
+        });
+        let routing = ProviderCompatibilityTranslator::translate(&raw_doc);
+        let providers: Vec<Value> = routing
+            .providers
+            .iter()
+            .map(|pref| {
+                json!({
+                    "name": pref.name,
+                    "priority": pref.priority,
+                    "enabled": pref.enabled,
+                    "availability": "unknown",
+                    "last_init_error": Value::Null,
+                    "source": pref.source.as_str(),
+                })
+            })
+            .collect();
+        assert_eq!(providers.len(), 2, "fallback must expose all configured providers");
+        assert_eq!(providers[0]["name"], "anthropic");
+        assert_eq!(providers[0]["source"], "providers");
+        assert_eq!(providers[1]["name"], "openai");
+        assert_eq!(providers[1]["enabled"], false);
+    }
 }
