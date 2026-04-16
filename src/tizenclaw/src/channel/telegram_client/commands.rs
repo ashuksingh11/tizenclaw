@@ -94,6 +94,7 @@ impl TelegramClient {
         match state.pending_menu.as_ref()? {
             TelegramPendingMenu::SelectMode => match selection {
                 1 => Some("/select chat".to_string()),
+                2 => Some("/select backend".to_string()),
                 _ => None,
             },
             TelegramPendingMenu::Model => {
@@ -133,7 +134,7 @@ impl TelegramClient {
                 Some(TelegramPendingMenu::SelectMode),
             );
             return TelegramOutgoingMessage::with_markup(
-                "Choose [chat] or [coding].",
+                "Unknown mode. Choose [chat] or [backend].",
                 Self::select_keyboard(),
             );
         };
@@ -849,10 +850,10 @@ Handlers: {}",
     ) -> String {
         let mode_prefix = match execution_mode {
             TelegramExecutionMode::Plan => {
-                "You are operating in TizenClaw Telegram coding mode. Start with a short plan, then perform the work carefully. Keep the final response concise and actionable."
+                "You are operating as an AI agent via TizenClaw. Start with a short plan, then perform the work carefully. Keep the final response concise and actionable."
             }
             TelegramExecutionMode::Fast => {
-                "You are operating in TizenClaw Telegram coding mode. Optimize for speed, keep the response concise, and take the fastest reasonable path."
+                "You are operating as an AI agent via TizenClaw. Optimize for speed, keep the response concise, and take the fastest reasonable path."
             }
         };
         let session_label = state.session_label_for(TelegramInteractionMode::Coding);
@@ -866,7 +867,7 @@ Handlers: {}",
             String::new()
         } else {
             format!(
-                "\nCurrent Telegram coding session history ({})\n{}\n",
+                "\nCurrent session history ({})\n{}\n",
                 session_label, recent_context
             )
         };

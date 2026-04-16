@@ -90,6 +90,14 @@ mod tests {
     use std::sync::Arc;
     use tempfile::tempdir;
 
+    /// Return an ISO-8601 date string (YYYY-MM-DD) for N calendar days ago,
+    /// computed from the actual wall-clock time so date-sensitive tests remain
+    /// valid regardless of when they run.
+    fn iso_date_days_ago(days: u64) -> String {
+        let secs = unix_timestamp_secs().saturating_sub(days * 86400);
+        format_unix_timestamp_utc(secs)[..10].to_string()
+    }
+
     #[test]
     fn utf8_safe_preview_returns_full_short_ascii_text() {
         let text = "battery";
@@ -711,10 +719,19 @@ mod tests {
     fn summarize_recent_news_result_prefers_reputable_recent_sources() {
         let question = "Will the Fed decrease interest rates by 50+ bps after the April 2026 meeting?";
         let description = "";
+        let recent = iso_date_days_ago(1);
+        let reuters_snippet = format!(
+            "{} Reuters reports that traders raised bets on a bigger cut after softer inflation data and weaker payroll growth.",
+            recent
+        );
+        let reuters_url = format!(
+            "https://www.reuters.com/world/us/fed-officials-weigh-larger-rate-cut-april-2026-meeting-{}/",
+            recent
+        );
         let reputable = json!({
             "title": "Fed officials weigh larger rate cut for April 2026 meeting",
-            "snippet": "April 12, 2026 Reuters reports that traders raised bets on a bigger cut after softer inflation data and weaker payroll growth.",
-            "url": "https://www.reuters.com/world/us/fed-officials-weigh-larger-rate-cut-april-2026-meeting-2026-04-12/"
+            "snippet": reuters_snippet,
+            "url": reuters_url
         });
         let mirror = json!({
             "title": "Will the Fed decrease interest rates by 50+ bps after the April 2026 meeting?",
@@ -819,15 +836,20 @@ mod tests {
     fn summarize_recent_news_result_accepts_preferred_source_with_url_date() {
         let question = "Strait of Hormuz traffic returns to normal by end of April?";
         let description = "A market about shipping conditions after a U.S. blockade threat.";
+        let today = iso_date_days_ago(0);
+        let url = format!(
+            "https://www.reuters.com/world/asia-pacific/us-blockade-iran-will-be-major-military-endeavor-experts-say-{}/",
+            today
+        );
         let result = json!({
             "title": "US blockade of Iran will be major military endeavor, experts say",
             "snippet": "",
-            "url": "https://www.reuters.com/world/asia-pacific/us-blockade-iran-will-be-major-military-endeavor-experts-say-2026-04-13/"
+            "url": url
         });
 
         let summary =
             summarize_recent_news_result(question, description, &result).expect("summary");
-        assert!(summary.contains("2026-04-13"));
+        assert!(summary.contains(&today));
         assert!(recent_news_summary_is_strong(&summary));
     }
 
@@ -4215,8 +4237,24 @@ startxref
     #[test]
     fn completed_file_management_targets_accept_prediction_market_decimal_odds() {
         let dir = tempdir().unwrap();
-        let content = "# Polymarket Briefing — 2026-04-13\n\n## 1. Will the next Prime Minister of Hungary be Viktor Orbán?\n**Current odds:** Yes 0.35% / No 99.65%\n**Related news:** Reuters reported on 2026-04-13 that the Hungarian forint jumped after Orbán's election defeat. https://www.reuters.com/business/hungarian-forint-jumps-after-orbans-election-defeat-2026-04-13/\n\n## 2. Will WTI Crude Oil (WTI) hit (HIGH) $110 in April?\n**Current odds:** Yes 72% / No 28%\n**Related news:** Reuters reported on 2026-04-12 that oil rose more than 7% to above $100 ahead of a U.S. blockade on Iran. https://www.reuters.com/business/energy/oil-bounces-back-above-100-after-us-iran-talks-end-stalemate-2026-04-12/\n\n## 3. Strait of Hormuz traffic returns to normal by end of April?\n**Current odds:** Yes 13% / No 88%\n**Related news:** Reuters reported on 2026-04-13 that Trump said the U.S. would begin a naval blockade of Iran's ports in the Strait of Hormuz. https://www.reuters.com/world/iran-war-live-trump-says-us-begin-naval-blockade-irans-ports-strait-hormuz-2026-04-13/\n";
-        std::fs::write(dir.path().join("polymarket_briefing.md"), content).unwrap();
+        let d0 = iso_date_days_ago(0);
+        let d1 = iso_date_days_ago(1);
+        let content = format!(
+            "# Polymarket Briefing — {d0}\n\n\
+            ## 1. Will the next Prime Minister of Hungary be Viktor Orbán?\n\
+            **Current odds:** Yes 0.35% / No 99.65%\n\
+            **Related news:** Reuters reported on {d0} that the Hungarian forint jumped after Orbán's election defeat. \
+            https://www.reuters.com/business/hungarian-forint-jumps-after-orbans-election-defeat-{d0}/\n\n\
+            ## 2. Will WTI Crude Oil (WTI) hit (HIGH) $110 in April?\n\
+            **Current odds:** Yes 72% / No 28%\n\
+            **Related news:** Reuters reported on {d1} that oil rose more than 7% to above $100 ahead of a U.S. blockade on Iran. \
+            https://www.reuters.com/business/energy/oil-bounces-back-above-100-after-us-iran-talks-end-stalemate-{d1}/\n\n\
+            ## 3. Strait of Hormuz traffic returns to normal by end of April?\n\
+            **Current odds:** Yes 13% / No 88%\n\
+            **Related news:** Reuters reported on {d0} that Trump said the U.S. would begin a naval blockade of Iran's ports in the Strait of Hormuz. \
+            https://www.reuters.com/world/iran-war-live-trump-says-us-begin-naval-blockade-irans-ports-strait-hormuz-{d0}/\n"
+        );
+        std::fs::write(dir.path().join("polymarket_briefing.md"), &content).unwrap();
 
         let prompt = "Fetch the top 3 trending prediction markets from Polymarket (polymarket.com) right now. For each market, find a related recent news story (from the last 48 hours) that explains why people are betting on it. Save the result as polymarket_briefing.md with **Current odds:** Yes {X}% / No {Y}% and **Related news:** for each market question.";
         let messages = vec![
@@ -4228,17 +4266,17 @@ startxref
                     "result": {"results": [
                         {
                             "title": "Hungarian forint jumps after Orban's election defeat | Reuters",
-                            "url": "https://www.reuters.com/business/hungarian-forint-jumps-after-orbans-election-defeat-2026-04-13/",
+                            "url": format!("https://www.reuters.com/business/hungarian-forint-jumps-after-orbans-election-defeat-{d0}/"),
                             "snippet": ""
                         },
                         {
                             "title": "Oil rises over 7% to above $100 ahead of US blockade on Iran - Reuters",
-                            "url": "https://www.reuters.com/business/energy/oil-bounces-back-above-100-after-us-iran-talks-end-stalemate-2026-04-12/",
+                            "url": format!("https://www.reuters.com/business/energy/oil-bounces-back-above-100-after-us-iran-talks-end-stalemate-{d1}/"),
                             "snippet": ""
                         },
                         {
                             "title": "Iran war live: Trump says US to begin naval blockade of Iran's ports in Strait of Hormuz",
-                            "url": "https://www.reuters.com/world/iran-war-live-trump-says-us-begin-naval-blockade-irans-ports-strait-hormuz-2026-04-13/",
+                            "url": format!("https://www.reuters.com/world/iran-war-live-trump-says-us-begin-naval-blockade-irans-ports-strait-hormuz-{d0}/"),
                             "snippet": ""
                         }
                     ]}
@@ -4270,8 +4308,24 @@ startxref
     #[test]
     fn completed_file_management_targets_accept_prediction_market_briefing_after_rate_limited_search() {
         let dir = tempdir().unwrap();
-        let content = "# Polymarket Briefing — 2026-04-13\n\n## 1. Will WTI Crude Oil (WTI) hit (HIGH) $110 in April?\n**Current odds:** Yes 74% / No 27%\n**Related news:** Reuters reported on 2026-04-13 that oil prices stayed elevated as Iran-related shipping risks threatened supply through the Gulf. https://www.reuters.com/business/energy/oil-tankers-steer-clear-hormuz-ahead-us-blockade-2026-04-13/\n\n## 2. Strait of Hormuz traffic returns to normal by end of April?\n**Current odds:** Yes 13% / No 88%\n**Related news:** Reuters reported on 2026-04-13 that tanker traffic near the Strait of Hormuz remained disrupted while blockade fears grew. https://www.reuters.com/business/energy/oil-tankers-steer-clear-hormuz-ahead-us-blockade-2026-04-13/\n\n## 3. US x Iran permanent peace deal by April 22, 2026?\n**Current odds:** Yes 9% / No 92%\n**Related news:** Reuters reported on 2026-04-10 that ceasefire talks were still fragile and far from a durable settlement. https://www.reuters.com/world/middle-east/irans-guards-will-view-military-vessels-approaching-strait-ceasefire-breach-2026-04-12/\n";
-        std::fs::write(dir.path().join("polymarket_briefing.md"), content).unwrap();
+        let d0 = iso_date_days_ago(0);
+        let d1 = iso_date_days_ago(1);
+        let content = format!(
+            "# Polymarket Briefing — {d0}\n\n\
+            ## 1. Will WTI Crude Oil (WTI) hit (HIGH) $110 in April?\n\
+            **Current odds:** Yes 74% / No 27%\n\
+            **Related news:** Reuters reported on {d0} that oil prices stayed elevated as Iran-related shipping risks threatened supply through the Gulf. \
+            https://www.reuters.com/business/energy/oil-tankers-steer-clear-hormuz-ahead-us-blockade-{d0}/\n\n\
+            ## 2. Strait of Hormuz traffic returns to normal by end of April?\n\
+            **Current odds:** Yes 13% / No 88%\n\
+            **Related news:** Reuters reported on {d0} that tanker traffic near the Strait of Hormuz remained disrupted while blockade fears grew. \
+            https://www.reuters.com/business/energy/oil-tankers-steer-clear-hormuz-ahead-us-blockade-{d0}/\n\n\
+            ## 3. US x Iran permanent peace deal by April 22, 2026?\n\
+            **Current odds:** Yes 9% / No 92%\n\
+            **Related news:** Reuters reported on {d1} that ceasefire talks were still fragile and far from a durable settlement. \
+            https://www.reuters.com/world/middle-east/irans-guards-will-view-military-vessels-approaching-strait-ceasefire-breach-{d1}/\n"
+        );
+        std::fs::write(dir.path().join("polymarket_briefing.md"), &content).unwrap();
 
         let prompt = "Fetch the top 3 trending prediction markets from Polymarket (polymarket.com) right now. For each market, find a related recent news story (from the last 48 hours) that explains why people are betting on it. Save the result as polymarket_briefing.md with **Current odds:** Yes {X}% / No {Y}% and **Related news:** for each market question.";
         let messages = vec![

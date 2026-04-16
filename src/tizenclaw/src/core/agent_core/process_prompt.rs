@@ -57,22 +57,11 @@ impl AgentCore {
             budget
         );
 
-        // Quick check: do we have any backend?
-        {
-            let has_primary = self.backend.read().await.is_some();
-            let has_fallback = !self.fallback_backends.read().await.is_empty();
-            if !has_primary && !has_fallback {
-                loop_state.last_error = Some("No LLM backend configured".into());
-                loop_state.mark_terminal(
-                    LoopTransitionReason::NoBackendConfigured,
-                    "no primary or fallback backend is configured",
-                );
-                self.persist_loop_snapshot(&loop_state);
-                return "Error: No LLM backend configured".into();
-            }
-        }
-
         // ── Phase 2: ContextLoading ──────────────────────────────────────
+        // Shortcuts are pure local transforms and do not require an LLM
+        // backend.  Resolve the session workdir and attempt shortcuts before
+        // the backend check so that offline / test scenarios can still return
+        // a shortcut result without a backend configured.
         loop_state.transition(AgentPhase::ContextLoading);
 
         log_conversation("User", prompt);
@@ -106,6 +95,21 @@ impl AgentCore {
             .await
         {
             return text;
+        }
+
+        // Quick check: do we have any backend?
+        {
+            let has_primary = self.backend.read().await.is_some();
+            let has_fallback = !self.fallback_backends.read().await.is_empty();
+            if !has_primary && !has_fallback {
+                loop_state.last_error = Some("No LLM backend configured".into());
+                loop_state.mark_terminal(
+                    LoopTransitionReason::NoBackendConfigured,
+                    "no primary or fallback backend is configured",
+                );
+                self.persist_loop_snapshot(&loop_state);
+                return "Error: No LLM backend configured".into();
+            }
         }
 
         // Build conversation history — compaction-aware load

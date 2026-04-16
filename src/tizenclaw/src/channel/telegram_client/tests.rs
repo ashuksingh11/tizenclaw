@@ -244,11 +244,15 @@ mod tests {
             reply.reply_markup.as_ref().unwrap()["keyboard"][0][0],
             "/select chat"
         );
+        assert_eq!(
+            reply.reply_markup.as_ref().unwrap()["keyboard"][0][1],
+            "/select backend"
+        );
         assert!(
             reply.reply_markup.as_ref().unwrap()["keyboard"][0]
                 .as_array()
                 .map(|row| row.len())
-                == Some(1)
+                == Some(2)
         );
     }
 
@@ -309,7 +313,11 @@ mod tests {
             Some("/select chat")
         );
         assert_eq!(
-            TelegramClient::pending_menu_command(&state, "2", &default_registry()),
+            TelegramClient::pending_menu_command(&state, "2", &default_registry()).as_deref(),
+            Some("/select backend")
+        );
+        assert_eq!(
+            TelegramClient::pending_menu_command(&state, "3", &default_registry()),
             None
         );
     }

@@ -104,7 +104,7 @@ impl TelegramClient {
     }
 
     fn select_keyboard() -> Value {
-        Self::build_reply_keyboard(&[&["/select chat"]])
+        Self::build_reply_keyboard(&[&["/select chat", "/select backend"]])
     }
 
     fn cli_backend_keyboard(cli_backends: &TelegramCliBackendRegistry) -> Value {
