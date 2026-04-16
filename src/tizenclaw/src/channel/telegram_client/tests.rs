@@ -1069,6 +1069,48 @@ mod tests {
     }
 
     #[test]
+    fn llm_config_telegram_section_overrides_model_choices() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "telegram_model_choices_{}_{}",
+            std::process::id(),
+            TelegramClient::current_timestamp_millis()
+        ));
+        std::fs::create_dir_all(&temp_root).unwrap();
+        std::fs::write(
+            temp_root.join("llm_config.json"),
+            r#"{
+                "telegram": {
+                    "cli_backends": {
+                        "backends": {
+                            "gemini": {
+                                "model_choices": [
+                                    {"value": "gemini-2.5-pro", "label": "Pro", "description": "Best quality"},
+                                    {"value": "gemini-2.5-flash", "label": "Flash", "description": "Faster"}
+                                ]
+                            }
+                        }
+                    }
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let mut cli_backends = default_registry();
+        TelegramClient::read_backend_models_from_llm_config(&temp_root, &mut cli_backends);
+
+        let choices = &cli_backends
+            .get(&backend("gemini"))
+            .unwrap()
+            .model_choices;
+        assert_eq!(choices.len(), 2);
+        assert_eq!(choices[0].value, "gemini-2.5-pro");
+        assert_eq!(choices[1].value, "gemini-2.5-flash");
+
+        let _ = std::fs::remove_file(temp_root.join("llm_config.json"));
+        let _ = std::fs::remove_dir(&temp_root);
+    }
+
+    #[test]
     fn startup_targets_include_allowed_chat_ids_without_saved_state() {
         let chat_states = Arc::new(Mutex::new(HashMap::new()));
         let allowed = Arc::new(HashSet::from([12345_i64]));

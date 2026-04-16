@@ -28,6 +28,14 @@ pub struct ClawHubLockEntry {
     pub version: Option<String>,
     pub install_path: String,
     pub installed_at_secs: u64,
+    /// Source registry kind.  Always `"clawhub"` for registry-managed skills.
+    /// Optional so existing lock entries without this field remain readable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_kind: Option<String>,
+    /// Base URL of the registry that the skill was installed from.
+    /// Defaults to `DEFAULT_CLAWHUB_BASE_URL` when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_base_url: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -200,6 +208,176 @@ pub fn clawhub_list(skill_hubs_dir: &Path) -> Result<Value, String> {
     Ok(json!({
         "skills": lock.skills,
         "lock_path": lock_path.to_string_lossy().as_ref(),
+    }))
+}
+
+/// Re-install all skills tracked by the lock file using the recorded source.
+///
+/// Skills without a `source_base_url` default to `DEFAULT_CLAWHUB_BASE_URL`.
+/// A failure for one skill does not abort the rest; each entry is classified as
+/// `updated`, `skipped`, or `failed` in the result.
+pub async fn clawhub_update(skill_hubs_dir: &Path) -> Result<Value, String> {
+    let workspace_dir = skill_hubs_dir.parent().unwrap_or(skill_hubs_dir);
+    let lock_path = workspace_dir.join(LOCK_SUBPATH);
+    let lock = load_lock_file(&lock_path);
+
+    if lock.skills.is_empty() {
+        return Ok(json!({
+            "updated": [],
+            "skipped": [{"slug": "__empty__", "status": "skipped", "detail": "lock file has no tracked skills"}],
+            "failed": [],
+            "lock_path": lock_path.to_string_lossy().as_ref(),
+        }));
+    }
+
+    let client = build_client()?;
+    let mut updated = Vec::new();
+    let mut skipped: Vec<Value> = Vec::new();
+    let mut failed: Vec<Value> = Vec::new();
+
+    for entry in &lock.skills {
+        let slug = &entry.slug;
+        let base_url = entry
+            .source_base_url
+            .as_deref()
+            .unwrap_or(DEFAULT_CLAWHUB_BASE_URL)
+            .trim_end_matches('/')
+            .to_string();
+
+        match update_one_skill(skill_hubs_dir, entry, &client, &base_url).await {
+            Ok(outcome) => {
+                if outcome["status"] == "updated" {
+                    updated.push(outcome);
+                } else {
+                    skipped.push(outcome);
+                }
+            }
+            Err(detail) => {
+                log::warn!("ClawHub update failed for '{}': {}", slug, detail);
+                failed.push(json!({
+                    "slug": slug,
+                    "display_name": entry.display_name,
+                    "status": "failed",
+                    "detail": detail,
+                }));
+            }
+        }
+    }
+
+    Ok(json!({
+        "updated": updated,
+        "skipped": skipped,
+        "failed": failed,
+        "lock_path": lock_path.to_string_lossy().as_ref(),
+    }))
+}
+
+/// Re-install one skill using its lock-file source identity.
+async fn update_one_skill(
+    skill_hubs_dir: &Path,
+    entry: &ClawHubLockEntry,
+    client: &reqwest::Client,
+    base_url: &str,
+) -> Result<Value, String> {
+    let slug = &entry.slug;
+    let previous_version = entry.version.clone();
+
+    // Fetch current metadata to get the latest version.
+    let detail_url = format!("{}/api/v1/skills/{}", base_url, slug);
+    let detail_resp = client
+        .get(&detail_url)
+        .send()
+        .await
+        .map_err(|err| format!("ClawHub detail request failed for '{}': {}", slug, err))?;
+    let detail_status = detail_resp.status();
+    let detail_body = detail_resp.text().await.unwrap_or_default();
+    if !detail_status.is_success() {
+        return Err(format!(
+            "ClawHub skill '{}' metadata fetch failed ({}): {}",
+            slug, detail_status, detail_body
+        ));
+    }
+    let detail: Value = serde_json::from_str(&detail_body)
+        .map_err(|err| format!("ClawHub detail parse failed for '{}': {}", slug, err))?;
+
+    let display_name = detail
+        .pointer("/skill/displayName")
+        .and_then(Value::as_str)
+        .unwrap_or(slug)
+        .to_string();
+    let new_version = detail
+        .pointer("/latestVersion/version")
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+
+    // Download the archive.
+    let download_url = format!("{}/api/v1/download", base_url);
+    let download_resp = client
+        .get(&download_url)
+        .query(&[("slug", slug.as_str())])
+        .send()
+        .await
+        .map_err(|err| format!("ClawHub download failed for '{}': {}", slug, err))?;
+    let download_status = download_resp.status();
+    if !download_status.is_success() {
+        let err_body = download_resp.text().await.unwrap_or_default();
+        return Err(format!(
+            "ClawHub download for '{}' failed ({}): {}",
+            slug, download_status, err_body
+        ));
+    }
+    let archive_bytes = download_resp
+        .bytes()
+        .await
+        .map_err(|err| format!("ClawHub archive read failed for '{}': {}", slug, err))?;
+
+    // Extract to staging, validate, then atomically replace live install.
+    let install_dir = skill_hubs_dir.join("clawhub").join(slug);
+    let staging_dir = skill_hubs_dir
+        .join("clawhub")
+        .join(format!("{}.__installing__", slug));
+    let backup_dir = skill_hubs_dir
+        .join("clawhub")
+        .join(format!("{}.__backup__", slug));
+
+    if staging_dir.exists() {
+        std::fs::remove_dir_all(&staging_dir).map_err(|err| {
+            format!(
+                "Failed to remove stale staging dir for '{}': {}",
+                slug, err
+            )
+        })?;
+    }
+    std::fs::create_dir_all(&staging_dir).map_err(|err| {
+        format!("Failed to create staging dir for '{}': {}", slug, err)
+    })?;
+
+    extract_zip_archive(&archive_bytes, &staging_dir, slug).map_err(|err| {
+        let _ = std::fs::remove_dir_all(&staging_dir);
+        err
+    })?;
+    validate_extracted_skill(&staging_dir, slug).map_err(|err| {
+        let _ = std::fs::remove_dir_all(&staging_dir);
+        err
+    })?;
+    atomic_replace_dir(&staging_dir, &install_dir, &backup_dir)?;
+
+    // Update lock entry with new version and source.
+    let workspace_dir = skill_hubs_dir.parent().unwrap_or(skill_hubs_dir);
+    update_lock_file(
+        workspace_dir,
+        slug,
+        &display_name,
+        new_version.as_deref(),
+        &install_dir,
+    )?;
+
+    Ok(json!({
+        "slug": slug,
+        "display_name": display_name,
+        "status": "updated",
+        "previous_version": previous_version,
+        "current_version": new_version,
     }))
 }
 
@@ -440,11 +618,15 @@ fn update_lock_file(
         .unwrap_or_default()
         .as_secs();
 
+    let base_url = resolve_base_url();
     if let Some(entry) = lock.skills.iter_mut().find(|entry| entry.slug == slug) {
         entry.display_name = display_name.to_string();
         entry.version = version.map(ToString::to_string);
         entry.install_path = install_dir.to_string_lossy().to_string();
         entry.installed_at_secs = now_secs;
+        // Persist source fields on every write so existing entries get updated.
+        entry.source_kind = Some("clawhub".to_string());
+        entry.source_base_url = Some(base_url.clone());
     } else {
         lock.skills.push(ClawHubLockEntry {
             slug: slug.to_string(),
@@ -452,6 +634,8 @@ fn update_lock_file(
             version: version.map(ToString::to_string),
             install_path: install_dir.to_string_lossy().to_string(),
             installed_at_secs: now_secs,
+            source_kind: Some("clawhub".to_string()),
+            source_base_url: Some(base_url),
         });
     }
 
@@ -479,7 +663,10 @@ pub fn skill_hubs_dir_from_paths(
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_zip_archive, load_lock_file, parse_clawhub_slug, update_lock_file, ClawHubLock};
+    use super::{
+        extract_zip_archive, load_lock_file, parse_clawhub_slug, update_lock_file, ClawHubLock,
+        ClawHubLockEntry,
+    };
     use std::io::Write as _;
     use tempfile::tempdir;
 
@@ -719,5 +906,58 @@ mod tests {
 
         assert!(install.join("SKILL.md").exists());
         assert!(!backup.exists());
+    }
+
+    #[test]
+    fn update_lock_file_writes_source_fields() {
+        let dir = tempdir().unwrap();
+        let install_dir = dir.path().join("skill-hubs/clawhub/my-skill");
+        update_lock_file(dir.path(), "my-skill", "My Skill", Some("1.0.0"), &install_dir).unwrap();
+        let lock = load_lock_file(&dir.path().join(".clawhub/lock.json"));
+        assert_eq!(lock.skills.len(), 1);
+        let entry = &lock.skills[0];
+        assert!(entry.source_kind.as_deref() == Some("clawhub"), "source_kind must be set");
+        assert!(entry.source_base_url.is_some(), "source_base_url must be set");
+    }
+
+    #[test]
+    fn lock_entry_with_legacy_fields_deserializes_ok() {
+        // Lock entries written before the source fields were added must still
+        // deserialize without error.
+        let json = r#"{
+            "skills": [{
+                "slug": "old-skill",
+                "display_name": "Old Skill",
+                "version": "0.9.0",
+                "install_path": "/some/path",
+                "installed_at_secs": 0
+            }]
+        }"#;
+        let lock: ClawHubLock = serde_json::from_str(json).unwrap();
+        assert_eq!(lock.skills.len(), 1);
+        assert!(lock.skills[0].source_kind.is_none());
+        assert!(lock.skills[0].source_base_url.is_none());
+    }
+
+    #[test]
+    fn clawhub_update_returns_skipped_for_empty_lock() {
+        // When the lock file has no tracked skills, update must return a
+        // success response with an explicit skipped entry — not an error.
+        let dir = tempdir().unwrap();
+        let skill_hubs_dir = dir.path().join("workspace/skill-hubs");
+        std::fs::create_dir_all(&skill_hubs_dir).unwrap();
+
+        // No lock file exists — clawhub_update should handle the empty case.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let result = rt
+            .block_on(super::clawhub_update(&skill_hubs_dir))
+            .unwrap();
+        let skipped = result["skipped"].as_array().unwrap();
+        assert!(!skipped.is_empty(), "must report at least one skipped entry for empty lock");
+        assert!(result["failed"].as_array().unwrap().is_empty());
+        assert!(result["updated"].as_array().unwrap().is_empty());
     }
 }

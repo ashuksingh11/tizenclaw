@@ -97,6 +97,7 @@ enum CommandMode {
     SkillHubList,
     SkillHubSearch { query: String },
     SkillHubInstall { source: String },
+    SkillHubUpdate,
 }
 
 #[derive(Clone, Debug)]
@@ -541,6 +542,10 @@ impl IpcClient {
 
     fn clawhub_search(&self, query: &str) -> Result<Value, String> {
         self.call("clawhub_search", json!({ "query": query }))
+    }
+
+    fn clawhub_update(&self) -> Result<Value, String> {
+        self.call("clawhub_update", json!({}))
     }
 
     fn clawhub_install(&self, source: &str) -> Result<Value, String> {
@@ -2282,7 +2287,8 @@ fn print_usage() {
     eprintln!("ClawHub commands:");
     eprintln!("  tizenclaw-cli skill-hub list");
     eprintln!("  tizenclaw-cli skill-hub search <query>");
-    eprintln!("  tizenclaw-cli skill-hub install <slug>\n");
+    eprintln!("  tizenclaw-cli skill-hub install <slug>");
+    eprintln!("  tizenclaw-cli skill-hub update\n");
     eprintln!("If no prompt given, starts interactive mode.");
 }
 
@@ -2494,9 +2500,10 @@ fn parse_cli(args: &[String]) -> Result<ParsedCli, String> {
                         }
                         CommandMode::SkillHubInstall { source }
                     }
+                    "update" => CommandMode::SkillHubUpdate,
                     _ => {
                         return Err(
-                            "Usage: tizenclaw-cli skill-hub <list|search|install>".into()
+                            "Usage: tizenclaw-cli skill-hub <list|search|install|update>".into()
                         );
                     }
                 };
@@ -2599,6 +2606,14 @@ fn cmd_skill_hub_install(client: &IpcClient, source: &str) {
     }
 }
 
+fn cmd_skill_hub_update(client: &IpcClient) {
+    eprintln!("Updating all tracked skills from ClawHub...");
+    match client.clawhub_update() {
+        Ok(result) => print_json(&result),
+        Err(error) => print_error_and_exit(&error),
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let parsed = parse_cli(&args).unwrap_or_else(|err| print_error_and_exit(&err));
@@ -2693,6 +2708,7 @@ fn main() {
         CommandMode::SkillHubList => cmd_skill_hub_list(&client),
         CommandMode::SkillHubSearch { query } => cmd_skill_hub_search(&client, &query),
         CommandMode::SkillHubInstall { source } => cmd_skill_hub_install(&client, &source),
+        CommandMode::SkillHubUpdate => cmd_skill_hub_update(&client),
         CommandMode::Auth(_) | CommandMode::Setup => unreachable!(),
     }
 }

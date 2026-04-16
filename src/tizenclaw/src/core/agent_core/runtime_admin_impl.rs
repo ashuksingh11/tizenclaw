@@ -2,12 +2,7 @@ impl AgentCore {
     pub async fn shutdown(&self) {
         log::info!("AgentCore shutting down");
         self.event_bus.stop();
-        if let Some(b) = self.backend.write().await.as_mut() {
-            b.shutdown();
-        }
-        for fb in self.fallback_backends.write().await.iter_mut() {
-            fb.shutdown();
-        }
+        self.provider_registry.write().await.shutdown_all();
     }
 
     pub fn get_session_store(&self) -> Option<SessionStoreRef<'_>> {
@@ -225,30 +220,33 @@ impl AgentCore {
     }
 
     pub fn get_llm_runtime(&self) -> Value {
-        let (configured_active_backend, configured_fallback_backends) = match self.llm_config.lock()
-        {
-            Ok(config) => (
-                config.active_backend.clone(),
-                config.fallback_backends.clone(),
-            ),
-            Err(err) => {
-                let config = err.into_inner();
-                (
+        // Use a blocking try to avoid deadlock when called from a sync context
+        // that may already hold a registry read lock.  Falls back to reading
+        // the stored `llm_config` for basic compatibility fields.
+        if let Ok(rg) = self.provider_registry.try_read() {
+            return rg.status_json();
+        }
+        // Fallback path: registry is write-locked (reload in progress).
+        let (configured_active_backend, configured_fallback_backends) =
+            match self.llm_config.lock() {
+                Ok(config) => (
                     config.active_backend.clone(),
                     config.fallback_backends.clone(),
-                )
-            }
-        };
-        let runtime_primary_backend = match self.backend_name.read() {
-            Ok(name) => name.clone(),
-            Err(err) => err.into_inner().clone(),
-        };
-
+                ),
+                Err(err) => {
+                    let config = err.into_inner();
+                    (
+                        config.active_backend.clone(),
+                        config.fallback_backends.clone(),
+                    )
+                }
+            };
         json!({
             "configured_active_backend": configured_active_backend,
             "configured_fallback_backends": configured_fallback_backends,
-            "runtime_primary_backend": runtime_primary_backend,
-            "runtime_has_primary_backend": !runtime_primary_backend.is_empty()
+            "configured_provider_order": configured_fallback_backends,
+            "providers": [],
+            "current_selection": Value::Null,
         })
     }
 
@@ -613,6 +611,15 @@ impl AgentCore {
         }
     }
 
+    pub async fn clawhub_update(&self) -> Value {
+        let skill_hubs_dir =
+            crate::core::clawhub_client::skill_hubs_dir_from_paths(&self.platform.paths);
+        match crate::core::clawhub_client::clawhub_update(&skill_hubs_dir).await {
+            Ok(result) => json!({ "status": "ok", "result": result }),
+            Err(err) => json!({ "status": "error", "error": err }),
+        }
+    }
+
     pub async fn register_external_path(
         &self,
         kind: RegistrationKind,
@@ -721,10 +728,9 @@ impl AgentCore {
         );
 
         // Phase 3: LLM-assisted markdown generation (single call)
-        let has_primary = self.backend.read().await.is_some();
-        let has_fallback = !self.fallback_backends.read().await.is_empty();
+        let has_any_backend = self.provider_registry.read().await.has_any();
 
-        if has_primary || has_fallback {
+        if has_any_backend {
             log::info!("[Startup Indexing] Generating documentation via LLM...");
             let prompt = tool_indexer::build_indexing_prompt(&metadata);
             let system_prompt = "You are a precise documentation generator. \

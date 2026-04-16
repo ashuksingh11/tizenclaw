@@ -99,9 +99,7 @@ impl AgentCore {
 
         // Quick check: do we have any backend?
         {
-            let has_primary = self.backend.read().await.is_some();
-            let has_fallback = !self.fallback_backends.read().await.is_empty();
-            if !has_primary && !has_fallback {
+            if !self.provider_registry.read().await.has_any() {
                 loop_state.last_error = Some("No LLM backend configured".into());
                 loop_state.mark_terminal(
                     LoopTransitionReason::NoBackendConfigured,
@@ -377,10 +375,12 @@ impl AgentCore {
                 .collect();
             builder = builder.add_available_skill_references(formatted_skill_references);
 
-            let model_name = {
-                let bn = self.backend_name.read().unwrap_or_else(|e| e.into_inner());
-                (*bn).clone()
-            };
+            let model_name = self
+                .provider_registry
+                .read()
+                .await
+                .primary_name()
+                .to_string();
             let prompt_mode = session_profile
                 .as_ref()
                 .and_then(|profile| profile.prompt_mode)
@@ -471,9 +471,9 @@ impl AgentCore {
                     cached_hash,
                     new_hash
                 );
-                let be_guard = self.backend.read().await;
-                if let Some(be) = be_guard.as_ref() {
-                    let cached = be.prepare_cache(&system_prompt).await;
+                let rg = self.provider_registry.read().await;
+                if let Some(primary) = rg.instances().first() {
+                    let cached = primary.backend.prepare_cache(&system_prompt).await;
                     if cached {
                         log::info!(
                             "[PromptCache] Cache ready — subsequent rounds will reference cached content"
@@ -484,7 +484,7 @@ impl AgentCore {
                         );
                     }
                 }
-                drop(be_guard);
+                drop(rg);
                 // Always update the stored hash so we do not retry on every call
                 *self.prompt_hash.write().await = new_hash;
             } else {
@@ -1096,12 +1096,11 @@ impl AgentCore {
             // Record token usage
             {
                 let be_name = self
-                    .backend
+                    .provider_registry
                     .read()
                     .await
-                    .as_ref()
-                    .map(|be| be.get_name().to_string())
-                    .unwrap_or_else(|| "unknown".into());
+                    .primary_name()
+                    .to_string();
                 if let Ok(ss) = self.session_store.lock() {
                     if let Some(store) = ss.as_ref() {
                         store.record_usage(

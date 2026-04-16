@@ -69,10 +69,11 @@ impl AgentCore {
             let plan_sys = "You are a precise planner. Outline the distinct steps to solve the user's request. Output only a list of concise steps.";
 
             let plan_response = {
-                let backend_guard = self.backend.read().await;
-                if let Some(backend) = backend_guard.as_ref() {
+                let rg = self.provider_registry.read().await;
+                if let Some(primary) = rg.instances().first() {
                     Some(
-                        backend
+                        primary
+                            .backend
                             .chat(
                                 &sanitize_messages_for_transport(vec![LlmMessage::user(prompt)]),
                                 &[],

@@ -50,3 +50,5 @@ pub mod on_device_embedding;
 pub mod wordpiece_tokenizer;
 // ClawHub skill hub integration
 pub mod clawhub_client;
+// Provider selection layer
+pub mod provider_selection;

@@ -811,6 +811,9 @@ impl IpcServer {
                 Ok(result) => result,
                 Err(response) => return response,
             },
+            "clawhub_update" => tokio::task::block_in_place(|| {
+                rt_handle.block_on(agent.clawhub_update())
+            }),
             _ => {
                 return Self::jsonrpc_error(
                     req_id,

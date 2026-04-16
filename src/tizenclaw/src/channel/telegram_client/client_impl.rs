@@ -173,15 +173,6 @@ impl TelegramClient {
         config_dir: &Path,
         cli_backends: &mut TelegramCliBackendRegistry,
     ) {
-        let gemini_backend = TelegramCliBackend::new("gemini");
-        if cli_backends
-            .get(&gemini_backend)
-            .and_then(|definition| definition.model.as_deref())
-            .is_some()
-        {
-            return;
-        }
-
         let llm_config = config_dir.join("llm_config.json");
         let Ok(content) = std::fs::read_to_string(&llm_config) else {
             return;
@@ -189,19 +180,34 @@ impl TelegramClient {
         let Ok(json) = serde_json::from_str::<Value>(&content) else {
             return;
         };
-        let Some(model) = json
-            .get("backends")
-            .and_then(|v| v.get("gemini"))
-            .and_then(|v| v.get("model"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
-            return;
-        };
 
-        if let Some(definition) = cli_backends.definitions.get_mut(&gemini_backend) {
-            definition.model = Some(model.to_string());
+        // Merge telegram-scoped cli_backends overrides (model_choices etc.)
+        // from the optional `telegram.cli_backends` key in llm_config.json.
+        if let Some(telegram_section) = json.get("telegram") {
+            cli_backends.merge_config_value(telegram_section.get("cli_backends"));
+        }
+
+        // Gemini model fallback: if the operator has not set a model for the
+        // gemini backend (neither in telegram_config.json nor above), try the
+        // top-level `backends.gemini.model` key for backwards compatibility.
+        let gemini_backend = TelegramCliBackend::new("gemini");
+        let gemini_model_set = cli_backends
+            .get(&gemini_backend)
+            .and_then(|definition| definition.model.as_deref())
+            .is_some();
+        if !gemini_model_set {
+            if let Some(model) = json
+                .get("backends")
+                .and_then(|v| v.get("gemini"))
+                .and_then(|v| v.get("model"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                if let Some(definition) = cli_backends.definitions.get_mut(&gemini_backend) {
+                    definition.model = Some(model.to_string());
+                }
+            }
         }
     }
 

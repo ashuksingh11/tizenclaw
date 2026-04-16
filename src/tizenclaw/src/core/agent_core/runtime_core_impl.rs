@@ -3,8 +3,9 @@ impl AgentCore {
         let keys_dir = platform.paths.config_dir.join("keys");
         AgentCore {
             platform,
-            backend: tokio::sync::RwLock::new(None),
-            fallback_backends: tokio::sync::RwLock::new(Vec::new()),
+            provider_registry: tokio::sync::RwLock::new(
+                crate::core::provider_selection::ProviderRegistry::default(),
+            ),
             session_store: Mutex::new(None),
             tool_dispatcher: tokio::sync::RwLock::new(ToolDispatcher::new()),
             safety_guard: Arc::new(Mutex::new(SafetyGuard::new())),
@@ -13,7 +14,6 @@ impl AgentCore {
             key_store: Mutex::new(KeyStore::new(&keys_dir)),
             system_prompt: RwLock::new(String::new()),
             soul_content: RwLock::new(None),
-            backend_name: RwLock::new(String::new()),
             llm_config: Mutex::new(LlmConfig::default()),
             circuit_breakers: RwLock::new(std::collections::HashMap::new()),
             action_bridge: Mutex::new(crate::core::action_bridge::ActionBridge::new()),
@@ -1038,22 +1038,26 @@ impl AgentCore {
         // Load LLM config (supports multi-backend + fallback)
         let llm_config_path = paths.config_dir.join("llm_config.json");
         let config = LlmConfig::load(&llm_config_path.to_string_lossy());
-        let fallback_names = config.fallback_backends.clone();
+        let llm_doc = crate::core::llm_config_store::load(&paths.config_dir)
+            .unwrap_or_else(|_| crate::core::llm_config_store::default_document());
 
         // Initialize plugin manager
         let mut plugin_manager = crate::llm::plugin_manager::PluginManager::new();
         // Plugins are exclusively scanned via PackageManager via `scan_plugins`.
         plugin_manager.scan_plugins(Some(self.platform.package_manager.as_ref()));
 
-        // Unified priority-based selection
+        // Build provider routing config from llm_config document.
+        let routing =
+            crate::core::provider_selection::ProviderCompatibilityTranslator::translate(&llm_doc);
+
+        // Unified priority-based selection — candidates are ordered by priority.
         let candidates = self.get_backend_candidates(&config, &plugin_manager);
 
-        // 5. Initialize backends iteratively
-        let mut primary_initialized = false;
-        let mut fallbacks = Vec::new();
+        // Initialize backends; build the provider registry in configured preference order.
+        let mut instances: Vec<crate::core::provider_selection::ProviderInstance> = Vec::new();
 
-        for cand in candidates {
-            // Acquire KeyStore briefly — clone the api_key value, then drop the guard.
+        // Iterate candidate list in priority order and initialize each backend.
+        for cand in &candidates {
             let merged_cfg = {
                 let ks_guard = self.key_store.lock().unwrap_or_else(|e| e.into_inner());
                 let base = config.backend_config(&cand.name);
@@ -1063,39 +1067,42 @@ impl AgentCore {
             if let Some(be) =
                 Self::create_and_init_backend_static(&plugin_manager, &cand.name, merged_cfg)
             {
-                if !primary_initialized {
-                    log::info!(
-                        "Primary LLM backend '{}' initialized (priority {})",
-                        cand.name,
-                        cand.priority
-                    );
-                    *self.backend.write().await = Some(be);
-                    if let Ok(mut bn) = self.backend_name.write() {
-                        *bn = cand.name.clone();
-                    }
-                    primary_initialized = true;
-                } else if fallback_names.contains(&cand.name) {
-                    log::info!(
-                        "Fallback LLM backend '{}' initialized (priority {})",
-                        cand.name,
-                        cand.priority
-                    );
-                    fallbacks.push(be);
-                } else {
-                    log::debug!(
-                        "Backend '{}' initialized but not in fallback_backends, skipping as fallback",
-                        cand.name
-                    );
-                }
+                let slot = if instances.is_empty() { "Primary" } else { "Fallback" };
+                log::info!(
+                    "{} LLM backend '{}' initialized (priority {})",
+                    slot,
+                    cand.name,
+                    cand.priority
+                );
+                instances.push(crate::core::provider_selection::ProviderInstance {
+                    name: cand.name.clone(),
+                    backend: be,
+                    last_init_error: None,
+                });
+            } else {
+                log::warn!("Backend '{}' failed to initialize", cand.name);
             }
         }
 
-        if !primary_initialized {
-            log::error!("Failed to initialize ANY backend from candidates list!");
-            *self.backend.write().await = None;
+        // Re-order instances to match the configured routing preference order so
+        // ProviderSelector iterates in the operator-specified order, not the
+        // initialization candidate order which may differ (e.g. plugin priority).
+        let ordered_names = routing.ordered_names();
+        if !ordered_names.is_empty() {
+            instances.sort_by_key(|inst| {
+                ordered_names
+                    .iter()
+                    .position(|name| *name == inst.name.as_str())
+                    .unwrap_or(usize::MAX)
+            });
         }
 
-        *self.fallback_backends.write().await = fallbacks;
+        if instances.is_empty() {
+            log::error!("Failed to initialize ANY backend from candidates list!");
+        }
+
+        let registry = crate::core::provider_selection::ProviderRegistry::new(routing, instances);
+        *self.provider_registry.write().await = registry;
 
         // Store config for later use
         if let Ok(mut cfg) = self.llm_config.lock() {
@@ -1154,7 +1161,7 @@ impl AgentCore {
         self.publish_runtime_event(
             "initialize",
             json!({
-                "primary_backend": self.get_llm_runtime()["runtime_primary_backend"],
+                "primary_backend": self.provider_registry.read().await.primary_name(),
                 "tool_roots": collect_tool_roots(paths),
             }),
         );
@@ -1198,25 +1205,29 @@ impl AgentCore {
         }
     }
 
-    /// Reload LLM backends dynamically
+    /// Reload LLM backends dynamically.
+    ///
+    /// Shuts down the current registry, re-reads config, re-initializes all
+    /// backends, and publishes a `reload_backends` event.
     pub async fn reload_backends(&self) {
         let paths = &self.platform.paths;
         let llm_config_path = paths.config_dir.join("llm_config.json");
         let config = LlmConfig::load(&llm_config_path.to_string_lossy());
+        let llm_doc = crate::core::llm_config_store::load(&paths.config_dir)
+            .unwrap_or_else(|_| crate::core::llm_config_store::default_document());
         self.reload_safety_guard();
 
         // Re-scan plugins
         let mut plugin_manager = crate::llm::plugin_manager::PluginManager::new();
         plugin_manager.scan_plugins(Some(self.platform.package_manager.as_ref()));
 
-        // Unified priority-based selection
+        let routing =
+            crate::core::provider_selection::ProviderCompatibilityTranslator::translate(&llm_doc);
+
         let candidates = self.get_backend_candidates(&config, &plugin_manager);
+        let mut instances: Vec<crate::core::provider_selection::ProviderInstance> = Vec::new();
 
-        let mut primary_initialized = false;
-        let mut fallbacks = Vec::new();
-
-        for cand in candidates {
-            // Acquire KeyStore briefly — merge api_key, then drop guard.
+        for cand in &candidates {
             let merged_cfg = {
                 let ks_guard = self.key_store.lock().unwrap_or_else(|e| e.into_inner());
                 let base = config.backend_config(&cand.name);
@@ -1226,30 +1237,42 @@ impl AgentCore {
             if let Some(be) =
                 Self::create_and_init_backend_static(&plugin_manager, &cand.name, merged_cfg)
             {
-                if !primary_initialized {
-                    log::debug!(
-                        "Dynamically swapped Primary LLM backend to '{}' (priority {})",
-                        cand.name,
-                        cand.priority
-                    );
-                    *self.backend.write().await = Some(be);
-                    if let Ok(mut bn) = self.backend_name.write() {
-                        *bn = cand.name.clone();
-                    }
-                    primary_initialized = true;
-                } else {
-                    fallbacks.push(be);
-                }
+                let slot = if instances.is_empty() { "Primary" } else { "Fallback" };
+                log::debug!(
+                    "Reload: {} LLM backend '{}' initialized (priority {})",
+                    slot,
+                    cand.name,
+                    cand.priority
+                );
+                instances.push(crate::core::provider_selection::ProviderInstance {
+                    name: cand.name.clone(),
+                    backend: be,
+                    last_init_error: None,
+                });
             }
         }
 
-        if !primary_initialized {
-            log::warn!("Failed to initialize ANY backend during reload!");
-            *self.backend.write().await = None;
+        // Re-order to match configured routing preference.
+        let ordered_names = routing.ordered_names();
+        if !ordered_names.is_empty() {
+            instances.sort_by_key(|inst| {
+                ordered_names
+                    .iter()
+                    .position(|name| *name == inst.name.as_str())
+                    .unwrap_or(usize::MAX)
+            });
         }
 
-        // Properly update fallback backends
-        *self.fallback_backends.write().await = fallbacks;
+        if instances.is_empty() {
+            log::warn!("Failed to initialize ANY backend during reload!");
+        }
+
+        // Atomically replace the old registry (old backends are dropped here).
+        {
+            let mut rg = self.provider_registry.write().await;
+            rg.shutdown_all();
+            *rg = crate::core::provider_selection::ProviderRegistry::new(routing, instances);
+        }
 
         if let Ok(mut stored_config) = self.llm_config.lock() {
             *stored_config = config;
@@ -1334,9 +1357,11 @@ impl AgentCore {
         state.last_failure_time = Some(std::time::Instant::now());
     }
 
-    /// Execute a chat request against the primary backend, falling back on failure.
+    /// Execute a chat request using the provider registry.
     ///
-    /// Acquires backend lock only for the duration of each `chat()` call.
+    /// Iterates providers in the configured preference order, skipping any
+    /// that are blocked by the circuit breaker.  Holds the registry read lock
+    /// for the duration of each `chat()` call.
     async fn chat_with_fallback(
         &self,
         messages: &[LlmMessage],
@@ -1345,69 +1370,100 @@ impl AgentCore {
         system_prompt: &str,
         max_tokens: Option<u32>,
     ) -> LlmResponse {
-        let mut failure_summaries: Vec<String> = Vec::new();
+        use crate::core::provider_selection::{
+            ProviderAttempt, ProviderAttemptResult, ProviderSelectionRecord, ProviderSelector,
+        };
 
-        // Try primary backend — lock is held only during chat()
-        {
-            let bn = match self.backend_name.read() {
-                Ok(guard) => (*guard).clone(),
-                Err(p) => (*p.into_inner()).clone(),
+        let mut failure_summaries: Vec<String> = Vec::new();
+        let mut attempted: Vec<ProviderAttempt> = Vec::new();
+
+        // Snapshot the provider names so we can release the read lock before
+        // the chat call (which is async and may be long-running).
+        let provider_names: Vec<String> = {
+            let rg = self.provider_registry.read().await;
+            rg.instances().iter().map(|i| i.name.clone()).collect()
+        };
+
+        // Track a successful response to write the selection record after the loop.
+        let mut success_result: Option<(LlmResponse, usize)> = None;
+
+        'providers: for (idx, name) in provider_names.iter().enumerate() {
+            let slot = if idx == 0 { "Primary" } else { "Fallback" };
+
+            if !self.is_backend_available(name) {
+                log::warn!("{} backend '{}' skipped due to Circuit Breaker", slot, name);
+                failure_summaries.push(format!("{}: skipped by circuit breaker", name));
+                attempted.push(ProviderAttempt {
+                    provider: name.clone(),
+                    result: ProviderAttemptResult::SkippedOpenCircuit,
+                    detail: Some("circuit breaker open".to_string()),
+                });
+                continue;
+            }
+
+            if idx > 0 {
+                log::debug!("Trying fallback backend '{}'", name);
+            }
+
+            let resp = {
+                let rg = self.provider_registry.read().await;
+                let Some(inst) = rg.instances().iter().find(|i| i.name == *name) else {
+                    continue 'providers;
+                };
+                inst.backend
+                    .chat(messages, tools, on_chunk, system_prompt, max_tokens)
+                    .await
             };
 
-            if self.is_backend_available(&bn) {
-                let be_guard = self.backend.read().await;
-                if let Some(be) = be_guard.as_ref() {
-                    let resp = be
-                        .chat(messages, tools, on_chunk, system_prompt, max_tokens)
-                        .await;
-                    if resp.success {
-                        self.record_success(&bn);
-                        return resp;
-                    }
-                    self.record_failure(&bn);
-                    log::warn!(
-                        "Primary backend '{}' failed (HTTP {}): {}",
-                        bn,
-                        resp.http_status,
-                        resp.error_message
-                    );
-                    failure_summaries.push(format!(
-                        "{} (HTTP {}): {}",
-                        bn, resp.http_status, resp.error_message
-                    ));
-                }
-            } else {
-                log::warn!("Primary backend '{}' skipped due to Circuit Breaker", bn);
-                failure_summaries.push(format!("{}: skipped by circuit breaker", bn));
+            if resp.success {
+                self.record_success(name);
+                attempted.push(ProviderAttempt {
+                    provider: name.clone(),
+                    result: ProviderAttemptResult::Selected,
+                    detail: None,
+                });
+                success_result = Some((resp, idx));
+                break;
             }
-        }
-        // Primary lock is released here
 
-        // Try fallback backends in order
-        {
-            let fbs_guard = self.fallback_backends.read().await;
-            for fb in fbs_guard.iter() {
-                let bn = fb.get_name().to_string();
-                if self.is_backend_available(&bn) {
-                    log::debug!("Trying fallback backend '{}'", bn);
-                    let resp = fb
-                        .chat(messages, tools, on_chunk, system_prompt, max_tokens)
-                        .await;
-                    if resp.success {
-                        self.record_success(&bn);
-                        return resp;
-                    }
-                    self.record_failure(&bn);
-                    log::warn!("Fallback '{}' also failed: {}", bn, resp.error_message);
-                    failure_summaries.push(format!(
-                        "{} (HTTP {}): {}",
-                        bn, resp.http_status, resp.error_message
-                    ));
+            self.record_failure(name);
+            log::warn!(
+                "{} backend '{}' failed (HTTP {}): {}",
+                slot,
+                name,
+                resp.http_status,
+                resp.error_message
+            );
+            failure_summaries.push(format!(
+                "{} (HTTP {}): {}",
+                name, resp.http_status, resp.error_message
+            ));
+            attempted.push(ProviderAttempt {
+                provider: name.clone(),
+                result: ProviderAttemptResult::ExecutionFailed,
+                detail: Some(resp.error_message.clone()),
+            });
+        }
+
+        if let Some((resp, idx)) = success_result {
+            let selected = &provider_names[idx];
+            let record = ProviderSelectionRecord {
+                selected_provider: selected.clone(),
+                attempted_providers: attempted,
+                reason: if idx == 0 {
+                    "first ready provider in configured order".to_string()
                 } else {
-                    log::warn!("Fallback backend '{}' skipped due to Circuit Breaker", bn);
-                    failure_summaries.push(format!("{}: skipped by circuit breaker", bn));
-                }
+                    format!("fallback to provider at position {}", idx)
+                },
+                selected_at_unix_secs: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            };
+            if let Ok(mut rg_write) = self.provider_registry.try_write() {
+                rg_write.set_active_selection(record);
             }
+            return resp;
         }
 
         let error_message = if failure_summaries.is_empty() {

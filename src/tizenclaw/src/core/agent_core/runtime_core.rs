@@ -2,13 +2,17 @@
 ///
 /// Callers share `Arc<AgentCore>` — no outer Mutex needed.
 /// Each field that requires mutation is individually protected:
-/// - `backend` + `fallback_backends`: Mutex (used during LLM calls)
+/// - `provider_registry`: RwLock — owns all initialized LLM backends and
+///   the configured preference order for request-time routing.
 /// - `session_store`: Mutex (SQLite is not Sync)
 /// - `tool_dispatcher`: RwLock (reads are frequent, writes are rare)
 pub struct AgentCore {
     platform: Arc<libtizenclaw_core::framework::PlatformContext>,
-    backend: tokio::sync::RwLock<Option<Box<dyn LlmBackend>>>,
-    fallback_backends: tokio::sync::RwLock<Vec<Box<dyn LlmBackend>>>,
+    /// Provider registry — owns all initialized backends in preference order.
+    /// Replaces the former `backend` + `fallback_backends` + `backend_name`
+    /// flat fields.  `ProviderSelector` picks the first available provider at
+    /// request time using the circuit-breaker state in `circuit_breakers`.
+    provider_registry: tokio::sync::RwLock<crate::core::provider_selection::ProviderRegistry>,
     session_store: Mutex<Option<SessionStore>>,
     tool_dispatcher: tokio::sync::RwLock<ToolDispatcher>,
     safety_guard: Arc<Mutex<SafetyGuard>>,
@@ -17,7 +21,6 @@ pub struct AgentCore {
     key_store: Mutex<KeyStore>,
     system_prompt: RwLock<String>,
     soul_content: RwLock<Option<String>>,
-    backend_name: RwLock<String>,
     llm_config: Mutex<LlmConfig>,
     circuit_breakers: RwLock<std::collections::HashMap<String, CircuitBreakerState>>,
     action_bridge: Mutex<crate::core::action_bridge::ActionBridge>,

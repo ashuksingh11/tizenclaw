@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 
 const SKILL_CAPABILITIES_CONFIG: &str = "skill_capabilities.json";
 
@@ -126,6 +127,120 @@ impl SkillCapabilitySnapshot {
     }
 }
 
+// ── Snapshot cache ────────────────────────────────────────────────────────────
+
+/// Reason that triggers a cache invalidation.
+#[derive(Clone, Debug)]
+pub enum SkillSnapshotInvalidationReason {
+    RegistrationChanged,
+    CapabilityConfigChanged,
+    SkillRootChanged,
+    ClawHubInstall,
+    ClawHubUpdate,
+    ManualReload,
+}
+
+/// Lightweight signature for one skill root directory.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SkillRootSignature {
+    path: String,
+    /// Directory-entry count (number of immediate children).
+    entry_count: usize,
+    /// Latest modification time (Unix seconds) of any immediate child.
+    latest_modified_unix_secs: u64,
+}
+
+impl SkillRootSignature {
+    fn from_path(path: &str) -> Self {
+        let dir = Path::new(path);
+        let mut entry_count = 0usize;
+        let mut latest_secs = 0u64;
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                entry_count += 1;
+                if let Ok(meta) = entry.metadata() {
+                    let secs = meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    if secs > latest_secs {
+                        latest_secs = secs;
+                    }
+                }
+            }
+        }
+        Self {
+            path: path.to_string(),
+            entry_count,
+            latest_modified_unix_secs: latest_secs,
+        }
+    }
+}
+
+/// Deterministic invalidation key for the snapshot cache.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SkillSnapshotFingerprint {
+    root_signatures: Vec<SkillRootSignature>,
+    /// Content hash of the registered skill path list.
+    registration_signature: u64,
+    /// Content hash of `skill_capabilities.json`.
+    config_signature: u64,
+}
+
+fn hash_str_u64(s: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.hash(&mut h);
+    h.finish()
+}
+
+impl SkillSnapshotFingerprint {
+    fn compute(paths: &PlatformPaths, registrations: &RegisteredPaths) -> Self {
+        let roots = collect_skill_roots(paths, registrations);
+        let root_signatures = roots
+            .iter()
+            .map(|root| SkillRootSignature::from_path(&root.path))
+            .collect();
+
+        let registration_input = registrations.skill_paths.join("|");
+        let registration_signature = hash_str_u64(&registration_input);
+
+        let config_path = paths.config_dir.join(SKILL_CAPABILITIES_CONFIG);
+        let config_content = std::fs::read_to_string(&config_path).unwrap_or_default();
+        let config_signature = hash_str_u64(&config_content);
+
+        Self {
+            root_signatures,
+            registration_signature,
+            config_signature,
+        }
+    }
+}
+
+struct SkillSnapshotCache {
+    fingerprint: SkillSnapshotFingerprint,
+    snapshot: SkillCapabilitySnapshot,
+}
+
+/// Process-global snapshot cache.  Protected by a `Mutex` so concurrent
+/// callers share one cached value without a separate reference-counted wrapper.
+static SNAPSHOT_CACHE: LazyLock<Mutex<Option<SkillSnapshotCache>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+/// Explicitly drop the cached snapshot so the next `load_snapshot` call
+/// rebuilds it from the filesystem.
+pub fn invalidate_snapshot_cache(reason: SkillSnapshotInvalidationReason) {
+    log::debug!(
+        "[SkillCache] Cache invalidated: {:?}",
+        reason
+    );
+    if let Ok(mut guard) = SNAPSHOT_CACHE.lock() {
+        *guard = None;
+    }
+}
+
 pub fn build_skill_snapshot(
     paths: &PlatformPaths,
     registrations: &RegisteredPaths,
@@ -180,7 +295,28 @@ pub fn load_snapshot(
     paths: &PlatformPaths,
     registrations: &RegisteredPaths,
 ) -> SkillCapabilitySnapshot {
-    build_skill_snapshot(paths, registrations)
+    let fingerprint = SkillSnapshotFingerprint::compute(paths, registrations);
+
+    if let Ok(guard) = SNAPSHOT_CACHE.lock() {
+        if let Some(cache) = guard.as_ref() {
+            if cache.fingerprint == fingerprint {
+                log::debug!("[SkillCache] Cache hit — returning cached snapshot");
+                return cache.snapshot.clone();
+            }
+        }
+    }
+
+    log::debug!("[SkillCache] Cache miss — rebuilding snapshot from filesystem");
+    let snapshot = build_skill_snapshot(paths, registrations);
+
+    if let Ok(mut guard) = SNAPSHOT_CACHE.lock() {
+        *guard = Some(SkillSnapshotCache {
+            fingerprint,
+            snapshot: snapshot.clone(),
+        });
+    }
+
+    snapshot
 }
 
 pub fn top_skills_for_prompt<'a>(
@@ -331,8 +467,9 @@ fn registered_tool_names(paths: &PlatformPaths, registrations: &RegisteredPaths)
 #[cfg(test)]
 mod tests {
     use super::{
-        build_skill_snapshot, load_snapshot, top_skills_for_prompt, SkillCapabilityConfig,
-        SKILL_CAPABILITIES_CONFIG,
+        build_skill_snapshot, invalidate_snapshot_cache, load_snapshot, top_skills_for_prompt,
+        SkillCapabilityConfig, SkillSnapshotInvalidationReason, SKILL_CAPABILITIES_CONFIG,
+        SNAPSHOT_CACHE,
     };
     use crate::core::registration_store::RegisteredPaths;
     use libtizenclaw_core::framework::paths::PlatformPaths;
@@ -491,6 +628,68 @@ mod tests {
         assert!(entry.dependency_ready);
         assert!(entry.enabled);
         assert!(entry.missing_requires.is_empty());
+    }
+
+    #[test]
+    fn snapshot_cache_returns_cached_value_on_second_call() {
+        // Clear shared process cache before this test.
+        *SNAPSHOT_CACHE.lock().unwrap() = None;
+
+        let temp = tempdir().unwrap();
+        let paths = PlatformPaths::from_base(temp.path().join("runtime"));
+        paths.ensure_dirs();
+
+        let skill_dir = paths.skills_dir.join("cached_skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: Cache test skill\n---\n# Cache\n",
+        )
+        .unwrap();
+
+        let registrations = RegisteredPaths::default();
+
+        // First call — populates cache.
+        let snap1 = load_snapshot(&paths, &registrations);
+        assert_eq!(snap1.skills.len(), 1);
+
+        // Second call with same inputs — must return cached value (same address
+        // is not testable, but entry count and name must match).
+        let snap2 = load_snapshot(&paths, &registrations);
+        assert_eq!(snap2.skills.len(), 1);
+        assert_eq!(snap1.skills[0].skill.file_name, snap2.skills[0].skill.file_name);
+    }
+
+    #[test]
+    fn snapshot_cache_invalidate_forces_rebuild() {
+        *SNAPSHOT_CACHE.lock().unwrap() = None;
+
+        let temp = tempdir().unwrap();
+        let paths = PlatformPaths::from_base(temp.path().join("runtime"));
+        paths.ensure_dirs();
+
+        let skill_dir = paths.skills_dir.join("inv_skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: Invalidation test\n---\n# Inv\n",
+        )
+        .unwrap();
+
+        let registrations = RegisteredPaths::default();
+
+        // Populate cache.
+        let _ = load_snapshot(&paths, &registrations);
+        assert!(SNAPSHOT_CACHE.lock().unwrap().is_some());
+
+        // Invalidate.
+        invalidate_snapshot_cache(SkillSnapshotInvalidationReason::ManualReload);
+        assert!(SNAPSHOT_CACHE.lock().unwrap().is_none());
+
+        // Next load rebuilds.
+        let snap = load_snapshot(&paths, &registrations);
+        assert_eq!(snap.skills.len(), 1);
+        assert!(SNAPSHOT_CACHE.lock().unwrap().is_some());
     }
 
     #[test]
