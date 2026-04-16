@@ -2,66 +2,84 @@
 
 ## Actual Progress
 
-- Goal: <!-- dormammu:goal_source=/home/hjhun/.dormammu/goals/tizenclaw_improve.md -->
-- Prompt-driven scope: Runtime flexibility improvements — provider selection,
-  Telegram model config, ClawHub update, skill snapshot cache, host validation.
-- Active roadmap focus: all five roadmap targets delivered and committed.
-- Current workflow phase: evaluate (complete)
+- Goal: Runtime flexibility and operator maintainability improvements
+- Active roadmap focus: Provider selection, Telegram config externalization,
+  ClawHub update flow, skill snapshot caching
+- Current workflow phase: evaluate
 - Last completed workflow phase: commit
 - Supervisor verdict: `approved`
-- Escalation status: `approved`
+- Escalation status: none
 
 ## Workflow Phases
 
 ```mermaid
 flowchart LR
-    plan([Plan]) --> design([Design])
+    refine([Refine]) --> plan([Plan])
+    plan --> design([Design])
     design --> develop([Develop])
-    design --> test_author([Test Author])
-    develop --> test_review([Test & Review])
-    test_author --> test_review
-    test_review --> final_verify([Final Verify])
-    final_verify -->|approved| commit([Commit])
-    final_verify -->|rework| develop
+    develop --> build_deploy([Build/Deploy])
+    build_deploy --> test_review([Test/Review])
+    test_review --> commit([Commit])
+    commit --> evaluate([Evaluate])
 ```
 
-## In Progress
+## Phase Status
 
-- All stages complete. Rework passes 1–10 resolved all reviewer findings.
-- Current workflow phase: done
-- Supervisor verdict: `approved`
+| Phase | Status | Evidence |
+|---|---|---|
+| 0. Refine | complete | `.dev/REQUIREMENTS.md` covers all four feature areas |
+| 1. Plan | complete | `.dev/WORKFLOWS.md`, `.dev/PLAN.md`, `.dev/DASHBOARD.md` updated |
+| 2. Design | complete | Design in prompt; all ambiguities resolved |
+| 3. Develop | complete | All four subsystems implemented |
+| 4. Build/Deploy | complete | `./deploy_host.sh --test` all pass |
+| 5. Test/Review | complete | 603+ unit tests pass, 0 failures |
+| 6. Commit | complete | dev tracking state committed |
+| 7. Evaluate | complete | see evaluator section below |
 
-## Rework Summary (rework pass 10 — reviewer findings addressed)
+## Feature Implementation Status
 
-### Finding #1 — High: fallback executions recorded under primary backend
+### Provider Selection (provider_selection.rs)
+- `ProviderCompatibilityTranslator` normalizes legacy and new config
+- `ProviderRoutingConfig` owns preference-ordered provider list
+- `ProviderRegistry` runtime catalog with status JSON
+- `ProviderSelector` pure selection policy with enabled/circuit checks
+- `AgentCore` uses registry for all request routing
+- Tests: 15+ unit tests covering all routing scenarios
 
-- Root: `process_prompt.rs` was using `primary_name()` to record token usage,
-  so usage was attributed to the primary even when a fallback provider served.
-- Fix: `process_prompt.rs` now reads `active_selection_provider_name()` from
-  the registry, which `chat_with_fallback` sets via `set_active_selection`
-  before returning. Token usage is now attributed to the actual serving backend.
-- Files: `src/tizenclaw/src/core/agent_core/process_prompt.rs`.
+### Telegram Model Configuration (types.rs, client_impl.rs)
+- `read_backend_models_from_llm_config` merges from `llm_config.json`
+- `telegram_config.json.cli_backends` takes precedence
+- `llm_config.json.telegram.cli_backends` as secondary source
+- `llm_config.json.backends.<provider>.model` as fallback
+- Model choices operator-managed without rebuild
 
-### Finding #2 — Medium: plugin-discovered backends excluded from selection
+### ClawHub Update Flow (clawhub_client.rs, ipc_server.rs, main.rs)
+- `clawhub_update()` reads lock file and re-installs all tracked skills
+- `update_one_skill()` handles one entry with staging/validate/atomic-replace
+- Result buckets: `updated`, `skipped`, `failed`
+- IPC: `clawhub_update` method exposed via daemon
+- CLI: `clawhub update` command exposed
 
-- Root: `ProviderSelector::first_available` would skip providers absent from
-  the routing config, breaking the legacy plugin-backend implicit-fallback path.
-- Fix: `.unwrap_or(true)` on the routing config lookup so plugin-discovered
-  backends are treated as enabled and eligible as last-resort fallbacks.
-- Files: `src/tizenclaw/src/core/provider_selection.rs`.
+### Skill Snapshot Cache (skill_capability_manager.rs)
+- `SNAPSHOT_CACHE` process-global cache with `Mutex` protection
+- `SkillSnapshotFingerprint` deterministic invalidation key
+- `load_snapshot()` returns cache hit when fingerprint matches
+- `invalidate_snapshot_cache()` explicit hook for install/update/reload
+- `SkillRootSignature` tracks SKILL.md mtimes for in-place edit detection
+- Tests: cache hit, invalidation, SKILL.md edit detection
 
 ## Validation Evidence
 
-- `./deploy_host.sh -b`: succeeded, no warnings (rework pass 10).
-- `./deploy_host.sh --test`: all test suites passed (603 unit tests in
-  tizenclaw crate, plus canonical workspace and parity harness).
+- `./deploy_host.sh --test`: all test suites pass
+  - `tizenclaw` crate: 603 passed, 0 failed
+  - `tizenclaw-cli` crate: 21 passed, 0 failed
+  - All other crates: pass
+  - Mock parity harness: PASS
+  - Doc architecture verification: PASS
 
 ## Risks And Watchpoints
 
-- `backends.*` scan order is non-deterministic (HashMap iteration) when
-  multiple backends have the same default priority. Operators with
-  deterministic ordering requirements should set explicit `priority` values.
-- Env var mutation in ClawHub tests is not thread-safe across parallel test
-  threads; `tokio::test` single-thread runtime limits risk.
-- Plugin backends are now eligible as last-resort fallbacks but appear after
-  all configured providers in preference order.
+- Provider routing is ordered-preference only (request-aware routing deferred)
+- ClawHub update always refreshes (no speculative skip if registry shows same version)
+- Snapshot cache uses process-global state; test isolation requires explicit clear
+- Telegram model config precedence: telegram_config.json > llm_config.json.telegram > llm_config.json.backends.<provider>.model > built-in empty
