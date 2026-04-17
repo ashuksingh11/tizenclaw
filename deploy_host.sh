@@ -1120,6 +1120,12 @@ show_summary() {
 main() {
   parse_args "$@"
 
+  # Re-derive the canonical rust/ workspace target dir so it is always
+  # co-located with CARGO_TARGET_DIR_HOST even when --build-root overrides
+  # the default.  The default produces ~/.tizenclaw/build/rust-cargo-target;
+  # a custom --build-root <dir> produces <dir>/rust-cargo-target.
+  RUST_WORKSPACE_TARGET_DIR="${CARGO_TARGET_DIR_HOST%/cargo-target}/rust-cargo-target"
+
   # Simple actions that don't need a build
   if [ "${STOP_DAEMON}" = true ]; then
     stop_daemon
