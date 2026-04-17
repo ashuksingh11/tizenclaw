@@ -141,15 +141,35 @@ cat > "${TEST_ROOT}/config/channel_config.json" <<'JSON'
 JSON
 
 # ─────────────────────────────────────────────
-# Pre-flight: warn if the dashboard test port is busy
+# Resolve a free ephemeral port for the dashboard scenario
 # ─────────────────────────────────────────────
-# dashboard_runtime_contract.json calls dashboard.start with port 9191.
-# Warn early rather than let the scenario fail with a cryptic error.
-if ss -ltnp "( sport = :9191 )" 2>/dev/null | grep -q ':9191'; then
-  warn "Port 9191 is already in use on this host."
-  warn "dashboard_runtime_contract.json starts the web dashboard on port 9191."
-  warn "That scenario may fail if the port cannot be claimed."
-fi
+# Pick a free port via Python so the dashboard test never collides with an
+# existing listener regardless of what is already bound on this host.
+TEST_DASHBOARD_PORT="$(python3 - <<'PYEOF'
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(('127.0.0.1', 0))
+print(s.getsockname()[1])
+s.close()
+PYEOF
+)"
+log "Dashboard scenario will use dynamically assigned port: ${TEST_DASHBOARD_PORT}"
+
+# Patch dashboard_runtime_contract.json into the isolated root, replacing the
+# canonical port (9191) with the dynamically assigned one in both params and
+# assertions so the scenario is self-consistent.
+DASHBOARD_SRC="${PROJECT_DIR}/tests/system/dashboard_runtime_contract.json"
+DASHBOARD_PATCHED="${TEST_ROOT}/dashboard_runtime_contract.json"
+python3 - "${DASHBOARD_SRC}" "${DASHBOARD_PATCHED}" "${TEST_DASHBOARD_PORT}" <<'PYEOF'
+import sys
+src, dst, port = sys.argv[1], sys.argv[2], sys.argv[3]
+raw = open(src).read()
+# Replace the hard-coded canonical port (9191) everywhere in the file.
+# Both params and assertions reference the same value, so a plain string
+# substitution covers all occurrences — port numbers and derived URLs alike.
+open(dst, "w").write(raw.replace("9191", port))
+PYEOF
+ok "Patched dashboard scenario written to ${DASHBOARD_PATCHED}"
 
 # ─────────────────────────────────────────────
 # Export isolation environment
@@ -239,8 +259,15 @@ FAILED_NAMES=()
 echo ""
 echo -e "${BOLD}── Offline System Contract Suite ──────────────────────────────${NC}"
 
+DASHBOARD_SCENARIO_CANONICAL="tests/system/dashboard_runtime_contract.json"
+
 for scenario in "${SCENARIOS[@]}"; do
-  scenario_path="${PROJECT_DIR}/${scenario}"
+  # Use the port-patched copy for the dashboard scenario.
+  if [[ "${scenario}" == "${DASHBOARD_SCENARIO_CANONICAL}" ]]; then
+    scenario_path="${DASHBOARD_PATCHED}"
+  else
+    scenario_path="${PROJECT_DIR}/${scenario}"
+  fi
 
   if [[ ! -f "${scenario_path}" ]]; then
     err "Scenario file not found: ${scenario_path}"
