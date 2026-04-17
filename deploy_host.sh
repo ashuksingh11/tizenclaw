@@ -574,6 +574,20 @@ do_test() {
     fail "Documentation-driven verification failed"
   fi
 
+  # cargo test produces test executables in debug/deps/ but not named binaries
+  # in debug/. Run cargo build so the contract suite can find tizenclaw,
+  # tizenclaw-tool-executor, and tizenclaw-tests at their expected paths.
+  local cargo_build_args=(build --workspace --offline --locked)
+  if [ "${BUILD_MODE}" = "release" ]; then
+    cargo_build_args+=(--release)
+  fi
+  log "Building named binaries for contract suite: cargo ${cargo_build_args[*]}"
+  if CARGO_TARGET_DIR="${CARGO_TARGET_DIR_HOST}" cargo "${cargo_build_args[@]}"; then
+    ok "Named binaries built (${BUILD_MODE})"
+  else
+    fail "Named binary build failed"
+  fi
+
   log "Running offline system contract suite"
   local bin_dir="${CARGO_TARGET_DIR_HOST}/debug"
   if [ "${BUILD_MODE}" = "release" ]; then

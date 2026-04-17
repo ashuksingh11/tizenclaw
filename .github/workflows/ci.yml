@@ -183,7 +183,13 @@ jobs:
       - name: Dump build diagnostics on failure
         if: failure()
         run: |
-          echo "── Build root (${RUNNER_TEMP}/tizenclaw-build) ─────────────────"
-          ls -la "${RUNNER_TEMP}/tizenclaw-build/" 2>/dev/null || echo "(build root absent)"
+          BUILD_ROOT="${RUNNER_TEMP}/tizenclaw-build"
+          echo "── Build root (${BUILD_ROOT}) ──────────────────────────────────"
+          ls -la "${BUILD_ROOT}/" 2>/dev/null || echo "(build root absent)"
+          echo ""
+          echo "── debug/ named binaries ───────────────────────────────────────"
+          ls -la "${BUILD_ROOT}/debug/" 2>/dev/null \
+            | grep -v "^total\|^d\|deps\|build\|incremental\|\.d$\|\.rmeta$" \
+            || echo "(debug dir absent or empty)"
           echo ""
           echo "── Cargo test output and daemon/contract logs appear above ─────"
