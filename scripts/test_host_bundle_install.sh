@@ -77,11 +77,25 @@ any_stray_for_root() {
   local root="$1"
   local current_uid
   current_uid="$(id -u)"
-  for pname in tizenclaw tizenclaw-tool-executor tizenclaw-web-dashboard; do
-    if pgrep -u "${current_uid}" -f "${root}/bin/${pname}" >/dev/null 2>&1; then
-      return 0
-    fi
-  done
+  # Use bash-level cmdline matching so that control scripts such as
+  # tizenclaw-hostctl are not falsely treated as daemon processes.  pgrep ERE
+  # suffix patterns like ([[:space:]]|$) behave inconsistently across procps
+  # versions; reading /proc/<pid>/cmdline in bash is authoritative.
+  # A process is stray only when its cmdline STARTS WITH the daemon binary
+  # path — i.e. the daemon exec'd directly, not an interpreter running the
+  # hostctl script with the binary path appearing later as an argument.
+  local line pid cmdline pname
+  while IFS= read -r line; do
+    [[ -n "${line}" ]] || continue
+    pid="${line%% *}"
+    cmdline="${line#* }"
+    for pname in tizenclaw tizenclaw-tool-executor tizenclaw-web-dashboard; do
+      if [[ "${cmdline}" == "${root}/bin/${pname}" ]] \
+         || [[ "${cmdline}" == "${root}/bin/${pname} "* ]]; then
+        return 0
+      fi
+    done
+  done < <(pgrep -u "${current_uid}" -af "${root}/bin/" 2>/dev/null || true)
   return 1
 }
 
@@ -280,7 +294,22 @@ main() {
     fail "tizenclaw-hostctl --log exited prematurely — expected tail -f to remain running"
   fi
   kill "${log_check_pid}" 2>/dev/null || true
+  # The subshell wrapper may have spawned a child bash running tizenclaw-hostctl
+  # that is not a direct child of log_check_pid after exec; kill it explicitly.
+  pkill -u "$(id -u)" -f "${install_root}/bin/tizenclaw-hostctl" 2>/dev/null || true
   wait "${log_check_pid}" 2>/dev/null || true
+  # Reap any remaining hostctl --log children before the stray-process check.
+  # SIGTERM via pkill is asynchronous; poll until the process is gone, then
+  # escalate to SIGKILL if it lingers.
+  local _log_kill_deadline=$((SECONDS + 5))
+  while pgrep -u "$(id -u)" -f "${install_root}/bin/tizenclaw-hostctl" >/dev/null 2>&1; do
+    if [[ "${SECONDS}" -ge "${_log_kill_deadline}" ]]; then
+      pkill -9 -u "$(id -u)" -f "${install_root}/bin/tizenclaw-hostctl" 2>/dev/null || true
+      sleep 0.2
+      break
+    fi
+    sleep 0.1
+  done
 
   log "Stopping installed daemon via tizenclaw-hostctl --stop..."
   run_hostctl --stop \
