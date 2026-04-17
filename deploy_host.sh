@@ -778,11 +778,6 @@ stop_daemon() {
     ok "Daemon stopped"
   else
     warn "No PID file found at ${PID_FILE}. Daemon may not be running."
-    # Try by name as fallback
-    if pgrep -x "${PKG_NAME}" &>/dev/null; then
-      run pkill -x "${PKG_NAME}" || true
-      ok "Daemon killed by name"
-    fi
   fi
 
   if pgrep -f "${INSTALL_DIR}/${TOOL_EXECUTOR_NAME}" &>/dev/null; then
