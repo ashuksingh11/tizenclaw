@@ -12,10 +12,10 @@ REPO_REF="develRust"
 SOURCE_DIR="${HOME}/.local/src/tizenclaw"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-HOST_BASE_DIR="${HOME}/.tizenclaw"
+HOST_BASE_DIR="${TIZENCLAW_INSTALL_ROOT:-${HOME}/.tizenclaw}"
 HOST_BIN_DIR="${HOST_BASE_DIR}/bin"
 HOST_MANAGE_SCRIPT="${HOST_BASE_DIR}/manage/deploy_host.sh"
-BASHRC_PATH="${HOME}/.bashrc"
+BASHRC_PATH="${TIZENCLAW_BASHRC_PATH:-${HOME}/.bashrc}"
 PATH_EXPORT='export PATH="$HOME/.tizenclaw/bin:$PATH"'
 
 SKIP_DEPS=false
@@ -337,6 +337,11 @@ seed_config_from_bundle() {
 }
 
 restart_host_services() {
+  if [[ "${TIZENCLAW_SKIP_SERVICES:-}" == "1" ]]; then
+    log "Skipping service restart (TIZENCLAW_SKIP_SERVICES=1)"
+    return
+  fi
+
   if [[ -x "${HOST_MANAGE_SCRIPT}" ]]; then
     "${HOST_MANAGE_SCRIPT}" --restart-only
     return
@@ -354,15 +359,19 @@ restart_host_services() {
 }
 
 stop_host_services_if_present() {
+  if [[ "${TIZENCLAW_SKIP_SERVICES:-}" == "1" ]]; then
+    log "Skipping service stop (TIZENCLAW_SKIP_SERVICES=1)"
+    return
+  fi
+
   wait_for_exit() {
     local binary_name="$1"
     local attempts=0
+    local match_pat="${HOST_BIN_DIR}/${binary_name}([[:space:]]|\$)"
 
-    while pgrep -u "$(id -u)" -x "${binary_name}" >/dev/null 2>&1 \
-      || pgrep -u "$(id -u)" -f "${HOST_BIN_DIR}/${binary_name}([[:space:]]|$)" >/dev/null 2>&1; do
+    while pgrep -u "$(id -u)" -f "${match_pat}" >/dev/null 2>&1; do
       if [[ "${attempts}" -ge 5 ]]; then
-        pkill -9 -u "$(id -u)" -x "${binary_name}" >/dev/null 2>&1 || true
-        pkill -9 -u "$(id -u)" -f "${HOST_BIN_DIR}/${binary_name}([[:space:]]|$)" >/dev/null 2>&1 || true
+        pkill -9 -u "$(id -u)" -f "${match_pat}" >/dev/null 2>&1 || true
         break
       fi
       sleep 1
@@ -376,9 +385,6 @@ stop_host_services_if_present() {
     pkill -f "${HOST_BIN_DIR}/tizenclaw-tool-executor" >/dev/null 2>&1 || true
     pkill -f "${HOST_BIN_DIR}/tizenclaw-web-dashboard" >/dev/null 2>&1 || true
     pkill -f "${HOST_BIN_DIR}/tizenclaw" >/dev/null 2>&1 || true
-    pkill -x tizenclaw-tool-executor >/dev/null 2>&1 || true
-    pkill -x tizenclaw-web-dashboard >/dev/null 2>&1 || true
-    pkill -x tizenclaw >/dev/null 2>&1 || true
   fi
 
   wait_for_exit "tizenclaw-tool-executor"
@@ -464,6 +470,45 @@ download_release_bundle() {
   curl -fsSL "${ASSET_URL}" -o "${asset_path}"
 }
 
+fetch_checksum_for_url() {
+  local asset_url="$1"
+
+  if [[ "${asset_url}" == file://* ]]; then
+    local local_cs="${asset_url#file://}.sha256"
+    if [[ -f "${local_cs}" ]]; then
+      cat "${local_cs}"
+      return 0
+    fi
+    return 1
+  fi
+
+  local cs_content
+  cs_content="$(curl -fsSL "${asset_url}.sha256" 2>/dev/null)" || return 1
+  printf '%s\n' "${cs_content}"
+}
+
+verify_bundle_checksum() {
+  local asset_url="$1"
+  local archive_path="$2"
+  local cs_content
+
+  if ! cs_content="$(fetch_checksum_for_url "${asset_url}")"; then
+    warn "No checksum file found for ${asset_url}; skipping integrity check"
+    return 0
+  fi
+
+  local expected_hash
+  expected_hash="$(awk '{print $1}' <<< "${cs_content}")"
+  local actual_hash
+  actual_hash="$(sha256sum "${archive_path}" | awk '{print $1}')"
+
+  if [[ "${expected_hash}" != "${actual_hash}" ]]; then
+    fail "Bundle checksum mismatch: expected ${expected_hash}, got ${actual_hash}"
+  fi
+
+  log "Bundle checksum verified: ${actual_hash}"
+}
+
 locate_bundle_root() {
   local extracted_root="$1"
   find "${extracted_root}" -name bundle-manifest.json -print -quit | xargs -r dirname
@@ -478,6 +523,7 @@ install_from_release_asset() {
   archive_path="${temp_dir}/tizenclaw-host-bundle.tar.gz"
 
   download_release_bundle "${archive_path}"
+  verify_bundle_checksum "${ASSET_URL}" "${archive_path}"
   tar -xzf "${archive_path}" -C "${temp_dir}"
 
   bundle_root="$(locate_bundle_root "${temp_dir}")"

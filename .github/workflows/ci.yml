@@ -41,6 +41,7 @@ jobs:
           bash -n deploy_host.sh
           bash -n deploy.sh
           bash -n scripts/create_host_release_bundle.sh
+          bash -n scripts/test_host_bundle_install.sh
 
       - name: Enforce owner-only action policy
         run: |
@@ -125,6 +126,13 @@ jobs:
           tar -tzf "${archive}" | grep -F 'bin/tizenclaw-cli'
           tar -tzf "${archive}" | grep -F 'manage/deploy_host.sh'
           tar -tzf "${archive}" | grep -F 'bundle-manifest.json'
+
+      - name: Run installer smoke test
+        run: |
+          set -euo pipefail
+          cd "${WORKDIR}"
+          archive="dist/tizenclaw-host-bundle-ci-${GITHUB_SHA::7}-linux-x86_64.tar.gz"
+          bash scripts/test_host_bundle_install.sh --bundle "${archive}"
 
   host-validation:
     name: Host Canonical Validation
