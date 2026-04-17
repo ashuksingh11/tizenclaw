@@ -439,18 +439,17 @@ impl ToolDispatcher {
             .map_err(|error| format!("Failed to serialize tool args for '{}': {}", name, error))?;
 
         if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(&stdin_payload)
-                .await
-                .map_err(|error| format!("Failed to write stdin for '{}': {}", name, error))?;
-            stdin
-                .write_all(b"\n")
-                .await
-                .map_err(|error| format!("Failed to terminate stdin for '{}': {}", name, error))?;
-            stdin
-                .shutdown()
-                .await
-                .map_err(|error| format!("Failed to close stdin for '{}': {}", name, error))?;
+            let write_result = async {
+                stdin.write_all(&stdin_payload).await?;
+                stdin.write_all(b"\n").await?;
+                stdin.shutdown().await
+            }
+            .await;
+            if let Err(error) = write_result {
+                if error.kind() != std::io::ErrorKind::BrokenPipe {
+                    return Err(format!("Failed to write stdin for '{}': {}", name, error));
+                }
+            }
         }
 
         let timeout_secs = timeout_override.unwrap_or(decl.timeout_secs);
