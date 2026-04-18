@@ -98,12 +98,18 @@ flow.
   5. **Offline system contract suite** — boots a temporary isolated daemon
      instance and runs the scenarios listed in
      `tests/system/offline_suite.json` against it. The daemon and all
-     companion processes run with `TIZENCLAW_DATA_DIR` pointed at a
-     `mktemp` root, `HOME` redirected to an empty directory inside that
-     root (blocking `~/.codex/auth.json` and other home-relative
-     credential files), and `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and
-     `GEMINI_API_KEY` unset — so no ambient credentials or live hosted
-     backends can affect the run regardless of the host machine's state.
+     companion processes run inside a private network namespace
+     (`unshare --net`) when the kernel supports unprivileged network
+     namespaces, blocking all outbound connectivity at the OS level.
+     Loopback is re-enabled inside the namespace so Unix-domain-socket IPC
+     and localhost TCP (used by the dashboard scenario) continue to work.
+     On hosts where `unshare --net` is unavailable the runner falls back to
+     credential-level isolation: `TIZENCLAW_DATA_DIR` pointed at a `mktemp`
+     root, `HOME` redirected to an empty directory inside that root
+     (blocking `~/.codex/auth.json` and other home-relative credential
+     files), and `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GEMINI_API_KEY`
+     unset.  A visible warning is emitted when network-namespace isolation
+     is not available so the gap is never silent.
      The isolation environment is always cleaned up, even when a scenario
      fails.
 - `tests/system/offline_suite.json` is the authoritative list of

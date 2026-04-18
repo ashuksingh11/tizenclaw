@@ -33,6 +33,34 @@ warn() { echo -e "${YELLOW}[ WARN ]${NC} $*"; }
 err()  { echo -e "${RED}[ FAIL ]${NC} $*"; }
 
 # ─────────────────────────────────────────────
+# Network namespace isolation
+#
+# Re-exec the entire script inside a private network namespace so the daemon
+# and tool-executor have no outbound connectivity.  Unix-domain-socket IPC and
+# loopback TCP (used by the dashboard scenario) continue to work because we
+# bring the loopback interface back up inside the namespace.
+#
+# If unshare is unavailable or the kernel does not permit unprivileged
+# network namespaces, we fall back to credential-level isolation only and
+# emit a visible warning.  The suite still runs; the warning surfaces the gap.
+# ─────────────────────────────────────────────
+if [[ -z "${_TIZENCLAW_NET_NS:-}" ]]; then
+  if command -v unshare >/dev/null 2>&1 && \
+     unshare --net true 2>/dev/null; then
+    exec env _TIZENCLAW_NET_NS=1 unshare --net -- bash -- "$0" "$@"
+    # exec replaces the process; reaching here is unreachable under normal
+    # conditions, but the fallback below handles unexpected failures.
+  fi
+  echo -e "${YELLOW}[ WARN ]${NC} [CONTRACTS] Network namespace isolation unavailable; isolation is credential-level only (no outbound network block)"
+fi
+
+# Bring up the loopback interface when running inside a fresh network
+# namespace so localhost TCP (dashboard) and Unix sockets continue to work.
+if [[ -n "${_TIZENCLAW_NET_NS:-}" ]] && command -v ip >/dev/null 2>&1; then
+  ip link set lo up 2>/dev/null || true
+fi
+
+# ─────────────────────────────────────────────
 # Argument parsing
 # ─────────────────────────────────────────────
 BIN_DIR=""
