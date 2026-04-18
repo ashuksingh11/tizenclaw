@@ -47,6 +47,7 @@ Use the repository scripts instead of direct `cargo build` or
 - Check daemon status (source checkout): `./deploy_host.sh --status`
 - Follow daemon logs (source checkout): `./deploy_host.sh --log`
 - Install from the current checkout: `./install.sh --local-checkout`
+  (both regular clones and `git worktree` checkouts are supported)
 - Clone and build from a remote repository: `./install.sh --source-install`
 
 The `--source-install` path is non-destructive. If the target directory

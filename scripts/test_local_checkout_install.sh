@@ -16,14 +16,22 @@ PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TMP_DIR=""
 INSTALL_ROOT_EXPLICIT=""
 INSTALL_ROOT_IMPLICIT=""
+INSTALL_ROOT_WORKTREE=""
 
 log()  { printf '[checkout-smoke] %s\n' "$*"; }
 fail() { printf '[checkout-smoke][fail] %s\n' "$*" >&2; exit 1; }
 
 cleanup() {
   if [[ -n "${TMP_DIR}" && -d "${TMP_DIR}" ]]; then
+    # Remove any temporary worktree before wiping TMP_DIR so git bookkeeping
+    # stays consistent even if the test failed mid-flight.
+    local wt_dir="${TMP_DIR}/worktree"
+    if [[ -d "${wt_dir}" ]]; then
+      git -C "${PROJECT_DIR}" worktree remove --force "${wt_dir}" 2>/dev/null || true
+    fi
+
     local root
-    for root in "${INSTALL_ROOT_EXPLICIT}" "${INSTALL_ROOT_IMPLICIT}"; do
+    for root in "${INSTALL_ROOT_EXPLICIT}" "${INSTALL_ROOT_IMPLICIT}" "${INSTALL_ROOT_WORKTREE}"; do
       [[ -n "${root}" ]] || continue
       local hostctl="${root}/bin/tizenclaw-hostctl"
       if [[ -x "${hostctl}" ]]; then
@@ -88,14 +96,15 @@ STUB
   log "curl shadowed with a failing stub (any bundle download will now abort the test)"
 }
 
-# Run install.sh with full environment isolation.
-# Extra install.sh flags are passed as positional arguments after the three
-# required positional parameters (install_root, fake_home, build_root).
-run_install() {
-  local install_root="$1"
-  local fake_home="$2"
-  local build_root="$3"
-  shift 3
+# Run install.sh found in <script_dir> with full environment isolation.
+# Extra install.sh flags are passed as positional arguments after the four
+# required positional parameters (script_dir, install_root, fake_home, build_root).
+run_install_from_dir() {
+  local script_dir="$1"
+  local install_root="$2"
+  local fake_home="$3"
+  local build_root="$4"
+  shift 4
 
   # Preserve real Rust toolchain locations so rustup shims remain
   # functional after HOME is redirected to the isolated temp directory.
@@ -109,11 +118,20 @@ run_install() {
   TIZENCLAW_BASHRC_PATH="${fake_home}/.bashrc" \
   TIZENCLAW_SKIP_SERVICES="1" \
   TIZENCLAW_NO_NETWORK_FALLBACK="1" \
-    bash "${PROJECT_DIR}/install.sh" \
+    bash "${script_dir}/install.sh" \
       --skip-deps \
       --skip-setup \
       "$@" \
       -- --no-restart --build-root "${build_root}"
+}
+
+# Convenience wrapper that always runs install.sh from the main PROJECT_DIR.
+run_install() {
+  local install_root="$1"
+  local fake_home="$2"
+  local build_root="$3"
+  shift 3
+  run_install_from_dir "${PROJECT_DIR}" "${install_root}" "${fake_home}" "${build_root}" "$@"
 }
 
 verify_installed_tree() {
@@ -211,6 +229,49 @@ main() {
   verify_installed_tree "${INSTALL_ROOT_IMPLICIT}" "implicit"
   log "Test 2 PASSED"
 
+  # ── Test 3: git worktree checkout ─────────────────────────────────────────
+  # Creates a temporary worktree from the current repo and exercises both
+  # explicit --local-checkout and implicit auto-detection from that worktree.
+  # In a worktree, .git is a file (not a directory), so this test validates
+  # that all checkout-detection paths use Git plumbing rather than -d .git.
+  log "=== Test 3: git worktree checkout ==="
+  local worktree_dir="${TMP_DIR}/worktree"
+  local fake_home_worktree="${TMP_DIR}/home-worktree"
+  local fake_home_worktree_implicit="${TMP_DIR}/home-worktree-implicit"
+  INSTALL_ROOT_WORKTREE="${fake_home_worktree}/.tizenclaw"
+  local install_root_worktree_implicit="${fake_home_worktree_implicit}/.tizenclaw"
+  mkdir -p "${fake_home_worktree}" "${fake_home_worktree_implicit}"
+
+  git -C "${PROJECT_DIR}" worktree add --detach "${worktree_dir}" \
+    || fail "git worktree add failed — cannot create worktree for Test 3"
+
+  log "[worktree] .git entry type in worktree: $(stat -c '%F' "${worktree_dir}/.git" 2>/dev/null || echo '(absent)')"
+
+  log "[worktree] Test 3a: explicit --local-checkout from worktree"
+  run_install_from_dir \
+    "${worktree_dir}" \
+    "${INSTALL_ROOT_WORKTREE}" \
+    "${fake_home_worktree}" \
+    "${build_root}" \
+    --local-checkout \
+    || fail "install.sh --local-checkout from worktree exited non-zero"
+  verify_installed_tree "${INSTALL_ROOT_WORKTREE}" "worktree-explicit"
+  log "[worktree] Test 3a PASSED"
+
+  log "[worktree] Test 3b: implicit auto-detection from worktree"
+  run_install_from_dir \
+    "${worktree_dir}" \
+    "${install_root_worktree_implicit}" \
+    "${fake_home_worktree_implicit}" \
+    "${build_root}" \
+    || fail "install.sh (implicit) from worktree exited non-zero"
+  verify_installed_tree "${install_root_worktree_implicit}" "worktree-implicit"
+  log "[worktree] Test 3b PASSED"
+
+  git -C "${PROJECT_DIR}" worktree remove --force "${worktree_dir}" \
+    || true  # cleanup handles this too; tolerate double-remove
+  log "Test 3 PASSED"
+
   # ── Stray process check ───────────────────────────────────────────────────
   log "Verifying no stray daemon processes remain..."
   if any_stray_for_root "${INSTALL_ROOT_EXPLICIT}"; then
@@ -218,6 +279,12 @@ main() {
   fi
   if any_stray_for_root "${INSTALL_ROOT_IMPLICIT}"; then
     fail "Stray processes remain for implicit install root (${INSTALL_ROOT_IMPLICIT})"
+  fi
+  if any_stray_for_root "${INSTALL_ROOT_WORKTREE}"; then
+    fail "Stray processes remain for worktree install root (${INSTALL_ROOT_WORKTREE})"
+  fi
+  if any_stray_for_root "${install_root_worktree_implicit}"; then
+    fail "Stray processes remain for worktree-implicit install root (${install_root_worktree_implicit})"
   fi
 
   log "Source-checkout installer smoke test PASSED"

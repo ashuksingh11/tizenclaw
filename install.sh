@@ -154,6 +154,12 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+# Returns success when <path> is inside a valid Git work tree.
+# Works for both normal clones (.git/ directory) and worktrees (.git file).
+is_git_checkout() {
+  git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
 auto_select_local_checkout() {
   if [[ "${SOURCE_INSTALL}" == true || "${LOCAL_CHECKOUT}" == true ]]; then
     return
@@ -163,7 +169,7 @@ auto_select_local_checkout() {
     return
   fi
 
-  if [[ -x "${SCRIPT_DIR}/deploy_host.sh" && -d "${SCRIPT_DIR}/.git" ]]; then
+  if [[ -x "${SCRIPT_DIR}/deploy_host.sh" ]] && is_git_checkout "${SCRIPT_DIR}"; then
     LOCAL_CHECKOUT=true
     log "Detected repository checkout; defaulting to --local-checkout"
   fi
@@ -558,11 +564,11 @@ prepare_repo() {
   parent_dir="$(dirname "${SOURCE_DIR}")"
   mkdir -p "${parent_dir}"
 
-  if [[ -e "${SOURCE_DIR}" && ! -d "${SOURCE_DIR}/.git" ]]; then
+  if [[ -e "${SOURCE_DIR}" ]] && ! is_git_checkout "${SOURCE_DIR}"; then
     fail "${SOURCE_DIR} exists but is not a Git checkout"
   fi
 
-  if [[ -d "${SOURCE_DIR}/.git" ]]; then
+  if is_git_checkout "${SOURCE_DIR}"; then
     # Refuse to modify a checkout that has uncommitted or untracked changes.
     local porcelain
     porcelain="$(git -C "${SOURCE_DIR}" status --porcelain 2>&1)"
@@ -573,17 +579,17 @@ prepare_repo() {
     log "Fetching from origin at ${SOURCE_DIR}"
     git -C "${SOURCE_DIR}" fetch --tags origin
 
-    # If origin/<ref> is known, ensure the local branch has no commits that
-    # would be silently discarded by any destructive update operation.
+    # If origin/<ref> is known, ensure HEAD has no commits that would be
+    # silently abandoned by any subsequent checkout or reset.  Check HEAD
+    # directly so detached-HEAD states with local commits are also caught,
+    # not just the named-branch case.
     if git -C "${SOURCE_DIR}" rev-parse --verify "origin/${REPO_REF}" >/dev/null 2>&1; then
-      if git -C "${SOURCE_DIR}" rev-parse --verify "refs/heads/${REPO_REF}" >/dev/null 2>&1; then
-        local local_only
-        local_only="$(git -C "${SOURCE_DIR}" rev-list \
-          "origin/${REPO_REF}..refs/heads/${REPO_REF}" 2>/dev/null | wc -l)"
-        local_only="${local_only//[[:space:]]/}"
-        if [[ "${local_only}" -gt 0 ]]; then
-          fail "${SOURCE_DIR}: local branch '${REPO_REF}' has ${local_only} commit(s) not present on origin/${REPO_REF}. Push or discard the local commits, or use a different --dir."
-        fi
+      local local_only
+      local_only="$(git -C "${SOURCE_DIR}" rev-list \
+        "origin/${REPO_REF}..HEAD" 2>/dev/null | wc -l)"
+      local_only="${local_only//[[:space:]]/}"
+      if [[ "${local_only}" -gt 0 ]]; then
+        fail "${SOURCE_DIR}: HEAD has ${local_only} commit(s) not present on origin/${REPO_REF}. Push or discard the local commits, or use a different --dir."
       fi
     fi
 
@@ -615,7 +621,7 @@ run_source_install() {
 
 run_local_checkout_install() {
   [[ -x "${SCRIPT_DIR}/deploy_host.sh" ]] || fail "deploy_host.sh not found in ${SCRIPT_DIR}"
-  [[ -d "${SCRIPT_DIR}/.git" ]] || fail "${SCRIPT_DIR} is not a Git checkout"
+  is_git_checkout "${SCRIPT_DIR}" || fail "${SCRIPT_DIR} is not a Git checkout"
 
   log "Running deploy_host.sh from local checkout ${SCRIPT_DIR} ${HOST_ARGS[*]:-}"
   (
