@@ -97,7 +97,14 @@ run_install() {
   local build_root="$3"
   shift 3
 
+  # Preserve real Rust toolchain locations so rustup shims remain
+  # functional after HOME is redirected to the isolated temp directory.
+  local real_cargo_home="${CARGO_HOME:-${HOME}/.cargo}"
+  local real_rustup_home="${RUSTUP_HOME:-${HOME}/.rustup}"
+
   HOME="${fake_home}" \
+  CARGO_HOME="${real_cargo_home}" \
+  RUSTUP_HOME="${real_rustup_home}" \
   TIZENCLAW_INSTALL_ROOT="${install_root}" \
   TIZENCLAW_BASHRC_PATH="${fake_home}/.bashrc" \
   TIZENCLAW_SKIP_SERVICES="1" \
