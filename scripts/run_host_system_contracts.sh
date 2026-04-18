@@ -40,18 +40,34 @@ err()  { echo -e "${RED}[ FAIL ]${NC} $*"; }
 # loopback TCP (used by the dashboard scenario) continue to work because we
 # bring the loopback interface back up inside the namespace.
 #
-# If unshare is unavailable or the kernel does not permit unprivileged
-# network namespaces, we fall back to credential-level isolation only and
-# emit a visible warning.  The suite still runs; the warning surfaces the gap.
+# Two paths are attempted in order:
+#   1. Privileged: unshare --net  (works as root or with CAP_NET_ADMIN)
+#   2. Unprivileged: unshare --user --map-root-user --net
+#      (works on kernels with unprivileged_userns_clone enabled, typical in
+#       Ubuntu/WSL2 without requiring root)
+#
+# If neither path succeeds, the suite hard-fails.  A credential-only fallback
+# is not acceptable because it cannot enforce the hermetic no-network guarantee
+# required by the offline contract acceptance criteria.
 # ─────────────────────────────────────────────
 if [[ -z "${_TIZENCLAW_NET_NS:-}" ]]; then
-  if command -v unshare >/dev/null 2>&1 && \
-     unshare --net true 2>/dev/null; then
-    exec env _TIZENCLAW_NET_NS=1 unshare --net -- bash -- "$0" "$@"
-    # exec replaces the process; reaching here is unreachable under normal
-    # conditions, but the fallback below handles unexpected failures.
+  if command -v unshare >/dev/null 2>&1; then
+    # Path 1: privileged network namespace (root / CAP_NET_ADMIN).
+    if unshare --net true 2>/dev/null; then
+      exec env _TIZENCLAW_NET_NS=1 unshare --net -- bash -- "$0" "$@"
+    fi
+    # Path 2: unprivileged user+network namespace (normal user, Ubuntu/WSL2).
+    if unshare --user --map-root-user --net true 2>/dev/null; then
+      exec env _TIZENCLAW_NET_NS=1 \
+        unshare --user --map-root-user --net -- bash -- "$0" "$@"
+    fi
   fi
-  echo -e "${YELLOW}[ WARN ]${NC} [CONTRACTS] Network namespace isolation unavailable; isolation is credential-level only (no outbound network block)"
+  echo -e "${RED}[ FAIL ]${NC} [CONTRACTS] Network namespace isolation is required for the offline contract suite."
+  echo -e "${RED}[ FAIL ]${NC} [CONTRACTS] Neither privileged nor unprivileged network namespace creation succeeded."
+  echo -e "${RED}[ FAIL ]${NC} [CONTRACTS] On Ubuntu/WSL2, ensure user namespaces are enabled:"
+  echo -e "${RED}[ FAIL ]${NC} [CONTRACTS]   sudo sysctl -w kernel.unprivileged_userns_clone=1"
+  echo -e "${RED}[ FAIL ]${NC} [CONTRACTS] Alternatively, run as root."
+  exit 1
 fi
 
 # Bring up the loopback interface when running inside a fresh network
