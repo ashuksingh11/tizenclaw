@@ -12,6 +12,9 @@
     "tests/system/rust_workspace_refactor_parity.json",
     "tests/system/doc_layout_verification.json",
     "tests/system/file_manager_bridge.json",
-    "tests/system/agent_loop_shortcuts_runtime_contract.json"
+    "tests/system/agent_loop_shortcuts_runtime_contract.json",
+    "tests/system/email_triage_runtime_contract.json",
+    "tests/system/file_grounded_recall_runtime_contract.json",
+    "tests/system/project_email_summary_runtime_contract.json"
   ]
 }

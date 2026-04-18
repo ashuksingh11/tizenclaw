@@ -1,5 +1,6 @@
 {
   "name": "file-grounded-recall-runtime-contract",
+  "offline_safe": true,
   "steps": [
     {
       "name": "store-memory-note",

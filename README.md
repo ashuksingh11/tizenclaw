@@ -127,7 +127,11 @@ flow.
   topology, command registry, channel registry, dashboard start/stop,
   key management, ClawHub update, Rust workspace parity, file-manager
   bridge backend selection (`file_manager_bridge.json`), and
-  shortcut-backed prompt flows (`agent_loop_shortcuts_runtime_contract.json`).
+  shortcut-backed prompt flows: executive briefing generation
+  (`agent_loop_shortcuts_runtime_contract.json`), inbox email triage
+  (`email_triage_runtime_contract.json`), file-grounded memory recall
+  (`file_grounded_recall_runtime_contract.json`), and project email
+  corpus summarisation (`project_email_summary_runtime_contract.json`).
   Every scenario in this suite declares `"offline_safe": true`; the
   runner enforces this and fails clearly if a scenario is added without
   the declaration. All shortcut-backed scenarios are fully deterministic

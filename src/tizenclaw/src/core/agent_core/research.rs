@@ -1171,11 +1171,15 @@ fn email_corpus_coverage_notice(
 
 fn prompt_requests_memory_file_capture(prompt: &str) -> bool {
     let prompt_lower = normalize_prompt_intent_text(prompt).to_ascii_lowercase();
+    let targets_memory_md = expected_file_management_targets(prompt)
+        .iter()
+        .flatten()
+        .any(|path| path.eq_ignore_ascii_case("memory/MEMORY.md"));
+    if !targets_memory_md {
+        return false;
+    }
     prompt_lower.contains("remember this")
-        && expected_file_management_targets(prompt)
-            .iter()
-            .flatten()
-            .any(|path| path.eq_ignore_ascii_case("memory/MEMORY.md"))
+        || (prompt_lower.starts_with("save") && prompt_lower.contains("memory/memory.md"))
 }
 
 fn extract_memory_capture_body(prompt: &str) -> Option<String> {

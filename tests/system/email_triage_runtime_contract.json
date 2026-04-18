@@ -1,21 +1,63 @@
 {
   "name": "email-triage-runtime-contract",
+  "offline_safe": true,
   "steps": [
     {
-      "name": "seed-email-triage-fixtures",
-      "method": "process_prompt",
+      "name": "create-inbox-directory",
+      "method": "bridge_tool",
       "params": {
-        "session_id": "${unique_session_id:email-triage}",
-        "prompt": "Create these files exactly as plain text in the working directory.\n\n1. Save to inbox/email_01.txt:\nFrom: cto@example.com\nSubject: URGENT: Production database outage\n\nCustomer-facing services are failing. Join the war room now.\n\n2. Save to inbox/email_02.txt:\nFrom: deals@saastools.com\nSubject: Flash Sale: 60% off annual plans\n\nUpgrade your workflow with real-time monitoring and dashboards."
+        "tool_name": "file_manager",
+        "allowed_tools": ["file_manager"],
+        "args": {
+          "session_id": "${unique_session_id:email-triage}",
+          "operation": "mkdir",
+          "path": "inbox"
+        }
       },
       "assertions": [
         {
-          "path": "session_id",
-          "exists": true
-        },
+          "path": "success",
+          "equals": true
+        }
+      ]
+    },
+    {
+      "name": "write-urgent-email",
+      "method": "bridge_tool",
+      "params": {
+        "tool_name": "file_manager",
+        "allowed_tools": ["file_manager"],
+        "args": {
+          "session_id": "${unique_session_id:email-triage}",
+          "operation": "write",
+          "path": "inbox/email_01.txt",
+          "content": "From: cto@example.com\nSubject: URGENT: Production database outage\n\nCustomer-facing services are failing. Join the war room now."
+        }
+      },
+      "assertions": [
         {
-          "path": "text",
-          "contains": "email_01.txt"
+          "path": "success",
+          "equals": true
+        }
+      ]
+    },
+    {
+      "name": "write-promo-email",
+      "method": "bridge_tool",
+      "params": {
+        "tool_name": "file_manager",
+        "allowed_tools": ["file_manager"],
+        "args": {
+          "session_id": "${unique_session_id:email-triage}",
+          "operation": "write",
+          "path": "inbox/email_02.txt",
+          "content": "From: deals@saastools.com\nSubject: Flash Sale: 60% off annual plans\n\nUpgrade your workflow with real-time monitoring and dashboards."
+        }
+      },
+      "assertions": [
+        {
+          "path": "success",
+          "equals": true
         }
       ]
     },
@@ -35,14 +77,27 @@
     },
     {
       "name": "triage-report-keeps-promo-email-low-priority",
-      "method": "process_prompt",
+      "method": "bridge_tool",
       "params": {
-        "session_id": "${unique_session_id:email-triage}",
-        "prompt": "Read triage_report.md and answer this directly: what priority was assigned to email_02.txt?"
+        "tool_name": "file_manager",
+        "allowed_tools": ["file_manager"],
+        "args": {
+          "session_id": "${unique_session_id:email-triage}",
+          "operation": "read",
+          "path": "triage_report.md"
+        }
       },
       "assertions": [
         {
-          "path": "text",
+          "path": "success",
+          "equals": true
+        },
+        {
+          "path": "content",
+          "contains": "email_02.txt"
+        },
+        {
+          "path": "content",
           "contains": "P4"
         }
       ]
