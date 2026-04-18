@@ -620,7 +620,7 @@ prepare_repo() {
       # Already on the target branch — skip checkout, proceed to fast-forward.
       log "Already on ${REPO_REF}; skipping checkout"
     elif git -C "${SOURCE_DIR}" worktree list --porcelain 2>/dev/null \
-          | grep -qF "branch refs/heads/${REPO_REF}"; then
+          | grep -qFx "branch refs/heads/${REPO_REF}"; then
       # The target branch is locked by another worktree.  We cannot switch to
       # it from here, and proceeding on the current branch would install the
       # wrong code.  Abort and tell the user where to run the update instead.

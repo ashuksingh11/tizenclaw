@@ -41,8 +41,8 @@ cleanup() {
       hook_file="${common_dir}/hooks/pre-commit"
       # Remove any test-installed hook first so we start clean.
       rm -f "${hook_file}"
-      if [[ -n "${HOOK_BACKUP_PATH}" && -f "${HOOK_BACKUP_PATH}" ]]; then
-        cp -p "${HOOK_BACKUP_PATH}" "${hook_file}"
+      if [[ -n "${HOOK_BACKUP_PATH}" && -e "${HOOK_BACKUP_PATH}" ]]; then
+        cp -a "${HOOK_BACKUP_PATH}" "${hook_file}"
       fi
     fi
 
@@ -308,7 +308,7 @@ main() {
   hook_file_path="${common_dir_hooks}/hooks/pre-commit"
   if [[ -e "${hook_file_path}" ]]; then
     HOOK_BACKUP_PATH="${TMP_DIR}/pre-commit.bak"
-    cp -p "${hook_file_path}" "${HOOK_BACKUP_PATH}"
+    cp -a "${hook_file_path}" "${HOOK_BACKUP_PATH}"
     rm -f "${hook_file_path}"
   fi
 
