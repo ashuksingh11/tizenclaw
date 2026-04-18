@@ -612,8 +612,18 @@ prepare_repo() {
       fi
     fi
 
-    log "Checking out ${REPO_REF}"
-    git -C "${SOURCE_DIR}" checkout "${REPO_REF}"
+    # Skip checkout if HEAD already resolves to the requested ref.
+    # In a linked worktree the branch may be locked to this worktree;
+    # attempting `git checkout <branch>` would fail with
+    # "already used by worktree" even when HEAD is correct.
+    local current_ref
+    current_ref="$(git -C "${SOURCE_DIR}" symbolic-ref --short HEAD 2>/dev/null || true)"
+    if [[ "${current_ref}" != "${REPO_REF}" ]]; then
+      log "Checking out ${REPO_REF}"
+      git -C "${SOURCE_DIR}" checkout "${REPO_REF}"
+    else
+      log "Already on ${REPO_REF}; skipping checkout"
+    fi
 
     if git -C "${SOURCE_DIR}" rev-parse --verify "origin/${REPO_REF}" >/dev/null 2>&1; then
       git -C "${SOURCE_DIR}" merge --ff-only "origin/${REPO_REF}"
