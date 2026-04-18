@@ -621,10 +621,17 @@ prepare_repo() {
       log "Already on ${REPO_REF}; skipping checkout"
     elif git -C "${SOURCE_DIR}" worktree list --porcelain 2>/dev/null \
           | grep -qFx "branch refs/heads/${REPO_REF}"; then
-      # The target branch is locked by another worktree.  We cannot switch to
-      # it from here, and proceeding on the current branch would install the
-      # wrong code.  Abort and tell the user where to run the update instead.
-      fail "${SOURCE_DIR} is currently on '${current_ref:-detached HEAD}', not '${REPO_REF}', and '${REPO_REF}' is already checked out in another worktree. Run the installer from that worktree, or use --dir pointing to the worktree that has ${REPO_REF} checked out."
+      # The target branch is locked by another worktree.  If this worktree's
+      # detached HEAD already points at the same commit as the target ref, no
+      # checkout is needed — the correct code is already present.
+      local head_commit target_commit
+      head_commit="$(git -C "${SOURCE_DIR}" rev-parse HEAD 2>/dev/null || true)"
+      target_commit="$(git -C "${SOURCE_DIR}" rev-parse "refs/heads/${REPO_REF}" 2>/dev/null || true)"
+      if [[ -n "${head_commit}" && "${head_commit}" == "${target_commit}" ]]; then
+        log "Detached HEAD is already at ${REPO_REF} (${head_commit:0:7}); skipping checkout"
+      else
+        fail "${SOURCE_DIR} is currently on '${current_ref:-detached HEAD}', not '${REPO_REF}', and '${REPO_REF}' is already checked out in another worktree. Run the installer from that worktree, or use --dir pointing to the worktree that has ${REPO_REF} checked out."
+      fi
     else
       log "Checking out ${REPO_REF}"
       git -C "${SOURCE_DIR}" checkout "${REPO_REF}"
