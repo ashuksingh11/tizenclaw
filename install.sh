@@ -61,6 +61,14 @@ Options:
   --test               Forward --test to deploy_host.sh in source mode
   -h, --help           Show this help
 
+Source-install safety:
+  When --source-install targets a directory that already exists, the installer
+  never discards uncommitted changes or local commits. If the checkout is dirty
+  (modified or untracked files) or if the local branch contains commits not
+  present on the remote, the installer fails with a clear message before
+  touching any files. Use a different --dir, clean the checkout, or push/stash
+  your local changes to recover.
+
 Examples:
   ./install.sh
   ./install.sh --local-checkout
@@ -555,20 +563,43 @@ prepare_repo() {
   fi
 
   if [[ -d "${SOURCE_DIR}/.git" ]]; then
-    log "Updating existing repository at ${SOURCE_DIR}"
+    # Refuse to modify a checkout that has uncommitted or untracked changes.
+    local porcelain
+    porcelain="$(git -C "${SOURCE_DIR}" status --porcelain 2>&1)"
+    if [[ -n "${porcelain}" ]]; then
+      fail "${SOURCE_DIR} has uncommitted or untracked changes and will not be modified automatically. Clean the checkout, commit or stash your work, or use a different --dir to avoid data loss."
+    fi
+
+    log "Fetching from origin at ${SOURCE_DIR}"
     git -C "${SOURCE_DIR}" fetch --tags origin
+
+    # If origin/<ref> is known, ensure the local branch has no commits that
+    # would be silently discarded by any destructive update operation.
+    if git -C "${SOURCE_DIR}" rev-parse --verify "origin/${REPO_REF}" >/dev/null 2>&1; then
+      if git -C "${SOURCE_DIR}" rev-parse --verify "refs/heads/${REPO_REF}" >/dev/null 2>&1; then
+        local local_only
+        local_only="$(git -C "${SOURCE_DIR}" rev-list \
+          "origin/${REPO_REF}..refs/heads/${REPO_REF}" 2>/dev/null | wc -l)"
+        local_only="${local_only//[[:space:]]/}"
+        if [[ "${local_only}" -gt 0 ]]; then
+          fail "${SOURCE_DIR}: local branch '${REPO_REF}' has ${local_only} commit(s) not present on origin/${REPO_REF}. Push or discard the local commits, or use a different --dir."
+        fi
+      fi
+    fi
+
+    log "Checking out ${REPO_REF}"
+    git -C "${SOURCE_DIR}" checkout "${REPO_REF}"
+
+    if git -C "${SOURCE_DIR}" rev-parse --verify "origin/${REPO_REF}" >/dev/null 2>&1; then
+      git -C "${SOURCE_DIR}" merge --ff-only "origin/${REPO_REF}"
+    else
+      warn "origin/${REPO_REF} not found; using the checked out ref as-is"
+    fi
   else
     log "Cloning ${REPO_URL} into ${SOURCE_DIR}"
     git clone "${REPO_URL}" "${SOURCE_DIR}"
-  fi
-
-  log "Checking out ${REPO_REF}"
-  git -C "${SOURCE_DIR}" checkout "${REPO_REF}"
-
-  if git -C "${SOURCE_DIR}" rev-parse --verify "origin/${REPO_REF}" >/dev/null 2>&1; then
-    git -C "${SOURCE_DIR}" reset --hard "origin/${REPO_REF}"
-  else
-    warn "origin/${REPO_REF} not found; using the checked out ref as-is"
+    log "Checking out ${REPO_REF}"
+    git -C "${SOURCE_DIR}" checkout "${REPO_REF}"
   fi
 }
 
