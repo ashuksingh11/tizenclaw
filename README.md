@@ -103,13 +103,13 @@ flow.
      namespaces, blocking all outbound connectivity at the OS level.
      Loopback is re-enabled inside the namespace so Unix-domain-socket IPC
      and localhost TCP (used by the dashboard scenario) continue to work.
-     On hosts where `unshare --net` is unavailable the runner falls back to
-     credential-level isolation: `TIZENCLAW_DATA_DIR` pointed at a `mktemp`
-     root, `HOME` redirected to an empty directory inside that root
-     (blocking `~/.codex/auth.json` and other home-relative credential
-     files), and `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GEMINI_API_KEY`
-     unset.  A visible warning is emitted when network-namespace isolation
-     is not available so the gap is never silent.
+     Network-namespace isolation is a hard requirement. If neither
+     privileged (`unshare --net`) nor unprivileged
+     (`unshare --user --map-root-user --net`) namespace creation succeeds,
+     the runner exits immediately with a clear error rather than continuing
+     with weaker isolation. On Ubuntu/WSL2 the unprivileged path works
+     without root; if it does not, enable user namespaces with
+     `sudo sysctl -w kernel.unprivileged_userns_clone=1` or run as root.
      The isolation environment is always cleaned up, even when a scenario
      fails.
 - `tests/system/offline_suite.json` is the authoritative list of
