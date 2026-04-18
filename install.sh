@@ -612,17 +612,23 @@ prepare_repo() {
       fi
     fi
 
-    # Skip checkout if HEAD already resolves to the requested ref.
-    # In a linked worktree the branch may be locked to this worktree;
-    # attempting `git checkout <branch>` would fail with
-    # "already used by worktree" even when HEAD is correct.
+    # Skip checkout when already on the target branch, or when the branch is
+    # locked by another worktree.  Linked worktrees created from a branch
+    # that is already active in another worktree use detached HEAD, so
+    # symbolic-ref returns empty and `git checkout <branch>` would fail with
+    # "fatal: '<branch>' is already used by worktree".  Detect that case
+    # via `git worktree list` and skip the checkout; the divergent-history
+    # guard above already confirmed HEAD is safe to use as-is.
     local current_ref
     current_ref="$(git -C "${SOURCE_DIR}" symbolic-ref --short HEAD 2>/dev/null || true)"
-    if [[ "${current_ref}" != "${REPO_REF}" ]]; then
+    if [[ "${current_ref}" == "${REPO_REF}" ]]; then
+      log "Already on ${REPO_REF}; skipping checkout"
+    elif git -C "${SOURCE_DIR}" worktree list --porcelain 2>/dev/null \
+          | grep -qF "branch refs/heads/${REPO_REF}"; then
+      log "${REPO_REF} is active in another worktree; skipping checkout"
+    else
       log "Checking out ${REPO_REF}"
       git -C "${SOURCE_DIR}" checkout "${REPO_REF}"
-    else
-      log "Already on ${REPO_REF}; skipping checkout"
     fi
 
     if git -C "${SOURCE_DIR}" rev-parse --verify "origin/${REPO_REF}" >/dev/null 2>&1; then
