@@ -627,7 +627,7 @@ prepare_repo() {
       local head_commit target_commit
       head_commit="$(git -C "${SOURCE_DIR}" rev-parse HEAD 2>/dev/null || true)"
       target_commit="$(git -C "${SOURCE_DIR}" rev-parse "refs/heads/${REPO_REF}" 2>/dev/null || true)"
-      if [[ -n "${head_commit}" && "${head_commit}" == "${target_commit}" ]]; then
+      if [[ -z "${current_ref}" && -n "${head_commit}" && "${head_commit}" == "${target_commit}" ]]; then
         log "Detached HEAD is already at ${REPO_REF} (${head_commit:0:7}); skipping checkout"
       else
         fail "${SOURCE_DIR} is currently on '${current_ref:-detached HEAD}', not '${REPO_REF}', and '${REPO_REF}' is already checked out in another worktree. Run the installer from that worktree, or use --dir pointing to the worktree that has ${REPO_REF} checked out."
