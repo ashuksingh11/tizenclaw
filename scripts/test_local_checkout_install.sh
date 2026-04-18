@@ -14,13 +14,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TMP_DIR=""
+INSTALL_ROOT_EXPLICIT=""
+INSTALL_ROOT_IMPLICIT=""
 
 log()  { printf '[checkout-smoke] %s\n' "$*"; }
 fail() { printf '[checkout-smoke][fail] %s\n' "$*" >&2; exit 1; }
 
 cleanup() {
   if [[ -n "${TMP_DIR}" && -d "${TMP_DIR}" ]]; then
-    for root in "${TMP_DIR}/install-explicit" "${TMP_DIR}/install-implicit"; do
+    local root
+    for root in "${INSTALL_ROOT_EXPLICIT}" "${INSTALL_ROOT_IMPLICIT}"; do
+      [[ -n "${root}" ]] || continue
       local hostctl="${root}/bin/tizenclaw-hostctl"
       if [[ -x "${hostctl}" ]]; then
         TIZENCLAW_INSTALL_ROOT="${root}" \
@@ -33,8 +37,10 @@ cleanup() {
   fi
 }
 
-# Returns 0 if the binary can be executed. Exit codes other than 126/127 are
-# accepted because a binary may legitimately exit non-zero without a live daemon.
+# Verifies a binary executes cleanly. Exit codes 0-125 are accepted (a binary
+# may legitimately exit non-zero without a live daemon). Exit codes 126 and 127
+# mean the kernel could not start the binary. Exit codes >= 128 are shell-mapped
+# signals (SIGSEGV=139, SIGABRT=134, etc.) and indicate a crash.
 assert_runnable() {
   local bin="$1"
   shift
@@ -42,6 +48,9 @@ assert_runnable() {
   "$bin" "$@" >/dev/null 2>&1 || rc=$?
   if [[ $rc -eq 126 || $rc -eq 127 ]]; then
     fail "Cannot execute: ${bin} (rc=${rc})"
+  fi
+  if [[ $rc -gt 127 ]]; then
+    fail "Binary terminated by signal: ${bin} (rc=${rc})"
   fi
 }
 
@@ -92,6 +101,7 @@ run_install() {
   TIZENCLAW_INSTALL_ROOT="${install_root}" \
   TIZENCLAW_BASHRC_PATH="${fake_home}/.bashrc" \
   TIZENCLAW_SKIP_SERVICES="1" \
+  TIZENCLAW_NO_NETWORK_FALLBACK="1" \
     bash "${PROJECT_DIR}/install.sh" \
       --skip-deps \
       --skip-setup \
@@ -153,9 +163,9 @@ main() {
 
   local build_root="${TMP_DIR}/build"
   local fake_home_explicit="${TMP_DIR}/home-explicit"
-  local install_root_explicit="${fake_home_explicit}/.tizenclaw"
+  INSTALL_ROOT_EXPLICIT="${fake_home_explicit}/.tizenclaw"
   local fake_home_implicit="${TMP_DIR}/home-implicit"
-  local install_root_implicit="${fake_home_implicit}/.tizenclaw"
+  INSTALL_ROOT_IMPLICIT="${fake_home_implicit}/.tizenclaw"
   local fake_curl_dir="${TMP_DIR}/fake-bin"
 
   mkdir -p "${fake_home_explicit}" "${fake_home_implicit}" "${build_root}"
@@ -169,13 +179,13 @@ main() {
   # ── Test 1: explicit --local-checkout ─────────────────────────────────────
   log "=== Test 1: explicit --local-checkout ==="
   run_install \
-    "${install_root_explicit}" \
+    "${INSTALL_ROOT_EXPLICIT}" \
     "${fake_home_explicit}" \
     "${build_root}" \
     --local-checkout \
     || fail "install.sh --local-checkout exited non-zero"
 
-  verify_installed_tree "${install_root_explicit}" "explicit"
+  verify_installed_tree "${INSTALL_ROOT_EXPLICIT}" "explicit"
   log "Test 1 PASSED"
 
   # ── Test 2: implicit auto-detection ───────────────────────────────────────
@@ -186,21 +196,21 @@ main() {
   # from build_root so it completes quickly.
   log "=== Test 2: implicit auto-detection (no --local-checkout flag) ==="
   run_install \
-    "${install_root_implicit}" \
+    "${INSTALL_ROOT_IMPLICIT}" \
     "${fake_home_implicit}" \
     "${build_root}" \
     || fail "install.sh (implicit auto-detection) exited non-zero"
 
-  verify_installed_tree "${install_root_implicit}" "implicit"
+  verify_installed_tree "${INSTALL_ROOT_IMPLICIT}" "implicit"
   log "Test 2 PASSED"
 
   # ── Stray process check ───────────────────────────────────────────────────
   log "Verifying no stray daemon processes remain..."
-  if any_stray_for_root "${install_root_explicit}"; then
-    fail "Stray processes remain for explicit install root (${install_root_explicit})"
+  if any_stray_for_root "${INSTALL_ROOT_EXPLICIT}"; then
+    fail "Stray processes remain for explicit install root (${INSTALL_ROOT_EXPLICIT})"
   fi
-  if any_stray_for_root "${install_root_implicit}"; then
-    fail "Stray processes remain for implicit install root (${install_root_implicit})"
+  if any_stray_for_root "${INSTALL_ROOT_IMPLICIT}"; then
+    fail "Stray processes remain for implicit install root (${INSTALL_ROOT_IMPLICIT})"
   fi
 
   log "Source-checkout installer smoke test PASSED"

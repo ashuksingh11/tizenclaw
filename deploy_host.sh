@@ -373,6 +373,8 @@ run_rust_workspace_build() {
   mkdir -p "${RUST_WORKSPACE_TARGET_DIR}"
   if CARGO_TARGET_DIR="${RUST_WORKSPACE_TARGET_DIR}" cargo "${cargo_args[@]}"; then
     ok "Canonical rust workspace build succeeded (${BUILD_MODE})"
+  elif [[ "${TIZENCLAW_NO_NETWORK_FALLBACK:-0}" == "1" ]]; then
+    fail "Canonical rust workspace build failed (network fallback disabled)"
   elif run_rust_workspace_without_vendor "${retry_args[@]}"; then
     warn "Canonical rust workspace build required network-backed dependency resolution"
     ok "Canonical rust workspace build succeeded (${BUILD_MODE})"
@@ -405,6 +407,8 @@ run_rust_workspace_tests() {
   mkdir -p "${RUST_WORKSPACE_TARGET_DIR}"
   if CARGO_TARGET_DIR="${RUST_WORKSPACE_TARGET_DIR}" cargo "${cargo_args[@]}" 2>&1; then
     ok "Canonical rust workspace tests passed"
+  elif [[ "${TIZENCLAW_NO_NETWORK_FALLBACK:-0}" == "1" ]]; then
+    fail "Canonical rust workspace tests failed (network fallback disabled)"
   elif run_rust_workspace_without_vendor "${retry_args[@]}"; then
     warn "Canonical rust workspace tests required network-backed dependency resolution"
     ok "Canonical rust workspace tests passed"
