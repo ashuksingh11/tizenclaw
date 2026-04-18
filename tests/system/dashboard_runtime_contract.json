@@ -1,5 +1,6 @@
 {
   "name": "dashboard-runtime-contract",
+  "offline_safe": true,
   "steps": [
     {
       "name": "dashboard-start-returns-port-and-url",

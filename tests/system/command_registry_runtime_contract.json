@@ -1,5 +1,6 @@
 {
   "name": "command-registry-runtime-contract",
+  "offline_safe": true,
   "steps": [
     {
       "name": "builtins-are-listed",

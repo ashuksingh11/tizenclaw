@@ -1,5 +1,6 @@
 {
   "name": "clawhub-update-runtime-contract",
+  "offline_safe": true,
   "steps": [
     {
       "name": "clawhub-update-empty-lock-returns-ok",

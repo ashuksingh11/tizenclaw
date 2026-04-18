@@ -1,5 +1,6 @@
 {
   "name": "doc-layout-verification",
+  "offline_safe": true,
   "steps": [
     {
       "name": "registered-paths-remain-visible",

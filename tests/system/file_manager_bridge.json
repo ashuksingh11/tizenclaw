@@ -1,5 +1,6 @@
 {
   "name": "file-manager-bridge",
+  "offline_safe": true,
   "steps": [
     {
       "name": "mkdir-via-linux-utility",

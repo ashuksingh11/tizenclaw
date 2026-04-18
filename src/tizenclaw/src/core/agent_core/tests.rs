@@ -1010,16 +1010,16 @@ mod tests {
             {
                 "question": "Military action against Iran ends by April 17, 2026?",
                 "description": "Near-term geopolitical escalation market.",
-                "endDateIso": "2026-04-17",
+                "endDateIso": "2026-04-30",
                 "volume24hr": 6325778.72,
                 "volumeNum": 7901398.22,
                 "outcomes": "[\"Yes\", \"No\"]",
                 "outcomePrices": "[\"0.99\", \"0.01\"]"
             },
             {
-                "question": "Will Manchester United FC win on 2026-04-13?",
+                "question": "Will Manchester United FC win on 2026-04-25?",
                 "description": "A same-day football match result market.",
-                "endDateIso": "2026-04-13",
+                "endDateIso": "2026-04-25",
                 "volume24hr": 2440327.74,
                 "volumeNum": 2961279.19,
                 "outcomes": "[\"Yes\", \"No\"]",
@@ -1055,7 +1055,7 @@ mod tests {
         assert!(questions.contains(&"Military action against Iran ends by April 17, 2026?"));
         assert!(questions.contains(&"US x Iran permanent peace deal by April 22, 2026?"));
         assert!(questions.contains(&"Strait of Hormuz traffic returns to normal by end of April?"));
-        assert!(!questions.contains(&"Will Manchester United FC win on 2026-04-13?"));
+        assert!(!questions.contains(&"Will Manchester United FC win on 2026-04-25?"));
     }
 
     #[test]

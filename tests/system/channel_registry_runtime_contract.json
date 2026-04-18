@@ -1,5 +1,6 @@
 {
   "name": "channel-registry-runtime-contract",
+  "offline_safe": true,
   "steps": [
     {
       "name": "dashboard-is-registered",

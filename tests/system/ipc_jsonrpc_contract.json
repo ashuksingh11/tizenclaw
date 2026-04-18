@@ -1,5 +1,6 @@
 {
   "name": "ipc-jsonrpc-contract",
+  "offline_safe": true,
   "steps": [
     {
       "name": "ping-health-check",

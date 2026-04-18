@@ -1,5 +1,6 @@
 {
   "name": "basic-ipc-smoke",
+  "offline_safe": true,
   "steps": [
     {
       "name": "read-llm-transport",

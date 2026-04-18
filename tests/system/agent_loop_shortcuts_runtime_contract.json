@@ -1,5 +1,6 @@
 {
   "name": "agent-loop-shortcuts-runtime-contract",
+  "offline_safe": true,
   "steps": [
     {
       "name": "create-research-directory",
@@ -161,7 +162,7 @@
         },
         {
           "path": "content",
-          "contains": "MegaCorp"
+          "contains": "revenue protection"
         }
       ]
     }

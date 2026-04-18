@@ -1,5 +1,6 @@
 {
   "name": "rust-workspace-refactor-parity",
+  "offline_safe": true,
   "steps": [
     {
       "name": "runtime-commands-remain-discoverable",
