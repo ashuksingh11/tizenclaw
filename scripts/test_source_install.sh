@@ -349,6 +349,87 @@ main() {
   fi
   log "Test 4 PASSED"
 
+  # ── Test 5: locked worktree must cause installer to fail (not build from wrong branch) ──
+  # Reproduces the scenario where SOURCE_DIR is on a different branch and
+  # REPO_REF is locked in a linked worktree.  The installer must reject this
+  # with a non-zero exit rather than silently building from the wrong branch.
+  log "=== Test 5: locked worktree causes installer to fail cleanly ==="
+
+  local source_dir_wt="${TMP_DIR}/source-wt"
+  local fake_home_wt="${TMP_DIR}/home-wt"
+  local install_root_wt="${fake_home_wt}/.tizenclaw"
+  local locked_wt="${TMP_DIR}/locked-wt"
+  mkdir -p "${fake_home_wt}"
+
+  # Fresh clone from bare repo; start on test_ref.
+  git clone "${bare_url}" "${source_dir_wt}"
+  git -C "${source_dir_wt}" checkout "${test_ref}"
+
+  # Create a diverged branch and leave the main clone on it.  other-branch
+  # starts at the same commit as test_ref so no local-only-commit guard fires.
+  git -C "${source_dir_wt}" \
+    -c user.email="smoke@test.local" \
+    -c user.name="Smoke Test" \
+    checkout -b other-branch
+
+  # Record the current HEAD on other-branch; it must not move after the install
+  # attempt, proving the installer did not touch the wrong branch.
+  local head_before_wt
+  head_before_wt="$(git -C "${source_dir_wt}" rev-parse HEAD)"
+
+  # Lock test_ref in a linked worktree.  The installer is pointed at
+  # source_dir_wt (on other-branch) with --ref test_ref; it must fail rather
+  # than proceeding to build from other-branch.
+  git -C "${source_dir_wt}" worktree add --detach "${locked_wt}"
+  git -C "${locked_wt}" checkout "${test_ref}"
+
+  local err5_output
+  local install5_rc=0
+  err5_output="$(
+    HOME="${fake_home_wt}" \
+    CARGO_HOME="${CARGO_HOME:-${HOME}/.cargo}" \
+    RUSTUP_HOME="${RUSTUP_HOME:-${HOME}/.rustup}" \
+    TIZENCLAW_INSTALL_ROOT="${install_root_wt}" \
+    TIZENCLAW_BASHRC_PATH="${fake_home_wt}/.bashrc" \
+    TIZENCLAW_SKIP_SERVICES="1" \
+    TIZENCLAW_NO_NETWORK_FALLBACK="1" \
+      bash "${PROJECT_DIR}/install.sh" \
+        --source-install \
+        --repo "${bare_url}" \
+        --ref "${test_ref}" \
+        --dir "${source_dir_wt}" \
+        --skip-deps \
+        --skip-setup \
+        -- --no-restart --build-root "${build_root}" \
+      2>&1 >/dev/null
+  )" || install5_rc=$?
+
+  if [[ "${install5_rc}" -eq 0 ]]; then
+    fail "Test 5: Expected non-zero exit when REPO_REF is locked in another worktree, got 0"
+  fi
+  log "Test 5: installer exited ${install5_rc} (expected non-zero) — OK"
+
+  # Error message must mention the checkout path so the user can act on it.
+  if ! grep -Fq "${source_dir_wt}" <<< "${err5_output}"; then
+    fail "Test 5: Error message does not mention the checkout path (${source_dir_wt}): ${err5_output}"
+  fi
+
+  # The main clone must still be on other-branch and HEAD must not have moved.
+  local branch_after_wt
+  branch_after_wt="$(git -C "${source_dir_wt}" symbolic-ref --short HEAD \
+    2>/dev/null || echo 'DETACHED')"
+  if [[ "${branch_after_wt}" != "other-branch" ]]; then
+    fail "Test 5: Branch changed from other-branch to '${branch_after_wt}'; installer switched branches"
+  fi
+  local head_after_wt
+  head_after_wt="$(git -C "${source_dir_wt}" rev-parse HEAD)"
+  if [[ "${head_after_wt}" != "${head_before_wt}" ]]; then
+    fail "Test 5: HEAD moved from ${head_before_wt} to ${head_after_wt}; installer modified the wrong branch"
+  fi
+
+  git -C "${source_dir_wt}" worktree remove --force "${locked_wt}" || true
+  log "Test 5 PASSED"
+
   log "Source-install smoke test PASSED"
 }
 

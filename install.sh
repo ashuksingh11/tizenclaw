@@ -612,20 +612,19 @@ prepare_repo() {
       fi
     fi
 
-    # Skip checkout when already on the target branch, or when the branch is
-    # locked by another worktree.  Linked worktrees created from a branch
-    # that is already active in another worktree use detached HEAD, so
-    # symbolic-ref returns empty and `git checkout <branch>` would fail with
-    # "fatal: '<branch>' is already used by worktree".  Detect that case
-    # via `git worktree list` and skip the checkout; the divergent-history
-    # guard above already confirmed HEAD is safe to use as-is.
+    # Determine the currently checked-out branch (empty for detached HEAD).
     local current_ref
     current_ref="$(git -C "${SOURCE_DIR}" symbolic-ref --short HEAD 2>/dev/null || true)"
+
     if [[ "${current_ref}" == "${REPO_REF}" ]]; then
+      # Already on the target branch — skip checkout, proceed to fast-forward.
       log "Already on ${REPO_REF}; skipping checkout"
     elif git -C "${SOURCE_DIR}" worktree list --porcelain 2>/dev/null \
           | grep -qF "branch refs/heads/${REPO_REF}"; then
-      log "${REPO_REF} is active in another worktree; skipping checkout"
+      # The target branch is locked by another worktree.  We cannot switch to
+      # it from here, and proceeding on the current branch would install the
+      # wrong code.  Abort and tell the user where to run the update instead.
+      fail "${SOURCE_DIR} is currently on '${current_ref:-detached HEAD}', not '${REPO_REF}', and '${REPO_REF}' is already checked out in another worktree. Run the installer from that worktree, or use --dir pointing to the worktree that has ${REPO_REF} checked out."
     else
       log "Checking out ${REPO_REF}"
       git -C "${SOURCE_DIR}" checkout "${REPO_REF}"
