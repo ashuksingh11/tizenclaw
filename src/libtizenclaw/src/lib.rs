@@ -44,6 +44,10 @@ fn set_last_error(msg: &str) {
 
 // ── Helper: C string conversion ────────────────
 
+/// # Safety
+///
+/// `ptr` must either be null or point to a valid NUL-terminated C string
+/// that remains alive for the duration of the returned borrow.
 unsafe fn cstr_to_str<'a>(ptr: *const c_char) -> Option<&'a str> {
     if ptr.is_null() {
         return None;
@@ -71,6 +75,10 @@ type HandlePtr = *mut Arc<Mutex<HandleInner>>;
 //  Lifecycle
 // ═══════════════════════════════════════════
 
+/// # Safety
+///
+/// `handle` must be a valid, writable pointer to storage for a
+/// `tizenclaw_h` result.
 #[no_mangle]
 pub unsafe extern "C" fn tizenclaw_create(handle: *mut *mut libc::c_void) -> i32 {
     if handle.is_null() {
@@ -131,6 +139,11 @@ pub extern "C" fn tizenclaw_destroy(handle: *mut libc::c_void) {
 //  Prompt Processing
 // ═══════════════════════════════════════════
 
+/// # Safety
+///
+/// `handle`, `session_id`, and `prompt` must either be null or point to valid
+/// values matching the C API contract. The returned string must be released
+/// with `tizenclaw_free_string`.
 #[no_mangle]
 pub unsafe extern "C" fn tizenclaw_process_prompt(
     handle: *mut libc::c_void,
@@ -160,7 +173,7 @@ pub unsafe extern "C" fn tizenclaw_process_prompt(
 
     let arc = &*ptr;
     match arc.lock() {
-        Ok(inner) => match inner.agent.process_prompt(sid, p) {
+        Ok(inner) => match inner.agent.process_prompt(p, sid) {
             Ok(resp) => string_to_c(resp),
             Err(e) => {
                 set_last_error(&e);
@@ -177,6 +190,10 @@ pub unsafe extern "C" fn tizenclaw_process_prompt(
 /// Async callback type matching tizenclaw_response_cb in tizenclaw.h
 type ResponseCallback = unsafe extern "C" fn(*const c_char, i32, *mut libc::c_void);
 
+/// # Safety
+///
+/// `handle`, `session_id`, and `prompt` must follow the C API contract, and
+/// `callback` must remain callable for the lifetime of the spawned worker.
 #[no_mangle]
 pub unsafe extern "C" fn tizenclaw_process_prompt_async(
     handle: *mut libc::c_void,
@@ -213,7 +230,7 @@ pub unsafe extern "C" fn tizenclaw_process_prompt_async(
 
     std::thread::spawn(move || {
         let result = match arc.lock() {
-            Ok(inner) => inner.agent.process_prompt(&sid, &p),
+            Ok(inner) => inner.agent.process_prompt(&p, &sid),
             Err(e) => Err(format!("Lock poisoned: {}", e)),
         };
 
@@ -239,6 +256,10 @@ pub unsafe extern "C" fn tizenclaw_process_prompt_async(
 //  Session Management
 // ═══════════════════════════════════════════
 
+/// # Safety
+///
+/// `handle` and `session_id` must follow the C API contract and remain valid
+/// for the duration of the call.
 #[no_mangle]
 pub unsafe extern "C" fn tizenclaw_clear_session(
     handle: *mut libc::c_void,
@@ -354,6 +375,10 @@ pub extern "C" fn tizenclaw_get_tools(handle: *mut libc::c_void) -> *mut c_char 
     }
 }
 
+/// # Safety
+///
+/// `handle`, `tool_name`, and `args_json` must follow the C API contract. The
+/// returned string must be released with `tizenclaw_free_string`.
 #[no_mangle]
 pub unsafe extern "C" fn tizenclaw_execute_tool(
     handle: *mut libc::c_void,
@@ -477,6 +502,10 @@ pub extern "C" fn tizenclaw_stop_dashboard(handle: *mut libc::c_void) -> i32 {
 //  Utility
 // ═══════════════════════════════════════════
 
+/// # Safety
+///
+/// `ptr` must be a pointer previously returned by this library via
+/// `CString::into_raw` and must not be freed more than once.
 #[no_mangle]
 pub unsafe extern "C" fn tizenclaw_free_string(ptr: *mut c_char) {
     if !ptr.is_null() {

@@ -190,10 +190,20 @@ impl SystemPromptBuilder {
             ReasoningPolicy::Native => {
                 lines.push("1. **Reasoning**: Keep chain-of-thought private. Use the backend's native reasoning behavior when available instead of emitting literal reasoning tags.".into());
                 lines.push("2. **Action**: If you need to call a tool, use the native tool calling schema. Do not narrate routine calls.".into());
-                lines.push("3. **Final Response**: Return a direct user-visible answer. `<final>` tags are optional and only needed for compatibility.".into());
+        lines.push("3. **Final Response**: Return a direct user-visible answer. `<final>` tags are optional and only needed for compatibility.".into());
             }
         }
         lines.push("4. **Budget Awareness**: If a tool result arrives in truncated or summarized form, treat it as a budgeted snapshot and request a narrower follow-up tool call when necessary.".into());
+        lines.push("5. **File-Type Routing**: When the workspace already tells you the file type, call the specialized reader directly. Use `extract_document_text` for PDFs/documents and `inspect_tabular_data` for CSV/XLSX files instead of searching for another tool first.".into());
+        lines.push("6. **Direct Specialized Tools First**: If the request plainly maps to a native capability such as `generate_image`, `extract_document_text`, or `web_search`, call that tool directly before using `search_tools`. Use discovery only when the needed capability is genuinely unclear or missing.".into());
+        lines.push("7. **Explicit Tool Bans Win**: If the user explicitly says not to use tools or asks for raw JSON only, obey that instruction and return the requested format without tool calls.".into());
+        lines.push("8. **No Fake Outputs**: If a task asks for a real image, document extraction, or current research, use the corresponding native tool (`generate_image`, `extract_document_text`, `web_search`) instead of fabricating placeholder files or unsupported claims.".into());
+        lines.push("9. **Completion Check**: For file-output tasks, inspect inputs first, create the requested artifact, and verify the saved file is non-empty and matches the requested file type before declaring success. If you just wrote a plain text or Markdown file and the tool confirmed the write succeeded, do not add an extra `stat` or reread step unless a prior write failed or you need to repair a specific problem.".into());
+        lines.push("10. **Answer File Quality**: When saving an answer or report file, write a direct sentence or short structured report that restates the requested fact. Do not save only a bare value, and do not write uncertainty placeholders when the task explicitly asks for a current numeric fact such as a quote or price.".into());
+        lines.push("11. **Research Artifact Completeness**: For current web research files, do not finalize with vague placeholders, month-only dates, missing URLs, or stale past-year items when the prompt asks for current, upcoming, or this-year facts. If one candidate lacks a verifiable required field, research a different candidate instead of guessing. For general multi-item roundups, prefer diverse organizers or ecosystems instead of filling the list from one event family unless the user explicitly asked for that source.".into());
+        lines.push("12. **Markdown Means Markdown**: When the requested output file ends with `.md`, save the final artifact as real Markdown. Prefer a short heading plus a Markdown table or bullet list for multi-item research results instead of raw JSON or CSV unless the user explicitly asked for those formats.".into());
+        lines.push("13. **Long-Form Writing Structure**: For blog posts, essays, or articles saved to Markdown, use a title, multiple titled sections, and an explicit conclusion. Cover several distinct points rather than repeating the same idea, and support important claims with concrete reasoning, examples, or role-specific implications when the topic calls for them. Include at least one concrete scenario, workflow, or before/after example when the audience is professional or technical so the piece does not stay generic. If the prompt gives a target word count, treat it as a tight drafting budget and revise until the final draft lands very close to that number.".into());
+        lines.push("14. **Input File Protection**: When the prompt references source documents, datasets, or other existing input files together with a different output file, treat the referenced inputs as read-only unless the user explicitly asks you to modify them. Never overwrite a source file just because you re-read it during verification.".into());
         lines.push("".into());
 
         if self.prompt_mode == PromptMode::Full {
@@ -333,6 +343,10 @@ mod tests {
         assert!(prompt.contains("## Reasoning & Tool Interaction"));
         assert!(prompt.contains("chain-of-thought private"));
         assert!(prompt.contains("Budget Awareness"));
+        assert!(prompt.contains("Answer File Quality"));
+        assert!(prompt.contains("Markdown Means Markdown"));
+        assert!(prompt.contains("Long-Form Writing Structure"));
+        assert!(prompt.contains("Input File Protection"));
     }
 
     #[test]

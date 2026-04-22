@@ -99,6 +99,13 @@ jobs:
             --output-dir dist
           ls -lh dist
 
+      - name: Run installer smoke test
+        run: |
+          set -euo pipefail
+          cd "${WORKDIR}"
+          archive="dist/tizenclaw-host-bundle-${BUNDLE_VERSION}-linux-x86_64.tar.gz"
+          bash scripts/test_host_bundle_install.sh --bundle "${archive}"
+
       - name: Publish GitHub Release asset
         if: env.PUBLISH_RELEASE == 'true'
         env:

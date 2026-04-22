@@ -5,15 +5,17 @@ RELEASE_REPO="hjhun/tizenclaw"
 RELEASE_VERSION="latest"
 ASSET_URL=""
 SOURCE_INSTALL=false
+LOCAL_CHECKOUT=false
 
 REPO_URL="https://github.com/hjhun/tizenclaw.git"
 REPO_REF="develRust"
 SOURCE_DIR="${HOME}/.local/src/tizenclaw"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-HOST_BASE_DIR="${HOME}/.tizenclaw"
+HOST_BASE_DIR="${TIZENCLAW_INSTALL_ROOT:-${HOME}/.tizenclaw}"
 HOST_BIN_DIR="${HOST_BASE_DIR}/bin"
-HOST_MANAGE_SCRIPT="${HOST_BASE_DIR}/manage/deploy_host.sh"
-BASHRC_PATH="${HOME}/.bashrc"
+HOST_MANAGE_SCRIPT="${HOST_BASE_DIR}/manage/tizenclaw-hostctl.sh"
+BASHRC_PATH="${TIZENCLAW_BASHRC_PATH:-${HOME}/.bashrc}"
 PATH_EXPORT='export PATH="$HOME/.tizenclaw/bin:$PATH"'
 
 SKIP_DEPS=false
@@ -48,6 +50,7 @@ Options:
   --version <tag>      Release tag to install (default: latest)
   --asset-url <url>    Override the bundle asset URL
   --source-install     Clone the repository and build on the local host
+  --local-checkout     Install from the current repository checkout
   --repo <url>         Override the Git repository URL for source install
   --ref <git-ref>      Git ref to checkout for source install
   --dir <path>         Repository clone directory for source install
@@ -58,8 +61,17 @@ Options:
   --test               Forward --test to deploy_host.sh in source mode
   -h, --help           Show this help
 
+Source-install safety:
+  When --source-install targets a directory that already exists, the installer
+  never discards uncommitted changes or local commits. If the checkout is dirty
+  (modified or untracked files) or if the local branch contains commits not
+  present on the remote, the installer fails with a clear message before
+  touching any files. Use a different --dir, clean the checkout, or push/stash
+  your local changes to recover.
+
 Examples:
   ./install.sh
+  ./install.sh --local-checkout
   ./install.sh --version v1.0.0
   ./install.sh --asset-url file:///tmp/tizenclaw-host-bundle.tar.gz
   ./install.sh --source-install --ref develRust
@@ -81,6 +93,10 @@ parse_args() {
         ;;
       --source-install)
         SOURCE_INSTALL=true
+        shift
+        ;;
+      --local-checkout)
+        LOCAL_CHECKOUT=true
         shift
         ;;
       --repo)
@@ -136,6 +152,34 @@ parse_args() {
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1
+}
+
+# Returns success when <path> is the root of a valid Git work tree.
+# Works for both normal clones (.git/ directory) and worktrees (.git file).
+# Subdirectories inside a repo are intentionally rejected to prevent
+# prepare_repo() from operating on the parent repo unexpectedly.
+is_git_checkout() {
+  git -C "$1" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+  local toplevel actual
+  toplevel="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  actual="$(cd "$1" && pwd -P 2>/dev/null)" || return 1
+  toplevel="$(cd "${toplevel}" && pwd -P 2>/dev/null)" || return 1
+  [[ "${toplevel}" == "${actual}" ]]
+}
+
+auto_select_local_checkout() {
+  if [[ "${SOURCE_INSTALL}" == true || "${LOCAL_CHECKOUT}" == true ]]; then
+    return
+  fi
+
+  if [[ -n "${ASSET_URL}" || "${RELEASE_VERSION}" != "latest" ]]; then
+    return
+  fi
+
+  if [[ -x "${SCRIPT_DIR}/deploy_host.sh" ]] && is_git_checkout "${SCRIPT_DIR}"; then
+    LOCAL_CHECKOUT=true
+    log "Detected repository checkout; defaulting to --local-checkout"
+  fi
 }
 
 install_runtime_deps() {
@@ -264,6 +308,7 @@ prepare_host_runtime_dirs() {
     "${HOST_BASE_DIR}/config" \
     "${HOST_BASE_DIR}/sample" \
     "${HOST_BASE_DIR}/manage" \
+    "${HOST_BASE_DIR}/run" \
     "${HOST_BASE_DIR}/tools/cli" \
     "${HOST_BASE_DIR}/workspace/skills" \
     "${HOST_BASE_DIR}/logs" \
@@ -314,15 +359,23 @@ seed_config_from_bundle() {
 }
 
 restart_host_services() {
+  if [[ "${TIZENCLAW_SKIP_SERVICES:-}" == "1" ]]; then
+    log "Skipping service restart (TIZENCLAW_SKIP_SERVICES=1)"
+    return
+  fi
+
   if [[ -x "${HOST_MANAGE_SCRIPT}" ]]; then
-    "${HOST_MANAGE_SCRIPT}" --restart-only
+    TIZENCLAW_INSTALL_ROOT="${HOST_BASE_DIR}" \
+      "${HOST_MANAGE_SCRIPT}" --restart-only
     return
   fi
 
   if [[ -x "${SOURCE_DIR}/deploy_host.sh" ]]; then
     (
       cd "${SOURCE_DIR}"
-      ./deploy_host.sh --restart-only
+      TIZENCLAW_INSTALL_ROOT="${HOST_BASE_DIR}" \
+      TIZENCLAW_BASHRC_PATH="${BASHRC_PATH}" \
+        ./deploy_host.sh --restart-only
     )
     return
   fi
@@ -331,15 +384,19 @@ restart_host_services() {
 }
 
 stop_host_services_if_present() {
+  if [[ "${TIZENCLAW_SKIP_SERVICES:-}" == "1" ]]; then
+    log "Skipping service stop (TIZENCLAW_SKIP_SERVICES=1)"
+    return
+  fi
+
   wait_for_exit() {
     local binary_name="$1"
     local attempts=0
+    local match_pat="${HOST_BIN_DIR}/${binary_name}([[:space:]]|\$)"
 
-    while pgrep -u "$(id -u)" -x "${binary_name}" >/dev/null 2>&1 \
-      || pgrep -u "$(id -u)" -f "${HOST_BIN_DIR}/${binary_name}([[:space:]]|$)" >/dev/null 2>&1; do
+    while pgrep -u "$(id -u)" -f "${match_pat}" >/dev/null 2>&1; do
       if [[ "${attempts}" -ge 5 ]]; then
-        pkill -9 -u "$(id -u)" -x "${binary_name}" >/dev/null 2>&1 || true
-        pkill -9 -u "$(id -u)" -f "${HOST_BIN_DIR}/${binary_name}([[:space:]]|$)" >/dev/null 2>&1 || true
+        pkill -9 -u "$(id -u)" -f "${match_pat}" >/dev/null 2>&1 || true
         break
       fi
       sleep 1
@@ -348,14 +405,12 @@ stop_host_services_if_present() {
   }
 
   if [[ -x "${HOST_MANAGE_SCRIPT}" ]]; then
-    "${HOST_MANAGE_SCRIPT}" --stop || true
+    TIZENCLAW_INSTALL_ROOT="${HOST_BASE_DIR}" \
+      "${HOST_MANAGE_SCRIPT}" --stop || true
   else
     pkill -f "${HOST_BIN_DIR}/tizenclaw-tool-executor" >/dev/null 2>&1 || true
     pkill -f "${HOST_BIN_DIR}/tizenclaw-web-dashboard" >/dev/null 2>&1 || true
     pkill -f "${HOST_BIN_DIR}/tizenclaw" >/dev/null 2>&1 || true
-    pkill -x tizenclaw-tool-executor >/dev/null 2>&1 || true
-    pkill -x tizenclaw-web-dashboard >/dev/null 2>&1 || true
-    pkill -x tizenclaw >/dev/null 2>&1 || true
   fi
 
   wait_for_exit "tizenclaw-tool-executor"
@@ -377,8 +432,12 @@ install_release_bundle() {
   copy_tree_contents "${bundle_root}/embedded" "${HOST_BASE_DIR}/embedded"
   copy_tree_contents "${bundle_root}/manage" "${HOST_BASE_DIR}/manage"
 
+  if [[ -f "${bundle_root}/bundle-manifest.json" ]]; then
+    install -m 644 "${bundle_root}/bundle-manifest.json" "${HOST_BASE_DIR}/bundle-manifest.json"
+  fi
+
   if [[ -x "${HOST_MANAGE_SCRIPT}" ]]; then
-    ln -sf ../manage/deploy_host.sh "${HOST_BIN_DIR}/tizenclaw-hostctl"
+    ln -sf ../manage/tizenclaw-hostctl.sh "${HOST_BIN_DIR}/tizenclaw-hostctl"
   fi
 
   seed_config_from_bundle "${bundle_root}"
@@ -441,6 +500,48 @@ download_release_bundle() {
   curl -fsSL "${ASSET_URL}" -o "${asset_path}"
 }
 
+fetch_checksum_for_url() {
+  local asset_url="$1"
+
+  if [[ "${asset_url}" == file://* ]]; then
+    local local_cs="${asset_url#file://}.sha256"
+    if [[ -f "${local_cs}" ]]; then
+      cat "${local_cs}"
+      return 0
+    fi
+    return 1
+  fi
+
+  local cs_content
+  cs_content="$(curl -fsSL "${asset_url}.sha256" 2>/dev/null)" || return 1
+  printf '%s\n' "${cs_content}"
+}
+
+verify_bundle_checksum() {
+  local asset_url="$1"
+  local archive_path="$2"
+  local cs_content
+
+  if ! cs_content="$(fetch_checksum_for_url "${asset_url}")"; then
+    if [[ "${asset_url}" == https://* ]]; then
+      fail "Checksum file not retrievable for ${asset_url}; refusing to install an unverified bundle. Ensure the .sha256 asset is published alongside the bundle."
+    fi
+    warn "No checksum file found for ${asset_url}; skipping integrity check"
+    return 0
+  fi
+
+  local expected_hash
+  expected_hash="$(awk '{print $1}' <<< "${cs_content}")"
+  local actual_hash
+  actual_hash="$(sha256sum "${archive_path}" | awk '{print $1}')"
+
+  if [[ "${expected_hash}" != "${actual_hash}" ]]; then
+    fail "Bundle checksum mismatch: expected ${expected_hash}, got ${actual_hash}"
+  fi
+
+  log "Bundle checksum verified: ${actual_hash}"
+}
+
 locate_bundle_root() {
   local extracted_root="$1"
   find "${extracted_root}" -name bundle-manifest.json -print -quit | xargs -r dirname
@@ -455,6 +556,7 @@ install_from_release_asset() {
   archive_path="${temp_dir}/tizenclaw-host-bundle.tar.gz"
 
   download_release_bundle "${archive_path}"
+  verify_bundle_checksum "${ASSET_URL}" "${archive_path}"
   tar -xzf "${archive_path}" -C "${temp_dir}"
 
   bundle_root="$(locate_bundle_root "${temp_dir}")"
@@ -469,25 +571,82 @@ prepare_repo() {
   parent_dir="$(dirname "${SOURCE_DIR}")"
   mkdir -p "${parent_dir}"
 
-  if [[ -e "${SOURCE_DIR}" && ! -d "${SOURCE_DIR}/.git" ]]; then
+  if [[ -e "${SOURCE_DIR}" ]] && ! is_git_checkout "${SOURCE_DIR}"; then
     fail "${SOURCE_DIR} exists but is not a Git checkout"
   fi
 
-  if [[ -d "${SOURCE_DIR}/.git" ]]; then
-    log "Updating existing repository at ${SOURCE_DIR}"
+  if is_git_checkout "${SOURCE_DIR}"; then
+    # Refuse to modify a checkout that has uncommitted or untracked changes.
+    local porcelain
+    porcelain="$(git -C "${SOURCE_DIR}" status --porcelain 2>&1)"
+    if [[ -n "${porcelain}" ]]; then
+      fail "${SOURCE_DIR} has uncommitted or untracked changes and will not be modified automatically. Clean the checkout, commit or stash your work, or use a different --dir to avoid data loss."
+    fi
+
+    log "Fetching from origin at ${SOURCE_DIR}"
     git -C "${SOURCE_DIR}" fetch --tags origin
+
+    # If origin/<ref> is known, ensure neither HEAD nor the local branch that
+    # will be checked out has commits that would be silently abandoned.
+    # Checking only HEAD is insufficient: when HEAD is on a different branch,
+    # the local branch named ${REPO_REF} may have local-only commits that the
+    # subsequent checkout + ff-merge would leave in place unnoticed.
+    if git -C "${SOURCE_DIR}" rev-parse --verify "origin/${REPO_REF}" >/dev/null 2>&1; then
+      local head_only
+      head_only="$(git -C "${SOURCE_DIR}" rev-list \
+        "origin/${REPO_REF}..HEAD" 2>/dev/null | wc -l)"
+      head_only="${head_only//[[:space:]]/}"
+      if [[ "${head_only}" -gt 0 ]]; then
+        fail "${SOURCE_DIR}: HEAD has ${head_only} commit(s) not present on origin/${REPO_REF}. Push or discard the local commits, or use a different --dir."
+      fi
+
+      # Also guard the named local branch even when HEAD is not on it.
+      if git -C "${SOURCE_DIR}" rev-parse --verify "refs/heads/${REPO_REF}" >/dev/null 2>&1; then
+        local branch_only
+        branch_only="$(git -C "${SOURCE_DIR}" rev-list \
+          "origin/${REPO_REF}..refs/heads/${REPO_REF}" 2>/dev/null | wc -l)"
+        branch_only="${branch_only//[[:space:]]/}"
+        if [[ "${branch_only}" -gt 0 ]]; then
+          fail "${SOURCE_DIR}: ${REPO_REF} has ${branch_only} commit(s) not present on origin/${REPO_REF}. Push or discard the local commits, or use a different --dir."
+        fi
+      fi
+    fi
+
+    # Determine the currently checked-out branch (empty for detached HEAD).
+    local current_ref
+    current_ref="$(git -C "${SOURCE_DIR}" symbolic-ref --short HEAD 2>/dev/null || true)"
+
+    if [[ "${current_ref}" == "${REPO_REF}" ]]; then
+      # Already on the target branch — skip checkout, proceed to fast-forward.
+      log "Already on ${REPO_REF}; skipping checkout"
+    elif git -C "${SOURCE_DIR}" worktree list --porcelain 2>/dev/null \
+          | grep -qFx "branch refs/heads/${REPO_REF}"; then
+      # The target branch is locked by another worktree.  If this worktree's
+      # detached HEAD already points at the same commit as the target ref, no
+      # checkout is needed — the correct code is already present.
+      local head_commit target_commit
+      head_commit="$(git -C "${SOURCE_DIR}" rev-parse HEAD 2>/dev/null || true)"
+      target_commit="$(git -C "${SOURCE_DIR}" rev-parse "refs/heads/${REPO_REF}" 2>/dev/null || true)"
+      if [[ -z "${current_ref}" && -n "${head_commit}" && "${head_commit}" == "${target_commit}" ]]; then
+        log "Detached HEAD is already at ${REPO_REF} (${head_commit:0:7}); skipping checkout"
+      else
+        fail "${SOURCE_DIR} is currently on '${current_ref:-detached HEAD}', not '${REPO_REF}', and '${REPO_REF}' is already checked out in another worktree. Run the installer from that worktree, or use --dir pointing to the worktree that has ${REPO_REF} checked out."
+      fi
+    else
+      log "Checking out ${REPO_REF}"
+      git -C "${SOURCE_DIR}" checkout "${REPO_REF}"
+    fi
+
+    if git -C "${SOURCE_DIR}" rev-parse --verify "origin/${REPO_REF}" >/dev/null 2>&1; then
+      git -C "${SOURCE_DIR}" merge --ff-only "origin/${REPO_REF}"
+    else
+      warn "origin/${REPO_REF} not found; using the checked out ref as-is"
+    fi
   else
     log "Cloning ${REPO_URL} into ${SOURCE_DIR}"
     git clone "${REPO_URL}" "${SOURCE_DIR}"
-  fi
-
-  log "Checking out ${REPO_REF}"
-  git -C "${SOURCE_DIR}" checkout "${REPO_REF}"
-
-  if git -C "${SOURCE_DIR}" rev-parse --verify "origin/${REPO_REF}" >/dev/null 2>&1; then
-    git -C "${SOURCE_DIR}" reset --hard "origin/${REPO_REF}"
-  else
-    warn "origin/${REPO_REF} not found; using the checked out ref as-is"
+    log "Checking out ${REPO_REF}"
+    git -C "${SOURCE_DIR}" checkout "${REPO_REF}"
   fi
 }
 
@@ -497,6 +656,17 @@ run_source_install() {
   log "Running deploy_host.sh ${HOST_ARGS[*]:-}"
   (
     cd "${SOURCE_DIR}"
+    ./deploy_host.sh "${HOST_ARGS[@]}"
+  )
+}
+
+run_local_checkout_install() {
+  [[ -x "${SCRIPT_DIR}/deploy_host.sh" ]] || fail "deploy_host.sh not found in ${SCRIPT_DIR}"
+  is_git_checkout "${SCRIPT_DIR}" || fail "${SCRIPT_DIR} is not a Git checkout"
+
+  log "Running deploy_host.sh from local checkout ${SCRIPT_DIR} ${HOST_ARGS[*]:-}"
+  (
+    cd "${SCRIPT_DIR}"
     ./deploy_host.sh "${HOST_ARGS[@]}"
   )
 }
@@ -556,8 +726,16 @@ run_setup_wizard() {
 
 main() {
   parse_args "$@"
+  auto_select_local_checkout
 
-  if [[ "${SOURCE_INSTALL}" == true ]]; then
+  if [[ "${LOCAL_CHECKOUT}" == true ]]; then
+    if [[ "${SKIP_DEPS}" != true ]]; then
+      install_build_deps
+      install_rustup
+    fi
+    ensure_rust_in_shell
+    run_local_checkout_install
+  elif [[ "${SOURCE_INSTALL}" == true ]]; then
     if [[ "${SKIP_DEPS}" != true ]]; then
       install_build_deps
       install_rustup

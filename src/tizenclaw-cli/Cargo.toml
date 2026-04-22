@@ -5,4 +5,5 @@ edition = "2021"
 
 [dependencies]
 tizenclaw = { package = "libtizenclaw", path = "../libtizenclaw" }
+libtizenclaw_core = { package = "libtizenclaw-core", path = "../libtizenclaw-core" }
 serde_json = "1"

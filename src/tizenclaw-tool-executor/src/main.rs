@@ -19,16 +19,7 @@ const SOCKET_NAME: &str = "tizenclaw-tool-executor.sock";
 const MAX_PAYLOAD: usize = 10 * 1024 * 1024;
 
 fn default_tools_dir() -> std::path::PathBuf {
-    if let Ok(path) = std::env::var("TIZENCLAW_TOOLS_DIR") {
-        return std::path::PathBuf::from(path);
-    }
-    if std::path::Path::new("/etc/tizen-release").exists()
-        || std::path::Path::new("/opt/usr/share/tizenclaw").exists()
-    {
-        return std::path::PathBuf::from("/opt/usr/share/tizenclaw/tools");
-    }
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    std::path::PathBuf::from(home).join(".tizenclaw/tools")
+    libtizenclaw_core::framework::paths::PlatformPaths::detect().tools_dir
 }
 
 async fn send_payload<W: AsyncWrite + Unpin>(writer: &mut W, resp: &Value) -> bool {

@@ -21,6 +21,7 @@
 //! 14. ResultReporting    — Format and finalize agent output
 //! 15. Complete           — Loop exited; session archived
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Instant;
 
@@ -91,6 +92,39 @@ impl EvalVerdict {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum LoopTransitionReason {
+    LoopInitialized,
+    ToolCallsRequested,
+    IdleRecovery,
+    WorkflowStepAdvance,
+    FileActionRequired,
+    FileTargetsMissing,
+    PersistedOutputsMissing,
+    GoalAchieved,
+    NoBackendConfigured,
+    StuckLoopAbort,
+    RoundLimitReached,
+}
+
+impl LoopTransitionReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LoopTransitionReason::LoopInitialized => "loop_initialized",
+            LoopTransitionReason::ToolCallsRequested => "tool_calls_requested",
+            LoopTransitionReason::IdleRecovery => "idle_recovery",
+            LoopTransitionReason::WorkflowStepAdvance => "workflow_step_advance",
+            LoopTransitionReason::FileActionRequired => "file_action_required",
+            LoopTransitionReason::FileTargetsMissing => "file_targets_missing",
+            LoopTransitionReason::PersistedOutputsMissing => "persisted_outputs_missing",
+            LoopTransitionReason::GoalAchieved => "goal_achieved",
+            LoopTransitionReason::NoBackendConfigured => "no_backend_configured",
+            LoopTransitionReason::StuckLoopAbort => "stuck_loop_abort",
+            LoopTransitionReason::RoundLimitReached => "round_limit_reached",
+        }
+    }
+}
+
 /// Per-session state carried across all agent loop iterations.
 ///
 /// `Send + Sync`: all fields are owned values or standard primitives.
@@ -127,6 +161,8 @@ pub struct AgentLoopState {
     // Observation
     pub last_observation: Option<Value>,
     pub needs_follow_up: bool,
+    pub last_transition_reason: String,
+    pub last_transition_detail: String,
     pub last_prefetch_memory: Option<String>,
     pub last_prefetch_skills: Vec<String>,
 
@@ -140,6 +176,29 @@ pub struct AgentLoopState {
     // Fallback strategy telemetry
     pub stuck_retry_count: usize,
     pub tool_budget_events: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentLoopSnapshot {
+    pub session_id: String,
+    pub phase: String,
+    pub original_goal: String,
+    pub plan_step_count: usize,
+    pub current_step: usize,
+    pub round: usize,
+    pub error_count: usize,
+    pub tool_retry_count: usize,
+    pub max_tool_rounds: usize,
+    pub last_eval_verdict: String,
+    pub needs_follow_up: bool,
+    pub last_transition_reason: String,
+    pub last_transition_detail: String,
+    pub last_error: Option<String>,
+    pub total_tool_calls: usize,
+    pub stuck_retry_count: usize,
+    pub tool_budget_events: usize,
+    pub active_workflow_id: Option<String>,
+    pub current_workflow_step: usize,
 }
 
 impl AgentLoopState {
@@ -167,6 +226,8 @@ impl AgentLoopState {
             compact_threshold: Self::DEFAULT_COMPACT_THRESHOLD,
             last_observation: None,
             needs_follow_up: false,
+            last_transition_reason: LoopTransitionReason::LoopInitialized.as_str().to_string(),
+            last_transition_detail: String::new(),
             last_prefetch_memory: None,
             last_prefetch_skills: Vec::new(),
             last_error: None,
@@ -203,6 +264,21 @@ impl AgentLoopState {
         self.needs_follow_up = value;
     }
 
+    pub fn record_transition(&mut self, reason: LoopTransitionReason, detail: impl Into<String>) {
+        self.last_transition_reason = reason.as_str().to_string();
+        self.last_transition_detail = detail.into();
+    }
+
+    pub fn mark_follow_up(&mut self, reason: LoopTransitionReason, detail: impl Into<String>) {
+        self.needs_follow_up = true;
+        self.record_transition(reason, detail);
+    }
+
+    pub fn mark_terminal(&mut self, reason: LoopTransitionReason, detail: impl Into<String>) {
+        self.needs_follow_up = false;
+        self.record_transition(reason, detail);
+    }
+
     pub fn record_prefetch_memory(&mut self, preview: Option<String>) {
         self.last_prefetch_memory = preview;
     }
@@ -213,6 +289,30 @@ impl AgentLoopState {
 
     pub fn record_budget_events(&mut self, count: usize) {
         self.tool_budget_events += count;
+    }
+
+    pub fn snapshot(&self) -> AgentLoopSnapshot {
+        AgentLoopSnapshot {
+            session_id: self.session_id.clone(),
+            phase: self.phase.as_str().to_string(),
+            original_goal: self.original_goal.clone(),
+            plan_step_count: self.plan_steps.len(),
+            current_step: self.current_step,
+            round: self.round,
+            error_count: self.error_count,
+            tool_retry_count: self.tool_retry_count,
+            max_tool_rounds: self.max_tool_rounds,
+            last_eval_verdict: self.last_eval_verdict.as_str().to_string(),
+            needs_follow_up: self.needs_follow_up,
+            last_transition_reason: self.last_transition_reason.clone(),
+            last_transition_detail: self.last_transition_detail.clone(),
+            last_error: self.last_error.clone(),
+            total_tool_calls: self.total_tool_calls,
+            stuck_retry_count: self.stuck_retry_count,
+            tool_budget_events: self.tool_budget_events,
+            active_workflow_id: self.active_workflow_id.clone(),
+            current_workflow_step: self.current_workflow_step,
+        }
     }
 
     /// Returns true if the token budget is at or above the compaction threshold.
@@ -260,7 +360,7 @@ impl AgentLoopState {
         log::debug!(
             "[SelfInspection] session='{}' round={} phase={} \
              tokens={}/{} ({}%) tools={} errors={} follow_up={} \
-             prefetched_skills={} memory_prefetched={} budgeted_results={} \
+             transition={} prefetched_skills={} memory_prefetched={} budgeted_results={} \
              elapsed={}s",
             self.session_id,
             self.round,
@@ -271,6 +371,7 @@ impl AgentLoopState {
             self.total_tool_calls,
             self.error_count,
             self.needs_follow_up,
+            self.last_transition_reason,
             self.last_prefetch_skills.len(),
             self.last_prefetch_memory.is_some(),
             self.tool_budget_events,
@@ -398,14 +499,70 @@ mod tests {
     #[test]
     fn test_follow_up_and_prefetch_tracking() {
         let mut s = AgentLoopState::new("sess1", "goal");
-        s.set_follow_up(true);
+        s.mark_follow_up(LoopTransitionReason::ToolCallsRequested, "tool follow-up");
         s.record_prefetch_memory(Some("memory preview".into()));
         s.record_prefetch_skills(vec!["skill_a".into(), "skill_b".into()]);
         s.record_budget_events(2);
 
         assert!(s.needs_follow_up);
+        assert_eq!(s.last_transition_reason, "tool_calls_requested");
+        assert_eq!(s.last_transition_detail, "tool follow-up");
         assert_eq!(s.last_prefetch_memory.as_deref(), Some("memory preview"));
         assert_eq!(s.last_prefetch_skills.len(), 2);
         assert_eq!(s.tool_budget_events, 2);
+    }
+
+    #[test]
+    fn test_snapshot_reflects_runtime_state() {
+        let mut s = AgentLoopState::new("sess1", "goal");
+        s.plan_steps = vec!["plan".into(), "execute".into()];
+        s.current_step = 1;
+        s.round = 2;
+        s.error_count = 1;
+        s.tool_retry_count = 3;
+        s.max_tool_rounds = 7;
+        s.last_eval_verdict = EvalVerdict::PartialProgress;
+        s.mark_follow_up(
+            LoopTransitionReason::WorkflowStepAdvance,
+            "workflow advanced",
+        );
+        s.last_error = Some("temporary failure".into());
+        s.total_tool_calls = 4;
+        s.stuck_retry_count = 1;
+        s.tool_budget_events = 2;
+        s.active_workflow_id = Some("wf-1".into());
+        s.current_workflow_step = 5;
+
+        let snapshot = s.snapshot();
+
+        assert_eq!(snapshot.session_id, "sess1");
+        assert_eq!(snapshot.phase, "GoalParsing");
+        assert_eq!(snapshot.plan_step_count, 2);
+        assert_eq!(snapshot.current_step, 1);
+        assert_eq!(snapshot.round, 2);
+        assert_eq!(snapshot.error_count, 1);
+        assert_eq!(snapshot.tool_retry_count, 3);
+        assert_eq!(snapshot.max_tool_rounds, 7);
+        assert_eq!(snapshot.last_eval_verdict, "PartialProgress");
+        assert!(snapshot.needs_follow_up);
+        assert_eq!(snapshot.last_transition_reason, "workflow_step_advance");
+        assert_eq!(snapshot.last_transition_detail, "workflow advanced");
+        assert_eq!(snapshot.last_error.as_deref(), Some("temporary failure"));
+        assert_eq!(snapshot.total_tool_calls, 4);
+        assert_eq!(snapshot.stuck_retry_count, 1);
+        assert_eq!(snapshot.tool_budget_events, 2);
+        assert_eq!(snapshot.active_workflow_id.as_deref(), Some("wf-1"));
+        assert_eq!(snapshot.current_workflow_step, 5);
+    }
+
+    #[test]
+    fn test_mark_terminal_clears_follow_up() {
+        let mut s = AgentLoopState::new("sess1", "goal");
+        s.mark_follow_up(LoopTransitionReason::ToolCallsRequested, "tools pending");
+        s.mark_terminal(LoopTransitionReason::GoalAchieved, "done");
+
+        assert!(!s.needs_follow_up);
+        assert_eq!(s.last_transition_reason, "goal_achieved");
+        assert_eq!(s.last_transition_detail, "done");
     }
 }

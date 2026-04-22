@@ -26,6 +26,10 @@ struct CurlInner {
 
 type ChunkCallback = unsafe extern "C" fn(*const c_char, *mut libc::c_void);
 
+/// # Safety
+///
+/// `ptr` must either be null or point to a valid NUL-terminated C string for
+/// the duration of the returned borrow.
 unsafe fn cstr(ptr: *const c_char) -> &'static str {
     if ptr.is_null() { return ""; }
     CStr::from_ptr(ptr).to_str().unwrap_or("")

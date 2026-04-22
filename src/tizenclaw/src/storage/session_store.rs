@@ -2,7 +2,7 @@
 //!
 //! ## Directory Structure
 //! ```
-//! /opt/usr/share/tizenclaw/sessions/
+//! <runtime_root>/sessions/
 //! └── {session_id}/
 //!     ├── compacted.md      ← compact snapshot (atomic overwrite on compaction)
 //!     ├── 2026-04-01.md     ← day-1 conversation (append-only)
@@ -24,7 +24,7 @@
 use crate::llm::backend::{LlmMessage, LlmToolCall};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -175,6 +175,115 @@ fn normalize_markdown_block(content: &str) -> Option<String> {
     }
 }
 
+fn utf8_prefix(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    text.chars().take(max_chars).collect()
+}
+
+fn utf8_suffix(text: &str, max_chars: usize) -> String {
+    let total = text.chars().count();
+    if total <= max_chars {
+        return text.to_string();
+    }
+    text.chars().skip(total.saturating_sub(max_chars)).collect()
+}
+
+fn summarized_text_metadata(text: &str) -> Value {
+    let word_count = text.split_whitespace().count();
+    let line_count = text.lines().count();
+    let paragraph_count = text
+        .split("\n\n")
+        .filter(|paragraph| !paragraph.trim().is_empty())
+        .count();
+    let heading_count = text
+        .lines()
+        .filter(|line| line.trim_start().starts_with('#'))
+        .count();
+    let url_count = regex::Regex::new(r"https?://\S+")
+        .map(|regex| regex.find_iter(text).count())
+        .unwrap_or(0);
+
+    json!({
+        "word_count": word_count,
+        "line_count": line_count,
+        "paragraph_count": paragraph_count,
+        "heading_count": heading_count,
+        "url_count": url_count,
+    })
+}
+
+fn summarize_large_argument_fields(value: &Value) -> Value {
+    const MAX_INLINE_ARG_CHARS: usize = 1600;
+    const MAX_INLINE_ARG_HEAD_CHARS: usize = 1000;
+    const MAX_INLINE_ARG_TAIL_CHARS: usize = 400;
+
+    match value {
+        Value::Object(map) => {
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (key, entry) in map {
+                let summarized = match entry {
+                    Value::String(text)
+                        if matches!(key.as_str(), "content" | "code" | "text")
+                            && text.chars().count() > MAX_INLINE_ARG_CHARS =>
+                    {
+                        let mut summary = serde_json::Map::new();
+                        summary.insert(
+                            "preview".to_string(),
+                            Value::String(utf8_prefix(text, MAX_INLINE_ARG_HEAD_CHARS)),
+                        );
+                        summary.insert(
+                            "tail_preview".to_string(),
+                            Value::String(utf8_suffix(text, MAX_INLINE_ARG_TAIL_CHARS)),
+                        );
+                        summary.insert(
+                            "char_count".to_string(),
+                            json!(text.chars().count()),
+                        );
+                        summary.insert("truncated".to_string(), json!(true));
+                        if let Some(metadata) = summarized_text_metadata(text).as_object() {
+                            for (meta_key, meta_value) in metadata {
+                                summary.insert(meta_key.clone(), meta_value.clone());
+                            }
+                        }
+                        Value::Object(summary)
+                    }
+                    _ => summarize_large_argument_fields(entry),
+                };
+                out.insert(key.clone(), summarized);
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => {
+            Value::Array(items.iter().map(summarize_large_argument_fields).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+fn summarize_structured_tool_call_items(content: &[Value]) -> Vec<Value> {
+    content
+        .iter()
+        .map(|item| {
+            let Some(object) = item.as_object() else {
+                return item.clone();
+            };
+            let mut normalized = object.clone();
+            if let Some(arguments) = normalized.get("arguments").cloned() {
+                normalized.insert(
+                    "arguments".to_string(),
+                    summarize_large_argument_fields(&arguments),
+                );
+            }
+            if let Some(params) = normalized.get("params").cloned() {
+                normalized.insert("params".to_string(), summarize_large_argument_fields(&params));
+            }
+            Value::Object(normalized)
+        })
+        .collect()
+}
+
 impl SessionStore {
     pub fn new(base_dir: &Path, db_path: &str) -> Result<Self, String> {
         let base_dir = base_dir.to_path_buf();
@@ -253,7 +362,7 @@ impl SessionStore {
     pub fn ensure_session(&self, session_id: &str) {
         let dir = self.session_dir(session_id);
         let _ = fs::create_dir_all(&dir);
-        let _ = fs::create_dir_all(self.base_dir.join("workdirs").join(session_id));
+        let _ = fs::create_dir_all(self.session_workdir(session_id));
 
         let path = self.session_file_today(session_id);
         if !path.exists() {
@@ -301,6 +410,25 @@ impl SessionStore {
         }
     }
 
+    pub fn append_message(&self, session_id: &str, message: &SessionMessage) -> Result<(), String> {
+        self.ensure_session(session_id);
+
+        let rendered = render_session_message_body(message);
+        let Some(normalized) = normalize_markdown_block(&rendered) else {
+            return Ok(());
+        };
+
+        let path = self.session_file_today(session_id);
+        let block = format!("## {}\n{}\n\n", message.role, normalized);
+
+        let _g = self.lock.write().unwrap();
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| file.write_all(block.as_bytes()))
+            .map_err(|e| e.to_string())
+    }
+
     pub fn add_structured_user_message(&self, session_id: &str, content: &str) {
         let Some(normalized) = normalize_markdown_block(content) else {
             return;
@@ -340,13 +468,14 @@ impl SessionStore {
         if content.is_empty() {
             return;
         }
+        let summarized_content = summarize_structured_tool_call_items(&content);
         self.append_structured_event(
             session_id,
             &json!({
                 "type": "message",
                 "message": {
                     "role": "assistant",
-                    "content": content
+                    "content": summarized_content
                 }
             }),
         );
@@ -356,6 +485,7 @@ impl SessionStore {
         &self,
         session_id: &str,
         tool_name: &str,
+        actual_tool_name: &str,
         tool_call_id: &str,
         result: &Value,
     ) {
@@ -372,6 +502,7 @@ impl SessionStore {
                 "message": {
                     "role": "toolResult",
                     "tool_name": tool_name,
+                    "actual_tool_name": actual_tool_name,
                     "tool_call_id": tool_call_id,
                     "content": [rendered]
                 }
@@ -437,6 +568,10 @@ impl SessionStore {
         (result, from_compacted)
     }
 
+    pub fn load(&self, session_id: &str, limit: usize) -> Vec<SessionMessage> {
+        self.load_session_context(session_id, limit).0
+    }
+
     // ── Compaction persistence ────────────────────────────────────────────────
 
     /// Load `compacted.md` snapshot. Returns empty Vec if not present.
@@ -480,9 +615,7 @@ impl SessionStore {
         // Write temp → rename (atomic on POSIX/Tizen)
         {
             let _g = self.lock.write().unwrap();
-            fs::write(&tmp_path, content.as_bytes())
-                .map_err(|e| format!("tmp write failed: {}", e))?;
-            fs::rename(&tmp_path, &final_path).map_err(|e| format!("rename failed: {}", e))?;
+            atomic_write(&tmp_path, &final_path, content.as_bytes())?;
         }
 
         log::debug!(
@@ -534,12 +667,101 @@ impl SessionStore {
         msgs
     }
 
+    pub fn list_sessions(&self) -> Vec<String> {
+        let sessions_root = self.base_dir.join("sessions");
+        let mut sessions: Vec<String> = fs::read_dir(&sessions_root)
+            .ok()
+            .into_iter()
+            .flat_map(|entries| entries.filter_map(|entry| entry.ok()))
+            .filter_map(|entry| {
+                if entry.path().is_dir() {
+                    entry.file_name().into_string().ok()
+                } else {
+                    None
+                }
+            })
+            .collect();
+        sessions.sort();
+        sessions
+    }
+
     /// Remove today's session file. Does NOT delete the session directory
     /// or compacted.md — only wipes the current day's conversation.
     pub fn clear_session(&self, session_id: &str) {
         let path = self.session_file_today(session_id);
         let _g = self.lock.write().unwrap();
         let _ = fs::remove_file(path);
+    }
+
+    pub fn session_runtime_summary(&self, session_id: &str) -> Value {
+        let session_dir = self.session_dir(session_id);
+        let today_path = self.session_file_today(session_id);
+        let compacted_path = self.compacted_path(session_id);
+        let compacted_structured_path = self.compacted_structured_path(session_id);
+        let transcript_path = self.transcript_path(session_id);
+        let workdir_path = self.base_dir.join("workdirs").join(session_id);
+
+        let message_file_count = fs::read_dir(&session_dir)
+            .ok()
+            .map(|entries| {
+                entries
+                    .filter_map(|entry| entry.ok())
+                    .filter(|entry| {
+                        entry
+                            .path()
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .map(|name| name.ends_with(".md") && name != "compacted.md")
+                            .unwrap_or(false)
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+
+        let transcript_exists = transcript_path.exists();
+        let transcript_messages = if transcript_exists {
+            self.load_transcript_messages(session_id)
+        } else {
+            Vec::new()
+        };
+        let assistant_messages: Vec<&SessionMessage> = transcript_messages
+            .iter()
+            .filter(|message| message.role == "assistant" && !message.text.trim().is_empty())
+            .collect();
+        let assistant_message_count = assistant_messages.len();
+        let last_assistant_text = assistant_messages
+            .last()
+            .map(|m| m.text.clone())
+            .unwrap_or_default();
+        let tool_result_count = transcript_messages
+            .iter()
+            .filter(|message| message.role == "tool")
+            .count();
+        let compacted_exists = compacted_path.exists();
+        let compacted_structured_exists = compacted_structured_path.exists();
+        let resume_ready = compacted_exists
+            || compacted_structured_exists
+            || transcript_exists
+            || message_file_count > 0;
+
+        json!({
+            "session_dir": session_dir,
+            "today_path": today_path,
+            "compacted_path": compacted_path,
+            "compacted_structured_path": compacted_structured_path,
+            "transcript_path": transcript_path,
+            "workdir_path": workdir_path,
+            "session_exists": session_dir.exists(),
+            "message_file_count": message_file_count,
+            "compacted_snapshot_exists": compacted_exists,
+            "structured_compaction_exists": compacted_structured_exists,
+            "transcript_exists": transcript_exists,
+            "transcript_message_count": transcript_messages.len(),
+            "assistant_message_count": assistant_message_count,
+            "last_assistant_text": last_assistant_text,
+            "tool_result_count": tool_result_count,
+            "resume_ready": resume_ready,
+        })
     }
 
     pub fn clear_all(&self) -> Result<Value, String> {
@@ -758,8 +980,11 @@ impl SessionStore {
         let path = self.transcript_path(session_id);
         let _g = self.lock.write().unwrap();
         if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
-            let _ = file.write_all(event.to_string().as_bytes());
-            let _ = file.write_all(b"\n");
+            let mut line = event.to_string();
+            line.push('\n');
+            let _ = file.write_all(line.as_bytes());
+            let _ = file.flush();
+            let _ = file.sync_all();
         }
     }
 
@@ -1004,7 +1229,8 @@ fn parse_transcript_event(event: &Value) -> Vec<SessionMessage> {
         "toolResult" => vec![SessionMessage {
             role: "tool".to_string(),
             tool_name: message
-                .get("tool_name")
+                .get("actual_tool_name")
+                .or_else(|| message.get("tool_name"))
                 .and_then(|value| value.as_str())
                 .unwrap_or("")
                 .to_string(),
@@ -1018,6 +1244,50 @@ fn parse_transcript_event(event: &Value) -> Vec<SessionMessage> {
         }],
         _ => Vec::new(),
     }
+}
+
+fn render_session_message_body(message: &SessionMessage) -> String {
+    if let Some(normalized) = normalize_markdown_block(&message.text) {
+        return normalized;
+    }
+
+    if !message.tool_calls.is_empty() {
+        return serde_json::to_string(&message.tool_calls).unwrap_or_default();
+    }
+
+    if !message.tool_name.is_empty() || !message.tool_call_id.is_empty() || !message.tool_result.is_null()
+    {
+        return json!({
+            "tool_name": message.tool_name,
+            "tool_call_id": message.tool_call_id,
+            "tool_result": message.tool_result,
+        })
+        .to_string();
+    }
+
+    message.timestamp.clone()
+}
+
+fn atomic_write(tmp_path: &Path, final_path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let mut tmp_file =
+        File::create(tmp_path).map_err(|e| format!("tmp write failed: {}", e))?;
+    tmp_file
+        .write_all(bytes)
+        .map_err(|e| format!("tmp write failed: {}", e))?;
+    tmp_file
+        .sync_all()
+        .map_err(|e| format!("tmp sync failed: {}", e))?;
+    drop(tmp_file);
+
+    fs::rename(tmp_path, final_path).map_err(|e| format!("rename failed: {}", e))?;
+
+    if let Some(parent) = final_path.parent() {
+        File::open(parent)
+            .and_then(|dir| dir.sync_all())
+            .map_err(|e| format!("dir sync failed: {}", e))?;
+    }
+
+    Ok(())
 }
 
 /// Return only messages from `today` that are NOT already represented in
@@ -1034,16 +1304,12 @@ fn deduplicate_after_compacted(
         return today.to_vec();
     }
     // Build a set of (role, first-100-chars) from compacted for fast lookup
-    let compacted_set: std::collections::HashSet<(String, String)> = compacted
-        .iter()
-        .map(session_message_dedup_key)
-        .collect();
+    let compacted_set: std::collections::HashSet<(String, String)> =
+        compacted.iter().map(session_message_dedup_key).collect();
 
     today
         .iter()
-        .filter(|msg| {
-            !compacted_set.contains(&session_message_dedup_key(msg))
-        })
+        .filter(|msg| !compacted_set.contains(&session_message_dedup_key(msg)))
         .cloned()
         .collect()
 }
@@ -1056,9 +1322,7 @@ fn session_message_dedup_key(message: &SessionMessage) -> (String, String) {
     } else if !message.tool_name.is_empty() || !message.tool_call_id.is_empty() {
         format!(
             "{}:{}:{}",
-            message.tool_name,
-            message.tool_call_id,
-            message.tool_result
+            message.tool_name, message.tool_call_id, message.tool_result
         )
     } else {
         message.reasoning_text.clone()
@@ -1292,6 +1556,29 @@ mod tests {
     }
 
     #[test]
+    fn test_append_message_and_load_alias_roundtrip() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+
+        store
+            .append_message(
+                "alias_s1",
+                &SessionMessage {
+                    role: "user".into(),
+                    text: "hello from append_message".into(),
+                    timestamp: get_timestamp(),
+                    ..SessionMessage::default()
+                },
+            )
+            .unwrap();
+
+        let loaded = store.load("alias_s1", 10);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].role, "user");
+        assert_eq!(loaded[0].text, "hello from append_message");
+    }
+
+    #[test]
     fn test_load_compacted_returns_empty_if_not_exists() {
         let tmp = tempdir().unwrap();
         let store = make_store(tmp.path());
@@ -1318,6 +1605,7 @@ mod tests {
         store.add_structured_tool_result_message(
             "tool_hist",
             "read_file",
+            "file_manager",
             "call_1",
             &json!({"path": ".tmp/demo.txt", "content": "demo"}),
         );
@@ -1329,8 +1617,30 @@ mod tests {
         assert_eq!(msgs[1].tool_calls.len(), 1);
         assert_eq!(msgs[1].tool_calls[0].id, "call_1");
         assert_eq!(msgs[2].role, "tool");
+        assert_eq!(msgs[2].tool_name, "file_manager");
         assert_eq!(msgs[2].tool_call_id, "call_1");
         assert_eq!(msgs[2].tool_result["content"], json!("demo"));
+    }
+
+    #[test]
+    fn test_load_session_context_prefers_actual_tool_name_for_tool_results() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+
+        store.add_structured_tool_result_message(
+            "tool_hist_alias",
+            "list_files",
+            "file_manager",
+            "call_alias",
+            &json!({"entries": []}),
+        );
+
+        let (msgs, from_compacted) = store.load_session_context("tool_hist_alias", 10);
+        assert!(!from_compacted);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, "tool");
+        assert_eq!(msgs[0].tool_name, "file_manager");
+        assert_eq!(msgs[0].tool_call_id, "call_alias");
     }
 
     #[test]
@@ -1362,6 +1672,61 @@ mod tests {
             .expect("save_compacted_structured must succeed");
         let loaded = store.load_compacted_structured("tool_hist2");
         assert_eq!(loaded, messages);
+    }
+
+    #[test]
+    fn test_session_runtime_summary_reports_resume_artifacts() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+
+        store.add_message("runtime", "user", "hello");
+        store.add_structured_assistant_text_message("runtime", "world");
+
+        let summary = store.session_runtime_summary("runtime");
+
+        assert_eq!(summary["session_exists"], true);
+        assert_eq!(summary["resume_ready"], true);
+        assert_eq!(summary["message_file_count"], 1);
+        assert_eq!(summary["transcript_exists"], true);
+        assert!(summary["session_dir"]
+            .as_str()
+            .unwrap()
+            .ends_with("/sessions/runtime"));
+        assert!(summary["workdir_path"]
+            .as_str()
+            .unwrap()
+            .ends_with("/workdirs/runtime"));
+    }
+
+    #[test]
+    fn test_summarized_text_metadata_reports_shape_signals() {
+        let text = "# Title\n\nFirst paragraph with https://example.com.\n\n## Conclusion\n\nSecond paragraph.";
+        let metadata = summarized_text_metadata(text);
+
+        assert_eq!(metadata["word_count"], json!(10));
+        assert_eq!(metadata["paragraph_count"], json!(4));
+        assert_eq!(metadata["heading_count"], json!(2));
+        assert_eq!(metadata["url_count"], json!(1));
+    }
+
+    #[test]
+    fn test_summarize_large_argument_fields_preserves_word_count_for_large_text() {
+        let text = format!(
+            "# Title\n\n{}\n\n## Conclusion\n\n{} https://example.com",
+            "word ".repeat(500),
+            "tail ".repeat(40)
+        );
+        let payload = json!({ "content": text });
+        let summarized = summarize_large_argument_fields(&payload);
+
+        assert!(
+            summarized["content"]["word_count"]
+                .as_u64()
+                .expect("word_count should be present")
+                > 500
+        );
+        assert_eq!(summarized["content"]["heading_count"], json!(2));
+        assert_eq!(summarized["content"]["url_count"], json!(1));
     }
 
     #[test]
@@ -1437,6 +1802,7 @@ mod tests {
         store.add_structured_tool_result_message(
             "bench_s2",
             "read_file",
+            "file_manager",
             "call_1",
             &json!({"content": "demo"}),
         );
@@ -1454,6 +1820,88 @@ mod tests {
         assert!(lines[1].contains("\"role\":\"assistant\""));
         assert!(lines[2].contains("\"toolCall\""));
         assert!(lines[3].contains("\"role\":\"toolResult\""));
+    }
+
+    #[test]
+    fn test_structured_transcript_summarizes_large_tool_call_content() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+
+        store.add_structured_tool_call_message(
+            "bench_s3",
+            vec![json!({
+                "type": "toolCall",
+                "name": "file_write",
+                "actual_tool_name": "file_write",
+                "tool_call_id": "call_big",
+                "arguments": {
+                    "path": "daily_briefing.md",
+                    "content": "A".repeat(2200)
+                }
+            })],
+        );
+
+        let transcript = tmp
+            .path()
+            .join("sessions")
+            .join("bench_s3")
+            .join("transcript.jsonl");
+        let transcript_text = std::fs::read_to_string(transcript).unwrap();
+        let event: Value = serde_json::from_str(transcript_text.lines().next().unwrap()).unwrap();
+        let content = event["message"]["content"].as_array().unwrap();
+
+        assert_eq!(content[0]["arguments"]["path"], json!("daily_briefing.md"));
+        assert_eq!(content[0]["arguments"]["content"]["truncated"], json!(true));
+        assert_eq!(content[0]["arguments"]["content"]["char_count"], json!(2200));
+        assert!(content[0]["arguments"]["content"]["preview"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count() < 2200);
+        assert_eq!(
+            content[0]["arguments"]["content"]["tail_preview"],
+            json!("A".repeat(400))
+        );
+    }
+
+    #[test]
+    fn test_structured_transcript_keeps_head_and_tail_for_large_mixed_content() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+        let large = format!("{}MIDDLE{}", "A".repeat(1200), "Z".repeat(500));
+
+        store.add_structured_tool_call_message(
+            "bench_s4",
+            vec![json!({
+                "type": "toolCall",
+                "name": "file_write",
+                "actual_tool_name": "file_write",
+                "tool_call_id": "call_mixed",
+                "arguments": {
+                    "path": "alpha_summary.md",
+                    "content": large
+                }
+            })],
+        );
+
+        let transcript = tmp
+            .path()
+            .join("sessions")
+            .join("bench_s4")
+            .join("transcript.jsonl");
+        let transcript_text = std::fs::read_to_string(transcript).unwrap();
+        let event: Value = serde_json::from_str(transcript_text.lines().next().unwrap()).unwrap();
+        let payload = &event["message"]["content"][0]["arguments"]["content"];
+
+        assert_eq!(payload["truncated"], json!(true));
+        assert!(payload["preview"]
+            .as_str()
+            .unwrap()
+            .starts_with(&"A".repeat(200)));
+        assert!(payload["tail_preview"]
+            .as_str()
+            .unwrap()
+            .ends_with(&"Z".repeat(200)));
     }
 
     #[test]
@@ -1475,6 +1923,30 @@ mod tests {
         assert!(tmp.path().join("workdirs").exists());
         assert!(store.load_session_context("wipe_s1", 10).0.is_empty());
         assert_eq!(store.load_token_usage("wipe_s1").total_requests, 0);
+    }
+
+    #[test]
+    fn test_list_sessions_reads_session_ids_from_disk() {
+        let tmp = tempdir().unwrap();
+        let store = make_store(tmp.path());
+
+        store.add_message("list_a", "user", "hello");
+        store.add_message("list_b", "assistant", "world");
+
+        let sessions = store.list_sessions();
+        assert_eq!(sessions, vec!["list_a".to_string(), "list_b".to_string()]);
+    }
+
+    #[test]
+    fn session_message_serialization_roundtrip() {
+        let msg = SessionMessage {
+            role: "user".into(),
+            text: "hello".into(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        let restored: SessionMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(msg.text, restored.text);
     }
 
     #[test]

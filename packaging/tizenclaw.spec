@@ -8,6 +8,16 @@ License:    Apache-2.0
 Source0:    %{name}-%{version}.tar.gz
 Source1001: %{name}.manifest
 
+%ifarch aarch64
+%global cargo_target_triple aarch64-unknown-linux-gnu
+%else
+%ifarch armv7hl armv7l armv7el
+%global cargo_target_triple arm-unknown-linux-gnueabi
+%else
+%global cargo_target_triple x86_64-unknown-linux-gnu
+%endif
+%endif
+
 # Rust build
 BuildRequires:  cmake
 BuildRequires:  cargo
@@ -61,47 +71,35 @@ TizenClaw Native Agent running as a System Service (Rust Edition).
 cp %{SOURCE1001} .
 
 %build
-# GCC LTO bytecode requires the LTO linker plugin during final link. However, rustc doesn't pass the GCC linker plugin flags.
-# This causes undefined references when linking static C dependencies (e.g. SQLite, OpenSSL built by the cc crate).
-# To fix this, we strip LTO flags from the environment globally for this build.
-export CFLAGS=$(echo "$CFLAGS" | sed 's/-flto[^ ]*//g')
-export CXXFLAGS=$(echo "$CXXFLAGS" | sed 's/-flto[^ ]*//g')
-export LDFLAGS=$(echo "$LDFLAGS" | sed 's/-flto[^ ]*//g')
-export CFLAGS="$CFLAGS -Wno-error=missing-field-initializers -Wno-error"
-
-%cmake .
-%__make %{?_smp_mflags}
-
-# Run Rust unit tests during build
-cd %{_builddir}/%{name}-%{version}
-cargo test --release --offline -- --test-threads=1 || echo "WARNING: Some unit tests failed"
-cd -
+%cmake . -DCMAKE_INSTALL_PREFIX=/ -DCARGO_TARGET_TRIPLE=%{cargo_target_triple}
+/usr/bin/cmake --build . --verbose
 
 %install
-# Use cmake --install with DESTDIR to avoid re-triggering cargo build target
-DESTDIR=%{buildroot} cmake --install .
-
-# Tizen structure
-mkdir -p %{buildroot}%{_bindir}
-mkdir -p %{buildroot}%{_unitdir}
-mkdir -p %{buildroot}%{_unitdir}/multi-user.target.wants
-mkdir -p %{buildroot}%{_unitdir}/sockets.target.wants
-mkdir -p %{buildroot}/opt/usr/share/tizenclaw/config
-mkdir -p %{buildroot}/opt/usr/share/tizenclaw/docs
-mkdir -p %{buildroot}/opt/usr/share/tizenclaw/embedded
-mkdir -p %{buildroot}/opt/usr/share/tizenclaw/memory
-# actions/ dir removed — tools are discovered dynamically
-mkdir -p %{buildroot}/opt/usr/share/tizenclaw/tools/cli
-mkdir -p %{buildroot}/opt/usr/share/tizenclaw/workspace/skills
-mkdir -p %{buildroot}/opt/usr/share/crash/dump
-
-ln -sf ../tizenclaw.service %{buildroot}%{_unitdir}/multi-user.target.wants/tizenclaw.service
-ln -sf ../tizenclaw-tool-executor.socket %{buildroot}%{_unitdir}/sockets.target.wants/tizenclaw-tool-executor.socket
+DESTDIR=%{buildroot} /usr/bin/cmake --install . --verbose
 
 %post
-if [ -d /opt/usr/share/tizen-tools ]; then
-rm -rf /opt/usr/share/tizen-tools
-fi
+mkdir -p /home/owner/.tizenclaw/config
+mkdir -p /home/owner/.tizenclaw/workspace/skills
+mkdir -p /home/owner/.tizenclaw/workspace/skill-hubs
+mkdir -p /home/owner/.tizenclaw/tools
+mkdir -p /home/owner/.tizenclaw/plugins/llm
+mkdir -p /home/owner/.tizenclaw/plugins/cli
+mkdir -p /home/owner/.tizenclaw/workflows
+mkdir -p /home/owner/.tizenclaw/codes
+mkdir -p /home/owner/.tizenclaw/logs
+mkdir -p /home/owner/.tizenclaw/actions
+mkdir -p /home/owner/.tizenclaw/pipelines
+mkdir -p /home/owner/.tizenclaw/state
+mkdir -p /home/owner/.tizenclaw/sessions
+mkdir -p /home/owner/.tizenclaw/memory
+mkdir -p /home/owner/.tizenclaw/outbound
+mkdir -p /home/owner/.tizenclaw/telegram_sessions
+cp -rn /opt/usr/share/tizenclaw/config/. /home/owner/.tizenclaw/config/ 2>/dev/null || true
+chown -R owner:users /home/owner/.tizenclaw 2>/dev/null || true
+/usr/libexec/tizenclaw/sanitize-packaged-assets.sh
+systemctl daemon-reload >/dev/null 2>&1 || true
+systemctl enable tizenclaw.service >/dev/null 2>&1 || true
+systemctl enable tizenclaw-tool-executor.socket >/dev/null 2>&1 || true
 
 %files
 %defattr(-,root,root,-)
@@ -110,57 +108,15 @@ fi
 %{_bindir}/tizenclaw-cli
 %{_bindir}/tizenclaw-tool-executor
 %{_bindir}/tizenclaw-web-dashboard
-%{_bindir}/start_mcp_tunnel.sh
 %{_unitdir}/tizenclaw.service
 %{_unitdir}/tizenclaw-tool-executor.service
 %{_unitdir}/tizenclaw-tool-executor.socket
-%{_unitdir}/multi-user.target.wants/tizenclaw.service
-%{_unitdir}/sockets.target.wants/tizenclaw-tool-executor.socket
-
-%config(noreplace) /opt/usr/share/tizenclaw/config/*
-
-# tools.md is generated at runtime by the daemon startup indexer
-/opt/usr/share/tizenclaw/web/
+%{_libexecdir}/tizenclaw/sanitize-packaged-assets.sh
+%dir /opt/usr/share/tizenclaw/
+/opt/usr/share/tizenclaw/.packaged-assets.manifest
+/opt/usr/share/tizenclaw/config/
 /opt/usr/share/tizenclaw/docs/
 /opt/usr/share/tizenclaw/embedded/
-# actions/ dir removed
-%dir /opt/usr/share/tizenclaw/tools/
-%dir /opt/usr/share/tizenclaw/tools/cli/
-%dir /opt/usr/share/tizenclaw/workspace/
-%dir /opt/usr/share/tizenclaw/workspace/skills/
-/opt/usr/share/tizenclaw/tools/cli/*
-%dir /opt/usr/share/tizenclaw/config/
-%dir /opt/usr/share/tizenclaw/memory/
-%dir /opt/usr/share/tizenclaw/
-%{_libdir}/libtizenclaw-core.so
-%{_libdir}/libtizenclaw.so
-%dir /opt/usr/share/crash/
-%dir /opt/usr/share/crash/dump/
-
-# pkgmgr metadata parser plugins
-%{_sysconfdir}/package-manager/parserlib/metadata/libtizenclaw-metadata-llm-backend-plugin.so
-%{_datarootdir}/parser-plugins/tizenclaw-metadata-llm-backend-plugin.info
-%{_sysconfdir}/package-manager/parserlib/metadata/libtizenclaw-metadata-skill-plugin.so
-%{_datarootdir}/parser-plugins/tizenclaw-metadata-skill-plugin.info
-%{_sysconfdir}/package-manager/parserlib/metadata/libtizenclaw-metadata-cli-plugin.so
-%{_datarootdir}/parser-plugins/tizenclaw-metadata-cli-plugin.info
-
-## ═══════════════════════════════════════════
-##  Development Sub-package
-## ═══════════════════════════════════════════
-%package devel
-Summary:  TizenClaw C API development files
-Requires: %{name} = %{version}-%{release}
-
-%description devel
-Header files and pkgconfig for building applications and plugins against TizenClaw.
-
-%files devel
-%{_includedir}/tizenclaw/tizenclaw.h
-%{_includedir}/tizenclaw/tizenclaw_error.h
-%dir %{_includedir}/tizenclaw/core
-%{_includedir}/tizenclaw/core/tizenclaw_channel.h
-%{_includedir}/tizenclaw/core/tizenclaw_llm_backend.h
-%{_includedir}/tizenclaw/core/tizenclaw_curl.h
-%{_libdir}/pkgconfig/tizenclaw.pc
-%{_libdir}/pkgconfig/tizenclaw-core.pc
+/opt/usr/share/tizenclaw/img/rootfs.tar.gz
+/opt/usr/share/tizenclaw/plugins/libtizenclaw_plugin.so
+/opt/usr/share/tizenclaw/web/

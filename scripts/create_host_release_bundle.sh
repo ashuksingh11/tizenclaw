@@ -13,6 +13,7 @@ PKG_NAME="tizenclaw"
 TOOL_EXECUTOR_NAME="tizenclaw-tool-executor"
 CLI_NAME="tizenclaw-cli"
 WEB_DASHBOARD_NAME="tizenclaw-web-dashboard"
+TEST_TOOL_NAME="tizenclaw-tests"
 
 usage() {
   cat <<'EOF'
@@ -172,7 +173,10 @@ main() {
   if [[ "${SKIP_BUILD}" != true ]]; then
     (
       cd "${PROJECT_DIR}"
-      ./deploy_host.sh -b
+      # Bundle generation packages release artifacts, so request a
+      # release build explicitly instead of relying on deploy_host.sh's
+      # default debug mode.
+      ./deploy_host.sh --release -b
     )
   fi
 
@@ -208,6 +212,9 @@ main() {
   install_executable_if_present \
     "${build_dir}/${WEB_DASHBOARD_NAME}" \
     "${bundle_root}/bin/${WEB_DASHBOARD_NAME}"
+  install_executable_if_present \
+    "${build_dir}/${TEST_TOOL_NAME}" \
+    "${bundle_root}/bin/${TEST_TOOL_NAME}"
   install_data_if_present \
     "${build_dir}/libtizenclaw.so" \
     "${bundle_root}/lib/libtizenclaw.so"
@@ -252,9 +259,13 @@ main() {
     "${bundle_root}/web/img/tizenclaw.svg"
   copy_tree_contents "${PROJECT_DIR}/data/docs" "${bundle_root}/docs"
   copy_tree_contents "${PROJECT_DIR}/tools/embedded" "${bundle_root}/embedded"
+  # Bundled releases ship only the installed-runtime control script.
+  # The source-tree ./deploy_host.sh is intentionally NOT packaged — it
+  # assumes a repository checkout (data/, tools/, cargo workspace, git)
+  # and must not be exposed as the installed runtime entrypoint.
   install -m 755 \
-    "${PROJECT_DIR}/deploy_host.sh" \
-    "${bundle_root}/manage/deploy_host.sh"
+    "${PROJECT_DIR}/scripts/tizenclaw-hostctl.sh" \
+    "${bundle_root}/manage/tizenclaw-hostctl.sh"
 
   write_bundle_manifest "${bundle_root}"
 

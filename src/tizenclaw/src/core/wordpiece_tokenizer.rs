@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::io::BufRead;
+use std::path::Path;
 
 /// Tokenized input ready for the ONNX model.
 pub struct TokenizedInput {
@@ -82,8 +83,33 @@ impl WordPieceTokenizer {
         !self.vocab.is_empty()
     }
 
+    pub fn load(vocab_path: &Path) -> Result<Self, String> {
+        let mut tokenizer = Self::new();
+        let path = vocab_path
+            .to_str()
+            .ok_or_else(|| format!("Invalid vocab path: {:?}", vocab_path))?;
+        if tokenizer.load_vocab(path) {
+            Ok(tokenizer)
+        } else {
+            Err(format!("Failed to load WordPiece vocab from {:?}", vocab_path))
+        }
+    }
+
     pub fn is_loaded(&self) -> bool {
         !self.vocab.is_empty()
+    }
+
+    pub fn count_tokens(&self, text: &str) -> usize {
+        if text.is_empty() {
+            return 0;
+        }
+
+        let normalized = Self::normalize_text(text);
+        let basic_tokens = Self::basic_tokenize(&normalized);
+        basic_tokens
+            .iter()
+            .map(|token| self.wordpiece_tokenize(token).len())
+            .sum()
     }
 
     /// Tokenize text into model input format.
@@ -225,6 +251,8 @@ impl WordPieceTokenizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     fn make_tokenizer_with_vocab() -> WordPieceTokenizer {
         let mut t = WordPieceTokenizer::new();
@@ -311,7 +339,7 @@ mod tests {
         assert_eq!(result.input_ids.len(), 8);
         assert_eq!(result.input_ids[0], 2); // [CLS]
         assert_eq!(result.input_ids[2], 3); // [SEP]
-        // Remaining should be [PAD]=0
+                                            // Remaining should be [PAD]=0
         for i in 3..8 {
             assert_eq!(result.input_ids[i], 0);
             assert_eq!(result.attention_mask[i], 0);
@@ -347,5 +375,22 @@ mod tests {
     fn test_tokenizer_with_vocab_is_loaded() {
         let t = make_tokenizer_with_vocab();
         assert!(t.is_loaded());
+    }
+
+    #[test]
+    fn test_count_tokens_counts_wordpieces() {
+        let t = make_tokenizer_with_vocab();
+        assert_eq!(t.count_tokens("hello world"), 2);
+        assert_eq!(t.count_tokens("tested"), 2);
+    }
+
+    #[test]
+    fn test_load_returns_tokenizer() {
+        let dir = tempdir().unwrap();
+        let vocab_path = dir.path().join("vocab.txt");
+        fs::write(&vocab_path, "[PAD]\n[UNK]\n[CLS]\n[SEP]\nhello\n").unwrap();
+
+        let tokenizer = WordPieceTokenizer::load(&vocab_path).unwrap();
+        assert!(tokenizer.is_loaded());
     }
 }

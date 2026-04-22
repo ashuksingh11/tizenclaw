@@ -4,9 +4,11 @@
 # without Tizen GBS — uses `cargo build` with vendored sources.
 #
 # Usage:
-#   ./deploy_host.sh                   # Build (release) + install + run
+#   ./deploy_host.sh                   # Build (debug) + install + run
+#   ./deploy_host.sh --release         # Build in release mode
 #   ./deploy_host.sh -d, --debug       # Build in debug mode
 #   ./deploy_host.sh -b, --build-only  # Build only, do not run
+#   ./deploy_host.sh --no-restart      # Build + install only
 #   ./deploy_host.sh --restart-only    # Restart using installed host files
 #   ./deploy_host.sh -s, --stop        # Stop running daemon
 #   ./deploy_host.sh --status          # Show daemon status
@@ -28,10 +30,13 @@ TOOL_EXECUTOR_NAME="tizenclaw-tool-executor"
 CLI_NAME="tizenclaw-cli"
 TEST_TOOL_NAME="tizenclaw-tests"
 WEB_DASHBOARD_NAME="tizenclaw-web-dashboard"
+PLATFORM_PLUGIN_NAME="libtizenclaw_plugin.so"
+METADATA_PLUGIN_PKG="tizenclaw-metadata-plugin"
 HOST_DASHBOARD_PORT_DEFAULT=9091
 DEVEL_BRANCH_PREFIX="devel"
+DEVEL_OAUTH_REGRESSION_SCENARIO="tests/system/openai_oauth_regression.json"
 
-HOST_BASE_DIR="${HOME}/.tizenclaw"
+HOST_BASE_DIR="${TIZENCLAW_INSTALL_ROOT:-${HOME}/.tizenclaw}"
 INSTALL_DIR="${HOST_BASE_DIR}/bin"
 LIB_DIR="${HOST_BASE_DIR}/lib"
 INCLUDE_DIR="${HOST_BASE_DIR}/include"
@@ -50,11 +55,11 @@ EMBEDDED_TOOLS_SRC="${PROJECT_DIR}/tools/embedded"
 WEB_SRC="${PROJECT_DIR}/data/web"
 IMG_SRC="${PROJECT_DIR}/data/img"
 BUNDLED_CONFIG_DIR="${PROJECT_DIR}/data/config"
-BASHRC_PATH="${HOME}/.bashrc"
+BASHRC_PATH="${TIZENCLAW_BASHRC_PATH:-${HOME}/.bashrc}"
 PATH_EXPORT='export PATH="$HOME/.tizenclaw/bin:$PATH"'
 
-PID_FILE="/tmp/tizenclaw-host.pid"
-TOOL_EXECUTOR_PID_FILE="/tmp/tizenclaw-tool-executor-host.pid"
+PID_FILE="${HOST_BASE_DIR}/run/tizenclaw-host.pid"
+TOOL_EXECUTOR_PID_FILE="${HOST_BASE_DIR}/run/tizenclaw-tool-executor-host.pid"
 
 # Colors
 RED='\033[0;31m'
@@ -67,8 +72,9 @@ NC='\033[0m'
 # ─────────────────────────────────────────────
 # Defaults
 # ─────────────────────────────────────────────
-BUILD_MODE="release"
+BUILD_MODE="${BUILD_MODE:-debug}"
 BUILD_ONLY=false
+NO_RESTART=false
 STOP_DAEMON=false
 RESTART_ONLY=false
 SHOW_STATUS=false
@@ -79,6 +85,8 @@ REMOVE_INSTALL=false
 DEVEL_MODE=false
 LLM_CONFIG=""
 CARGO_TARGET_DIR_HOST="${CARGO_TARGET_DIR:-${CARGO_TARGET_DIR_DEFAULT}}"
+RUST_WORKSPACE_MANIFEST="${PROJECT_DIR}/rust/Cargo.toml"
+RUST_WORKSPACE_TARGET_DIR="${BUILD_ROOT_DIR}/rust-cargo-target"
 
 # ─────────────────────────────────────────────
 # Logging helpers
@@ -180,7 +188,7 @@ if dashboard is None:
     dashboard = {
         "name": "web_dashboard",
         "type": "web_dashboard",
-        "enabled": True,
+        "enabled": False,
         "settings": {},
     }
     channels.append(dashboard)
@@ -191,7 +199,7 @@ if not isinstance(settings, dict):
     dashboard["settings"] = settings
 
 dashboard.setdefault("type", "web_dashboard")
-dashboard.setdefault("enabled", True)
+dashboard["enabled"] = False
 settings["port"] = port
 settings.setdefault("localhost_only", False)
 
@@ -254,8 +262,10 @@ ${CYAN}Usage:${NC}
   ${ENTRYPOINT_NAME} [options]
 
 ${CYAN}Options:${NC}
-  -d, --debug             Build in debug mode (default: release)
+      --release           Build in release mode
+  -d, --debug             Build in debug mode (default)
   -b, --build-only        Build only, do not install or run
+      --no-restart        Build and install only, do not restart the daemon
       --test              Build + run cargo tests (offline, vendored)
       --restart-only      Restart the installed host daemon only
   -s, --stop              Stop the running host daemon
@@ -269,7 +279,8 @@ ${CYAN}Options:${NC}
   -h, --help              Show this help
 
 ${CYAN}Examples:${NC}
-  ${ENTRYPOINT_NAME}                           # Release build + install + run
+  ${ENTRYPOINT_NAME}                           # Debug build + install + run
+  ${ENTRYPOINT_NAME} --release                 # Release build + install + run
   ${ENTRYPOINT_NAME} -d                        # Debug build + install + run
   ${ENTRYPOINT_NAME} -b                        # Build only
   ${ENTRYPOINT_NAME} --test                    # Run unit/integration tests
@@ -290,8 +301,10 @@ EOF
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --release)         BUILD_MODE="release"; shift ;;
       -d|--debug)       BUILD_MODE="debug"; shift ;;
       -b|--build-only)  BUILD_ONLY=true; shift ;;
+      --no-restart)     NO_RESTART=true; shift ;;
       --test)           RUN_TESTS=true; shift ;;
       --restart-only)   RESTART_ONLY=true; shift ;;
       -s|--stop)        STOP_DAEMON=true; shift ;;
@@ -330,9 +343,98 @@ check_prerequisites() {
   log "Build mode  : ${BUILD_MODE}"
   log "Project dir : ${PROJECT_DIR}"
   log "Build only  : ${BUILD_ONLY}"
+  log "No restart  : ${NO_RESTART}"
   log "Devel mode  : ${DEVEL_MODE}"
   log "Data dir    : ${DATA_DIR}"
   log "Build root  : ${CARGO_TARGET_DIR_HOST}"
+  if [ -f "${RUST_WORKSPACE_MANIFEST}" ]; then
+    log "Rust ws     : ${RUST_WORKSPACE_MANIFEST}"
+  fi
+}
+
+run_rust_workspace_build() {
+  local cargo_args=("build" "--manifest-path" "${RUST_WORKSPACE_MANIFEST}" "--workspace" "--offline" "--locked")
+  local retry_args=("build" "--manifest-path" "${RUST_WORKSPACE_MANIFEST}" "--workspace")
+  if [ "${BUILD_MODE}" = "release" ]; then
+    cargo_args+=("--release")
+  fi
+
+  if [ ! -f "${RUST_WORKSPACE_MANIFEST}" ]; then
+    return 0
+  fi
+
+  log "Running canonical rust workspace build: cargo ${cargo_args[*]}"
+  if [ "${DRY_RUN}" = true ]; then
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} export CARGO_TARGET_DIR='${RUST_WORKSPACE_TARGET_DIR}'"
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} cargo ${cargo_args[*]}"
+    return 0
+  fi
+
+  mkdir -p "${RUST_WORKSPACE_TARGET_DIR}"
+  if CARGO_TARGET_DIR="${RUST_WORKSPACE_TARGET_DIR}" cargo "${cargo_args[@]}"; then
+    ok "Canonical rust workspace build succeeded (${BUILD_MODE})"
+  elif [[ "${TIZENCLAW_NO_NETWORK_FALLBACK:-0}" == "1" ]]; then
+    fail "Canonical rust workspace build failed (network fallback disabled)"
+  elif run_rust_workspace_without_vendor "${retry_args[@]}"; then
+    warn "Canonical rust workspace build required network-backed dependency resolution"
+    ok "Canonical rust workspace build succeeded (${BUILD_MODE})"
+  else
+    fail "Canonical rust workspace build failed"
+  fi
+}
+
+run_rust_workspace_tests() {
+  local cargo_args=("test" "--manifest-path" "${RUST_WORKSPACE_MANIFEST}" "--workspace" "--offline" "--locked")
+  local retry_args=("test" "--manifest-path" "${RUST_WORKSPACE_MANIFEST}" "--workspace")
+  if [ "${BUILD_MODE}" = "release" ]; then
+    cargo_args+=("--release")
+    retry_args+=("--release")
+  fi
+  cargo_args+=("--" "--test-threads=1")
+  retry_args+=("--" "--test-threads=1")
+
+  if [ ! -f "${RUST_WORKSPACE_MANIFEST}" ]; then
+    return 0
+  fi
+
+  log "Running canonical rust workspace tests: cargo ${cargo_args[*]}"
+  if [ "${DRY_RUN}" = true ]; then
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} export CARGO_TARGET_DIR='${RUST_WORKSPACE_TARGET_DIR}'"
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} cargo ${cargo_args[*]}"
+    return 0
+  fi
+
+  mkdir -p "${RUST_WORKSPACE_TARGET_DIR}"
+  if CARGO_TARGET_DIR="${RUST_WORKSPACE_TARGET_DIR}" cargo "${cargo_args[@]}" 2>&1; then
+    ok "Canonical rust workspace tests passed"
+  elif [[ "${TIZENCLAW_NO_NETWORK_FALLBACK:-0}" == "1" ]]; then
+    fail "Canonical rust workspace tests failed (network fallback disabled)"
+  elif run_rust_workspace_without_vendor "${retry_args[@]}"; then
+    warn "Canonical rust workspace tests required network-backed dependency resolution"
+    ok "Canonical rust workspace tests passed"
+  else
+    fail "Canonical rust workspace tests failed"
+  fi
+}
+
+run_rust_workspace_without_vendor() {
+  local cargo_config="${PROJECT_DIR}/.cargo/config.toml"
+  local cargo_config_backup="${PROJECT_DIR}/.cargo/config.toml.deploy_host_backup"
+
+  if [ ! -f "${cargo_config}" ]; then
+    CARGO_TARGET_DIR="${RUST_WORKSPACE_TARGET_DIR}" cargo "$@"
+    return $?
+  fi
+
+  mv "${cargo_config}" "${cargo_config_backup}"
+  if CARGO_TARGET_DIR="${RUST_WORKSPACE_TARGET_DIR}" cargo "$@"; then
+    mv "${cargo_config_backup}" "${cargo_config}"
+    return 0
+  else
+    local status=$?
+    mv "${cargo_config_backup}" "${cargo_config}"
+    return "${status}"
+  fi
 }
 
 ensure_shell_path() {
@@ -401,20 +503,10 @@ cleanup_legacy_host_install() {
 do_build() {
   header "Step 1/3: Cargo Build (Host — Generic Linux)"
 
-  local cargo_args=("build" "--offline" "--locked")
+  local cargo_args=("build" "--workspace" "--offline" "--locked")
   if [ "${BUILD_MODE}" = "release" ]; then
     cargo_args+=("--release")
   fi
-
-  # Build daemon + tool-executor + CLI + web-dashboard + shared client library
-  cargo_args+=(
-    "-p" "${PKG_NAME}"
-    "-p" "libtizenclaw"
-    "-p" "${TOOL_EXECUTOR_NAME}"
-    "-p" "${CLI_NAME}"
-    "-p" "${TEST_TOOL_NAME}"
-    "-p" "${WEB_DASHBOARD_NAME}"
-  )
 
   log "Running: cargo ${cargo_args[*]}"
   cd "${PROJECT_DIR}"
@@ -433,6 +525,8 @@ do_build() {
   else
     fail "Cargo build failed"
   fi
+
+  run_rust_workspace_build
 }
 
 # ─────────────────────────────────────────────
@@ -447,21 +541,67 @@ do_test() {
     process_report || true
   fi
 
-  log "Running: cargo test --offline --locked"
+  local cargo_test_args=(test --workspace --offline --locked)
+  if [ "${BUILD_MODE}" = "release" ]; then
+    cargo_test_args+=(--release)
+  fi
+  log "Running: cargo ${cargo_test_args[*]}"
   cd "${PROJECT_DIR}"
 
   if [ "${DRY_RUN}" = true ]; then
     echo -e "  ${YELLOW}[DRY-RUN]${NC} export CARGO_TARGET_DIR='${CARGO_TARGET_DIR_HOST}'"
-    echo -e "  ${YELLOW}[DRY-RUN]${NC} cargo test --offline --locked"
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} cargo ${cargo_test_args[*]}"
     return 0
   fi
 
   mkdir -p "${CARGO_TARGET_DIR_HOST}"
 
-  if CARGO_TARGET_DIR="${CARGO_TARGET_DIR_HOST}" cargo test --offline --locked -- --test-threads=1 2>&1; then
+  if CARGO_TARGET_DIR="${CARGO_TARGET_DIR_HOST}" cargo "${cargo_test_args[@]}" -- --test-threads=1 2>&1; then
     ok "All tests passed"
   else
-    warn "Some tests failed (see output above)"
+    fail "Some tests failed (see output above)"
+  fi
+
+  run_rust_workspace_tests
+
+  log "Running reconstruction parity harness"
+  if bash "${PROJECT_DIR}/rust/scripts/run_mock_parity_harness.sh"; then
+    ok "Mock parity harness passed"
+  else
+    fail "Mock parity harness failed"
+  fi
+
+  log "Running documentation-driven architecture verification"
+  if python3 "${PROJECT_DIR}/scripts/verify_doc_architecture.py"; then
+    ok "Documentation-driven verification passed"
+  else
+    fail "Documentation-driven verification failed"
+  fi
+
+  # cargo test produces test executables in debug/deps/ but not named binaries
+  # in debug/. Run cargo build so the contract suite can find tizenclaw,
+  # tizenclaw-tool-executor, and tizenclaw-tests at their expected paths.
+  local cargo_build_args=(build --workspace --offline --locked)
+  if [ "${BUILD_MODE}" = "release" ]; then
+    cargo_build_args+=(--release)
+  fi
+  log "Building named binaries for contract suite: cargo ${cargo_build_args[*]}"
+  if CARGO_TARGET_DIR="${CARGO_TARGET_DIR_HOST}" cargo "${cargo_build_args[@]}"; then
+    ok "Named binaries built (${BUILD_MODE})"
+  else
+    fail "Named binary build failed"
+  fi
+
+  log "Running offline system contract suite"
+  local bin_dir="${CARGO_TARGET_DIR_HOST}/debug"
+  if [ "${BUILD_MODE}" = "release" ]; then
+    bin_dir="${CARGO_TARGET_DIR_HOST}/release"
+  fi
+  if bash "${PROJECT_DIR}/scripts/run_host_system_contracts.sh" \
+      --bin-dir "${bin_dir}"; then
+    ok "Offline system contract suite passed"
+  else
+    fail "Offline system contract suite failed (see output above)"
   fi
 }
 
@@ -480,7 +620,7 @@ do_install() {
     "${INCLUDE_DIR}/tizenclaw/core" "${PKGCONFIG_DIR}" "${CONFIG_DIR}" "${TOOLS_DIR}/cli" \
     "${WORKSPACE_DIR}/skills" "${TOOLS_DIR}" "${DATA_DIR}/embedded" "${DATA_DIR}/web" \
     "${DATA_DIR}/workflows" "${DATA_DIR}/pipelines" "${DATA_DIR}/codes" \
-    "${DATA_DIR}/memory" "${DATA_DIR}/plugins" "${LOG_DIR}"
+    "${DATA_DIR}/memory" "${DATA_DIR}/plugins" "${LOG_DIR}" "${HOST_BASE_DIR}/run"
 
   if [ -d "${TOOLS_DIR}/skills" ] && [ ! -e "${WORKSPACE_DIR}/skills" ]; then
     log "Migrating legacy skills dir → ${WORKSPACE_DIR}/skills"
@@ -512,6 +652,7 @@ do_install() {
     "libtizenclaw.rlib"
     "libtizenclaw_core.so"
     "libtizenclaw_core.rlib"
+    "${PLATFORM_PLUGIN_NAME}"
   )
   for lib_name in "${lib_candidates[@]}"; do
     local lib_path="${build_dir}/${lib_name}"
@@ -522,6 +663,14 @@ do_install() {
     run install -m 755 "${lib_path}" "${LIB_DIR}/${lib_name}"
     ok "Installed library: ${lib_name}"
   done
+
+  local platform_plugin_path="${build_dir}/${PLATFORM_PLUGIN_NAME}"
+  if [ "${DRY_RUN}" = false ] && [ -f "${platform_plugin_path}" ]; then
+    log "Installing platform plugin → ${DATA_DIR}/plugins/${PLATFORM_PLUGIN_NAME}"
+    run install -m 755 "${platform_plugin_path}" \
+      "${DATA_DIR}/plugins/${PLATFORM_PLUGIN_NAME}"
+    ok "Installed platform plugin"
+  fi
 
   log "Installing public headers → ${INCLUDE_DIR}/tizenclaw"
   run install -m 644 "${PROJECT_DIR}/src/libtizenclaw/include/tizenclaw.h" \
@@ -611,6 +760,22 @@ EOF
     ok "Embedded tool descriptors installed"
   fi
 
+  # Install the standalone installed-runtime control script so that
+  # tizenclaw-hostctl works even for local-checkout installs. The source
+  # deploy_host.sh itself is never copied into the managed tree.
+  local hostctl_src="${PROJECT_DIR}/scripts/tizenclaw-hostctl.sh"
+  if [ -f "${hostctl_src}" ]; then
+    run mkdir -p "${HOST_BASE_DIR}/manage"
+    log "Installing bundled host control script → ${HOST_BASE_DIR}/manage/tizenclaw-hostctl.sh"
+    run install -m 755 "${hostctl_src}" "${HOST_BASE_DIR}/manage/tizenclaw-hostctl.sh"
+    if [ "${DRY_RUN}" = false ]; then
+      ln -sf ../manage/tizenclaw-hostctl.sh "${INSTALL_DIR}/tizenclaw-hostctl"
+    else
+      echo -e "  ${YELLOW}[DRY-RUN]${NC} ln -sf ../manage/tizenclaw-hostctl.sh '${INSTALL_DIR}/tizenclaw-hostctl'"
+    fi
+    ok "Installed tizenclaw-hostctl"
+  fi
+
   ensure_shell_path
   cleanup_legacy_host_install
 }
@@ -657,11 +822,6 @@ stop_daemon() {
     ok "Daemon stopped"
   else
     warn "No PID file found at ${PID_FILE}. Daemon may not be running."
-    # Try by name as fallback
-    if pgrep -x "${PKG_NAME}" &>/dev/null; then
-      run pkill -x "${PKG_NAME}" || true
-      ok "Daemon killed by name"
-    fi
   fi
 
   if pgrep -f "${INSTALL_DIR}/${TOOL_EXECUTOR_NAME}" &>/dev/null; then
@@ -677,14 +837,14 @@ stop_daemon() {
     run pkill -f "${INSTALL_DIR}/${WEB_DASHBOARD_NAME}" || true
   fi
 
-  if pgrep -x "${TOOL_EXECUTOR_NAME}" &>/dev/null; then
-    run pkill -x "${TOOL_EXECUTOR_NAME}" || true
+  if pgrep -f "${INSTALL_DIR}/${TOOL_EXECUTOR_NAME}" &>/dev/null; then
+    run pkill -f "${INSTALL_DIR}/${TOOL_EXECUTOR_NAME}" || true
   fi
-  if pgrep -x "${CLI_NAME}" &>/dev/null; then
-    run pkill -x "${CLI_NAME}" || true
+  if pgrep -f "${INSTALL_DIR}/${CLI_NAME}" &>/dev/null; then
+    run pkill -f "${INSTALL_DIR}/${CLI_NAME}" || true
   fi
-  if pgrep -x "${WEB_DASHBOARD_NAME}" &>/dev/null; then
-    run pkill -x "${WEB_DASHBOARD_NAME}" || true
+  if pgrep -f "${INSTALL_DIR}/${WEB_DASHBOARD_NAME}" &>/dev/null; then
+    run pkill -f "${INSTALL_DIR}/${WEB_DASHBOARD_NAME}" || true
   fi
 
   wait_for_process_name_exit "tizenclaw-tool-executor" "${TOOL_EXECUTOR_NAME}" 5 || true
@@ -875,6 +1035,74 @@ do_run() {
   fi
 }
 
+wait_for_ipc_ready() {
+  header "IPC Readiness Check"
+
+  local test_cmd=("${INSTALL_DIR}/${TEST_TOOL_NAME}" "call" "--method" "ping")
+  local socket_path="${TIZENCLAW_SOCKET_PATH:-}"
+  local deadline=$((SECONDS + 5))
+  local socket_seen=false
+
+  if [ "${DRY_RUN}" = true ]; then
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} wait for daemon IPC readiness"
+    return 0
+  fi
+
+  while [ "${SECONDS}" -lt "${deadline}" ]; do
+    if [ -n "${socket_path}" ] && [ -S "${socket_path}" ]; then
+      socket_seen=true
+    fi
+
+    if "${test_cmd[@]}" >/dev/null 2>&1; then
+      if [ -n "${socket_path}" ]; then
+        ok "Daemon IPC is ready at ${socket_path}"
+      elif [ "${socket_seen}" = true ]; then
+        ok "Daemon IPC is ready"
+      else
+        ok "Daemon IPC is ready via abstract socket"
+      fi
+      return 0
+    fi
+
+    sleep 0.2
+  done
+
+  fail "Timed out waiting for daemon IPC readiness"
+}
+
+run_devel_entry_tests() {
+  if [ "${DEVEL_MODE}" != true ]; then
+    return 0
+  fi
+
+  header "Devel Entry Regression Check"
+  log "Running: ${INSTALL_DIR}/${TEST_TOOL_NAME} scenario --file ${DEVEL_OAUTH_REGRESSION_SCENARIO}"
+
+  if [ "${DRY_RUN}" = true ]; then
+    echo -e "  ${YELLOW}[DRY-RUN]${NC} ${INSTALL_DIR}/${TEST_TOOL_NAME} scenario --file ${DEVEL_OAUTH_REGRESSION_SCENARIO}"
+    ok "Skipped devel entry regression check (dry-run)"
+    return 0
+  fi
+
+  # Devel mode should fail fast when the linked Codex OAuth cache regresses.
+  # Give the freshly spawned daemon a short readiness window so we validate
+  # the live service rather than racing the socket startup.
+  local attempt
+  local max_attempts=10
+  for attempt in $(seq 1 "${max_attempts}"); do
+    if "${INSTALL_DIR}/${TEST_TOOL_NAME}" scenario --file "${DEVEL_OAUTH_REGRESSION_SCENARIO}"; then
+      ok "Devel entry OAuth regression check passed"
+      return 0
+    fi
+    if [ "${attempt}" -lt "${max_attempts}" ]; then
+      warn "Devel regression check hit a startup race; retrying (${attempt}/${max_attempts})"
+      sleep 1
+    fi
+  done
+
+  fail "Devel entry OAuth regression check failed"
+}
+
 ensure_existing_install() {
   if [ ! -x "${INSTALL_DIR}/${PKG_NAME}" ]; then
     fail "Installed host binary not found: ${INSTALL_DIR}/${PKG_NAME}"
@@ -911,6 +1139,12 @@ show_summary() {
 # ─────────────────────────────────────────────
 main() {
   parse_args "$@"
+
+  # Re-derive the canonical rust/ workspace target dir so it is always
+  # co-located with CARGO_TARGET_DIR_HOST even when --build-root overrides
+  # the default.  The default produces ~/.tizenclaw/build/rust-cargo-target;
+  # a custom --build-root <dir> produces <dir>/rust-cargo-target.
+  RUST_WORKSPACE_TARGET_DIR="${CARGO_TARGET_DIR_HOST%/cargo-target}/rust-cargo-target"
 
   # Simple actions that don't need a build
   if [ "${STOP_DAEMON}" = true ]; then
@@ -957,7 +1191,13 @@ main() {
   fi
 
   do_install
+  if [ "${NO_RESTART}" = true ]; then
+    ok "Build and install complete. Daemon restart skipped."
+    exit 0
+  fi
   do_run
+  wait_for_ipc_ready
+  run_devel_entry_tests
   show_summary
 }
 

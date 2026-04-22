@@ -47,6 +47,11 @@ unsafe impl Send for PluginLlmBackend {}
 unsafe impl Sync for PluginLlmBackend {}
 
 impl PluginLlmBackend {
+    fn ffi_safe_cstring(input: &str) -> CString {
+        let sanitized = input.replace('\0', " ");
+        CString::new(sanitized).unwrap_or_else(|_| c"".to_owned())
+    }
+
     pub fn new(plugin_path: &str, base_config: Option<Value>) -> Self {
         PluginLlmBackend {
             name: Path::new(plugin_path)
@@ -284,7 +289,7 @@ impl PluginLlmBackend {
         resp.prompt_tokens = prompt_tokens;
         resp.completion_tokens = completion_tokens;
         resp.total_tokens = total_tokens;
-        resp.http_status = http_status as u16;
+        resp.http_status = http_status;
 
         // tool calls
         unsafe extern "C" fn collect_tool_call(
@@ -413,7 +418,7 @@ impl LlmBackend for PluginLlmBackend {
                     success: false,
                     error_message: "Plugin not loaded".into(),
                     ..Default::default()
-                }
+                };
             }
         };
 
@@ -425,7 +430,7 @@ impl LlmBackend for PluginLlmBackend {
                         success: false,
                         error_message: "Plugin missing TIZENCLAW_LLM_BACKEND_CHAT symbol".into(),
                         ..Default::default()
-                    }
+                    };
                 }
             };
 
@@ -433,11 +438,12 @@ impl LlmBackend for PluginLlmBackend {
         let messages_h = unsafe { Self::build_messages_handle(messages) };
         let tools_h = unsafe { Self::build_tools_handle(tools) };
 
-        let c_system_prompt =
-            CString::new(system_prompt).unwrap_or_else(|_| CString::new("").unwrap());
+        let c_system_prompt = Self::ffi_safe_cstring(system_prompt);
 
         // TODO: Wire up on_chunk callback via ChunkCb if streaming is needed.
         // For now, pass None to indicate no streaming callback.
+        // SAFETY: The plugin ABI expects valid message/tool handles and a
+        // NUL-terminated prompt pointer for the duration of the call.
         let response_h = unsafe {
             chat_fn(
                 messages_h,
@@ -486,5 +492,19 @@ impl LlmBackend for PluginLlmBackend {
 impl Drop for PluginLlmBackend {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PluginLlmBackend;
+
+    #[test]
+    fn ffi_safe_cstring_replaces_embedded_nul() {
+        let value = PluginLlmBackend::ffi_safe_cstring("system\0prompt");
+        assert_eq!(
+            value.as_c_str().to_str().expect("valid UTF-8 CString"),
+            "system prompt"
+        );
     }
 }

@@ -20,8 +20,12 @@
 //! - Fallback: `chars / 3.5` heuristic when tokenizer is unavailable.
 
 use crate::llm::backend::LlmMessage;
+use crate::core::wordpiece_tokenizer::WordPieceTokenizer;
+use std::collections::HashSet;
+use std::sync::Arc;
 
 const HEURISTIC_CHARS_PER_TOKEN: f32 = 3.5;
+const COMPACT_THRESHOLD: f32 = 0.90;
 pub const DEFAULT_TOOL_RESULT_BUDGET_CHARS: usize = 4_000;
 
 fn char_boundary_prefix(text: &str, max_chars: usize) -> &str {
@@ -32,6 +36,29 @@ fn char_boundary_prefix(text: &str, max_chars: usize) -> &str {
     match text.char_indices().nth(max_chars) {
         Some((idx, _)) => &text[..idx],
         None => text,
+    }
+}
+
+pub fn truncate_tool_results(messages: &mut Vec<LlmMessage>, budget_chars: usize) {
+    if budget_chars == 0 {
+        return;
+    }
+
+    for msg in messages.iter_mut() {
+        if msg.role != "tool" {
+            continue;
+        }
+
+        let result_str = msg.tool_result.to_string();
+        if result_str.chars().count() <= budget_chars {
+            continue;
+        }
+
+        let truncated = char_boundary_prefix(&result_str, budget_chars).to_string();
+        msg.tool_result = serde_json::json!({
+            "output": truncated,
+            "_truncated": true
+        });
     }
 }
 
@@ -58,6 +85,7 @@ pub trait ContextEngine: Send + Sync {
 /// when a positive budget is supplied.
 pub struct SizedContextEngine {
     compact_threshold: f32,
+    tokenizer: Option<Arc<WordPieceTokenizer>>,
 }
 
 impl SizedContextEngine {
@@ -68,7 +96,8 @@ impl SizedContextEngine {
 
     pub fn new() -> Self {
         SizedContextEngine {
-            compact_threshold: Self::DEFAULT_THRESHOLD,
+            compact_threshold: COMPACT_THRESHOLD,
+            tokenizer: None,
         }
     }
 
@@ -77,11 +106,12 @@ impl SizedContextEngine {
         self
     }
 
-    pub fn budget_tool_result_message(
-        &self,
-        mut message: LlmMessage,
-        max_chars: usize,
-    ) -> (LlmMessage, bool) {
+    pub fn with_tokenizer(mut self, tokenizer: Arc<WordPieceTokenizer>) -> Self {
+        self.tokenizer = Some(tokenizer);
+        self
+    }
+
+    pub fn budget_tool_result_message(&self, message: LlmMessage, max_chars: usize) -> (LlmMessage, bool) {
         if message.role != "tool" || max_chars == 0 {
             return (message, false);
         }
@@ -91,16 +121,9 @@ impl SizedContextEngine {
             return (message, false);
         }
 
-        let preview = char_boundary_prefix(&serialized, max_chars.min(400)).to_string();
-        message.tool_result = serde_json::json!({
-            "summary": format!(
-                "Tool output truncated to stay within the agent context budget. \
-        Preview the result and call a narrower follow-up tool if more detail is required."
-            ),
-            "preview": preview,
-            "truncated": true,
-            "original_size": serialized.len(),
-        });
+        let mut batch = vec![message];
+        truncate_tool_results(&mut batch, max_chars);
+        let message = batch.into_iter().next().unwrap_or_default();
 
         (message, true)
     }
@@ -134,20 +157,51 @@ impl Default for SizedContextEngine {
 
 impl ContextEngine for SizedContextEngine {
     fn estimate_tokens(&self, messages: &[LlmMessage]) -> usize {
-        // Heuristic: total chars across all textual fields / 3.5
+        if let Some(tokenizer) = self.tokenizer.as_ref() {
+            let total = messages
+                .iter()
+                .map(|message| {
+                    let mut count = 0usize;
+                    if !message.text.is_empty() {
+                        count += tokenizer.count_tokens(&message.text);
+                    }
+                    if !message.reasoning_text.is_empty() {
+                        count += tokenizer.count_tokens(&message.reasoning_text);
+                    }
+                    if !message.tool_result.is_null() {
+                        count += tokenizer.count_tokens(&message.tool_result.to_string());
+                    }
+                    count
+                        + message
+                            .tool_calls
+                            .iter()
+                            .map(|tc| {
+                                tokenizer.count_tokens(&tc.name)
+                                    + tokenizer.count_tokens(&tc.args.to_string())
+                            })
+                            .sum::<usize>()
+                })
+                .sum::<usize>();
+            return total;
+        }
+
         let total_chars: usize = messages
             .iter()
             .map(|m| {
-                m.text.len()
-                    + m.reasoning_text.len()
-                    + m.tool_result.to_string().len()
+                m.text.chars().count()
+                    + m.reasoning_text.chars().count()
+                    + m.tool_result.to_string().chars().count()
                     + m.tool_calls
                         .iter()
-                        .map(|tc| tc.args.to_string().len() + tc.name.len())
+                        .map(|tc| tc.args.to_string().chars().count() + tc.name.chars().count())
                         .sum::<usize>()
             })
             .sum();
-        ((total_chars as f32) / HEURISTIC_CHARS_PER_TOKEN).ceil() as usize
+        if total_chars == 0 {
+            0
+        } else {
+            ((total_chars as f32) / HEURISTIC_CHARS_PER_TOKEN).ceil() as usize
+        }
     }
 
     fn should_compact(&self, messages: &[LlmMessage], budget: usize) -> bool {
@@ -160,6 +214,9 @@ impl ContextEngine for SizedContextEngine {
     }
 
     fn compact(&self, messages: Vec<LlmMessage>, budget: usize) -> Vec<LlmMessage> {
+        let mut messages = messages;
+        truncate_tool_results(&mut messages, DEFAULT_TOOL_RESULT_BUDGET_CHARS);
+
         let before = self.estimate_tokens(&messages);
         log::debug!(
             "[ContextEngine] Compacting: ~{} tokens / {} budget ({:.1}%)",
@@ -174,11 +231,13 @@ impl ContextEngine for SizedContextEngine {
 
         // ── Phase 1: Identify pinned messages ──────────────────────────────
         // Pin: system prompt + first user message (never removed)
-        let mut pinned_indices = std::collections::HashSet::new();
+        let mut pinned_indices = HashSet::new();
+        let mut first_system_found = false;
         let mut first_user_found = false;
         for (i, msg) in messages.iter().enumerate() {
-            if msg.role == "system" {
+            if msg.role == "system" && !first_system_found {
                 pinned_indices.insert(i);
+                first_system_found = true;
             } else if msg.role == "user" && !first_user_found {
                 pinned_indices.insert(i);
                 first_user_found = true;
@@ -186,84 +245,79 @@ impl ContextEngine for SizedContextEngine {
         }
 
         // ── Phase 2: Identify tool results safe to prune ──────────────────
-        // Collect names of all tools referenced in assistant messages
-        let referenced_tool_ids: std::collections::HashSet<String> = messages
-            .iter()
-            .filter(|m| m.role == "assistant")
-            .flat_map(|m| m.tool_calls.iter().map(|tc| tc.id.clone()))
-            .collect();
+        let mut prunable_indices = HashSet::new();
+        let mut later_assistant_tool_ids = HashSet::new();
+        for (i, msg) in messages.iter().enumerate().rev() {
+            if msg.role == "assistant" {
+                later_assistant_tool_ids.extend(msg.tool_calls.iter().map(|tc| tc.id.clone()));
+                continue;
+            }
 
-        // A "tool" message is prunable if its tool_call_id is not referenced
-        let mut prunable_indices = std::collections::HashSet::new();
-        for (i, msg) in messages.iter().enumerate() {
             if msg.role == "tool"
                 && !pinned_indices.contains(&i)
-                && !msg.tool_call_id.is_empty()
-                && !referenced_tool_ids.contains(&msg.tool_call_id)
+                && (msg.tool_call_id.is_empty()
+                    || !later_assistant_tool_ids.contains(&msg.tool_call_id))
             {
                 prunable_indices.insert(i);
             }
         }
 
         // ── Phase 3: Build compacted list without pruned messages ──────────
-        let mut compacted: Vec<LlmMessage> = messages
+        let compacted_items: Vec<(usize, LlmMessage)> = messages
             .into_iter()
             .enumerate()
             .filter(|(i, _)| !prunable_indices.contains(i))
-            .map(|(_, mut m)| {
-                if m.role == "tool" {
-                    if m.text.len() > 200 {
-                        m.text = format!("{}... [truncated]", &m.text[..200]);
-                    }
-                    let res_str = m.tool_result.to_string();
-                    if res_str.len() > 200 {
-                        m.tool_result =
-                            serde_json::json!(format!("{}... [truncated]", &res_str[..200]));
-                    }
-                }
-                m
-            })
+            .enumerate()
+            .map(|(stable_idx, (_, m))| (stable_idx, m))
             .collect();
 
         // ── Phase 4: If still over budget, drop oldest non-pinned messages ─
-        let target = ((budget as f32) * self.compact_threshold * 0.70) as usize;
-        let mut rebuilt_pinned = std::collections::HashSet::new();
-        // Rebuild pinned index into compacted list positions
+        let target = ((budget as f32) * self.compact_threshold) as usize;
+        let mut compacted_items = compacted_items;
+        let mut rebuilt_pinned = HashSet::new();
+        let mut first_system_found = false;
+        let mut first_user_found = false;
+        for (stable_idx, msg) in compacted_items.iter() {
+            if msg.role == "system" && !first_system_found {
+                rebuilt_pinned.insert(*stable_idx);
+                first_system_found = true;
+            } else if msg.role == "user" && !first_user_found {
+                rebuilt_pinned.insert(*stable_idx);
+                first_user_found = true;
+            }
+        }
+        let non_pinned_stable_indices: Vec<usize> = compacted_items
+            .iter()
+            .filter_map(|(stable_idx, _)| (!rebuilt_pinned.contains(stable_idx)).then_some(*stable_idx))
+            .collect();
+        let preserve_recent = ((non_pinned_stable_indices.len() as f32) * 0.30).ceil() as usize;
+        let preserved_recent_indices: HashSet<usize> = non_pinned_stable_indices
+            .iter()
+            .rev()
+            .take(preserve_recent)
+            .copied()
+            .collect();
+
+        while self.estimate_tokens(
+            &compacted_items
+                .iter()
+                .map(|(_, message)| message.clone())
+                .collect::<Vec<_>>(),
+        ) > target
         {
-            let mut user_seen = false;
-            for (i, msg) in compacted.iter().enumerate() {
-                if msg.role == "system" {
-                    rebuilt_pinned.insert(i);
-                } else if msg.role == "user" && !user_seen {
-                    rebuilt_pinned.insert(i);
-                    user_seen = true;
+            let drop_idx = compacted_items.iter().position(|(stable_idx, _)| {
+                !rebuilt_pinned.contains(stable_idx) && !preserved_recent_indices.contains(stable_idx)
+            });
+
+            match drop_idx {
+                Some(idx) => {
+                    compacted_items.remove(idx);
                 }
+                None => break,
             }
         }
 
-        while self.estimate_tokens(&compacted) > target && compacted.len() > 2 {
-            // Find the oldest non-pinned message
-            let drop_idx = compacted
-                .iter()
-                .enumerate()
-                .position(|(i, _)| !rebuilt_pinned.contains(&i));
-            if let Some(idx) = drop_idx {
-                compacted.remove(idx);
-                // Rebuild pinned index after removal
-                rebuilt_pinned.clear();
-                let mut user_seen = false;
-                for (i, msg) in compacted.iter().enumerate() {
-                    if msg.role == "system" {
-                        rebuilt_pinned.insert(i);
-                    } else if msg.role == "user" && !user_seen {
-                        rebuilt_pinned.insert(i);
-                        user_seen = true;
-                    }
-                }
-            } else {
-                break; // All remaining are pinned, cannot shrink further
-            }
-        }
+        let compacted: Vec<LlmMessage> = compacted_items.into_iter().map(|(_, message)| message).collect();
 
         let after = self.estimate_tokens(&compacted);
         log::debug!(
@@ -362,6 +416,7 @@ mod tests {
         let engine = SizedContextEngine::new();
         let messages = vec![
             msg("system", "You are TizenClaw."),
+            msg("system", "Secondary system note"),
             msg("user", "Original goal"),
             msg("assistant", "Thinking..."),
             msg("user", "Follow-up"),
@@ -375,6 +430,9 @@ mod tests {
         assert!(compact
             .iter()
             .any(|m| m.role == "user" && m.text == "Original goal"));
+        assert!(!compact
+            .iter()
+            .any(|m| m.role == "system" && m.text == "Secondary system note"));
     }
 
     #[test]
@@ -417,6 +475,23 @@ mod tests {
     }
 
     #[test]
+    fn test_compact_prunes_tool_only_referenced_by_earlier_assistant() {
+        let engine = SizedContextEngine::new();
+        let messages = vec![
+            msg("system", "prompt"),
+            msg("user", "goal"),
+            assistant_with_tool_call("Plan to use ref1", "ref1", "get_data"),
+            tool_msg("ref1", "late result"),
+            msg("assistant", "Done"),
+        ];
+
+        let compact = engine.compact(messages, 50);
+        assert!(!compact
+            .iter()
+            .any(|m| m.role == "tool" && m.tool_call_id == "ref1"));
+    }
+
+    #[test]
     fn test_compact_returns_at_least_system_and_user() {
         let engine = SizedContextEngine::new();
         let messages = vec![
@@ -456,8 +531,8 @@ mod tests {
         assert!(changed);
         assert_eq!(budgeted.tool_call_id, "call1");
         assert_eq!(budgeted.tool_name, "read_file");
-        assert_eq!(budgeted.tool_result["truncated"], json!(true));
-        assert!(budgeted.tool_result["preview"]
+        assert_eq!(budgeted.tool_result["_truncated"], json!(true));
+        assert!(budgeted.tool_result["output"]
             .as_str()
             .unwrap_or_default()
             .starts_with("{\"data\":"));
@@ -473,5 +548,22 @@ mod tests {
 
         assert!(!changed);
         assert_eq!(budgeted.tool_result, message.tool_result);
+    }
+
+    #[test]
+    fn test_truncate_tool_results_preserves_utf8_boundaries() {
+        let mut messages = vec![LlmMessage::tool_result(
+            "call1",
+            "unicode",
+            json!({ "output": "한글🙂emoji" }),
+        )];
+
+        truncate_tool_results(&mut messages, 7);
+
+        assert_eq!(messages[0].tool_result["_truncated"], json!(true));
+        let output = messages[0].tool_result["output"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(std::str::from_utf8(output.as_bytes()).is_ok());
     }
 }

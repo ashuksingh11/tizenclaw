@@ -25,8 +25,10 @@ tizen-web-search-cli --query <QUERY> [--engine <ENGINE>]
 
 ## Configuration
 API keys are stored in the active runtime config root, typically
-`/opt/usr/share/tizenclaw/config/web_search_config.json` on Tizen or
-`~/.tizenclaw/config/web_search_config.json` on host Linux.
+`/home/owner/.tizenclaw/config/web_search_config.json` on Tizen or
+`~/.tizenclaw/config/web_search_config.json` on host Linux. The CLI first
+honors `TIZENCLAW_CONFIG_DIR`, then `TIZENCLAW_HOME`, before falling back to
+the default runtime root.
 
 ## Example Output
 ```json

@@ -3,7 +3,9 @@
 pub mod agent_core;
 pub mod prompt_builder;
 pub mod registration_store;
+pub mod runtime_capabilities;
 pub mod runtime_paths;
+pub mod skill_capability_manager;
 pub mod skill_support;
 pub mod textual_skill_scanner;
 pub mod tool_declaration_builder;
@@ -46,3 +48,7 @@ pub mod swarm_manager;
 // Embedding Engine
 pub mod on_device_embedding;
 pub mod wordpiece_tokenizer;
+// ClawHub skill hub integration
+pub mod clawhub_client;
+// Provider selection layer
+pub mod provider_selection;

@@ -2,7 +2,8 @@
 
 use mdns_sd::{ServiceDaemon, ServiceEvent};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
 
 #[derive(Debug, Clone)]
 pub struct Peer {
@@ -13,7 +14,9 @@ pub struct Peer {
 }
 
 pub struct MdnsScanner {
+    daemon: Arc<Mutex<Option<Arc<ServiceDaemon>>>>,
     pub peers: Arc<RwLock<HashMap<String, Peer>>>,
+    running: Arc<AtomicBool>,
 }
 
 impl Default for MdnsScanner {
@@ -25,12 +28,17 @@ impl Default for MdnsScanner {
 impl MdnsScanner {
     pub fn new() -> Self {
         Self {
+            daemon: Arc::new(Mutex::new(None)),
             peers: Arc::new(RwLock::new(HashMap::new())),
+            running: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn start(&self) {
         let peers_clone = self.peers.clone();
+        let daemon_slot = self.daemon.clone();
+        let running = self.running.clone();
+
         tokio::task::spawn_blocking(move || {
             let mdns = match ServiceDaemon::new() {
                 Ok(m) => m,
@@ -42,12 +50,21 @@ impl MdnsScanner {
                     return;
                 }
             };
+            let mdns = Arc::new(mdns);
+            running.store(true, Ordering::SeqCst);
+            if let Ok(mut slot) = daemon_slot.lock() {
+                *slot = Some(mdns.clone());
+            }
 
             let service_type = "_tizenclaw._tcp.local.";
             let receiver = match mdns.browse(service_type) {
                 Ok(r) => r,
                 Err(e) => {
                     log::error!("mDNS browse failed: {}. Fallback to isolated mode.", e);
+                    running.store(false, Ordering::SeqCst);
+                    if let Ok(mut slot) = daemon_slot.lock() {
+                        *slot = None;
+                    }
                     return;
                 }
             };
@@ -92,6 +109,21 @@ impl MdnsScanner {
                     _ => {}
                 }
             }
+
+            running.store(false, Ordering::SeqCst);
+            if let Ok(mut slot) = daemon_slot.lock() {
+                *slot = None;
+            }
+            log::debug!("mDNS Scanner stopped");
         });
+    }
+
+    pub fn stop(&self) {
+        self.running.store(false, Ordering::SeqCst);
+        if let Ok(mut slot) = self.daemon.lock() {
+            if let Some(daemon) = slot.take() {
+                let _ = daemon.shutdown();
+            }
+        }
     }
 }

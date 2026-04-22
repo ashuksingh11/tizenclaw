@@ -49,12 +49,24 @@ impl ToolDeclarationBuilder {
             Self::push_workflow_tools(tools);
         }
 
-        // 6. Agent Role Intent
+        // 6. Coding / Script Intent
+        if p.contains("script")
+            || p.contains("python")
+            || p.contains("bash")
+            || p.contains("node")
+            || p.contains("executable")
+            || p.contains("program")
+            || p.contains("code")
+        {
+            Self::push_code_tools(tools);
+        }
+
+        // 7. Agent Role Intent
         if p.contains("agent") || p.contains("role") || p.contains("supervisor") {
             Self::push_agent_tools(tools);
         }
 
-        // 7. Research / Search Intent
+        // 8. Research / Search Intent
         if p.contains("search")
             || p.contains("research")
             || p.contains("weather")
@@ -66,7 +78,7 @@ impl ToolDeclarationBuilder {
             Self::push_research_tools(tools);
         }
 
-        // 8. Document / Data Intent
+        // 9. Document / Data Intent
         if p.contains(".pdf")
             || p.contains(".csv")
             || p.contains(".xlsx")
@@ -80,7 +92,7 @@ impl ToolDeclarationBuilder {
             Self::push_document_tools(tools);
         }
 
-        // 9. Image Intent
+        // 10. Image Intent
         if p.contains("image")
             || p.contains("png")
             || p.contains("jpg")
@@ -102,6 +114,7 @@ impl ToolDeclarationBuilder {
         Self::push_memory_tools(tools);
         Self::push_session_tools(tools);
         Self::push_workflow_tools(tools);
+        Self::push_code_tools(tools);
         Self::push_agent_tools(tools);
         Self::push_research_tools(tools);
         Self::push_document_tools(tools);
@@ -173,7 +186,7 @@ impl ToolDeclarationBuilder {
         });
         tools.push(LlmToolDecl {
             name: "file_manager".into(),
-            description: "Manage files and directories directly in the workspace using explicit operations such as read, write, append, list, mkdir, stat, copy, move, remove, and download. Prefer this over generated-code execution for normal file management tasks.".into(),
+            description: "Manage files and directories directly in the workspace using explicit operations such as read, write, append, list, mkdir, stat, copy, move, remove, and download. Prefer this over generated-code execution for normal file management tasks. For PDFs and other document formats use extract_document_text, and for spreadsheets use inspect_tabular_data instead of raw file reads.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -185,6 +198,15 @@ impl ToolDeclarationBuilder {
                     "path": {
                         "type": "string",
                         "description": "Target file or directory path for operations that use a single path"
+                    },
+                    "pattern": {
+                        "type": "string",
+                        "description": "Optional search pattern for read operations. When provided, the read result returns capped snippets around matching text instead of the full file. Use `|` between alternatives when you want snippets for several candidate terms in one read. Regex-style patterns are also supported for escaped JSON or large HTML blobs."
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "Optional maximum character budget for read results",
+                        "minimum": 1
                     },
                     "content": {
                         "type": "string",
@@ -205,6 +227,11 @@ impl ToolDeclarationBuilder {
                     "dest": {
                         "type": "string",
                         "description": "Destination path for the download operation"
+                    },
+                    "backend_preference": {
+                        "type": "string",
+                        "enum": ["linux_utility", "rust_fallback"],
+                        "description": "Optional backend override for observability and regression checks"
                     }
                 },
                 "required": ["operation"]
@@ -285,6 +312,9 @@ impl ToolDeclarationBuilder {
                 "required": ["prompt"]
             }),
         });
+    }
+
+    fn push_code_tools(tools: &mut Vec<LlmToolDecl>) {
         tools.push(LlmToolDecl {
             name: "run_generated_code".into(),
             description: "Write generated Python, Node.js, or Bash code under the device-owned codes directory and execute it immediately. If the first non-empty line is a comment containing the exact allowed absolute output file path, the same script may also be persisted there. When the user asks you to create script files under specific directories, do not answer with fenced code or prose; use this tool. Use this for executable scripts only. Do not use it for HTML/CSS/JS browser apps or webview content; use generate_web_app for those.".into(),
@@ -767,15 +797,23 @@ mod tests {
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"get_agent_status"));
         assert!(names.contains(&"send_outbound_message"));
-        assert!(names.contains(&"run_generated_code"));
-        assert!(names.contains(&"manage_generated_code"));
         // Task tools shouldn't be here since task intent is missing
         assert!(!names.contains(&"create_task"));
+        assert!(!names.contains(&"run_generated_code"));
 
         let mut tools2 = vec![];
         ToolDeclarationBuilder::append_builtin_tools(&mut tools2, "create a new task");
         let names2: Vec<&str> = tools2.iter().map(|t| t.name.as_str()).collect();
         assert!(names2.contains(&"create_task"));
+
+        let mut tools3 = vec![];
+        ToolDeclarationBuilder::append_builtin_tools(
+            &mut tools3,
+            "create a python script that prints hello world",
+        );
+        let names3: Vec<&str> = tools3.iter().map(|t| t.name.as_str()).collect();
+        assert!(names3.contains(&"run_generated_code"));
+        assert!(names3.contains(&"manage_generated_code"));
     }
 
     #[test]

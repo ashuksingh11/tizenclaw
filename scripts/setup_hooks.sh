@@ -2,13 +2,18 @@
 # TizenClaw Git Hooks Setup Script
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-HOOKS_DIR="${PROJECT_DIR}/.git/hooks"
-PRE_COMMIT_HOOK="${HOOKS_DIR}/pre-commit"
 
-if [ ! -d "${PROJECT_DIR}/.git" ]; then
-    echo "Error: .git directory not found in ${PROJECT_DIR}."
+if ! git -C "${PROJECT_DIR}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "Error: Not a git repository (${PROJECT_DIR})."
     exit 1
 fi
+
+_git_common_dir="$(git -C "${PROJECT_DIR}" rev-parse --git-common-dir)"
+if [[ "${_git_common_dir}" != /* ]]; then
+    _git_common_dir="${PROJECT_DIR}/${_git_common_dir}"
+fi
+HOOKS_DIR="${_git_common_dir}/hooks"
+PRE_COMMIT_HOOK="${HOOKS_DIR}/pre-commit"
 
 mkdir -p "$HOOKS_DIR"
 

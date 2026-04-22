@@ -1,314 +1,161 @@
-<p align="center">
-  <img src="data/img/tizenclaw.svg" alt="TizenClaw Logo" width="280">
-</p>
-
-<h1 align="center">TizenClaw</h1>
-
-<p align="center">
-  <strong>A persistent Rust AI agent runtime for Tizen and embedded Linux.</strong><br>
-  TizenClaw turns a device into an always-on agent system with Tizen-aware
-  integration, multi-surface access, plugin-ready boundaries, and a Telegram
-  coding workflow that can drive local <code>codex</code>, <code>gemini</code>,
-  and <code>claude</code> CLIs remotely.
-</p>
-
-<p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License"></a>
-  <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Rust">
-  <img src="https://img.shields.io/badge/Platform-Tizen%20%2B%20Embedded%20Linux-brightgreen.svg" alt="Platform">
-  <img src="https://img.shields.io/badge/Runtime-Tokio-black.svg" alt="Tokio">
-</p>
-
-<p align="center">
-  <a href="#why-tizenclaw">Why TizenClaw</a> •
-  <a href="#at-a-glance">At a Glance</a> •
-  <a href="#telegram-coding-over-chat">Telegram Coding Over Chat</a> •
-  <a href="#install-on-ubuntu-or-wsl">Install on Ubuntu or WSL</a> •
-  <a href="#deploy-to-a-tizen-target">Deploy to a Tizen Target</a>
-</p>
-
----
-
-## Why TizenClaw
-
-TizenClaw is not a one-shot assistant wrapper. It is a long-running agent
-daemon built for devices that need to stay alive, react to platform events,
-expose stable control surfaces, and survive the messy reality of embedded
-Linux deployments.
-
-The project is designed around the constraints that matter on Tizen-class
-systems:
-
-- a persistent runtime instead of a fire-and-forget script
-- explicit Tizen and generic-Linux boundaries instead of hidden platform
-  assumptions
-- dynamic loading for platform libraries that may differ by image or firmware
-- deploy-first validation through the real Tizen packaging path
-- host workflows that still reuse the same workspace and runtime model
-
-If you want an agent that feels closer to an embedded control plane than a
-demo chatbot, this is what TizenClaw is for.
-
-## At a Glance
-
-| Area | What TizenClaw Provides |
-| --- | --- |
-| Runtime model | A persistent Tokio-based daemon with IPC, scheduling, storage, and background automation |
-| Platform focus | Tizen-first behavior with generic Linux fallbacks where device APIs are unavailable |
-| Access surfaces | CLI, web dashboard, Telegram, webhook, Slack, Discord, MCP, and other channel layers present in the workspace |
-| Coding workflow | Telegram can switch into coding mode and drive local `codex`, `gemini`, or `claude` CLIs on the host |
-| Extensibility | Dedicated tool executor, metadata plugins, C-facing library, and dynamic `.so` loading |
-| Deployment story | `deploy.sh` for emulator/device packaging and deployment, `deploy_host.sh` for Ubuntu/WSL host runs |
-
-## What Makes It Strong
-
-### Built for real device runtimes
-
-TizenClaw keeps orchestration, concurrency, IPC, and state management in Rust,
-which makes the system easier to reason about when the process has to stay up
-for long periods on constrained hardware.
-
-### Tizen-aware without hard-wiring the whole system to Tizen
-
-Tizen-specific integrations live behind dedicated crates and adapters. Generic
-Linux infrastructure is available in parallel, so the runtime can remain useful
-on host Linux while still speaking to device-oriented services where they exist.
-
-### Remote coding from Telegram
-
-One of the most distinctive pieces of the project is the Telegram coding mode:
-you can chat with the device over Telegram, switch the chat into coding mode,
-choose a local coding-agent CLI backend, point that chat at a project
-directory, and receive progress and result messages back in Telegram while the
-host executes the request.
-
-### Clean boundaries for plugins and external consumers
-
-The repository includes `libtizenclaw`, `libtizenclaw-core`, and metadata
-plugin crates so runtime extensions and C-facing integrations do not have to be
-bolted onto the daemon as afterthoughts.
-
-## Telegram Coding Over Chat
-
-TizenClaw can use Telegram as a remote control surface for coding workflows.
-This is not just "send a prompt to the daemon" behavior. The Telegram channel
-can switch into a host-backed coding mode that runs real coding-agent CLIs.
-The backend list is config-driven, so `codex`, `gemini`, `claude`, or
-additional host CLIs can be described in `telegram_config.json` without
-changing Rust code.
-
-### Supported flow
-
-1. Switch the chat into coding mode with `/select coding`
-2. Choose a backend with `/coding_agent codex`,
-   `/coding_agent gemini`, or `/coding_agent claude`
-3. Bind the chat to a repository with `/project /path/to/repo`
-4. Choose execution style with `/mode plan` or `/mode fast`
-5. Toggle auto-approval where supported with `/auto_approve on`
-6. Inspect the current state with `/status` or start fresh with
-   `/new_session`
-
-### What you get
-
-- Per-chat backend selection
-- Per-chat project directory overrides
-- Separate chat and coding sessions
-- Progress updates while the CLI is still running
-- Chat token usage plus backend-reported CLI token usage
-- Host-auth hints when a CLI has not been logged in yet
-
-### Backend configuration
-
-The built-in defaults cover `codex`, `gemini`, and `claude`, but
-`telegram_config.json` can now carry richer backend definitions:
-
-```json
-{
-  "cli_backends": {
-    "default_backend": "codex",
-    "backends": {
-      "custom_agent": {
-        "aliases": ["custom", "agentx"],
-        "binary_path": "/home/user/.local/bin/custom-agent",
-        "usage_hint": "`custom-agent run --json --cwd <project> --prompt <prompt>`",
-        "auth_hint": "Custom Agent CLI must already be authenticated.",
-        "invocation": {
-          "args": ["run", "--json", "--cwd", "{project_dir}", "--prompt", "{prompt}"]
-        },
-        "response_extractors": [
-          { "source": "stdout", "format": "json", "text_path": "result" }
-        ],
-        "usage_extractors": [
-          {
-            "source": "stdout",
-            "format": "json",
-            "input_tokens_path": "usage.input_tokens",
-            "output_tokens_path": "usage.output_tokens",
-            "total_tokens_path": "usage.total_tokens"
-          }
-        ]
-      }
-    }
-  }
-}
-```
-
-That means the command help shown in Telegram, the CLI invocation shape,
-and the token usage extraction rules can all be supplied through config.
-
-| Backend | Example execution shape |
-| --- | --- |
-| Codex | `codex exec --json --full-auto -C <project> <prompt>` |
-| Gemini | `gemini --model <model> --prompt <prompt> --output-format json --approval-mode auto_edit` |
-| Claude | `claude --print --output-format json --permission-mode auto <prompt>` |
-
-This makes TizenClaw useful as a mobile coding bridge: Telegram becomes the
-control surface, while the actual code work happens through the local CLI tools
-you already trust on the host.
-
-## Architecture Snapshot
-
-```text
-Telegram / CLI / Dashboard / Channels
-                |
-                v
-        +-------------------+
-        | TizenClaw Daemon  |
-        | Tokio runtime     |
-        | IPC + scheduling  |
-        | storage + routing |
-        +---------+---------+
-                  |
-      +-----------+--------------------+
-      |           |                    |
-      v           v                    v
-  Tizen adapters  Generic Linux        LLM backends
-  and dynloaded   infrastructure        and plugins
-  platform APIs   fallbacks
-      |
-      +-------------------------------+
-                                      |
-                                      v
-                         Tool executor / C API / metadata plugins
-
-Telegram coding mode can also invoke:
-  codex / gemini / claude
-on the host and stream progress back into chat.
-```
-
-## Install on Ubuntu or WSL
-
-If you want to try TizenClaw on host Linux first, the repository now includes a
-GitHub-friendly bootstrap script that downloads a prebuilt host bundle from
-GitHub Releases, installs it under `~/.tizenclaw`, and launches the setup
-wizard.
-
-### One-line bootstrap
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/hjhun/tizenclaw/main/install.sh | bash
-```
-
-Useful variants:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/hjhun/tizenclaw/main/install.sh | bash -s -- --version v1.0.0
-curl -fsSL https://raw.githubusercontent.com/hjhun/tizenclaw/main/install.sh | bash -s -- --skip-setup
-curl -fsSL https://raw.githubusercontent.com/hjhun/tizenclaw/main/install.sh | bash -s -- --source-install --ref main
-```
-
-What the bootstrap does:
-
-- installs the runtime packages needed for host execution
-- downloads the matching `tizenclaw-host-bundle-...tar.gz` asset from GitHub Releases
-- installs the bundled binaries, web assets, configs, and management script
-- starts the host services from the installed bundle
-- launches `tizenclaw-cli setup` so you can either configure now or defer
-  setup and jump straight to the dashboard
-
-After installation, the setup wizard can help with:
-
-- choosing an LLM backend and entering its API key
-- optional Telegram bot setup for coding mode
-- showing the local dashboard URL and the command to rerun setup later
-- letting you choose "configure later" so you can open the dashboard first
-
-### Source Install for Contributors
-
-If you are actively developing TizenClaw and want a full repository checkout,
-switch the installer into source mode:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/hjhun/tizenclaw/main/install.sh | bash -s -- --source-install --ref main
-```
-
-Or run the classic manual flow:
-
-```bash
-git clone https://github.com/hjhun/tizenclaw.git
-cd tizenclaw
-./deploy_host.sh
-```
-
-Useful host commands:
-
-```bash
-./deploy_host.sh -b
-./deploy_host.sh --status
-./deploy_host.sh --log
-./deploy_host.sh -s
-tizenclaw-cli dashboard start
-tizenclaw-cli dashboard status
-```
-
-The host dashboard defaults to `http://localhost:9091`, and the setup wizard
-prints the active URL again at the end so first-time users can jump in right
-away.
-
-## Deploy to a Tizen Target
-
-For the emulator or device-oriented workflow, use the repository's Tizen deploy
-pipeline:
-
-```bash
-./deploy.sh -a x86_64
-```
-
-Useful variants:
-
-```bash
-./deploy.sh -a x86_64 -n
-./deploy.sh -a x86_64 -d <device-serial>
-./deploy.sh -a x86_64 -s
-```
-
-This path is the canonical Tizen validation flow. It handles build, packaging,
-deployment, and service restart on the target.
-
-## Workspace
-
-TizenClaw is a Rust workspace with clearly separated runtime roles:
-
-- `src/tizenclaw`: main daemon
-- `src/tizenclaw-cli`: IPC client and operational CLI
-- `src/tizenclaw-web-dashboard`: standalone web dashboard
-- `src/tizenclaw-tool-executor`: isolated tool-execution sidecar
-- `src/libtizenclaw-core`: shared framework and plugin/runtime support
-- `src/libtizenclaw`: C-facing client library
-- `src/tizenclaw-metadata-*`: metadata plugin crates for skills, CLI, and LLM
-  backend extensions
-
-## Documentation
-
-Additional repository docs:
-
-- [Structure Guide](docs/STRUCTURE.md)
-- [Usage Guide](docs/USAGE.md)
-
-## Status
-
-The project is actively evolving, but the central direction is already clear:
-TizenClaw aims to be a serious autonomous agent runtime for Tizen and embedded
-Linux, not just a sample app. Its strengths are persistence, explicit platform
-boundaries, flexible access surfaces, and unusually practical remote coding
-control through Telegram plus local coding-agent CLIs.
+# TizenClaw
+
+TizenClaw is a Rust-first autonomous agent daemon that supports a
+host-first Linux workflow and an explicit Tizen deployment path. The
+repository already includes a runnable daemon, a sandboxed tool executor,
+a web dashboard, IPC/system test scenarios, and the packaging scripts
+used for host and device validation.
+
+## Current Layout
+
+- `src/`: active Rust workspace for the daemon, CLI, shared libraries,
+  tool executor, metadata plugins, system-test client, web dashboard,
+  and repository support tools
+- `rust/`: forward-looking Rust workspace for the newer modular runtime
+  split (`tclaw-api`, `tclaw-runtime`, `tclaw-tools`, `tclaw-plugins`)
+- `tests/system/`: JSON system scenarios for daemon-visible contracts
+- `data/`: bundled host assets, web UI files, sample configs, and docs
+  data consumed by the runtime
+- `tools/`: embedded and CLI tool payloads used by the daemon
+- `packaging/`: Tizen RPM packaging assets
+
+## Implemented Components
+
+- `tizenclaw`: Tokio-based daemon with platform detection, logging,
+  startup indexing, IPC server startup, task scheduling, mDNS scanning,
+  optional devel mode, and channel registry management
+- `libtizenclaw-core`: core framework and plugin SDK with dynamic Tizen
+  library loading and C headers for integration boundaries
+- `tizenclaw-tool-executor`: isolated tool execution daemon that speaks a
+  length-prefixed JSON protocol over Unix sockets or stdio
+- `tizenclaw-web-dashboard`: Axum-based web dashboard that proxies daemon
+  IPC endpoints and serves the bundled UI
+- `tizenclaw-tests`: system-test client used with the scenarios in
+  `tests/system/`
+- metadata plugins: parser/export libraries for CLI, skill, and LLM
+  backend metadata
+
+## Workflows
+
+### Host-first development
+
+Use the repository scripts instead of direct `cargo build` or
+`cargo test` commands.
+
+- Build, install, and restart on the host: `./deploy_host.sh`
+- Run the host validation path: `./deploy_host.sh --test`
+- Check daemon status (source checkout): `./deploy_host.sh --status`
+- Follow daemon logs (source checkout): `./deploy_host.sh --log`
+- Install from the current checkout: `./install.sh --local-checkout`
+  (both regular clones and `git worktree` checkouts are supported)
+- Clone and build from a remote repository: `./install.sh --source-install`
+
+The `--source-install` path is non-destructive. If the target directory
+(`~/.local/src/tizenclaw` by default, or the path given to `--dir`) already
+exists, the installer checks for uncommitted changes and local-only commits
+before touching any files. If the checkout is dirty or has divergent history
+the installer fails with a clear message — it never runs `git reset --hard`
+or otherwise discards your work. Use `--dir` to target a different path,
+clean the checkout, or stash your changes to recover.
+
+Host installs live under `~/.tizenclaw/`, including binaries, configs,
+logs, tools, and the bundled web assets.
+
+### Installed bundle management
+
+`./deploy_host.sh` is the **source-checkout** development entrypoint and
+assumes the full repository layout (Cargo workspace, `data/`, `tools/`,
+Git metadata). It must not be used to manage a standalone installed
+bundle.
+
+Installed TizenClaw bundles expose a dedicated control script,
+`tizenclaw-hostctl`, which lives in `~/.tizenclaw/bin/` after running
+`./install.sh` (any mode). It is a lifecycle-only interface and supports
+only the following actions:
+
+- `tizenclaw-hostctl --help`
+- `tizenclaw-hostctl --status`
+- `tizenclaw-hostctl --restart-only`
+- `tizenclaw-hostctl --stop` (or `-s`)
+- `tizenclaw-hostctl --log`
+
+Build, test, install, and remove flags are intentionally **not** part of
+`tizenclaw-hostctl`; they fail fast with a message directing the user
+back to `./deploy_host.sh` in a repository checkout. This keeps the
+installed bundle interface smaller and harder to misuse.
+
+The installer (`install.sh`) and post-install automation drive
+`tizenclaw-hostctl` for restart and stop — the same interface remains
+available for the user under `~/.tizenclaw/bin/tizenclaw-hostctl` after
+setup.
+
+### Tizen deployment
+
+Use `./deploy.sh` only when you need the Tizen packaging and deployment
+flow.
+
+- Full build and deploy: `./deploy.sh`
+- Build for an explicit architecture: `./deploy.sh -a x86_64`
+- Deploy to a specific device: `./deploy.sh -d <serial>`
+
+## Verification Surfaces
+
+- `./deploy_host.sh --test` runs the full host validation path:
+  1. Cargo unit and integration tests for all workspace crates
+  2. Canonical Rust workspace tests (`rust/`)
+  3. Reconstruction parity harness (`rust/scripts/run_mock_parity_harness.sh`)
+  4. Documentation architecture verification (`scripts/verify_doc_architecture.py`)
+  5. **Offline system contract suite** — boots a temporary isolated daemon
+     instance and runs the scenarios listed in
+     `tests/system/offline_suite.json` against it. The daemon and all
+     companion processes run inside a private network namespace
+     (`unshare --net`) when the kernel supports unprivileged network
+     namespaces, blocking all outbound connectivity at the OS level.
+     Loopback is re-enabled inside the namespace so Unix-domain-socket IPC
+     and localhost TCP (used by the dashboard scenario) continue to work.
+     Network-namespace isolation is a hard requirement. If neither
+     privileged (`unshare --net`) nor unprivileged
+     (`unshare --user --map-root-user --net`) namespace creation succeeds,
+     the runner exits immediately with a clear error rather than continuing
+     with weaker isolation. On Ubuntu/WSL2 the unprivileged path works
+     without root; if it does not, enable user namespaces with
+     `sudo sysctl -w kernel.unprivileged_userns_clone=1` or run as root.
+     The isolation environment is always cleaned up, even when a scenario
+     fails.
+- `tests/system/offline_suite.json` is the authoritative list of
+  scenarios that run automatically. It covers JSON-RPC routing, runtime
+  topology, command registry, channel registry, dashboard start/stop,
+  key management, ClawHub update, Rust workspace parity, file-manager
+  bridge backend selection (`file_manager_bridge.json`), and
+  shortcut-backed prompt flows: executive briefing generation
+  (`agent_loop_shortcuts_runtime_contract.json`), inbox email triage
+  (`email_triage_runtime_contract.json`), file-grounded memory recall
+  (`file_grounded_recall_runtime_contract.json`), project email
+  corpus summarisation (`project_email_summary_runtime_contract.json`),
+  session transcript durability (`session_transcript_runtime_contract.json`),
+  JSON-only assistant capture (`json_only_transcript_runtime_contract.json`),
+  structured writing session state (`structured_writing_runtime_contract.json`),
+  and file-output preview completion
+  (`file_output_preview_runtime_contract.json`).
+  Every scenario in this suite declares `"offline_safe": true`; the
+  runner enforces this and fails clearly if a scenario is added without
+  the declaration. All shortcut-backed scenarios are fully deterministic
+  offline: they exercise pre-LLM shortcut paths and require no
+  configured backend.
+- Scenarios in `tests/system/` that are **not** in `offline_suite.json`
+  (e.g. `devel_mode_*`, `openai_oauth_regression`,
+  `research_grounding_runtime_contract`, `prediction_market_briefing_runtime_contract`,
+  internet-backed research scenarios) remain opt-in and must be run
+  manually against a live daemon with `tizenclaw-tests scenario
+  --file <path>`. These intentionally lack `"offline_safe": true`.
+- `tests/test_porting_workspace.py` covers the repository support tools
+  used for inventory, manifest, and audit checks
+- `rust/scripts/run_mock_parity_harness.sh` checks the newer Rust
+  workspace against the documented Rust-only repository layout
+
+## Related Files
+
+- [ROADMAP.md](/home/hjhun/samba/github/tizenclaw/ROADMAP.md)
+- [prompt/README.md](/home/hjhun/samba/github/tizenclaw/prompt/README.md)
+- [rust/README.md](/home/hjhun/samba/github/tizenclaw/rust/README.md)
+- [.claude/CLAUDE.md](/home/hjhun/samba/github/tizenclaw/.claude/CLAUDE.md)

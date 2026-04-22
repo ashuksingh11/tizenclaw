@@ -2,7 +2,7 @@
 
 #![allow(clippy::all)]
 
-use super::backend::*;
+use super::{backend::*, common};
 use crate::infra::http_client;
 use serde_json::{json, Value};
 
@@ -64,7 +64,7 @@ impl AnthropicBackend {
     }
 
     fn trimmed_text(text: &str) -> String {
-        text.trim().to_string()
+        common::trimmed_text(text)
     }
 
     fn normalized_model(model: &str) -> String {
@@ -84,35 +84,23 @@ impl AnthropicBackend {
     }
 
     fn request_url(endpoint: &str) -> String {
-        let trimmed = endpoint.trim().trim_end_matches('/');
-        if trimmed.ends_with("/messages") {
-            trimmed.to_string()
-        } else {
-            format!("{}/messages", trimmed)
-        }
+        common::request_url(endpoint, "messages")
     }
 
     fn extract_error_message(body: &str) -> Option<String> {
-        let json = serde_json::from_str::<Value>(body).ok()?;
-        if let Some(message) = json
-            .get("error")
-            .and_then(|error| error.get("message"))
-            .and_then(Value::as_str)
-        {
-            return Some(message.to_string());
-        }
-        json.get("message")
-            .and_then(Value::as_str)
-            .map(|message| message.to_string())
+        common::extract_error_message(body)
+    }
+
+    fn configured_api_key(config: &Value) -> String {
+        common::configured_api_key(config, &["api_key"], "ANTHROPIC_API_KEY")
+            .unwrap_or_default()
     }
 }
 
 #[async_trait::async_trait]
 impl LlmBackend for AnthropicBackend {
     fn initialize(&mut self, config: &Value) -> bool {
-        if let Some(k) = config["api_key"].as_str() {
-            self.api_key = k.into();
-        }
+        self.api_key = Self::configured_api_key(config);
         if let Some(m) = config["model"].as_str() {
             self.model = m.into();
         }
@@ -125,7 +113,10 @@ impl LlmBackend for AnthropicBackend {
         if let Some(tokens) = config["max_tokens"].as_u64() {
             self.default_max_tokens = Some(tokens as u32);
         }
-        if let Some(enabled) = config["prompt_cache"].as_bool() {
+        if let Some(enabled) = config["prompt_cache_enabled"]
+            .as_bool()
+            .or_else(|| config["prompt_cache"].as_bool())
+        {
             self.prompt_cache_enabled = enabled;
         }
         if let Some(tl) = config["thinking_level"].as_str() {
@@ -297,7 +288,7 @@ impl LlmBackend for AnthropicBackend {
         };
 
         let mut resp = LlmResponse::default();
-        resp.http_status = http_resp.status_code;
+        resp.http_status = http_resp.status_code as i32;
         if !http_resp.success {
             resp.error_message = Self::extract_error_message(&http_resp.body)
                 .map(|message| format!("{} ({})", message, http_resp.error))
@@ -337,6 +328,10 @@ impl LlmBackend for AnthropicBackend {
 
     fn get_name(&self) -> &str {
         "anthropic"
+    }
+
+    fn is_configured(&self) -> bool {
+        !self.api_key.is_empty()
     }
 }
 
@@ -406,12 +401,29 @@ mod tests {
         let mut backend = AnthropicBackend::new();
         let ok = backend.initialize(&json!({
             "api_key": "test-key",
-            "prompt_cache": true,
+            "prompt_cache_enabled": true,
             "thinking_level": "medium"
         }));
 
         assert!(ok);
         assert!(backend.prompt_cache_enabled);
         assert_eq!(backend.thinking_level.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn initialize_reads_api_key_from_env() {
+        unsafe {
+            std::env::set_var("ANTHROPIC_API_KEY", "env-key");
+        }
+
+        let mut backend = AnthropicBackend::new();
+        let ok = backend.initialize(&json!({}));
+
+        unsafe {
+            std::env::remove_var("ANTHROPIC_API_KEY");
+        }
+
+        assert!(ok);
+        assert!(backend.is_configured());
     }
 }

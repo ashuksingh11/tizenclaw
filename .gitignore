@@ -94,20 +94,26 @@ journal.txt
 
 # Local workflow metadata
 /.agent/
+/.dev/
+/PLAN.md
+/ROADMAP.md
 
 # Claude Code (local dev only)
 .claude/
 
-# Dev notes
-/.dev_note/
+# Dev workspace
+DORMAMMU.log
 docs/
 !docs/
 docs/*
+!docs/BENCHMARK.md
 !docs/llm_config_benchmark_design.md
 !docs/llm_cache_telemetry_design.md
 !docs/tizenclaw_cli_pinchbench_guide_ko.md
 !docs/STRUCTURE.md
 !docs/USAGE.md
+!docs/claw-code-analysis/
+!docs/claw-code-analysis/**
 !data/docs/
 !data/docs/**
 
@@ -117,4 +123,5 @@ src/tizenclaw/error.log
 
 # Prompts
 .prompt
+/prompt/
 .analysis/

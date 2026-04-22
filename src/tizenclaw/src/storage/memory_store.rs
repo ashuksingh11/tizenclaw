@@ -3,6 +3,7 @@
 //! Markdown files for Long-Term Memory injection into LLM prompts.
 
 use rusqlite::params;
+use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
@@ -210,6 +211,19 @@ impl MemoryStore {
         .ok()
     }
 
+    pub fn list_keys(&self) -> Vec<String> {
+        let conn = self.db.lock().unwrap();
+        let mut stmt = match conn.prepare("SELECT key FROM memories ORDER BY key ASC") {
+            Ok(stmt) => stmt,
+            Err(_) => return Vec::new(),
+        };
+
+        stmt.query_map([], |row| row.get::<_, String>(0))
+            .ok()
+            .map(|rows| rows.filter_map(|row| row.ok()).collect())
+            .unwrap_or_default()
+    }
+
     pub fn get_by_category(&self, category: &str, limit: usize) -> Vec<(String, String, String)> {
         let conn = self.db.lock().unwrap();
         let mut stmt = match conn.prepare(
@@ -299,15 +313,19 @@ impl MemoryStore {
         {
             let _g = self.file_lock.write().unwrap();
             if self.base_dir.exists() {
-                for entry in fs::read_dir(&self.base_dir)
-                    .map_err(|err| format!("Failed to read '{}': {}", self.base_dir.display(), err))?
-                {
+                for entry in fs::read_dir(&self.base_dir).map_err(|err| {
+                    format!("Failed to read '{}': {}", self.base_dir.display(), err)
+                })? {
                     let path = entry
                         .map_err(|err| format!("Failed to inspect memory entry: {}", err))?
                         .path();
                     if path.is_dir() {
                         fs::remove_dir_all(&path).map_err(|err| {
-                            format!("Failed to remove memory directory '{}': {}", path.display(), err)
+                            format!(
+                                "Failed to remove memory directory '{}': {}",
+                                path.display(),
+                                err
+                            )
                         })?;
                     } else {
                         fs::remove_file(&path).map_err(|err| {
@@ -323,6 +341,53 @@ impl MemoryStore {
         self.regenerate_summary();
 
         Ok(deleted_rows)
+    }
+
+    pub fn runtime_summary(&self) -> Value {
+        let category_count = |category: &str| -> i64 {
+            let conn = self.db.lock().unwrap();
+            conn.query_row(
+                "SELECT COUNT(*) FROM memories WHERE category = ?1",
+                params![category],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap_or(0)
+        };
+
+        let facts = category_count("facts");
+        let preferences = category_count("preferences");
+        let episodic = category_count("episodic");
+        let general = category_count("general");
+
+        let summary_path = self.base_dir.join("memory.md");
+        let short_term_dir = self.base_dir.join("short-term");
+        let long_term_dir = self.base_dir.join("long-term");
+        let episodic_dir = self.base_dir.join("episodic");
+        let total_entries = facts + preferences + episodic + general;
+        let prompt_ready = summary_path.exists() || total_entries > 0;
+        let embedding_available = self
+            .embedding_engine
+            .lock()
+            .map(|engine| engine.is_available())
+            .unwrap_or(false);
+
+        json!({
+            "base_dir": self.base_dir,
+            "summary_path": summary_path,
+            "short_term_dir": short_term_dir,
+            "long_term_dir": long_term_dir,
+            "episodic_dir": episodic_dir,
+            "summary_exists": summary_path.exists(),
+            "prompt_ready": prompt_ready,
+            "embedding_available": embedding_available,
+            "total_entries": total_entries,
+            "categories": {
+                "general": general,
+                "facts": facts,
+                "preferences": preferences,
+                "episodic": episodic,
+            }
+        })
     }
 
     /// Loads subset of memory files by semantics using RAG OnDeviceEmbedding
@@ -674,5 +739,60 @@ mod tests {
         assert!(md_dir.join("memory.md").exists());
         assert_eq!(store.get_by_category("facts", 10).len(), 0);
         assert_eq!(store.get_by_category("general", 10).len(), 0);
+    }
+
+    #[test]
+    fn test_runtime_summary_reports_memory_paths_and_counts() {
+        let tmp = tempdir().unwrap();
+        let md_dir = tmp.path().join("memory");
+        let db_path = tmp.path().join("mem.db");
+
+        let store = MemoryStore::new(
+            md_dir.to_str().unwrap(),
+            db_path.to_str().unwrap(),
+            tmp.path().to_str().unwrap(),
+        )
+        .unwrap();
+
+        store.set("fact::alpha", "Alpha", "facts");
+        store.set("pref::tone", "Concise", "preferences");
+        store.set("episode::1", "Observed the daemon start", "episodic");
+        store.set("chat::hint", "Remember the recent prompt", "general");
+
+        let summary = store.runtime_summary();
+
+        assert_eq!(summary["summary_exists"], true);
+        assert_eq!(summary["prompt_ready"], true);
+        assert_eq!(summary["total_entries"], 4);
+        assert_eq!(summary["categories"]["facts"], 1);
+        assert_eq!(summary["categories"]["preferences"], 1);
+        assert_eq!(summary["categories"]["episodic"], 1);
+        assert_eq!(summary["categories"]["general"], 1);
+        assert!(summary["summary_path"]
+            .as_str()
+            .unwrap()
+            .ends_with("/memory/memory.md"));
+    }
+
+    #[test]
+    fn test_list_keys_returns_sorted_memory_keys() {
+        let tmp = tempdir().unwrap();
+        let md_dir = tmp.path().join("memory");
+        let db_path = tmp.path().join("mem.db");
+
+        let store = MemoryStore::new(
+            md_dir.to_str().unwrap(),
+            db_path.to_str().unwrap(),
+            tmp.path().to_str().unwrap(),
+        )
+        .unwrap();
+
+        store.set("pref::tone", "Concise", "preferences");
+        store.set("fact::alpha", "Alpha", "facts");
+
+        assert_eq!(
+            store.list_keys(),
+            vec!["fact::alpha".to_string(), "pref::tone".to_string()]
+        );
     }
 }
