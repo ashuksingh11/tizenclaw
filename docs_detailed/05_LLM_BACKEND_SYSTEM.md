@@ -346,28 +346,40 @@ Note: The current built-in backends do not implement streaming internally (they 
 
 ## 8. Plugin LLM Backends
 
-For providers not built into TizenClaw, the `PluginLlmBackend` in `src/tizenclaw/src/llm/plugin_llm_backend.rs` enables loading custom backends from shared libraries (`.so` files) at runtime.
+> ⚠️ **Integration status: Built, not wired** — The plugin LLM backend machinery exists and
+> compiles, but is may not be exercised end-to-end in current production deployments. See
+> `src/tizenclaw/src/llm/plugin_llm_backend.rs` and `src/tizenclaw/src/llm/plugin_manager.rs`
+> for the implementation, and **[15_EXTENDING_TIZENCLAW.md](15_EXTENDING_TIZENCLAW.md)**
+> Scenario 4 for a walkthrough that also covers how to verify the wiring.
+
+For providers not built into TizenClaw, the `PluginLlmBackend` in `src/tizenclaw/src/llm/plugin_llm_backend.rs` enables loading custom backends from shared libraries (`.so` files) at runtime. The companion `plugin_manager.rs` handles discovery under `PlatformPaths::llm_plugins_dir`.
+
+The canonical SDK headers live at `src/libtizenclaw-sdk/include/tizenclaw_llm_backend.h`
+(and the rest of the `libtizenclaw-sdk` surface). Third-party LLM plugins should compile
+against those headers rather than redeclaring the symbols themselves.
 
 ### C ABI Interface
 
-A plugin `.so` must export four C-compatible functions:
+A plugin `.so` must export this set of C-compatible functions (loaded at runtime via `dlopen` + `dlsym`):
 
 ```c
 // Required
-int llm_plugin_init(const char* config_json);
-char* llm_plugin_chat(const char* request_json);
-
-// Optional
+const char* llm_plugin_info(void);          // JSON metadata (plugin id, version, capabilities)
+int         llm_plugin_init(const char* config_json);
+char*       llm_plugin_chat(const char* request_json);
 const char* llm_plugin_name(void);
-void llm_plugin_free(char* ptr);
+void        llm_plugin_free_string(char* ptr);
+void        llm_plugin_shutdown(void);
 ```
 
 | Function | Purpose |
 |----------|---------|
+| `llm_plugin_info` | Returns JSON metadata describing the plugin (id, version, capabilities). Consumed during discovery. |
 | `llm_plugin_init` | Receives the backend config as JSON. Returns 0 on success. |
-| `llm_plugin_chat` | Receives the full request (messages, tools, system_prompt) as JSON. Returns a JSON response string allocated with `malloc()`. |
+| `llm_plugin_chat` | Receives the full request (messages, tools, system_prompt) as JSON. Returns a JSON response string allocated with `malloc()` (or equivalent). |
 | `llm_plugin_name` | Returns the plugin's display name. If not provided, the filename stem is used. |
-| `llm_plugin_free` | Frees the string returned by `llm_plugin_chat`. If not provided, the memory is not freed (potential leak -- implement this). |
+| `llm_plugin_free_string` | Frees the string returned by `llm_plugin_chat`. If not provided, the memory is not freed (potential leak -- implement this). |
+| `llm_plugin_shutdown` | Called during backend teardown. Plugins should release any resources here; the loader calls `dlclose()` afterwards. |
 
 ### Loading Flow
 
@@ -397,8 +409,8 @@ sequenceDiagram
     PLB->>SO: llm_plugin_chat(request_json)
     SO-->>PLB: response_json (malloc'd)
     PLB->>PLB: Parse response JSON into LlmResponse
-    PLB->>SO: dlsym("llm_plugin_free")
-    PLB->>SO: llm_plugin_free(response_ptr)
+    PLB->>SO: dlsym("llm_plugin_free_string")
+    PLB->>SO: llm_plugin_free_string(response_ptr)
     PLB-->>AC: LlmResponse
 ```
 
@@ -468,8 +480,12 @@ char* llm_plugin_chat(const char* request_json) {
     return result;
 }
 
-void llm_plugin_free(char* ptr) {
+void llm_plugin_free_string(char* ptr) {
     free(ptr);
+}
+
+void llm_plugin_shutdown(void) {
+    // Release any resources held by the plugin
 }
 ```
 
@@ -504,3 +520,33 @@ flowchart LR
     CB --> FO[chat_with_fallback]
     FO --> AC[AgentCore.process_prompt]
 ```
+
+---
+
+## See Also
+
+- **[15_EXTENDING_TIZENCLAW.md](15_EXTENDING_TIZENCLAW.md)** — Scenario 4 walks through building an LLM plugin from scratch
+- **[13_SAFETY_AND_POLICY.md](13_SAFETY_AND_POLICY.md)** — Circuit breaker behavior for LLM failures
+
+## FAQ
+
+**Q: What happens when the primary LLM backend is down?**
+A: `chat_with_fallback` (agent_core.rs:265-322) checks CircuitBreakerState — after 2 consecutive failures, the primary is skipped for 60s. Fallback backends are tried in order. If all fail: "All LLM backends failed" error.
+
+**Q: Does TizenClaw cache LLM responses?**
+A: No response-level caching today. Each prompt hits the LLM fresh. The conversation history in the system prompt provides context reuse, but the API call itself isn't cached.
+
+**Q: Can I stream tokens to the user while the LLM is responding?**
+A: Yes — `chat()` accepts `on_chunk: Option<&(dyn Fn(&str) + Send + Sync)>`. The web dashboard uses SSE to forward these chunks. CLI streaming depends on the IPC protocol (today it's request/response; streaming is channel-specific).
+
+**Q: How do I add authentication to a custom LLM backend?**
+A: Put API keys/tokens in `llm_config.json`'s backend config object. The backend's `initialize(config: &Value)` method receives this — read credentials there. Never hardcode.
+
+**Q: What's the difference between `active_backend` and `fallback_backends`?**
+A: `active_backend` is tried first. `fallback_backends` is an ordered list tried on failure. Circuit breaker state is per-backend, not shared across primary vs fallback.
+
+**Q: Does the Ollama backend work offline?**
+A: Yes — Ollama runs locally. If the Ollama daemon isn't running on `localhost:11434`, it fails like any other backend.
+
+**Q: How do I test a new backend without cloud dependencies?**
+A: Use the Ollama backend with a local model, OR write a mock backend as a plugin `.so`. Mocking `LlmBackend` trait directly requires rebuilding the daemon.

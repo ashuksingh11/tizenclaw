@@ -1,453 +1,215 @@
-# 09 - Storage and Memory
+# 09 — Storage & Memory (Schema Reference)
 
-This guide covers TizenClaw's persistence layer: SQLite databases for sessions, long-term
-memory, vector embeddings, and audit logging. All storage is designed for embedded devices
-with limited RAM and flash storage.
+This document is the reference for TizenClaw's storage subsystems.
 
----
+> **Major change in April 2026**: Session transcripts moved from a SQLite `messages` table to a file-based layout (Markdown + JSONL per session directory). This enables atomic writes, crash safety on flash storage, and simpler compaction. See [11_MEMORY_SESSION_DEEPDIVE.md](11_MEMORY_SESSION_DEEPDIVE.md) for the flow.
 
-## 1. SQLite Foundation
+## Storage Subsystems
 
-**Source:** `src/tizenclaw/src/storage/sqlite.rs`
+| Store | Backing | Integration | File / Module |
+|---|---|---|---|
+| `SessionStore` | Files + SQLite index | ✅ Integrated | `storage/session_store.rs` |
+| `MemoryStore` | SQLite + ONNX models | ✅ Integrated (wired April 2026) | `storage/memory_store.rs` |
+| `EmbeddingStore` | (absorbed into MemoryStore) | Not a standalone field | — |
+| `AuditLogger` | SQLite | ⚠️ Partial usage | `storage/audit_logger.rs` |
 
-TizenClaw uses SQLite as its sole persistence engine. This choice is deliberate for
-embedded/Tizen deployment:
+All SQLite databases use WAL mode + `PRAGMA synchronous=NORMAL` for write throughput on embedded flash.
 
-- **No external service:** No PostgreSQL or MySQL daemon to manage on a TV or watch
-- **Single-file databases:** Easy to back up, migrate, or reset
-- **Bundled from source:** The `rusqlite` crate compiles SQLite from C source via the
-  `bundled` feature, so there is no dependency on the system's SQLite version
-- **WAL mode:** Write-Ahead Logging enables concurrent readers alongside a single writer,
-  which is critical when the IPC server, web dashboard, and agent core all access the
-  database simultaneously
+## 1. SessionStore — File-Based Transcripts ✅
 
-### Database Opening
+File: `src/tizenclaw/src/storage/session_store.rs` (~1,979 lines)
 
+### 1.1 Struct (lines 143-147)
 ```rust
-pub fn open_database(path: &str) -> SqliteResult<Connection> {
-    let conn = Connection::open(path)?;
-    conn.execute_batch(
-        "PRAGMA journal_mode=WAL;
-         PRAGMA busy_timeout=5000;
-         PRAGMA foreign_keys=ON;",
-    )?;
-    Ok(conn)
+pub struct SessionStore {
+    base_dir: PathBuf,
+    db: Arc<Mutex<rusqlite::Connection>>,
+    lock: Arc<RwLock<()>>,  // path-level locking for atomic writes
 }
 ```
 
-Every database connection is opened with three PRAGMAs:
+### 1.2 Directory layout per session
+```
+{base_dir}/{session_id}/
+├── {YYYY-MM-DD}.md       # Daily Markdown transcript (append-only)
+├── transcript.jsonl      # Structured event log (append-only)
+├── compacted.md          # Compaction snapshot (Markdown, replaceable)
+└── compacted.jsonl       # Compaction snapshot (structured)
+```
 
-| PRAGMA | Value | Why |
-|--------|-------|-----|
-| `journal_mode` | `WAL` | Concurrent reads while writing |
-| `busy_timeout` | 5000ms | Wait 5 seconds on lock contention instead of failing immediately |
-| `foreign_keys` | `ON` | Enforce referential integrity |
-
-The `SessionStore` adds `PRAGMA synchronous=NORMAL` for a small write-speed improvement
-at the cost of durability in a power-loss scenario (acceptable for conversation data).
-
----
-
-## 2. Session Store
-
-**Source:** `src/tizenclaw/src/storage/session_store.rs`
-
-The session store persists conversation history across daemon restarts and across
-different channels (CLI, web, Telegram, etc.).
-
-### SQL Schema
+### 1.3 SQLite tables (session_store.rs:298-312)
+Only two tables — messages are NOT in SQL anymore:
 
 ```sql
-CREATE TABLE IF NOT EXISTS sessions (
+CREATE TABLE session_index (
     id TEXT PRIMARY KEY,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
+    created_at TEXT NOT NULL,
+    last_active TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS messages (
+CREATE TABLE token_usage (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL,
-    role TEXT NOT NULL,        -- 'user', 'assistant', 'system'
-    content TEXT NOT NULL,
-    timestamp TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY(session_id) REFERENCES sessions(id)
-);
-
-CREATE TABLE IF NOT EXISTS token_usage (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    model TEXT NOT NULL,
     prompt_tokens INTEGER DEFAULT 0,
     completion_tokens INTEGER DEFAULT 0,
-    model TEXT DEFAULT '',
-    timestamp TEXT DEFAULT (datetime('now'))
+    cache_creation_input_tokens INTEGER DEFAULT 0,   -- Anthropic prompt cache
+    cache_read_input_tokens INTEGER DEFAULT 0        -- Anthropic prompt cache
 );
-
-CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
-CREATE INDEX IF NOT EXISTS idx_usage_session ON token_usage(session_id);
-CREATE INDEX IF NOT EXISTS idx_usage_timestamp ON token_usage(timestamp);
 ```
 
-### Key Operations
+New cache token columns track Anthropic's prompt-caching feature for cost analytics. Migration via `ensure_token_usage_columns()` uses `PRAGMA table_info` for backward-compat ALTER TABLE.
 
-**Session creation** -- `ensure_session()` uses `INSERT OR IGNORE` so it is idempotent:
+### 1.4 Key methods
+- **Session lifecycle**: `new(base_dir, db_path)`, `session_workdir(session_id)`, `ensure_session(session_id)`, `list_sessions()`, `clear_session(session_id)`, `clear_all()`
+- **Message append** (writes to today's `.md` file):
+  - `append_message(session_id, role, text)` — legacy append
+  - `add_structured_user_message(session_id, content)` — modern structured event
+  - `add_structured_assistant_text_message(session_id, text)`
+  - `add_structured_tool_call_message(session_id, tool_calls)`
+  - `add_structured_tool_result_message(session_id, tool_id, tool_name, result)`
+- **History load**: `load_session_context(session_id, limit: usize) -> (Vec<SessionMessage>, bool)` — returns tail-limited messages + `from_compacted` flag
+- **Compaction**: `load_compacted`, `save_compacted`, `load_compacted_structured`, `save_compacted_structured` — atomic replace of `compacted.md` via `.tmp` → `rename()` + `sync_all`
+- **Token tracking**: `record_usage`, `load_token_usage`, `load_daily_usage`
+- **Legacy compat**: `add_message(session_id, role, content)`, `get_messages(session_id, limit)`
 
+### 1.5 History merge algorithm (session_store.rs:520-569)
+1. Load `compacted.md` (or `.jsonl`) if present → base message list
+2. Load today's `{date}.md` (or `transcript.jsonl`) → incremental messages
+3. Deduplicate via `deduplicate_after_compacted()` (hash on role + preview)
+4. Tail-limit to `limit` messages
+5. Return `(messages, from_compacted)`
+
+### 1.6 Concurrency
+File locking via `Arc<RwLock<()>>`. Read lock for loads, write lock for appends. SQLite connection is serialized via `Arc<Mutex<Connection>>`. No in-memory message caching — disk is source of truth.
+
+## 2. MemoryStore — Long-Term Facts ✅
+
+File: `src/tizenclaw/src/storage/memory_store.rs`
+
+### 2.1 Instantiation (runtime_core_impl.rs:1151-1167)
 ```rust
-pub fn ensure_session(&self, session_id: &str) {
-    let _ = self.db.execute(
-        "INSERT OR IGNORE INTO sessions (id) VALUES (?1)",
-        params![session_id],
-    );
+let mem_dir = paths.data_dir.join("memory");
+let mem_db = mem_dir.join("memories.db");
+let model_dir = paths.data_dir.join("models");
+MemoryStore::new(mem_dir, mem_db, model_dir)
+```
+
+### 2.2 Integration in process_prompt (process_prompt.rs:443-463)
+```rust
+if literal_json_output || should_skip_memory_for_prompt(prompt) {
+    loop_state.record_prefetch_memory(None);
+} else if let Ok(ms) = self.memory_store.lock() {
+    if let Some(store) = ms.as_ref() {
+        let mem_str = store.load_relevant_for_prompt(prompt, 5, 0.1);
+        if !mem_str.is_empty() {
+            let memory_context = format!(
+                "## Context from Long-Term Memory\n<long_term_memory>\n{}\n</long_term_memory>",
+                mem_str
+            );
+            // injected into messages
+        }
+    }
 }
 ```
 
-**Message append** -- `add_message()` wraps the insert, session creation, and timestamp
-update in a single `BEGIN IMMEDIATE`/`COMMIT` transaction to avoid multiple fsync calls
-(saves 10-30ms per message on flash storage):
-
-```rust
-pub fn add_message(&self, session_id: &str, role: &str, content: &str) {
-    let _ = self.db.execute_batch("BEGIN IMMEDIATE");
-    // INSERT OR IGNORE session
-    // INSERT message
-    // UPDATE sessions.updated_at
-    let _ = self.db.execute_batch("COMMIT");
-}
-```
-
-**History retrieval** -- `get_messages()` fetches the most recent N messages for a session,
-ordered chronologically. The query uses `ORDER BY id DESC LIMIT ?2` then reverses the
-result in Rust to get oldest-first ordering:
-
-```rust
-pub fn get_messages(&self, session_id: &str, limit: usize) -> Vec<SessionMessage> {
-    // SELECT role, content, timestamp FROM messages
-    // WHERE session_id = ?1 ORDER BY id DESC LIMIT ?2
-    // Then reverse the Vec
-}
-```
-
-### Context Window
-
-`AgentCore` calls `get_messages(session_id, 20)` to retrieve the last 20 messages when
-building the LLM prompt. This `MAX_CONTEXT_MESSAGES = 20` window keeps the prompt size
-bounded while providing enough conversational context. Older messages are still stored in
-the database and can be retrieved through the web dashboard.
-
----
-
-## 3. Token Usage Tracking
-
-**Source:** `src/tizenclaw/src/storage/session_store.rs` (lines 118-162)
-
-Every LLM API call records its token consumption:
-
-```rust
-pub fn record_usage(
-    &self,
-    session_id: &str,
-    prompt_tokens: i32,
-    completion_tokens: i32,
-    model: &str,
-) {
-    // INSERT INTO token_usage (session_id, prompt_tokens, completion_tokens, model)
-}
-```
-
-### Aggregation Methods
-
-**Per-session usage:**
-
-```rust
-pub fn load_token_usage(&self, session_id: &str) -> TokenUsage
-// Returns: total_prompt_tokens, total_completion_tokens, total_requests
-```
-
-**Daily usage** (used by the `/api/metrics` endpoint and `tizenclaw-cli --usage`):
-
-```rust
-pub fn load_daily_usage(&self, date: &str) -> TokenUsage
-// If date is empty, uses today's date: date('now')
-// Aggregates across all sessions for that day
-```
-
-The `TokenUsage` struct:
-
-```rust
-pub struct TokenUsage {
-    pub total_prompt_tokens: i64,
-    pub total_completion_tokens: i64,
-    pub total_requests: i64,
-    pub entries: Vec<Value>,
-}
-```
-
-Per-model tracking is available through the `model` column in `token_usage`. The IPC
-`get_usage` method exposes this data to CLI and web clients.
-
----
-
-## 4. Memory Store
-
-**Source:** `src/tizenclaw/src/storage/memory_store.rs`
-
-The memory store provides **long-term key-value memory** that persists across sessions.
-This powers the agent's "remember" and "forget" tools -- the LLM can explicitly store
-facts that should survive session boundaries.
-
-### SQL Schema
-
+### 2.3 Schema
 ```sql
-CREATE TABLE IF NOT EXISTS memories (
+CREATE TABLE memories (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL,
     category TEXT DEFAULT 'general',
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
 );
-
-CREATE INDEX IF NOT EXISTS idx_mem_category ON memories(category);
+CREATE INDEX idx_mem_category ON memories(category);
 ```
 
-### Operations
+Embeddings are handled internally by MemoryStore using ONNX models from `data_dir/models/` (absorbing the previous separate `EmbeddingStore` concept).
 
-| Method | Description |
-|--------|-------------|
-| `set(key, value, category)` | Store or overwrite a memory (uses `INSERT OR REPLACE`) |
-| `get(key)` | Retrieve a memory by exact key |
-| `get_by_category(category, limit)` | List memories in a category, most recently updated first |
-| `search(query, limit)` | Fuzzy search across keys and values using `LIKE %query%` |
-| `delete(key)` | Remove a memory |
+### 2.4 Key API
+- `load_relevant_for_prompt(prompt, top_k: usize, threshold: f32) -> String` — returns formatted string for prompt injection
+- `set(key, value, category)`
+- `get(key)`
+- `get_by_category(category, limit)`
+- `delete(key)`
 
-### Example Usage
+## 3. AuditLogger ⚠️
 
-When a user says "Remember that my favorite color is blue", the agent's `remember` tool
-calls:
+File: `src/tizenclaw/src/storage/audit_logger.rs`
 
-```rust
-memory_store.set("user_favorite_color", "blue", "preferences");
+Partial usage — not wired to all code paths. Records `ipc_auth`, `tool_exec`, `llm_call` events.
+
+## 4. Filesystem Layout
+
+```
+{data_dir}/
+├── sessions/                       # SessionStore base_dir
+│   ├── session_index.db            # SQLite: metadata + token_usage
+│   ├── default/                    # per-session dirs
+│   │   ├── 2026-04-22.md
+│   │   ├── transcript.jsonl
+│   │   ├── compacted.md
+│   │   └── compacted.jsonl
+│   └── user-telegram-12345/
+│       └── ...
+├── memory/
+│   ├── memories.db                 # MemoryStore SQL
+│   └── ...
+├── models/                         # ONNX embedding models
+└── audit.db                        # AuditLogger (if enabled)
 ```
 
-In a later session, when building the system prompt, the agent can retrieve relevant
-memories:
+On Tizen: `{data_dir} = /opt/usr/share/tizenclaw/data/`
+On Linux dev: `{data_dir} = $XDG_DATA_HOME/tizenclaw/`
 
-```rust
-let prefs = memory_store.get_by_category("preferences", 10);
-// Returns: [("user_favorite_color", "blue"), ...]
-```
+## 5. Backup & Migration
 
----
+### Backup
+- Stop daemon → copy `{data_dir}` directory → restart. Atomic.
+- For live backup: SQLite files + transcript.jsonl can be copied while daemon runs (reads use shared lock).
+- Markdown files are append-only; copy is always safe.
 
-## 5. Embedding Store
+### Schema migration
+- `token_usage` table has `ensure_token_usage_columns()` helper that does `PRAGMA table_info` + conditional ALTER TABLE. Models the pattern for future additive migrations.
+- File-based transcripts have no schema — free-form append.
 
-**Source:** `src/tizenclaw/src/storage/embedding_store.rs`
+## 6. How Message Flow Differs From Pre-April-2026
 
-The embedding store provides vector storage for **Retrieval-Augmented Generation (RAG)**.
-It stores text chunks alongside their vector embeddings, enabling semantic search.
+| Aspect | Pre-merge (SQL) | Post-merge (files) |
+|---|---|---|
+| Message storage | `messages` table rows | `.md` + `.jsonl` files per session dir |
+| History load | `SELECT ... ORDER BY id DESC LIMIT N` | Parse today's file + compacted, dedup, tail-limit |
+| Windowing constant | `MAX_CONTEXT_MESSAGES = 20` | `MAX_CONTEXT_MESSAGES = 120`, plus `SizedContextEngine` token-aware compaction |
+| Tool call in history | flat content string | structured `LlmToolCall` field on `SessionMessage` |
+| Crash safety | SQLite atomicity | `.tmp` → rename + `sync_all` for compaction snapshots |
+| Compaction | none | `compacted.md` + `compacted.jsonl` snapshots |
 
-### SQL Schema
+## See Also
 
-```sql
-CREATE TABLE IF NOT EXISTS embeddings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source TEXT NOT NULL,
-    chunk_text TEXT NOT NULL,
-    embedding BLOB,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+- **[11_MEMORY_SESSION_DEEPDIVE.md](11_MEMORY_SESSION_DEEPDIVE.md)** — full flow: session creation → history load → memory retrieval → prompt build
+- **[13_SAFETY_AND_POLICY.md](13_SAFETY_AND_POLICY.md)** — audit logger's role
 
-CREATE INDEX IF NOT EXISTS idx_emb_source ON embeddings(source);
-```
+## FAQ
 
-### How Semantic Search Works
+**Q: Why move messages out of SQLite?**
+A: Append-only markdown + JSONL is crash-safe on flash (no torn writes), human-readable for debugging, and simplifies compaction — just rewrite the compacted file, don't DELETE/INSERT rows. SQL retains what benefits from indexed queries: session index and token analytics.
 
-1. **Ingestion:** Documents are split into ~500-character chunks and stored in the
-   `embeddings` table. The `source` field records where each chunk came from.
+**Q: Can I still query the full conversation in SQL?**
+A: No — you'd need to parse the `.md` or `.jsonl` files. For simple queries, `grep` works on markdown transcripts. For structured queries, parse `transcript.jsonl` line-by-line.
 
-2. **Knowledge databases:** External SQLite databases can be registered via
-   `register_knowledge_db()`. These are lazily attached via SQLite's `ATTACH DATABASE`
-   when a search is performed.
+**Q: What if the daemon crashes mid-write?**
+A: Daily `.md` append is a single write call, so either the line is there or it isn't — no partial state. Compaction uses `.tmp` + rename, so the old `compacted.md` remains valid until the new one is fully fsync'd to disk.
 
-3. **Search:** Currently uses `LIKE %query%` text matching across the main database
-   and all attached knowledge databases, combined with `UNION ALL`. Results are limited
-   to `top_k` entries.
+**Q: How does load_session_context deduplicate overlapping compacted + recent messages?**
+A: `deduplicate_after_compacted()` at session_store.rs:1299-1315 hashes `role + preview_text` of each message and drops duplicates. Preview text is the first N characters.
 
-4. **Cleanup:** After each search, attached databases are immediately detached to
-   reclaim memory and file handles -- important on memory-constrained embedded devices.
+**Q: Does MemoryStore actually do semantic search now?**
+A: Yes — `load_relevant_for_prompt(prompt, top_k, threshold)` computes an embedding via ONNX (models from `data_dir/models/`), searches with cosine similarity, filters by threshold, and returns top_k results formatted for prompt injection.
 
-### Key Methods
+**Q: What's the `from_compacted` boolean for?**
+A: Tells the caller that the message list starts from a compaction snapshot, not from the original conversation start. Useful for UI distinction ("you're seeing a compacted history") and to avoid confusing the LLM about provenance.
 
-```rust
-impl EmbeddingStore {
-    pub fn initialize(&mut self, db_path: &str) -> bool;
-    pub fn register_knowledge_db(&mut self, path: &str);
-    pub fn ingest(&self, source: &str, text: &str) -> Result<usize, String>;
-    pub fn search(&self, query: &str, top_k: usize) -> Vec<Value>;
-    pub fn close(&mut self);
-}
-```
-
----
-
-## 6. On-Device Embeddings
-
-**Source:** `src/tizenclaw/src/core/on_device_embedding.rs` and
-`src/tizenclaw/src/core/wordpiece_tokenizer.rs`
-
-TizenClaw can generate vector embeddings locally without any cloud API, using the
-**all-MiniLM-L6-v2** model in ONNX format.
-
-### ONNX Runtime Integration
-
-The embedding engine loads ONNX Runtime via `dlopen` (not a compile-time dependency),
-allowing graceful fallback if the library is not installed:
-
-```rust
-pub const EMBEDDING_DIM: usize = 384;
-
-const DEFAULT_ORT_LIB_PATH: &str = "/usr/lib/libonnxruntime.so";
-```
-
-The ORT C API types (OrtEnv, OrtSession, OrtValue, etc.) are declared as opaque
-repr(C) structs and accessed through function pointers loaded at runtime.
-
-### WordPiece Tokenizer
-
-`wordpiece_tokenizer.rs` implements a BERT-compatible tokenizer that:
-
-1. Loads a `vocab.txt` file
-2. Tokenizes input text into WordPiece tokens
-3. Produces `input_ids`, `attention_mask`, and `token_type_ids` tensors
-
-```rust
-pub struct TokenizedInput {
-    pub input_ids: Vec<i64>,
-    pub attention_mask: Vec<i64>,
-    pub token_type_ids: Vec<i64>,
-}
-
-pub struct WordPieceTokenizer {
-    vocab: HashMap<String, i64>,
-    cls_id: i64,
-    sep_id: i64,
-    unk_id: i64,
-    pad_id: i64,
-}
-```
-
-This eliminates any cloud dependency for the embedding pipeline -- the entire
-tokenize-embed-search flow runs on-device.
-
----
-
-## 7. Audit Logger
-
-**Source:** `src/tizenclaw/src/storage/audit_logger.rs`
-
-The audit logger records security-relevant and operational events to a separate
-SQLite database.
-
-### SQL Schema
-
-```sql
-CREATE TABLE IF NOT EXISTS audit_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    event_type TEXT NOT NULL,
-    session_id TEXT DEFAULT '',
-    details TEXT DEFAULT '{}',
-    timestamp TEXT DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_audit_type ON audit_events(event_type);
-CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_events(timestamp);
-```
-
-### Event Types
-
-| Method | Event Type | Details |
-|--------|-----------|---------|
-| `log_ipc_auth()` | `ipc_auth` | `{uid, pid, allowed}` |
-| `log_tool_exec()` | `tool_exec` | `{tool, exit_code}` |
-| `log_llm_call()` | `llm_call` | `{backend, prompt_tokens, completion_tokens}` |
-
-The web dashboard serves audit logs through `/api/logs` and `/api/logs/dates` endpoints,
-reading from date-partitioned markdown files in the `audit/` directory.
-
----
-
-## 8. Data Flow Diagram
-
-```mermaid
-flowchart TB
-    subgraph Inputs
-        CLI[tizenclaw-cli]
-        Web[Web Dashboard]
-        TG[Telegram]
-        Other[Other Channels]
-    end
-
-    subgraph IPC["IPC Layer"]
-        Socket["\0tizenclaw.sock"]
-    end
-
-    subgraph Core["AgentCore"]
-        AC[AgentCore]
-        PB[PromptBuilder]
-    end
-
-    subgraph LLM["LLM Backends"]
-        API[Cloud LLM API]
-    end
-
-    subgraph Storage["SQLite Storage Layer"]
-        SS[(sessions.db<br/>SessionStore)]
-        MS[(memory.db<br/>MemoryStore)]
-        ES[(embeddings.db<br/>EmbeddingStore)]
-        AL[(audit.db<br/>AuditLogger)]
-    end
-
-    subgraph OnDevice["On-Device ML"]
-        WP[WordPiece Tokenizer]
-        ORT[ONNX Runtime]
-    end
-
-    CLI --> Socket
-    Web --> Socket
-    TG --> Socket
-    Other --> Socket
-
-    Socket --> AC
-
-    AC -->|"get_messages(sid, 20)"| SS
-    SS -->|"conversation history"| PB
-    AC -->|"search memories"| MS
-    MS -->|"relevant memories"| PB
-    AC -->|"semantic search"| ES
-    ES -->|"RAG context"| PB
-
-    PB -->|"full prompt"| API
-    API -->|"response"| AC
-
-    AC -->|"add_message()"| SS
-    AC -->|"record_usage()"| SS
-    AC -->|"log_llm_call()"| AL
-    AC -->|"set() / get()"| MS
-
-    ES -->|"text chunks"| WP
-    WP -->|"token IDs"| ORT
-    ORT -->|"384-dim vectors"| ES
-```
-
-### Database File Locations
-
-All database files reside under `PlatformPaths::data_dir`:
-
-| File | Store | Purpose |
-|------|-------|---------|
-| `sessions.db` | SessionStore | Conversations + token usage |
-| `memory.db` | MemoryStore | Long-term agent memories |
-| `embeddings.db` | EmbeddingStore | RAG vector storage |
-| `audit.db` | AuditLogger | Security and operational events |
-
-The `sessions_db_path()` method on `PlatformPaths` returns the canonical path for the
-sessions database. Other stores follow the same pattern of opening their database file
-from the data directory.
+**Q: Where do token_usage records go?**
+A: SQLite `token_usage` table in `session_index.db` (same file as `session_index` table). Queryable via `load_token_usage(session_id)` and `load_daily_usage(date)`.

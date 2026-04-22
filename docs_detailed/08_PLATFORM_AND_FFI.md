@@ -402,6 +402,8 @@ bool TIZENCLAW_CHANNEL_SEND(const char* text);
 
 ## 8. Tizen Infrastructure Adapters
 
+> 🔧 **Infra adapter status**: The infra adapters (`app_lifecycle_adapter.rs`, `package_event_adapter.rs`, `tizen_system_event_adapter.rs`, `health_monitor.rs`, `dbus_probe.rs`) are present as files but are not instantiated in `main.rs` today. For them to produce events, they'd need wiring to EventBus. See **[14_EVENT_BUS_TRIGGERS.md](14_EVENT_BUS_TRIGGERS.md)** section 1.6 for the current publisher status.
+
 These modules in `src/tizenclaw/src/infra/` bridge Tizen platform services into the
 agent's event system.
 
@@ -452,3 +454,30 @@ pub struct HealthStatus {
 ```
 
 This data feeds the `/api/metrics` endpoint on the web dashboard.
+
+---
+
+## See Also
+
+- **[14_EVENT_BUS_TRIGGERS.md](14_EVENT_BUS_TRIGGERS.md)** — How infra adapters should publish to EventBus
+- **[15_EXTENDING_TIZENCLAW.md](15_EXTENDING_TIZENCLAW.md)** — Adding LLM plugins via C ABI
+
+## FAQ
+
+**Q: Why does TizenClaw need a plugin system if it has static Tizen bindings via tizen-sys?**
+A: `tizen-sys` is compile-time. The plugin system is runtime — useful for: shipping binaries that work on both Tizen and generic Linux (fallback to GenericLinuxPlatform), loading hardware-specific adapters without rebuild, and vendor-specific extensions.
+
+**Q: Can plugins be unloaded at runtime?**
+A: Not safely. `dlopen` + `dlclose` is error-prone when the plugin has spawned threads or stashed function pointers in callbacks. Current code loads at boot and keeps plugins resident until shutdown.
+
+**Q: How does `GenericLinuxPlatform` work on Ubuntu dev machines?**
+A: Uses stderr for logging (no `dlog`), `/etc/os-release` for OS version, and returns stubs for package_manager/app_control. Good enough to develop and unit-test without Tizen hardware.
+
+**Q: What if the Tizen plugin fails to load?**
+A: `PlatformContext::detect()` falls back to `GenericLinuxPlatform` silently. The log will show "No platform plugin found, using Generic Linux fallback" — check `journalctl` if Tizen features aren't working.
+
+**Q: Are the C API headers (tizenclaw.h) thread-safe?**
+A: Yes, wrapped in `Arc<Mutex<...>>` on the Rust side. Multiple threads can call `tizenclaw_process_prompt()` concurrently. But the mutex serializes — expect throughput equivalent to 1 session at a time.
+
+**Q: Why does `libtizenclaw-client` not link against `libtizenclaw` (the platform crate)?**
+A: To keep the C-ABI surface minimal. `libtizenclaw-client` speaks to the daemon via IPC, not in-process calls. This avoids pulling platform detection, plugin loading, and LLM backends into every client's address space.

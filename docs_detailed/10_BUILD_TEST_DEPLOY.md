@@ -632,3 +632,33 @@ flowchart TB
 4. **Deploy** with `./deploy.sh` (pushes RPM, installs, restarts services)
 5. **Verify** with CLI smoke tests, web dashboard checks, and dlog output
 6. **Debug** failures using dlog, journalctl, or direct SQLite inspection
+
+---
+
+## See Also
+
+- **[15_EXTENDING_TIZENCLAW.md](15_EXTENDING_TIZENCLAW.md)** — How to test extensions (skills, tools, agent roles, LLM plugins)
+- **[08_PLATFORM_AND_FFI.md](08_PLATFORM_AND_FFI.md)** — Platform detection and fallback to GenericLinuxPlatform for development
+
+## FAQ
+
+**Q: Can I develop TizenClaw without a Tizen device?**
+A: Yes — `cargo build --features mock-sys` (in `tizen-sys`). Uses `GenericLinuxPlatform` fallback. Most core logic (PromptBuilder, SessionStore, ToolDispatcher, IpcServer) works identically on Linux.
+
+**Q: How do I run unit tests for a specific module?**
+A: `cargo test -p tizenclaw <module_name>` e.g. `cargo test -p tizenclaw safety_guard`. All modules with `#[cfg(test)]` blocks will run.
+
+**Q: Why does `cargo build --release` produce slow binaries initially?**
+A: First build includes all 179 vendored crates — ~5-10 min. Incremental builds are fast (~10s). GBS does this too; `--incremental` flag on deploy.sh helps.
+
+**Q: How do I update a single binary without rebuilding everything?**
+A: `cargo build -p tizenclaw-cli --release` rebuilds just the CLI. But if shared code changed, dependents need rebuild too. GBS doesn't support partial RPM — full package only.
+
+**Q: What's the difference between `-n` (noinit) and `-s` (skip build) in deploy.sh?**
+A: `-n` skips GBS environment reinit (faster if already built). `-s` skips the GBS build entirely (uses existing RPM). Use `-s` when iterating on deploy logic or testing pre-built packages.
+
+**Q: Where do I look for daemon crashes on Tizen?**
+A: `journalctl -u tizenclaw -f` for live logs, `/var/log/tizenclaw.log` if redirected, and `sdb shell dlog | grep tizenclaw` for dlog-tagged entries.
+
+**Q: How do I debug IPC issues?**
+A: Enable DEBUG logs via `RUST_LOG=debug /usr/bin/tizenclaw`. Watch the daemon log; each incoming request logs "IPC msg received (N bytes)". If no message appears, the client isn't reaching the abstract socket.

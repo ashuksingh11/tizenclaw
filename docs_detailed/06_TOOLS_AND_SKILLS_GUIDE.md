@@ -96,6 +96,8 @@ This means the LLM can pass arguments as a single string (like CLI arguments) or
 
 ## 3. Tool Execution Flow
 
+> ⚠️ **Safety integration status**: `ToolDispatcher::execute()` (tool_dispatcher.rs:139-186) jumps straight from HashMap lookup to `Command::spawn`. The SafetyGuard and ToolPolicy modules are built but not called from this path today. See **[13_SAFETY_AND_POLICY.md](13_SAFETY_AND_POLICY.md)** for what should intercept here and how to wire it in.
+
 When the LLM decides to call a tool, `ToolDispatcher::execute()` (`src/tizenclaw/src/core/tool_dispatcher.rs`, lines 139-186) handles the entire execution:
 
 ```mermaid
@@ -522,3 +524,34 @@ The LLM will:
 | Load a tool from a shared library | Plugin backend | `.so` with C ABI | Push `.so` + configure |
 
 The tool-skill split means you can iterate on agent behavior (skills) at the speed of editing text files, while reserving the heavier tool deployment process for when the agent needs genuinely new capabilities.
+
+---
+
+## See Also
+
+- **[15_EXTENDING_TIZENCLAW.md](15_EXTENDING_TIZENCLAW.md)** — Scenarios 1 & 2 give step-by-step recipes for adding skills and tools with testing
+- **[13_SAFETY_AND_POLICY.md](13_SAFETY_AND_POLICY.md)** — How tool calls should be filtered (planned)
+- **[11_MEMORY_SESSION_DEEPDIVE.md](11_MEMORY_SESSION_DEEPDIVE.md)** — How tool results flow back into the conversation
+
+## FAQ
+
+**Q: Where does `ToolWatcher` poll? How often?**
+A: It polls `platform.paths.tools_dir` (typically `/opt/usr/share/tizen-tools/`). The polling interval is hard-coded in tool_watcher.rs. On change, calls `agent.reload_tools()` which rebuilds the HashMap from scratch.
+
+**Q: What if two tools have the same `name` in their manifests?**
+A: The second one wins — `HashMap::insert` overwrites. If you want namespacing, prefix tool names manually (e.g., `media_play`, `system_reboot`).
+
+**Q: How are tool arguments converted from JSON to CLI flags?**
+A: If args has `"args": "string here"`, it's split by whitespace → positional args. Otherwise, each key becomes `--key value`. See tool_dispatcher.rs:150-161.
+
+**Q: Can I pass JSON-structured arguments (not just strings)?**
+A: Current code stringifies non-string values via `v.to_string()` which produces JSON-encoded output. So `{"enabled": true}` becomes `--enabled true`, and `{"list": [1,2]}` becomes `--list "[1,2]"`. Your tool parses accordingly.
+
+**Q: How do I signal a tool failure back to the LLM meaningfully?**
+A: Exit with non-zero and print a human-readable error to stderr. ToolDispatcher returns a JSON object: `{"exit_code":N, "stdout":"...", "stderr":"...", "success":false}`. The LLM reads stderr to diagnose.
+
+**Q: Do tools run concurrently when the LLM issues multiple tool_calls?**
+A: Yes — `process_prompt` uses `futures_util::future::join_all` (agent_core.rs:461). All tools in one LLM response fire in parallel.
+
+**Q: Can SKILL.md files reference each other?**
+A: Not natively — each skill is independent. But they can instruct the LLM to invoke another skill's tools, or the LLM can read other SKILL.md files on the fly via `file_manager`.

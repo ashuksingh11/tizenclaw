@@ -2,6 +2,12 @@
 
 This document describes TizenClaw's runtime architecture: how the processes are arranged, how they boot, how they communicate, and how they shut down.
 
+> **Deeper dives on specific subsystems**:
+> - Memory & session lifecycle → [11_MEMORY_SESSION_DEEPDIVE.md](11_MEMORY_SESSION_DEEPDIVE.md)
+> - Multi-agent orchestration → [12_MULTI_AGENT_ORCHESTRATION.md](12_MULTI_AGENT_ORCHESTRATION.md)
+> - Safety & policy layers → [13_SAFETY_AND_POLICY.md](13_SAFETY_AND_POLICY.md)
+> - Event bus & autonomous triggers → [14_EVENT_BUS_TRIGGERS.md](14_EVENT_BUS_TRIGGERS.md)
+
 
 ## 1. Three-Tier Topology
 
@@ -488,3 +494,21 @@ If a `process_prompt()` call is mid-flight during shutdown:
 - `ipc_handle.join()` waits for all handler threads to finish.
 
 There is no hard kill. The daemon waits for in-flight work to complete naturally.
+
+
+## FAQ
+
+**Q: What happens if I send a prompt before `AgentCore::initialize()` completes?**
+A: The IPC server starts in phase 7 (after AgentCore init in phase 4), so it's not possible to reach the agent before it's ready. If initialize fails partially (e.g., LLM backend fails), the daemon logs an error but continues — subsequent prompts will return "No LLM backend configured".
+
+**Q: Why does the IPC server run on its own thread instead of the tokio runtime?**
+A: The IPC socket accept loop uses raw `libc` calls with a 1-second `SO_RCVTIMEO` timeout, which is simpler to express in a std::thread than in a tokio task. Each accepted client is handed to `tokio::task::block_in_place` + `handle.block_on` to run async code. This hybrid design keeps the accept loop simple while allowing async downstream.
+
+**Q: Is JSON-RPC 2.0 strictly enforced?**
+A: No — the dispatcher accepts plain text too. If the input isn't valid JSON, it's treated as a prompt against session "default". This is convenient but means you can't tell from outside whether the client intended a plain string or a broken JSON object.
+
+**Q: Can I turn off the web dashboard?**
+A: Yes, edit `channel_config.json` to disable the `web_dashboard` channel. But `main.rs` currently hardcodes a fallback that auto-enables it if no channel named `web_dashboard` is registered. To fully disable, you'd need to register a disabled channel explicitly.
+
+**Q: How do I debug a hang in the daemon?**
+A: Send SIGTERM — graceful shutdown kicks in. If the daemon is deadlocked (e.g., holding a Mutex in `process_prompt`), use `gdb -p <pid>` + `thread apply all bt` to dump backtraces. The fine-grained locking in AgentCore helps, but each `Mutex<Option<SessionStore>>` acquire can still deadlock if a callback re-enters the same lock.

@@ -17,12 +17,14 @@ A traditional LLM integration is stateless question-and-answer: you send a promp
 
 In C++ terms, a simple API call is like calling a pure function. An agent is more like an event loop with state -- it keeps running until it decides the job is done or a safety limit is hit.
 
-TizenClaw's agent implementation lives in `AgentCore` (`src/tizenclaw/src/core/agent_core.rs`). It holds:
+TizenClaw's agent implementation lives in `AgentCore`. As of April 2026, `core/agent_core.rs` is a 111-line facade that uses `include!` to pull in 15 subfiles under `core/agent_core/` (including `runtime_core.rs`, `runtime_core_impl.rs`, `process_prompt.rs`, and others). It holds:
 
-- An LLM backend (the "brain")
-- A tool dispatcher (the "hands")
-- A session store (the "memory")
-- A system prompt builder (the "personality")
+- A `ProviderRegistry` of LLM backends (the "brain")
+- A `ToolDispatcher` (the "hands")
+- A file-based `SessionStore` + wired `MemoryStore` (the "memory")
+- A `SystemPromptBuilder` + `AgentRoleRegistry` + per-session `session_profiles` (the "personality")
+- Wired `SafetyGuard` and `ToolPolicy` (the "conscience")
+- `EventBus`, `ActionBridge`, `WorkflowEngine`, and a `SizedContextEngine` for token-aware compaction
 
 ---
 
@@ -30,50 +32,115 @@ TizenClaw's agent implementation lives in `AgentCore` (`src/tizenclaw/src/core/a
 
 TizenClaw implements the **ReAct** (Reason + Act) pattern, one of the most widely-used agent architectures. The idea is simple: the LLM alternates between *reasoning* about what to do and *acting* by calling tools.
 
-The core implementation is `process_prompt()` in `src/tizenclaw/src/core/agent_core.rs` (lines 328-477). Here is the full flow:
+The core implementation is `process_prompt()` in `src/tizenclaw/src/core/agent_core/process_prompt.rs` (2,615 lines as of April 2026). Here is the full flow:
 
 ### Step-by-step
 
-1. **Store the user message** in SQLite via `SessionStore::add_message()`
-2. **Build conversation history** by loading the last `MAX_CONTEXT_MESSAGES = 20` messages from the database
+1. **Store the user message** in the session transcript via `SessionStore` (file-based; see **09_STORAGE_AND_MEMORY.md**)
+2. **Build conversation history** by loading up to the last `MAX_CONTEXT_MESSAGES = 120` messages via `load_session_context(session_id, limit)`
 3. **Construct the system prompt** using `SystemPromptBuilder` -- this assembles the agent's identity, available tools, loaded skills, and runtime context into a single string
-4. **Enter the agentic loop** (up to `MAX_TOOL_ROUNDS = 10` iterations):
+4. **Enter the agentic loop** (governed by `AgentLoopState`; no default iteration cap — `DEFAULT_MAX_TOOL_ROUNDS = 0` is a sentinel, caps come from `session_profile.max_iterations` if set):
    - Call the LLM via `chat_with_fallback()` with the full message history and tool declarations
-   - **If the LLM returns tool calls**: execute each tool via `ToolDispatcher::execute()`, append tool results to the message history, and loop back to step 4
+   - **If the LLM returns tool calls**: run `ToolPolicy` and `SafetyGuard` checks, then execute each tool via `ToolDispatcher::execute()`, append tool results to the message history, and loop back to step 4
    - **If the LLM returns plain text**: store it in the session and return it to the user
-5. If the loop exceeds 10 rounds, return an error ("Maximum tool call rounds exceeded")
+5. Natural termination comes from goal completion, error, or the LLM deciding it has a final answer
 
 ### Flowchart
 
 ```mermaid
 flowchart TD
-    A[User sends prompt] --> B[Store message in SQLite]
-    B --> C[Load last 20 messages as history]
+    A[User sends prompt] --> B[Append user message to session transcript files]
+    B --> C[load_session_context — last 120 msgs + compacted]
     C --> D[Build system prompt via SystemPromptBuilder]
-    D --> E[round = 0]
-    E --> F{round < MAX_TOOL_ROUNDS?}
-    F -- No --> G[Return error: max rounds exceeded]
-    F -- Yes --> H[Call LLM via chat_with_fallback]
+    D --> E[Initialize AgentLoopState]
+    E --> F{LoopState.is_terminal?}
+    F -- Yes, cap/error --> G[Return final state]
+    F -- No --> H[Call LLM via chat_with_fallback]
     H --> I{LLM response successful?}
     I -- No --> J[Return LLM error]
     I -- Yes --> K{Response has tool_calls?}
-    K -- Yes --> L[Execute tools via ToolDispatcher]
+    K -- Yes --> P1[ToolPolicy.policy_for check]
+    P1 --> P2[SafetyGuard.check_tool]
+    P2 --> L[Execute tools via ToolDispatcher]
     L --> M[Append assistant message + tool results to history]
-    M --> N[round += 1]
+    M --> N[LoopState.advance]
     N --> F
-    K -- No --> O[Store assistant text in SQLite]
-    O --> P[Return text to user]
+    K -- No --> O[Append assistant text to transcript]
+    O --> R[Return text to user]
 ```
+
+### Sequence diagram: full `process_prompt` trace
+
+The flowchart above shows the logical structure; the sequence diagram below traces how the three core collaborators (AgentCore, LLM Backend, ToolDispatcher) exchange messages during a single prompt.
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Agent as AgentCore
+    participant LS as AgentLoopState
+    participant SG as SafetyGuard
+    participant TP as ToolPolicy
+    participant MS as MemoryStore
+    participant LLM as LLM Backend
+    participant TD as ToolDispatcher
+    participant SS as SessionStore
+
+    User->>Agent: process_prompt(session_id, text)
+    Agent->>LS: new AgentLoopState(goal)
+    Note over Agent: Phase: ContextLoading
+    Agent->>SS: load_session_context(session_id, 120)
+    SS-->>Agent: (Vec<SessionMessage>, from_compacted)
+    Agent->>MS: load_relevant_for_prompt(prompt, 5, 0.1)
+    MS-->>Agent: memory_context (injected as <long_term_memory>)
+    Note over Agent: Phase: DecisionMaking
+    loop until LoopState.is_terminal()
+        Agent->>LLM: chat(messages, tools, system_prompt)
+        LLM-->>Agent: LlmResponse
+        alt response.has_tool_calls()
+            Note over Agent: Phase: SafetyCheck
+            Agent->>TP: policy_for(name).check
+            TP-->>Agent: pass / block_reason
+            Agent->>SG: check_tool(name, tool_call)
+            SG-->>Agent: None / BlockReason
+            alt allowed
+                Note over Agent: Phase: ToolDispatching
+                Agent->>TD: execute (parallel)
+                TD-->>Agent: results
+            else blocked
+                Agent->>LS: record block reason
+            end
+            Note over Agent: Phase: Evaluating, StateTracking
+        else terminal
+            Note over Agent: Phase: ResultReporting
+            Agent->>SS: append assistant message
+            Agent-->>User: text
+        end
+    end
+```
+
+> **See Also**: **[11_MEMORY_SESSION_DEEPDIVE.md](11_MEMORY_SESSION_DEEPDIVE.md)** documents the full 15-phase state machine (GoalParsing → ContextLoading → Pre-loop Compaction → DecisionMaking → SafetyCheck → ToolDispatching → ObservationCollect → Evaluating → ErrorRecovery → StateTracking → SelfInspection → RePlanning → TerminationCheck → ResultReporting) implemented across the 15 `include!`d subfiles in `core/agent_core/`.
 
 ### Key constants from the source
 
 ```rust
-// src/tizenclaw/src/core/agent_core.rs, lines 17-18
-const MAX_TOOL_ROUNDS: usize = 10;
-const MAX_CONTEXT_MESSAGES: usize = 20;
+// src/tizenclaw/src/core/agent_core.rs, lines 79-90
+const MAX_CONTEXT_MESSAGES: usize = 120;       // was 20 pre-April-2026
+const CONTEXT_TOKEN_BUDGET: usize = 0;         // 0 = unlimited, token-based budgeting is in SizedContextEngine
+const CONTEXT_COMPACT_THRESHOLD: f32 = 0.90;   // trigger compaction at 90% of budget
+const MAX_PREFETCHED_SKILLS: usize = 3;
+const MAX_OUTBOUND_DASHBOARD_MESSAGES: usize = 200;
+const MAX_TELEGRAM_OUTBOUND_CHARS: usize = 4000;
+const AUTHENTICATED_BACKEND_PRIORITY_BOOST: i32 = 10_000;
+
+// src/tizenclaw/src/core/agent_loop_state.rs, line 207
+impl AgentLoopState {
+    pub const DEFAULT_MAX_TOOL_ROUNDS: usize = 0;  // 0 = no default cap
+}
 ```
 
-`MAX_TOOL_ROUNDS` caps the number of reason-act cycles per prompt. Without this, a confused LLM could loop forever calling the same tool. `MAX_CONTEXT_MESSAGES` controls how much conversation history the LLM sees on each turn -- a sliding window that keeps token usage bounded.
+`MAX_TOOL_ROUNDS` (previously a constant in `agent_core.rs`) has moved to `AgentLoopState::DEFAULT_MAX_TOOL_ROUNDS = 0` in `core/agent_loop_state.rs`. The value `0` is a sentinel meaning "no default cap" — finite caps come from `session_profile.max_iterations` on a per-session basis. The loop still has natural termination on goal completion, error, or an LLM-decided "final answer".
+
+`MAX_CONTEXT_MESSAGES = 120` is a count-based cap on the sliding conversation window. Token-based budgeting is managed by `SizedContextEngine` with `CONTEXT_COMPACT_THRESHOLD = 0.90`, which triggers compaction when the token budget is 90% consumed.
 
 ---
 
@@ -311,8 +378,8 @@ The second layer focuses on runtime behavior:
 
 ### Structural Guardrails
 
-- **MAX_TOOL_ROUNDS = 10**: hard cap on agentic loop iterations in `agent_core.rs`
-- **MAX_CONTEXT_MESSAGES = 20**: bounds conversation history to prevent unbounded token growth
+- **`AgentLoopState::DEFAULT_MAX_TOOL_ROUNDS = 0`** (`core/agent_loop_state.rs:207`): sentinel for "no default cap"; finite per-session caps come from `session_profile.max_iterations`
+- **`MAX_CONTEXT_MESSAGES = 120`**: bounds the conversation window; `SizedContextEngine` handles token-aware compaction at 90% of budget (`CONTEXT_COMPACT_THRESHOLD`)
 - **Circuit breakers**: pause failing backends (see next section)
 - **SO_PEERCRED validation**: the tool executor only accepts connections from authorized processes
 
@@ -365,47 +432,50 @@ Each backend (primary and fallbacks) has its own independent circuit breaker, st
 
 ## 9. Memory and Sessions
 
-TizenClaw uses SQLite for persistent conversation memory, managed by `SessionStore` in `src/tizenclaw/src/storage/session_store.rs`.
+TizenClaw stores conversation transcripts as **files** (Markdown + JSONL) per session directory, with SQLite only for session metadata and token analytics. This changed in April 2026; see **[09_STORAGE_AND_MEMORY.md](09_STORAGE_AND_MEMORY.md)** for the full schema.
 
-### Database Schema
+### Storage layout (summary)
 
-Three tables:
+Per-session directory `{base_dir}/{session_id}/`:
+- `{YYYY-MM-DD}.md` — daily append-only Markdown transcript
+- `transcript.jsonl` — append-only structured event log
+- `compacted.md` + `compacted.jsonl` — compaction snapshots
 
-- **sessions**: tracks session IDs with creation/update timestamps
-- **messages**: stores every message (user, assistant, tool) with its session ID, role, content, and timestamp
-- **token_usage**: records prompt/completion token counts per LLM call, enabling usage tracking and cost monitoring
+SQLite tables (in `session_index.db`):
+- **session_index**: session IDs with `created_at` + `last_active`
+- **token_usage**: prompt/completion tokens plus `cache_creation_input_tokens` and `cache_read_input_tokens` for Anthropic prompt-cache analytics
 
 ### Conversation History Windowing
 
-When processing a new prompt, `AgentCore` loads the last `MAX_CONTEXT_MESSAGES = 20` messages for the current session:
+When processing a new prompt, `AgentCore` loads up to `MAX_CONTEXT_MESSAGES = 120` messages via:
 
 ```rust
-// src/tizenclaw/src/core/agent_core.rs, lines 353-358
-let history = {
-    let ss = self.session_store.lock();
-    ss.ok()
-        .and_then(|s| s.as_ref().map(|store|
-            store.get_messages(session_id, MAX_CONTEXT_MESSAGES)))
-        .unwrap_or_default()
-};
+// core/agent_core/process_prompt.rs (simplified)
+let (history, from_compacted) = session_store
+    .load_session_context(session_id, MAX_CONTEXT_MESSAGES);
 ```
 
-This sliding window ensures the LLM always has recent context without exceeding token limits. The SQL query uses `ORDER BY id DESC LIMIT ?2` to fetch the N most recent messages, then reverses them to restore chronological order.
+`load_session_context` returns `(Vec<SessionMessage>, bool)` — the bool is `from_compacted`, indicating the history begins from a compaction snapshot rather than the original start. Internally it merges `compacted.md` (or `.jsonl`) with today's append-only transcript, deduplicates overlapping entries via `deduplicate_after_compacted()`, and tail-limits to `limit` messages.
 
 ### Token Usage Tracking
 
-Every LLM call records its token consumption:
+Every LLM call records its token consumption, including Anthropic prompt-cache tokens:
 
 ```rust
-store.record_usage(session_id, response.prompt_tokens,
-                   response.completion_tokens, &backend_name);
+store.record_usage(
+    session_id,
+    response.prompt_tokens,
+    response.completion_tokens,
+    &backend_name,
+    // cache tokens also recorded when available
+);
 ```
 
-This data can be queried per-session (`load_token_usage`) or per-day (`load_daily_usage`) for monitoring and cost control.
+Queryable per-session via `load_token_usage`, per-day via `load_daily_usage`.
 
 ### Performance
 
-The session store uses SQLite WAL (Write-Ahead Logging) mode and batches writes into transactions to minimize fsync overhead -- important on embedded devices where I/O is often the bottleneck.
+SQLite uses WAL mode; file-based transcripts use `.tmp` + `rename()` + `sync_all` for crash-safe compaction-snapshot writes on flash storage. Daily append is a single write, avoiding torn-write risk.
 
 ---
 
@@ -415,12 +485,43 @@ TizenClaw's agent architecture can be understood as layers built on top of a sim
 
 ```mermaid
 flowchart BT
-    A[LLM API Call\nStateless, single-shot] --> B[+ Memory\nSQLite session store, history windowing]
+    A[LLM API Call\nStateless, single-shot] --> B[+ Memory\nFile-based session transcripts + SQL index]
     B --> C[+ Tools\nToolDispatcher, executable binaries]
     C --> D[+ Skills\nMarkdown instructions, hot-reloadable]
-    D --> E[+ Agentic Loop\nReAct pattern, multi-step reasoning]
-    E --> F[+ Safety\nSafetyGuard, ToolPolicy, circuit breakers]
-    F --> G[+ Multi-Agent\nAgentRole, orchestrator pattern]
+    D --> E[+ Agentic Loop\nReAct pattern, 15-phase state machine]
+    E --> F[+ Safety\nSafetyGuard, ToolPolicy, circuit breakers — all wired]
+    F --> G[+ Multi-Agent\nAgentRoleRegistry, session_profiles]
 ```
 
 Each layer adds capability while the safety mechanisms ensure the agent remains controllable and predictable -- critical for an embedded system running on real hardware.
+
+---
+
+## See Also
+
+- **[11_MEMORY_SESSION_DEEPDIVE.md](11_MEMORY_SESSION_DEEPDIVE.md)** — Complete session lifecycle and memory retrieval
+- **[12_MULTI_AGENT_ORCHESTRATION.md](12_MULTI_AGENT_ORCHESTRATION.md)** — How agents delegate to specialists
+- **[13_SAFETY_AND_POLICY.md](13_SAFETY_AND_POLICY.md)** — Layered defense (when wired)
+- **[14_EVENT_BUS_TRIGGERS.md](14_EVENT_BUS_TRIGGERS.md)** — Autonomous (non-user-initiated) agent actions
+
+---
+
+## FAQ
+
+**Q: Is `MAX_TOOL_ROUNDS = 10` still the iteration limit?**
+A: No. The old constant was removed. `AgentLoopState::DEFAULT_MAX_TOOL_ROUNDS = 0` in `core/agent_loop_state.rs:207` is the new default — `0` is a sentinel for "no cap by default". Finite caps come from `session_profile.max_iterations` (per-session override). Natural termination happens when the LLM emits a final answer or the goal is satisfied.
+
+**Q: Can the LLM call multiple tools in parallel?**
+A: Yes. `process_prompt` still runs all tool calls in a single LLM response concurrently via `join_all`. The next LLM turn sees all results at once.
+
+**Q: What if a tool takes longer than the configured timeout?**
+A: `tokio::process::Command` doesn't have an automatic timeout today — the `timeout_secs` field in ToolDecl is read but not enforced. Long-running tools can stall the agent. This is an integration gap worth fixing.
+
+**Q: Why does the agent sometimes repeat the same tool call?**
+A: ToolPolicy is now wired (`process_prompt.rs:1252`) with repeat-count checks via `policy_for(name)`. If you're still seeing repeats, check the policy file for that tool's `max_repeat_count` setting. See **13_SAFETY_AND_POLICY.md**.
+
+**Q: How do I make the agent remember things across sessions?**
+A: `MemoryStore` is now wired (`process_prompt.rs:443-463`). On each prompt, `load_relevant_for_prompt(prompt, 5, 0.1)` runs a semantic search over stored memories (ONNX embeddings from `data_dir/models/`) and injects top-k results as a `<long_term_memory>` block in the prompt. Use the memory API to `set(key, value, category)` facts you want persisted.
+
+**Q: Does streaming work for all backends?**
+A: Gemini and Anthropic support it. OpenAI support is in place but depends on `stream: true` being set. Ollama support varies by model. Check each backend's `chat()` method for details.

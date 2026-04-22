@@ -589,3 +589,21 @@ set(CMAKE_CXX_FLAGS_RELEASE "-Os -fno-exceptions")
 | Build one crate | `cargo build -p tizenclaw` | `cmake --build build --target tizenclaw` |
 | Clean | `cargo clean` | `cmake --build build --target clean` |
 | Check (no codegen) | `cargo check` | N/A |
+
+
+## FAQ
+
+**Q: Should I learn Rust before trying to extend TizenClaw?**
+A: For tools/skills (Scenario 1 & 2 in **[15_EXTENDING_TIZENCLAW.md](15_EXTENDING_TIZENCLAW.md)**), no — they're language-agnostic (any executable + JSON manifest). For LLM plugins (Scenario 4), you need either C or Rust knowledge. For modifying the daemon internals (wiring SafetyGuard, adding MemoryStore integration), yes — you'll want familiarity with traits, async, and Arc/Mutex patterns.
+
+**Q: What Rust features are most essential for understanding this codebase?**
+A: In order: (1) ownership and borrowing, (2) `Result<T, E>` and `?`, (3) trait objects (`Box<dyn Trait>`), (4) `Arc<T>` for shared ownership, (5) `tokio::spawn` and async/await, (6) pattern matching on enums. Fancier features (lifetimes in generics, proc macros) appear but are rarer.
+
+**Q: Does TizenClaw use `unsafe`?**
+A: Yes, sparingly. Mostly for: raw `libc` socket/signal calls (ipc_server.rs, main.rs), FFI to C libraries (tizen-sys bindings), dlopen/dlsym plugin loading. All `unsafe` blocks are small and auditable.
+
+**Q: How do I navigate the codebase quickly?**
+A: Start with `src/tizenclaw/src/main.rs` (the 8-phase boot), then `core/agent_core.rs::process_prompt` (the heart). Use `rg <symbol>` to trace callers. Cargo.toml workspace shows module boundaries.
+
+**Q: What's the hardest Rust concept in this codebase?**
+A: Probably the mix of std and tokio sync primitives — why `std::Mutex<Option<SessionStore>>` sits alongside `tokio::sync::RwLock<Box<dyn LlmBackend>>`. See **[11_MEMORY_SESSION_DEEPDIVE.md](11_MEMORY_SESSION_DEEPDIVE.md)** section 9 for the rationale.

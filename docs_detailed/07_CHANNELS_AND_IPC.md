@@ -152,6 +152,30 @@ sequenceDiagram
 If the payload is not valid JSON, the server treats it as a **plain text prompt** and
 dispatches it directly to `AgentCore::process_prompt()` with session `"default"`.
 
+### IPC protocol flow (Mermaid sequence)
+
+```mermaid
+sequenceDiagram
+    participant C as Client (CLI/webapp)
+    participant S as IpcServer<br/>(\0tizenclaw.sock)
+    participant A as AgentCore
+
+    C->>S: connect() [abstract UDS]
+    Note over C,S: Abstract namespace: sun_path[0]=0, then "tizenclaw.sock"
+    C->>S: 4-byte big-endian length
+    C->>S: UTF-8 JSON-RPC 2.0 payload (up to 10MB)
+    Note over S: parse method: "prompt" | "get_usage" | (plain text fallback)
+    S->>A: process_prompt(session_id, text, on_chunk)
+    A-->>S: response text (may take seconds)
+    S->>C: 4-byte length
+    S->>C: JSON response {jsonrpc:"2.0", id, result:{text:"..."}}
+
+    alt server busy
+        Note over S: active_clients >= 8
+        S->>C: busy error (code -32000)
+    end
+```
+
 ---
 
 ## 3. Web Dashboard
@@ -324,6 +348,14 @@ to MCP-compatible clients.
 ### MCP Client (`src/tizenclaw/src/channel/mcp_client.rs`)
 
 MCP client that connects to external MCP servers to discover and use remote tools.
+
+### MCP (Model Context Protocol) — detail
+
+TizenClaw includes both MCP server and client channels:
+- **mcp_server.rs**: exposes TizenClaw's tools as MCP-compliant endpoints for external MCP clients
+- **mcp_client.rs**: connects to external MCP servers (e.g., filesystem-mcp, sqlite-mcp), registering their resources/tools as callable from TizenClaw's LLM
+
+Configuration in `data/config/mcp_servers.json` (⚠️ may not be actively loaded in current deployments). MCP enables standardized tool federation across different AI assistants.
 
 ### A2A Handler (`src/tizenclaw/src/channel/a2a_handler.rs`)
 
@@ -502,3 +534,33 @@ cargo build
 ```
 
 The `ChannelRegistry` will automatically discover and start your channel at boot time.
+
+---
+
+## See Also
+
+- **[15_EXTENDING_TIZENCLAW.md](15_EXTENDING_TIZENCLAW.md)** — How to register new channels
+- **[14_EVENT_BUS_TRIGGERS.md](14_EVENT_BUS_TRIGGERS.md)** — Channels as event consumers/producers
+
+## FAQ
+
+**Q: Why abstract Unix sockets instead of regular filesystem sockets?**
+A: No filesystem cleanup needed — abstract sockets vanish when the daemon exits. No stale socket files to clean up on crashes. No SELinux/path-permission issues on Tizen. Tradeoff: you can't `ls -la /var/run/` to check if the daemon is running.
+
+**Q: What's the max payload size?**
+A: 10 MB (ipc_server.rs:10, `MAX_PAYLOAD_SIZE`). Requests larger than this are dropped and the connection closed.
+
+**Q: Can I connect from outside the device?**
+A: Not directly — abstract Unix sockets are local-only. For remote access, use the web dashboard (port 9090) or deploy an MCP server, or set up SSH tunneling.
+
+**Q: How does the CLI know what session ID to use?**
+A: By default it sends `session_id: "default"`. To use a specific session, pass `--session <id>` (if implemented in the CLI). Otherwise, write a JSON-RPC request directly with a custom session_id.
+
+**Q: Does the web dashboard share sessions with CLI?**
+A: Only if they use the same `session_id` string. Typical setup: CLI uses "default", web uses per-browser-tab UUIDs. They're isolated by convention.
+
+**Q: Is JSON-RPC notification (no id) supported?**
+A: No — `process_prompt` always produces a response. Fire-and-forget would need a separate IPC method.
+
+**Q: What protocol does Telegram/Discord/Slack use internally?**
+A: Each channel has its own external protocol (Telegram Bot API, Discord WebSocket, Slack Events API). Internally, they all route through `ChannelRegistry` → `AgentCore` → IPC socket. Channels use the standard `Channel` trait.
