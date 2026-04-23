@@ -1,0 +1,76 @@
+# Tell Git these files are binary so it never does line-ending or encoding
+# conversion on checkout. Without this, Windows clients with the default
+# core.autocrlf=true will corrupt them by translating 0x0A bytes to CRLF.
+
+# Office documents (ZIP-packaged XML)
+*.pptx binary
+*.docx binary
+*.xlsx binary
+*.ppt  binary
+*.doc  binary
+*.xls  binary
+*.odp  binary
+*.odt  binary
+*.ods  binary
+
+# PDFs and other binary docs
+*.pdf  binary
+
+# Images
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.bmp  binary
+*.webp binary
+*.svg  text
+
+# Archives
+*.zip  binary
+*.tar  binary
+*.gz   binary
+*.bz2  binary
+*.xz   binary
+*.7z   binary
+*.rpm  binary
+
+# Compiled / shared objects
+*.so   binary
+*.so.* binary
+*.a    binary
+*.o    binary
+*.dll  binary
+*.exe  binary
+*.bin  binary
+*.dylib binary
+
+# Audio / video / fonts / models
+*.mp3  binary
+*.mp4  binary
+*.wav  binary
+*.ttf  binary
+*.otf  binary
+*.woff binary
+*.woff2 binary
+*.onnx binary
+*.pb   binary
+
+# Force LF for source files (so Windows clones don't accidentally end up
+# with CRLF in shell scripts, Rust source, etc.)
+*.rs   text eol=lf
+*.sh   text eol=lf
+*.py   text eol=lf
+*.toml text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.c    text eol=lf
+*.h    text eol=lf
+*.cpp  text eol=lf
+*.hpp  text eol=lf
+*.cc   text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+Cargo.lock text eol=lf
